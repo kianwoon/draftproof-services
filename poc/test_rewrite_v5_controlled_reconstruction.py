@@ -22,6 +22,7 @@ from rewrite_v5.residual_comb import (
     build_residual_cluster_route_plan_prompt,
     build_residual_cluster_retune_prompt,
     build_borderline_verdict_cleanup_prompt,
+    build_final_topk_sentence_route_prompt,
     build_route_blueprint,
     build_unsafe_cluster_cleanup_prompt,
     generate_residual_cluster_route_plan,
@@ -32,6 +33,8 @@ from rewrite_v5.residual_comb import (
     _balanced_ai_topk_sort_value,
     _direct_scanner_candidate_strong_enough,
     _direct_scanner_batch_policy,
+    _author_proxy_candidate_audit,
+    _should_skip_core_after_direct_accept,
     _should_continue_direct_scanner_batches,
     generate_residual_cluster_seed_variants,
     _expand_to_local_text_boundaries,
@@ -346,8 +349,147 @@ def test_v5_residual_cluster_prompt_attaches_author_proxy_context():
     assert any("No variant contains placeholders" in row for row in payload["author_proxy_quality_contract"]["self_check_before_return"])
     assert "Do not invent personal experiences" in " ".join(payload["author_proxy_rules"])
     assert "highest-quality polished candidate" in " ".join(payload["author_proxy_rules"])
+    assert payload["author_proxy_candidate_audit_contract"]["applied_by"].startswith("DraftProof controller")
     assert payload["provenance_contract"]["needs_author_confirmation"]
     assert "acceptance_note" in payload["provenance_contract"]
+
+
+def test_v5_author_proxy_context_is_attached_to_all_accept_capable_prompts():
+    section = SectionUnit(
+        section_id="density_cluster_001",
+        heading="Density cluster cleanup",
+        text=(
+            "The placement helped me understand the client consultation process. "
+            "Timing also changed how comfortable the client felt."
+        ),
+        start_char=0,
+        end_char=118,
+        paragraph_count=1,
+        word_count=17,
+        metadata={"before_context": "Before the placement, the process felt abstract.", "after_context": ""},
+    )
+    density_cluster = {
+        "sentence_count": 2,
+        "word_count": 17,
+        "preview": "The placement helped me understand...",
+        "generic_hits": ["process"],
+        "transition_count": 1,
+    }
+    author_proxy_context = {
+        "schema_version": "author_proxy_context.v1",
+        "active": True,
+        "mode": "non_interrupting_author_proxy_draft",
+        "review_required": True,
+        "primary_mode": "author_grounded_evidence_rebuild",
+        "required_inputs": ["specific class observation"],
+        "allowed_provenance": ["source_preserved", "inferred_from_draft", "needs_author_confirmation"],
+        "quality_bar": {"target": "highest_quality_grounded_candidate"},
+        "review_cards": [{"card_id": "target-01", "target_text": "client consultation process"}],
+    }
+    route_plan = _sample_route_plan()
+
+    prompts = [
+        build_direct_scanner_leapfrog_prompt(
+            section=section,
+            density_cluster=density_cluster,
+            route_plan=route_plan,
+            author_proxy_context=author_proxy_context,
+        ),
+        build_risky_window_cleanup_prompt(
+            section=section,
+            current_scores={"risky_window_count": 1, "unsafe_cluster_count": 1},
+            route_plan=route_plan,
+            author_proxy_context=author_proxy_context,
+        ),
+        build_unsafe_cluster_cleanup_prompt(
+            section=section,
+            density_cluster=density_cluster,
+            route_plan=route_plan,
+            author_proxy_context=author_proxy_context,
+        ),
+        build_borderline_verdict_cleanup_prompt(
+            current_text=section.text,
+            current_scores={"ai": 22.0, "topk": 18.0, "risky_window_count": 0, "unsafe_cluster_count": 0},
+            density_gate={"safe": True},
+            author_proxy_context=author_proxy_context,
+        ),
+        build_final_topk_sentence_route_prompt(
+            current_scores={"ai": 22.0, "topk": 18.0, "risky_window_count": 0, "unsafe_cluster_count": 0},
+            targets=[{"target_id": "t001", "sentence": "Timing also changed how comfortable the client felt."}],
+            variant_count=2,
+            author_proxy_context=author_proxy_context,
+        ),
+    ]
+
+    for prompt in prompts:
+        payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+        assert payload["author_proxy_context"]["mode"] == "non_interrupting_author_proxy_draft"
+        assert payload["author_proxy_context"]["review_required"] is True
+        assert payload["author_proxy_candidate_audit_contract"]["model_output_schema"]
+        assert "author review" in payload["author_proxy_candidate_audit_contract"]["acceptance_note"]
+
+
+def test_v5_author_proxy_audit_flags_new_concrete_references():
+    context = {
+        "active": True,
+        "review_required": True,
+        "required_inputs": ["confirm the real observation"],
+        "review_cards": [{
+            "card_id": "target-01",
+            "provenance": "needs_author_confirmation",
+            "target_text": "class support",
+            "user_input_needed": "Confirm what happened.",
+        }],
+    }
+
+    audit = _author_proxy_candidate_audit(
+        "The class support improved.",
+        "The class support improved in Week 7 at Riverdale.",
+        context,
+        phase="unit",
+    )
+
+    assert audit["active"] is True
+    assert audit["review_required"] is True
+    assert audit["review_items"][0]["item_id"] == "target-01"
+    assert "7" in audit["novel_candidate_references"]["numbers"]
+    assert "Riverdale" in audit["novel_candidate_references"]["named_references"]
+    assert audit["safety_gate"]["passed"] is False
+    assert audit["safety_gate"]["requires_author_review"] is True
+
+
+def test_v5_author_proxy_active_prevents_direct_scanner_core_skip(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_SKIP_CORE_AFTER_DIRECT_SCANNER_ACCEPT", raising=False)
+
+    assert _should_skip_core_after_direct_accept(
+        direct_scanner_accepted_count=1,
+        author_proxy_context={},
+    )
+    assert not _should_skip_core_after_direct_accept(
+        direct_scanner_accepted_count=1,
+        author_proxy_context={"active": True},
+    )
+
+
+def test_v5_production_author_proxy_review_status_uses_candidate_audit():
+    context = {"active": True, "review_required": True, "review_cards": [{"card_id": "target-01"}]}
+
+    assert v5_production._accepted_author_proxy_review_required(
+        [{"author_proxy_audit": {
+            "active": True,
+            "review_required": True,
+            "safety_gate": {"requires_author_review": True},
+        }}],
+        context=context,
+        final_text="Changed text.",
+        original_text="Original text.",
+    )
+    assert not v5_production._accepted_author_proxy_review_required(
+        [{"author_proxy_audit": {"active": False}}],
+        context=context,
+        final_text="Changed text.",
+        original_text="Original text.",
+    )
 
 
 def test_v5_residual_retune_prompt_focuses_on_remaining_sentence_without_scores():

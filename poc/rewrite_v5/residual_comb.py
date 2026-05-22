@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 from pathlib import Path
+import re
 import time
 from typing import Any, Callable
 
@@ -297,6 +298,7 @@ def run_v5_residual_cluster_comb_experiment(
         "direct_scanner_batch_policy": _direct_scanner_batch_policy(),
         "direct_scanner_route_planning": _bool_env("DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_ROUTE_PLANNING", True),
         "direct_scanner_selection_policy": "balanced_ai_topk",
+        "author_proxy_context_active": _author_proxy_active(author_proxy_context),
         "planner_model": getattr(planner_gateway, "model", None),
         "writer_model": getattr(gateway, "model", None),
         "initial_density_gate": _compact_density_gate(baseline_density_gate),
@@ -361,6 +363,7 @@ def run_v5_residual_cluster_comb_experiment(
             accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
         )
         raise_if_canceled()
 
@@ -369,9 +372,9 @@ def run_v5_residual_cluster_comb_experiment(
         for row in direct_scanner_rounds
         if isinstance(row, dict) and isinstance(row.get("accepted"), dict)
     )
-    skip_core_after_direct = (
-        direct_scanner_accepted_count > 0
-        and _bool_env("DRAFTPROOF_REWRITE_V5_SKIP_CORE_AFTER_DIRECT_SCANNER_ACCEPT", True)
+    skip_core_after_direct = _should_skip_core_after_direct_accept(
+        direct_scanner_accepted_count=direct_scanner_accepted_count,
+        author_proxy_context=author_proxy_context,
     )
     phase_order["skip_core_after_direct_scanner_accept"] = skip_core_after_direct
     phase_order["direct_scanner_accepted_rounds"] = direct_scanner_accepted_count
@@ -406,6 +409,7 @@ def run_v5_residual_cluster_comb_experiment(
             accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
         )
         unsafe_cluster_rounds.extend(unsafe_cluster_probe_rounds)
         raise_if_canceled()
@@ -493,6 +497,8 @@ def run_v5_residual_cluster_comb_experiment(
                 variant=variant,
                 output_dir=round_dir,
                 label=f"seed_{variant.variant_id}",
+                author_proxy_context=author_proxy_context,
+                author_proxy_phase="residual_cluster_comb_seed",
             )
             for variant in seed_variants
         ]
@@ -579,6 +585,8 @@ def run_v5_residual_cluster_comb_experiment(
                         variant=variant,
                         output_dir=round_dir,
                         label=f"initial_{variant.variant_id}",
+                        author_proxy_context=author_proxy_context,
+                        author_proxy_phase="residual_cluster_comb_initial",
                     )
                     for variant in variants
                 ]
@@ -622,6 +630,8 @@ def run_v5_residual_cluster_comb_experiment(
                             variant=variant,
                             output_dir=round_dir,
                             label=f"adaptive_{variant.variant_id}",
+                            author_proxy_context=author_proxy_context,
+                            author_proxy_phase="residual_cluster_comb_adaptive",
                         )
                         for variant in adaptive_variants
                     ]
@@ -695,6 +705,8 @@ def run_v5_residual_cluster_comb_experiment(
                     variant=variant,
                     output_dir=round_dir,
                     label=f"retune_{variant.variant_id}",
+                    author_proxy_context=author_proxy_context,
+                    author_proxy_phase="residual_cluster_comb_retune",
                 )
                 for variant in retuned
             ]
@@ -824,6 +836,7 @@ def run_v5_residual_cluster_comb_experiment(
             accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
         )
         raise_if_canceled()
 
@@ -879,6 +892,7 @@ def run_v5_residual_cluster_comb_experiment(
             accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
         )
         raise_if_canceled()
 
@@ -929,6 +943,7 @@ def run_v5_residual_cluster_comb_experiment(
             accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
         )
         raise_if_canceled()
 
@@ -961,6 +976,7 @@ def run_v5_residual_cluster_comb_experiment(
             accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
         )
         raise_if_canceled()
 
@@ -993,6 +1009,7 @@ def run_v5_residual_cluster_comb_experiment(
             accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
         )
         raise_if_canceled()
 
@@ -1603,6 +1620,133 @@ def _residual_progress_percent(round_index: int, *, max_rounds: int) -> int:
     return max(67, min(75, 66 + round((min(index, total) / total) * 8)))
 
 
+def _author_proxy_active(context: dict[str, Any] | None) -> bool:
+    return isinstance(context, dict) and bool(context.get("active"))
+
+
+def _author_proxy_review_items(context: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not _author_proxy_active(context):
+        return []
+    cards = context.get("review_cards") if isinstance(context, dict) else []
+    if not isinstance(cards, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for index, card in enumerate(cards[:12], start=1):
+        if not isinstance(card, dict):
+            continue
+        items.append({
+            "item_id": str(card.get("card_id") or f"author-review-{index:02d}"),
+            "provenance": card.get("provenance") or "needs_author_confirmation",
+            "target_text": card.get("target_text"),
+            "user_input_needed": card.get("user_input_needed"),
+        })
+    return items
+
+
+_REFERENCE_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9'_-]*|\d+(?:[.,]\d+)?%?")
+
+
+def _reference_tokens(text: str) -> list[str]:
+    return [match.group(0).strip("'_-") for match in _REFERENCE_TOKEN_RE.finditer(str(text or ""))]
+
+
+def _sentence_initial_tokens(text: str) -> set[str]:
+    initials: set[str] = set()
+    for sentence in re.split(r"(?:^|[.!?]\s+|\n+)", str(text or "")):
+        tokens = _reference_tokens(sentence)
+        if tokens:
+            initials.add(tokens[0])
+    return initials
+
+
+def _concrete_reference_inventory(text: str) -> dict[str, list[str]]:
+    tokens = _reference_tokens(text)
+    sentence_initials = _sentence_initial_tokens(text)
+    numbers: list[str] = []
+    named_references: list[str] = []
+    for token in tokens:
+        if any(char.isdigit() for char in token):
+            if token not in numbers:
+                numbers.append(token)
+            continue
+        if len(token) <= 2 or token in sentence_initials:
+            continue
+        if token[:1].isupper() and any(char.islower() for char in token[1:]):
+            if token not in named_references:
+                named_references.append(token)
+    return {
+        "numbers": numbers[:20],
+        "named_references": named_references[:20],
+    }
+
+
+def _novel_reference_tokens(source_text: str, candidate_text: str) -> dict[str, list[str]]:
+    source = _concrete_reference_inventory(source_text)
+    candidate = _concrete_reference_inventory(candidate_text)
+    source_numbers = set(source.get("numbers") or [])
+    source_names = set(source.get("named_references") or [])
+    return {
+        "numbers": [token for token in candidate.get("numbers", []) if token not in source_numbers],
+        "named_references": [
+            token
+            for token in candidate.get("named_references", [])
+            if token not in source_names
+        ],
+    }
+
+
+def _author_proxy_candidate_audit(
+    source_text: str,
+    candidate_text: str,
+    context: dict[str, Any] | None,
+    *,
+    phase: str,
+) -> dict[str, Any]:
+    if not _author_proxy_active(context):
+        return {}
+    review_items = _author_proxy_review_items(context)
+    novel_references = _novel_reference_tokens(source_text, candidate_text)
+    has_novel_reference = bool(novel_references["numbers"] or novel_references["named_references"])
+    review_required = bool(
+        context.get("review_required")
+        or review_items
+        or context.get("required_inputs")
+        or has_novel_reference
+    )
+    if has_novel_reference:
+        reason = "candidate_introduced_concrete_references_not_present_in_source"
+    elif review_required:
+        reason = "author_proxy_review_required"
+    else:
+        reason = "source_grounded_candidate"
+    return {
+        "schema_version": "author_proxy_candidate_audit.v1",
+        "active": True,
+        "phase": phase,
+        "review_required": review_required,
+        "required_inputs": context.get("required_inputs") or [],
+        "review_items": review_items,
+        "novel_candidate_references": novel_references,
+        "safety_gate": {
+            "passed": not has_novel_reference,
+            "requires_author_review": review_required,
+            "reason": reason,
+        },
+    }
+
+
+def _should_skip_core_after_direct_accept(
+    *,
+    direct_scanner_accepted_count: int,
+    author_proxy_context: dict[str, Any] | None,
+) -> bool:
+    return (
+        int(direct_scanner_accepted_count or 0) > 0
+        and _bool_env("DRAFTPROOF_REWRITE_V5_SKIP_CORE_AFTER_DIRECT_SCANNER_ACCEPT", True)
+        and not _author_proxy_active(author_proxy_context)
+    )
+
+
 def _attach_author_proxy_context(payload: dict[str, Any], context: dict[str, Any] | None) -> None:
     if not isinstance(context, dict) or not context.get("active"):
         return
@@ -1642,6 +1786,18 @@ def _attach_author_proxy_context(payload: dict[str, Any], context: dict[str, Any
             "No variant contains placeholders, fake citations, fabricated facts, or vague filler.",
             "The strongest variant should be useful for the author to revise further, even before author confirmation.",
         ],
+    }
+    payload["author_proxy_candidate_audit_contract"] = {
+        "applied_by": "DraftProof controller after each candidate is scored.",
+        "model_output_schema": "Return the normal variants array only; do not add audit fields to the JSON response.",
+        "review_required": bool(context.get("review_required")),
+        "audit_fields": [
+            "required_inputs",
+            "review_items",
+            "novel_candidate_references",
+            "safety_gate",
+        ],
+        "acceptance_note": "A scanner-accepted candidate remains marked for manual author review when this context is active.",
     }
     payload["provenance_contract"] = {
         "source_preserved": "Exact or directly preserved material already present in the submitted text.",
@@ -2688,6 +2844,7 @@ def build_risky_window_cleanup_prompt(
     current_scores: dict[str, Any] | None = None,
     variant_count: int = 5,
     route_plan: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
     source_words = max(1, int(section.word_count or word_count(section.text)))
@@ -2754,6 +2911,7 @@ def build_risky_window_cleanup_prompt(
             "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=route_plan),
             "method": _custom_route_writer_method(),
         })
+    _attach_author_proxy_context(payload, author_proxy_context)
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -2763,6 +2921,7 @@ def build_unsafe_cluster_cleanup_prompt(
     density_cluster: dict[str, Any],
     variant_count: int = 5,
     route_plan: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
     source_words = max(1, int(section.word_count or word_count(section.text)))
@@ -2832,6 +2991,7 @@ def build_unsafe_cluster_cleanup_prompt(
             "length_guidance": _length_guidance_for_route_plan(section=section, route_plan=route_plan),
             "method": _custom_route_writer_method(),
         })
+    _attach_author_proxy_context(payload, author_proxy_context)
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -2843,6 +3003,7 @@ def build_borderline_verdict_cleanup_prompt(
     variant_count: int = 2,
     round_index: int = 1,
     retry_feedback: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
     source_words = max(1, word_count(current_text))
@@ -2924,6 +3085,7 @@ def build_borderline_verdict_cleanup_prompt(
     }
     if isinstance(retry_feedback, dict) and retry_feedback:
         payload["previous_rejection_feedback"] = retry_feedback
+    _attach_author_proxy_context(payload, author_proxy_context)
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -2934,6 +3096,7 @@ def build_direct_scanner_leapfrog_prompt(
     route_plan: dict[str, Any] | None = None,
     variant_count: int = 5,
     batch_index: int = 1,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
     source_words = max(1, int(section.word_count or word_count(section.text)))
@@ -3040,6 +3203,7 @@ def build_direct_scanner_leapfrog_prompt(
             "batch_index": int(batch_index),
             "instruction": "Use a different sentence route from prior attempts. Do not repeat the same opener or ending shape.",
         }
+    _attach_author_proxy_context(payload, author_proxy_context)
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -3050,6 +3214,7 @@ def generate_risky_window_cleanup_variants(
     gateway: LLMGateway,
     variant_count: int = 5,
     route_plan: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     return _generate_loose_variants_from_builder(
         prompt_builder=lambda count: build_risky_window_cleanup_prompt(
@@ -3057,6 +3222,7 @@ def generate_risky_window_cleanup_variants(
             current_scores=current_scores,
             variant_count=count,
             route_plan=route_plan,
+            author_proxy_context=author_proxy_context,
         ),
         gateway=gateway,
         variant_count=variant_count,
@@ -3070,6 +3236,7 @@ def generate_unsafe_cluster_cleanup_variants(
     gateway: LLMGateway,
     variant_count: int = 5,
     route_plan: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     return _generate_loose_variants_from_builder(
         prompt_builder=lambda count: build_unsafe_cluster_cleanup_prompt(
@@ -3077,6 +3244,7 @@ def generate_unsafe_cluster_cleanup_variants(
             density_cluster=density_cluster,
             variant_count=count,
             route_plan=route_plan,
+            author_proxy_context=author_proxy_context,
         ),
         gateway=gateway,
         variant_count=variant_count,
@@ -3092,6 +3260,7 @@ def generate_borderline_verdict_cleanup_variants(
     variant_count: int = 2,
     round_index: int = 1,
     retry_feedback: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     return _generate_loose_variants_from_builder(
         prompt_builder=lambda count: build_borderline_verdict_cleanup_prompt(
@@ -3101,6 +3270,7 @@ def generate_borderline_verdict_cleanup_variants(
             variant_count=count,
             round_index=round_index,
             retry_feedback=retry_feedback,
+            author_proxy_context=author_proxy_context,
         ),
         gateway=gateway,
         variant_count=variant_count,
@@ -3115,6 +3285,7 @@ def generate_direct_scanner_leapfrog_variants(
     variant_count: int = 5,
     route_plan: dict[str, Any] | None = None,
     batch_index: int = 1,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     return _generate_loose_variants_from_builder(
         prompt_builder=lambda count: build_direct_scanner_leapfrog_prompt(
@@ -3123,6 +3294,7 @@ def generate_direct_scanner_leapfrog_variants(
             route_plan=route_plan,
             variant_count=count,
             batch_index=batch_index,
+            author_proxy_context=author_proxy_context,
         ),
         gateway=gateway,
         variant_count=variant_count,
@@ -4092,7 +4264,15 @@ def _score_residual_variant(
     variant: RecompositionVariant,
     output_dir: Path,
     label: str,
+    author_proxy_context: dict[str, Any] | None = None,
+    author_proxy_phase: str | None = None,
 ) -> dict[str, Any]:
+    author_proxy_audit = _author_proxy_candidate_audit(
+        section.text,
+        variant.text,
+        author_proxy_context,
+        phase=author_proxy_phase or label,
+    )
     boundary_integrity = _section_apply_boundary_integrity(current_text, section)
     if not boundary_integrity.get("passed"):
         return {
@@ -4110,6 +4290,7 @@ def _score_residual_variant(
             "incremental": {},
             "local_scores": {},
             "local_goal": {},
+            "author_proxy_audit": author_proxy_audit,
         }
     candidate_text, apply_status = apply_section_variant(current_text, section, variant.text)
     if not apply_status.get("applied"):
@@ -4124,6 +4305,7 @@ def _score_residual_variant(
             "incremental": {},
             "local_scores": {},
             "local_goal": {},
+            "author_proxy_audit": author_proxy_audit,
         }
     source_integrity = minimal_replacement_text_integrity(current_text)
     candidate_integrity = minimal_replacement_text_integrity(candidate_text)
@@ -4147,6 +4329,7 @@ def _score_residual_variant(
             "incremental": {},
             "local_scores": {},
             "local_goal": {},
+            "author_proxy_audit": author_proxy_audit,
         }
     candidate_report = _scan_report(candidate_text)
     candidate_goal = evaluate_rewrite_goal(
@@ -4195,6 +4378,7 @@ def _score_residual_variant(
         "candidate_text": candidate_text,
         "candidate_report": candidate_report,
         "candidate_goal": candidate_goal,
+        "author_proxy_audit": author_proxy_audit,
     }
 
 
@@ -4208,8 +4392,16 @@ def _score_full_document_variant(
     variant: RecompositionVariant,
     output_dir: Path,
     label: str,
+    author_proxy_context: dict[str, Any] | None = None,
+    author_proxy_phase: str | None = None,
 ) -> dict[str, Any]:
     candidate_text = str(variant.text or "").strip()
+    author_proxy_audit = _author_proxy_candidate_audit(
+        current_text,
+        candidate_text,
+        author_proxy_context,
+        phase=author_proxy_phase or label,
+    )
     source_words = max(1, word_count(current_text))
     candidate_words = max(1, word_count(candidate_text))
     apply_status: dict[str, Any] = {
@@ -4255,6 +4447,7 @@ def _score_full_document_variant(
             "incremental": {},
             "local_scores": {},
             "local_goal": {},
+            "author_proxy_audit": author_proxy_audit,
         }
 
     candidate_report = _scan_report(candidate_text)
@@ -4284,6 +4477,7 @@ def _score_full_document_variant(
         "candidate_text": candidate_text,
         "candidate_report": candidate_report,
         "candidate_goal": candidate_goal,
+        "author_proxy_audit": author_proxy_audit,
     }
 
 
@@ -4308,6 +4502,7 @@ def _run_direct_scanner_leapfrog_pass(
     accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     started_at: float | None = None,
     max_seconds: float | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rounds: list[dict[str, Any]] = []
@@ -4359,6 +4554,7 @@ def _run_direct_scanner_leapfrog_pass(
                 local_goal=_local_goal(section.text, section.text),
                 planner_gateway=planner_gateway,
                 fallback_gateway=gateway,
+                author_proxy_context=author_proxy_context,
             )
         else:
             route_plan = None
@@ -4396,6 +4592,7 @@ def _run_direct_scanner_leapfrog_pass(
                 variant_count=variant_count,
                 route_plan=route_plan,
                 batch_index=batch_index,
+                author_proxy_context=author_proxy_context,
             )
             batch_dir = round_dir / f"batch_{batch_index:02d}"
             batch_dir.mkdir(parents=True, exist_ok=True)
@@ -4412,6 +4609,8 @@ def _run_direct_scanner_leapfrog_pass(
                     variant=variant,
                     output_dir=batch_dir,
                     label=f"direct_b{batch_index}_{variant.variant_id}",
+                    author_proxy_context=author_proxy_context,
+                    author_proxy_phase="direct_scanner_leapfrog",
                 )
                 for variant in variants
             ]
@@ -4510,6 +4709,7 @@ def _run_risky_window_cleanup_pass(
     accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     started_at: float | None = None,
     max_seconds: float | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rounds: list[dict[str, Any]] = []
@@ -4537,6 +4737,7 @@ def _run_risky_window_cleanup_pass(
             local_goal=_local_goal(section.text, section.text),
             planner_gateway=planner_gateway,
             fallback_gateway=gateway,
+            author_proxy_context=author_proxy_context,
         )
         (round_dir / "route_plan_prompt.json.txt").write_text(route_plan_prompt)
         (round_dir / "route_plan_completion.json.txt").write_text(route_plan_completion)
@@ -4555,6 +4756,7 @@ def _run_risky_window_cleanup_pass(
             gateway=gateway,
             variant_count=variant_count,
             route_plan=route_plan,
+            author_proxy_context=author_proxy_context,
         )
         diagnostics = {
             "route_plan": route_plan_diagnostics,
@@ -4573,6 +4775,8 @@ def _run_risky_window_cleanup_pass(
                 variant=variant,
                 output_dir=round_dir,
                 label=f"window_{variant.variant_id}",
+                author_proxy_context=author_proxy_context,
+                author_proxy_phase="risky_window_cleanup",
             )
             for variant in variants
         ]
@@ -4638,6 +4842,7 @@ def _run_unsafe_cluster_cleanup_pass(
     accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     started_at: float | None = None,
     max_seconds: float | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rounds: list[dict[str, Any]] = []
@@ -4701,6 +4906,7 @@ def _run_unsafe_cluster_cleanup_pass(
                 local_goal=_local_goal(section.text, section.text),
                 planner_gateway=planner_gateway,
                 fallback_gateway=gateway,
+                author_proxy_context=author_proxy_context,
             )
         else:
             route_plan = None
@@ -4724,6 +4930,7 @@ def _run_unsafe_cluster_cleanup_pass(
             gateway=gateway,
             variant_count=variant_count,
             route_plan=route_plan,
+            author_proxy_context=author_proxy_context,
         )
         diagnostics = {
             "route_plan": route_plan_diagnostics,
@@ -4742,6 +4949,8 @@ def _run_unsafe_cluster_cleanup_pass(
                 variant=variant,
                 output_dir=round_dir,
                 label=f"density_{variant.variant_id}",
+                author_proxy_context=author_proxy_context,
+                author_proxy_phase="unsafe_cluster_cleanup",
             )
             for variant in variants
         ]
@@ -4811,6 +5020,7 @@ def _run_borderline_verdict_cleanup_pass(
     accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     started_at: float | None = None,
     max_seconds: float | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rounds: list[dict[str, Any]] = []
@@ -4847,6 +5057,7 @@ def _run_borderline_verdict_cleanup_pass(
             variant_count=variant_count,
             round_index=round_index,
             retry_feedback=retry_feedback,
+            author_proxy_context=author_proxy_context,
         )
         (round_dir / "borderline_prompt.json.txt").write_text(prompt)
         (round_dir / "borderline_completion.json.txt").write_text(completion)
@@ -4860,6 +5071,8 @@ def _run_borderline_verdict_cleanup_pass(
                 variant=variant,
                 output_dir=round_dir,
                 label=f"borderline_r{round_index}_{variant.variant_id}",
+                author_proxy_context=author_proxy_context,
+                author_proxy_phase="borderline_verdict_cleanup",
             )
             for variant in variants
         ]
@@ -4925,6 +5138,7 @@ def _run_final_topk_sentence_route_pass(
     accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     started_at: float | None = None,
     max_seconds: float | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rounds: list[dict[str, Any]] = []
@@ -4965,6 +5179,7 @@ def _run_final_topk_sentence_route_pass(
             targets=batch_targets,
             gateway=gateway,
             variant_count=variant_count,
+            author_proxy_context=author_proxy_context,
         )
         (round_dir / "topk_sentence_route_prompt.json.txt").write_text(prompt)
         (round_dir / "topk_sentence_route_completion.json.txt").write_text(completion)
@@ -4979,6 +5194,8 @@ def _run_final_topk_sentence_route_pass(
                 variant=variant,
                 output_dir=round_dir,
                 label=f"topk_sentence_route_b{batch_index}_{variant.get('variant_id')}",
+                author_proxy_context=author_proxy_context,
+                author_proxy_phase="final_topk_sentence_route",
             )
             for variant in variants
         ]
@@ -5047,12 +5264,14 @@ def generate_final_topk_sentence_route_variants(
     targets: list[dict[str, Any]],
     gateway: LLMGateway,
     variant_count: int,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
     variants = max(1, min(5, int(variant_count or 1)))
     prompt = build_final_topk_sentence_route_prompt(
         current_scores=current_scores,
         targets=targets,
         variant_count=variants,
+        author_proxy_context=author_proxy_context,
     )
     structured = structured_json_request_options(
         getattr(gateway, "model", None),
@@ -5103,6 +5322,7 @@ def build_final_topk_sentence_route_prompt(
     current_scores: dict[str, Any],
     targets: list[dict[str, Any]],
     variant_count: int,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> str:
     payload = {
         "task": "final_topk_sentence_route_replacement",
@@ -5164,6 +5384,7 @@ def build_final_topk_sentence_route_prompt(
             ]
         },
     }
+    _attach_author_proxy_context(payload, author_proxy_context)
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -5178,6 +5399,8 @@ def _score_final_topk_sentence_route_variant(
     variant: dict[str, Any],
     output_dir: Path,
     label: str,
+    author_proxy_context: dict[str, Any] | None = None,
+    author_proxy_phase: str | None = None,
 ) -> dict[str, Any]:
     lookup = {str(target.get("target_id") or ""): str(target.get("sentence") or "") for target in targets}
     candidate_text = current_text
@@ -5234,6 +5457,12 @@ def _score_final_topk_sentence_route_variant(
                 "integrity_regression": integrity_regression,
             })
     if not apply_status.get("applied"):
+        author_proxy_audit = _author_proxy_candidate_audit(
+            current_text,
+            candidate_text,
+            author_proxy_context,
+            phase=author_proxy_phase or label,
+        )
         return {
             "section_id": "final_topk_sentence_route",
             "variant_id": variant.get("variant_id"),
@@ -5245,7 +5474,14 @@ def _score_final_topk_sentence_route_variant(
             "incremental": {},
             "candidate_text": candidate_text,
             "applied_repairs": applied,
+            "author_proxy_audit": author_proxy_audit,
         }
+    author_proxy_audit = _author_proxy_candidate_audit(
+        current_text,
+        candidate_text,
+        author_proxy_context,
+        phase=author_proxy_phase or label,
+    )
     candidate_report = _scan_report(candidate_text)
     candidate_goal = evaluate_rewrite_goal(
         original_text=original_text,
@@ -5272,6 +5508,7 @@ def _score_final_topk_sentence_route_variant(
         "candidate_report": candidate_report,
         "candidate_goal": candidate_goal,
         "applied_repairs": applied,
+        "author_proxy_audit": author_proxy_audit,
     }
 
 
@@ -7209,6 +7446,7 @@ def _compact_residual_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "incremental": row.get("incremental"),
         "local_scores": row.get("local_scores"),
         "apply_status": row.get("apply_status"),
+        "author_proxy_audit": row.get("author_proxy_audit"),
         "selection_policy": row.get("selection_policy"),
         "direct_scanner_batch": row.get("direct_scanner_batch"),
         "text": row.get("text"),

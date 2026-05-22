@@ -235,6 +235,35 @@ def _author_proxy_requires_review(context: dict[str, Any] | None, *, final_text:
     return bool(context.get("review_required") or context.get("review_cards"))
 
 
+def _accepted_author_proxy_review_required(
+    accepted_rows: list[dict[str, Any]],
+    *,
+    context: dict[str, Any] | None,
+    final_text: str,
+    original_text: str,
+) -> bool:
+    saw_author_proxy_audit = False
+    for row in accepted_rows:
+        if not isinstance(row, dict):
+            continue
+        audit = row.get("author_proxy_audit")
+        if not isinstance(audit, dict):
+            continue
+        saw_author_proxy_audit = True
+        if not audit.get("active"):
+            continue
+        safety_gate = audit.get("safety_gate") if isinstance(audit.get("safety_gate"), dict) else {}
+        if audit.get("review_required") or safety_gate.get("requires_author_review"):
+            return True
+    if saw_author_proxy_audit:
+        return False
+    return _author_proxy_requires_review(
+        context,
+        final_text=final_text,
+        original_text=original_text,
+    )
+
+
 def _v5_extra_body() -> dict[str, Any] | None:
     extra: dict[str, Any] = {}
     effort = os.environ.get("DRAFTPROOF_REWRITE_V5_REASONING_EFFORT", "none").strip() or "none"
@@ -375,30 +404,34 @@ def run_rewrite_pipeline_v5(
             return
         checkpoint_scores = checkpoint.get("scores") if isinstance(checkpoint.get("scores"), dict) else {}
         baseline_scores = checkpoint.get("baseline_scores") if isinstance(checkpoint.get("baseline_scores"), dict) else {}
+        checkpoint_accepted = checkpoint.get("accepted") if isinstance(checkpoint.get("accepted"), dict) else {}
+        checkpoint_author_review_required = _accepted_author_proxy_review_required(
+            [checkpoint_accepted],
+            context=author_proxy_context,
+            final_text=checkpoint_text,
+            original_text=original_text,
+        )
+        checkpoint_status = (
+            AUTHOR_PROXY_REVIEW_STATUS
+            if checkpoint_author_review_required
+            else "rewrite_candidate_generated_needs_external_review"
+        )
         checkpoint_summary = {
             "rewrite_pipeline_version": pipeline_version,
             "rewrite_engine_mode": "v5_residual_cluster_comb_production",
-            "outcome": (
-                AUTHOR_PROXY_REVIEW_STATUS
-                if author_proxy_context.get("active")
-                else "rewrite_candidate_generated_needs_external_review"
-            ),
-            "public_status": (
-                AUTHOR_PROXY_REVIEW_STATUS
-                if author_proxy_context.get("active")
-                else "rewrite_candidate_generated_needs_external_review"
-            ),
+            "outcome": checkpoint_status,
+            "public_status": checkpoint_status,
             "partial_rewrite_preserved": True,
             "partial_rewrite_preservation_reason": "accepted_checkpoint_saved_before_pipeline_completion",
             "checkpoint_recovery_available": True,
             "public_candidate_warning": (
                 AUTHOR_PROXY_WARNING
-                if author_proxy_context.get("active")
+                if checkpoint_author_review_required
                 else "best_candidate_requires_external_review"
             ),
-            "best_candidate_author_review_required": bool(author_proxy_context.get("active")),
+            "best_candidate_author_review_required": checkpoint_author_review_required,
             "author_proxy_context": author_proxy_context,
-            "author_review_cards": author_proxy_context.get("review_cards") if author_proxy_context.get("active") else [],
+            "author_review_cards": author_proxy_context.get("review_cards") if checkpoint_author_review_required else [],
             "checkpoint": _compact_v5_checkpoint(checkpoint),
             "v5_scores": {
                 "original": baseline_scores,
@@ -514,13 +547,15 @@ def run_rewrite_pipeline_v5(
     if global_best_fallback.get("applied") and isinstance(global_best_fallback.get("selected"), dict):
         accepted.append(global_best_fallback["selected"])
     no_text_change = final_text.strip() == original_text.strip()
-    if no_text_change:
-        public_status = RewriteGoalStatus.ORIGINAL_PRESERVED.value
-    elif _author_proxy_requires_review(
-        author_proxy_context,
+    author_proxy_review_required = _accepted_author_proxy_review_required(
+        accepted,
+        context=author_proxy_context,
         final_text=final_text,
         original_text=original_text,
-    ) and accepted:
+    )
+    if no_text_change:
+        public_status = RewriteGoalStatus.ORIGINAL_PRESERVED.value
+    elif author_proxy_review_required and accepted:
         public_status = AUTHOR_PROXY_REVIEW_STATUS
     elif final_goal.get("goal_met"):
         public_status = RewriteGoalStatus.AI_MITIGATED.value
