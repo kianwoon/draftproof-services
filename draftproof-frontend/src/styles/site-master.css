@@ -6310,7 +6310,10 @@ th {
 
 .submitted-editor-sheet {
   width: 100%;
-  height: min(92vh, 980px);
+  height: 84vh;
+  height: 84dvh;
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   border: 1px solid rgba(148, 163, 184, .45);
