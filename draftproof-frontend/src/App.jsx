@@ -22,7 +22,7 @@ import Security from './pages/Security';
 import EssayChecker from './pages/EssayChecker';
 import BuyTokens from './pages/BuyTokens';
 import PurchaseHistory from './pages/PurchaseHistory';
-import { getLocaleFromPathname } from './localeRouting';
+import { getLocaleFromPathname, isLocalizablePublicPath } from './localeRouting';
 
 function HomeRedirect() {
   const { user, loading } = useAuth();
@@ -70,6 +70,8 @@ export default function App() {
   const hideFooter = pathname === '/' || pathname === '/zh';
 
   useEffect(() => {
+    if (!isLocalizablePublicPath(pathname)) return;
+
     const routeLocale = getLocaleFromPathname(pathname);
     if (routeLocale !== i18n.resolvedLanguage && routeLocale !== i18n.language) {
       i18n.changeLanguage(routeLocale);
