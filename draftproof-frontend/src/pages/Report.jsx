@@ -77,22 +77,84 @@ function submittedContentToText(model) {
 }
 
 function tokenizeTrackedText(text) {
-  const tokens = [];
-  let buffer = '';
-  let bufferIsSpace = null;
+  return String(text || '').match(/\s+|[A-Za-z0-9]+|[^\sA-Za-z0-9]/g) || [];
+}
 
-  Array.from(String(text || '')).forEach((char) => {
-    const isSpace = char.trim() === '';
-    if (buffer && bufferIsSpace !== isSpace) {
-      tokens.push(buffer);
-      buffer = '';
+function compactDiffParts(parts) {
+  const compacted = [];
+  parts.forEach((part) => {
+    if (!part?.text) return;
+    const previous = compacted[compacted.length - 1];
+    if (previous?.type === part.type) {
+      previous.text += part.text;
+    } else {
+      compacted.push({ ...part });
     }
-    buffer += char;
-    bufferIsSpace = isSpace;
   });
+  return compacted;
+}
 
-  if (buffer) tokens.push(buffer);
-  return tokens;
+function lcsTokenDiff(originalTokens, currentTokens) {
+  const originalLength = originalTokens.length;
+  const currentLength = currentTokens.length;
+  const matrix = Array.from({ length: originalLength + 1 }, () => Array(currentLength + 1).fill(0));
+
+  for (let i = originalLength - 1; i >= 0; i -= 1) {
+    for (let j = currentLength - 1; j >= 0; j -= 1) {
+      matrix[i][j] = originalTokens[i] === currentTokens[j]
+        ? matrix[i + 1][j + 1] + 1
+        : Math.max(matrix[i + 1][j], matrix[i][j + 1]);
+    }
+  }
+
+  const parts = [];
+  let i = 0;
+  let j = 0;
+  while (i < originalLength && j < currentLength) {
+    if (originalTokens[i] === currentTokens[j]) {
+      parts.push({ type: 'equal', text: originalTokens[i] });
+      i += 1;
+      j += 1;
+    } else if (matrix[i + 1][j] >= matrix[i][j + 1]) {
+      parts.push({ type: 'delete', text: originalTokens[i] });
+      i += 1;
+    } else {
+      parts.push({ type: 'insert', text: currentTokens[j] });
+      j += 1;
+    }
+  }
+
+  while (i < originalLength) {
+    parts.push({ type: 'delete', text: originalTokens[i] });
+    i += 1;
+  }
+  while (j < currentLength) {
+    parts.push({ type: 'insert', text: currentTokens[j] });
+    j += 1;
+  }
+
+  return compactDiffParts(parts);
+}
+
+function charDiff(originalText, currentText) {
+  return lcsTokenDiff(Array.from(originalText || ''), Array.from(currentText || ''));
+}
+
+function refineReplacementParts(parts) {
+  const refined = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    const current = parts[i];
+    const next = parts[i + 1];
+    const currentIsWord = current?.type === 'delete' && /^[A-Za-z0-9]+$/.test(current.text || '');
+    const nextIsWord = next?.type === 'insert' && /^[A-Za-z0-9]+$/.test(next.text || '');
+    if (currentIsWord && nextIsWord) {
+      refined.push(...charDiff(current.text, next.text));
+      i += 1;
+    } else {
+      refined.push(current);
+    }
+  }
+  return compactDiffParts(refined);
 }
 
 function buildTrackedDiff(originalText, currentText) {
@@ -102,32 +164,8 @@ function buildTrackedDiff(originalText, currentText) {
 
   const originalTokens = tokenizeTrackedText(originalText);
   const currentTokens = tokenizeTrackedText(currentText);
-  let prefix = 0;
-  while (
-    prefix < originalTokens.length &&
-    prefix < currentTokens.length &&
-    originalTokens[prefix] === currentTokens[prefix]
-  ) {
-    prefix += 1;
-  }
 
-  let originalSuffix = originalTokens.length - 1;
-  let currentSuffix = currentTokens.length - 1;
-  while (
-    originalSuffix >= prefix &&
-    currentSuffix >= prefix &&
-    originalTokens[originalSuffix] === currentTokens[currentSuffix]
-  ) {
-    originalSuffix -= 1;
-    currentSuffix -= 1;
-  }
-
-  return [
-    { type: 'equal', text: originalTokens.slice(0, prefix).join('') },
-    { type: 'delete', text: originalTokens.slice(prefix, originalSuffix + 1).join('') },
-    { type: 'insert', text: currentTokens.slice(prefix, currentSuffix + 1).join('') },
-    { type: 'equal', text: originalTokens.slice(originalSuffix + 1).join('') },
-  ].filter((part) => part.text);
+  return refineReplacementParts(lcsTokenDiff(originalTokens, currentTokens));
 }
 
 function findTextRange(haystack, needle) {
