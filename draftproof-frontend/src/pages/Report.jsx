@@ -866,6 +866,7 @@ export default function Report() {
   const selectedSentenceDraftStatus = selectedSegment?.text && submittedDraftText.includes(selectedSegment.text)
     ? t('report.submitted.editor.sentenceUnchanged')
     : t('report.submitted.editor.sentenceEdited');
+  const selectedSignalStrength = clampPercent(selectedSegment?.primarySignal?.score);
   const submittedHighlightRange = selectedSegment?.id ? submittedHighlightRanges[selectedSegment.id] : null;
   const submittedEditorHighlightParts = highlightedEditorParts(submittedDraftText, submittedHighlightRange);
   const submittedDraftWordCount = countWords(submittedDraftText);
@@ -2015,11 +2016,26 @@ export default function Report() {
                               <span>{t('report.submitted.editor.affectedSentence')}</span>
                               <p>{selectedSegment.text}</p>
                             </div>
+                            {selectedSignalStrength != null && (
+                              <div
+                                className="submitted-signal-gauge"
+                                style={{
+                                  '--signal-color': selectedSegment.primarySignal.color || '#b45309',
+                                  '--signal-strength': `${Math.round(selectedSignalStrength)}%`,
+                                }}
+                                aria-label={t('report.submitted.signalStrength', { value: Math.round(selectedSignalStrength) })}
+                              >
+                                <div className="submitted-signal-gauge-head">
+                                  <span>{t('report.submitted.signalStrengthLabel')}</span>
+                                  <strong>{Math.round(selectedSignalStrength)}%</strong>
+                                </div>
+                                <div className="submitted-signal-gauge-track" aria-hidden="true">
+                                  <span />
+                                </div>
+                              </div>
+                            )}
                             <div className="submitted-panel-meta">
                               <span>{selectedSentenceDraftStatus}</span>
-                              {selectedSegment.primarySignal.score != null && (
-                                <span>{t('report.submitted.signalStrength', { value: Math.round(selectedSegment.primarySignal.score) })}</span>
-                              )}
                               {selectedSegment.primarySignal.tier && (
                                 <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedSegment.primarySignal.tier}`, { defaultValue: selectedSegment.primarySignal.tier }) })}</span>
                               )}
