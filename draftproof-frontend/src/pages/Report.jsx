@@ -240,6 +240,76 @@ function adjustHighlightedRanges(ranges, previousText, nextText) {
   );
 }
 
+function mapOriginalRangeToCurrent(originalText, currentText, range) {
+  if (!range || range.end <= range.start) return null;
+  if (originalText === currentText) return range;
+
+  const parts = lcsTokenDiff(tokenizeTrackedText(originalText), tokenizeTrackedText(currentText));
+  let originalOffset = 0;
+  let currentOffset = 0;
+  let mappedStart = null;
+  let mappedEnd = null;
+
+  const include = (start, end = start) => {
+    mappedStart = mappedStart == null ? start : Math.min(mappedStart, start);
+    mappedEnd = mappedEnd == null ? end : Math.max(mappedEnd, end);
+  };
+
+  parts.forEach((part) => {
+    const length = part.text.length;
+    if (part.type === 'equal') {
+      const originalEnd = originalOffset + length;
+      const overlapStart = Math.max(range.start, originalOffset);
+      const overlapEnd = Math.min(range.end, originalEnd);
+      if (overlapStart < overlapEnd) {
+        include(
+          currentOffset + (overlapStart - originalOffset),
+          currentOffset + (overlapEnd - originalOffset)
+        );
+      }
+      originalOffset = originalEnd;
+      currentOffset += length;
+      return;
+    }
+
+    if (part.type === 'delete') {
+      const originalEnd = originalOffset + length;
+      if (Math.max(range.start, originalOffset) < Math.min(range.end, originalEnd)) {
+        include(currentOffset);
+      }
+      originalOffset = originalEnd;
+      return;
+    }
+
+    if (part.type === 'insert') {
+      if (originalOffset >= range.start && originalOffset <= range.end) {
+        include(currentOffset, currentOffset + length);
+      }
+      currentOffset += length;
+    }
+  });
+
+  if (mappedStart == null || mappedEnd == null) return null;
+  const start = Math.max(0, Math.min(currentText.length, mappedStart));
+  const end = Math.max(start, Math.min(currentText.length, mappedEnd));
+  return end > start ? { start, end } : null;
+}
+
+function buildOriginalSegmentRanges(originalText, segments) {
+  const ranges = {};
+  let cursor = 0;
+  (segments || []).forEach((segment) => {
+    if (!segment?.id || !segment.text) return;
+    let start = originalText.indexOf(segment.text, cursor);
+    if (start < 0) start = originalText.indexOf(segment.text);
+    if (start < 0) return;
+    const end = start + segment.text.length;
+    ranges[segment.id] = { start, end, segmentId: segment.id };
+    cursor = end;
+  });
+  return ranges;
+}
+
 function highlightedEditorParts(text, range) {
   if (!range || range.end <= range.start) return [{ type: 'plain', text }];
   const start = Math.max(0, Math.min(text.length, range.start));
@@ -782,6 +852,7 @@ export default function Report() {
     ? buildTrackedDiff(originalSubmittedText, submittedDraftText)
     : [];
   const affectedSegments = submittedContent.segments.filter((segment) => segment.signals.length > 0);
+  const originalAffectedRanges = buildOriginalSegmentRanges(originalSubmittedText, affectedSegments);
   const selectedSentenceDraftStatus = selectedSegment?.text && submittedDraftText.includes(selectedSegment.text)
     ? t('report.submitted.editor.sentenceUnchanged')
     : t('report.submitted.editor.sentenceEdited');
@@ -790,11 +861,29 @@ export default function Report() {
   const submittedDraftWordCount = countWords(submittedDraftText);
   const submittedDraftTokensRequired = scanTokensRequired(submittedDraftWordCount);
 
+  const resolveSubmittedSegmentRange = (segment, existingRanges = submittedHighlightRanges) => {
+    if (!segment?.id || !segment.text) return null;
+    return (
+      findTextRange(submittedDraftText, segment.text) ||
+      existingRanges[segment.id] ||
+      mapOriginalRangeToCurrent(originalSubmittedText, submittedDraftText, originalAffectedRanges[segment.id])
+    );
+  };
+
+  const buildSubmittedHighlightRanges = (existingRanges = submittedHighlightRanges) => {
+    const nextRanges = { ...(existingRanges || {}) };
+    affectedSegments.forEach((segment) => {
+      if (nextRanges[segment.id]) return;
+      const range = resolveSubmittedSegmentRange(segment, nextRanges);
+      if (range) nextRanges[segment.id] = { ...range, segmentId: segment.id };
+    });
+    return nextRanges;
+  };
+
   const focusSentenceInSubmittedEditor = (segment) => {
     const editor = submittedEditorRef.current;
     if (!editor || !segment?.text) return;
-    const existingRange = submittedHighlightRanges[segment.id] || null;
-    const range = findTextRange(submittedDraftText, segment.text) || existingRange;
+    const range = resolveSubmittedSegmentRange(segment);
     setSubmittedHighlightRanges((current) => {
       if (!range) return current;
       return { ...current, [segment.id]: { ...range, segmentId: segment.id } };
@@ -1667,13 +1756,7 @@ export default function Report() {
                   onClick={() => {
                     setSubmittedEditorOpen(true);
                     setSubmittedRescanError(null);
-                    if (selectedSegment?.text) {
-                      const range = findTextRange(submittedDraftText, selectedSegment.text);
-                      setSubmittedHighlightRanges((current) => {
-                        if (!range) return current;
-                        return { ...current, [selectedSegment.id]: { ...range, segmentId: selectedSegment.id } };
-                      });
-                    }
+                    setSubmittedHighlightRanges((current) => buildSubmittedHighlightRanges(current));
                   }}
                 >
                   {t('report.submitted.editor.editDraft')}
