@@ -906,6 +906,29 @@ export default function Report() {
     return nextRanges;
   };
 
+  const renderSubmittedSignalGauge = () => {
+    if (selectedSignalStrength == null || !selectedSegment?.primarySignal) return null;
+    const value = Math.round(selectedSignalStrength);
+    return (
+      <div
+        className="submitted-signal-gauge"
+        style={{
+          '--signal-color': selectedSegment.primarySignal.color || '#b45309',
+          '--signal-strength': `${value}%`,
+        }}
+        aria-label={t('report.submitted.signalStrength', { value })}
+      >
+        <div className="submitted-signal-gauge-head">
+          <span>{t('report.submitted.signalStrengthLabel')}</span>
+          <strong>{value}%</strong>
+        </div>
+        <div className="submitted-signal-gauge-track" aria-hidden="true">
+          <span />
+        </div>
+      </div>
+    );
+  };
+
   const focusSentenceInSubmittedEditor = (segment) => {
     const editor = submittedEditorRef.current;
     if (!editor || !segment?.text) return;
@@ -1840,10 +1863,8 @@ export default function Report() {
                     <span className="submitted-panel-kicker">{selectedSegment.sentence_id}</span>
                     <h3>{signalLabel(selectedSegment.primarySignal.key, selectedSegment.primarySignal.label, t)}</h3>
                     <p>{signalDescription(selectedSegment.primarySignal.key, selectedSegment.primarySignal.description, t)}</p>
+                    {renderSubmittedSignalGauge()}
                     <div className="submitted-panel-meta">
-                      {selectedSegment.primarySignal.score != null && (
-                        <span>{t('report.submitted.signalStrength', { value: Math.round(selectedSegment.primarySignal.score) })}</span>
-                      )}
                       {selectedSegment.primarySignal.tier && (
                         <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedSegment.primarySignal.tier}`, { defaultValue: selectedSegment.primarySignal.tier }) })}</span>
                       )}
@@ -2033,24 +2054,7 @@ export default function Report() {
                               <span>{t('report.submitted.editor.affectedSentence')}</span>
                               <p>{selectedSegment.text}</p>
                             </div>
-                            {selectedSignalStrength != null && (
-                              <div
-                                className="submitted-signal-gauge"
-                                style={{
-                                  '--signal-color': selectedSegment.primarySignal.color || '#b45309',
-                                  '--signal-strength': `${Math.round(selectedSignalStrength)}%`,
-                                }}
-                                aria-label={t('report.submitted.signalStrength', { value: Math.round(selectedSignalStrength) })}
-                              >
-                                <div className="submitted-signal-gauge-head">
-                                  <span>{t('report.submitted.signalStrengthLabel')}</span>
-                                  <strong>{Math.round(selectedSignalStrength)}%</strong>
-                                </div>
-                                <div className="submitted-signal-gauge-track" aria-hidden="true">
-                                  <span />
-                                </div>
-                              </div>
-                            )}
+                            {renderSubmittedSignalGauge()}
                             <div className="submitted-panel-meta">
                               <span>{selectedSentenceDraftStatus}</span>
                               {selectedSegment.primarySignal.tier && (
