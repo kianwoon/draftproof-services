@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { getRewriteStatus, getRewriteReport, getRewriteDownload } from '../api/draftproofApi';
@@ -12,14 +12,6 @@ function normalizeSentence(value) {
 function countWords(value) {
   const normalized = String(value || '').trim();
   return normalized ? normalized.split(/\s+/).length : 0;
-}
-
-function getSentenceOriginal(row) {
-  return row?.orig_sentence ?? row?.original ?? '';
-}
-
-function getSentenceRewritten(row) {
-  return row?.new_sentence ?? row?.rewritten ?? '';
 }
 
 function tokenizeDiffText(text) {
@@ -128,6 +120,9 @@ export default function Rewrite() {
   const [loading, setLoading] = useState(Boolean(rewriteId));
   const [error, setError] = useState(null);
   const [copyStatus, setCopyStatus] = useState('idle');
+  const originalDiffRef = useRef(null);
+  const rewrittenDiffRef = useRef(null);
+  const diffScrollSyncingRef = useRef(false);
 
   useEffect(() => {
     if (!rewriteId) return undefined;
@@ -209,6 +204,26 @@ export default function Rewrite() {
     }
   };
 
+  const syncDiffScroll = (source) => {
+    const sourceEl = source === 'original' ? originalDiffRef.current : rewrittenDiffRef.current;
+    const targetEl = source === 'original' ? rewrittenDiffRef.current : originalDiffRef.current;
+    if (!sourceEl || !targetEl || diffScrollSyncingRef.current) return;
+
+    const sourceTopMax = sourceEl.scrollHeight - sourceEl.clientHeight;
+    const targetTopMax = targetEl.scrollHeight - targetEl.clientHeight;
+    const sourceLeftMax = sourceEl.scrollWidth - sourceEl.clientWidth;
+    const targetLeftMax = targetEl.scrollWidth - targetEl.clientWidth;
+    const topRatio = sourceTopMax > 0 ? sourceEl.scrollTop / sourceTopMax : 0;
+    const leftRatio = sourceLeftMax > 0 ? sourceEl.scrollLeft / sourceLeftMax : 0;
+
+    diffScrollSyncingRef.current = true;
+    targetEl.scrollTop = targetTopMax > 0 ? targetTopMax * topRatio : 0;
+    targetEl.scrollLeft = targetLeftMax > 0 ? targetLeftMax * leftRatio : 0;
+    window.requestAnimationFrame(() => {
+      diffScrollSyncingRef.current = false;
+    });
+  };
+
   const summary = report?.summary || report?.rewrite_summary || {};
   const mitigationPlan = summary.mitigation_plan || report?.mitigation_plan || {};
   const markedSuggestions = (
@@ -225,9 +240,6 @@ export default function Rewrite() {
     report?.author_review_cards ||
     []
   ).filter(Boolean);
-  const sentenceRows = (report?.sentence_comparison || []).filter(
-    (row) => normalizeSentence(getSentenceOriginal(row)) !== normalizeSentence(getSentenceRewritten(row))
-  );
   const requiresAuthorReview = (
     summary.best_candidate_author_review_required === true ||
     summary.public_candidate_warning === 'author_proxy_candidate_requires_review' ||
@@ -321,7 +333,11 @@ export default function Rewrite() {
                   <span>{t('rewritePage.original')}</span>
                   <strong>{t('rewritePage.word', { count: countWords(originalText) })}</strong>
                 </div>
-                <div className="rewrite-diff-body">
+                <div
+                  ref={originalDiffRef}
+                  className="rewrite-diff-body"
+                  onScroll={() => syncDiffScroll('original')}
+                >
                   {renderDiffParts(documentDiff.original, 'original')}
                 </div>
               </article>
@@ -330,7 +346,11 @@ export default function Rewrite() {
                   <span>{t('rewritePage.rewritten')}</span>
                   <strong>{t('rewritePage.word', { count: rewrittenWordCount })}</strong>
                 </div>
-                <div className="rewrite-diff-body">
+                <div
+                  ref={rewrittenDiffRef}
+                  className="rewrite-diff-body"
+                  onScroll={() => syncDiffScroll('rewritten')}
+                >
                   {renderDiffParts(documentDiff.rewritten, 'rewritten')}
                 </div>
               </article>
@@ -358,32 +378,6 @@ export default function Rewrite() {
               {report.final_text}
             </div>
           </section>
-        )}
-
-        {sentenceRows.length > 0 && (
-          <div style={{ margin: '24px 0' }}>
-            <h3>{t('rewritePage.sentenceChanges', { count: sentenceRows.length })}</h3>
-            <div className="reports-table-wrap">
-              <table className="reports-table">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>{t('rewritePage.original')}</th>
-                    <th>{t('rewritePage.rewritten')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sentenceRows.map((row, i) => (
-                    <tr key={`${row.index || i}-${i}`}>
-                      <td>{row.index ?? i + 1}</td>
-                      <td>{getSentenceOriginal(row) || '-'}</td>
-                      <td>{getSentenceRewritten(row) || '-'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
         )}
 
         {markedSuggestions.length > 0 && (
