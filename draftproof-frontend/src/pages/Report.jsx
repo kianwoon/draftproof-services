@@ -655,7 +655,17 @@ export default function Report() {
   }, [rewriteJob, report?.rewrite]);
 
   const activeRewriteForTimer = rewriteJob || report?.rewrite;
-  const rewriteTimerActive = rewriteLoading || isRewriteActive(activeRewriteForTimer?.status);
+  const currentRewrite = activeRewriteForTimer;
+  const rewriteInProgress = isRewriteActive(currentRewrite?.status);
+  const hasCompletedRewrite = currentRewrite?.status === 'completed';
+  const hasRewriteResult = hasCompletedRewrite && Boolean(currentRewrite?.id);
+  const canEditSubmittedDraft = !hasRewriteResult && !rewriteInProgress;
+  const rewriteTimerActive = rewriteLoading || rewriteInProgress;
+
+  useEffect(() => {
+    if (canEditSubmittedDraft || !submittedEditorOpen) return;
+    setSubmittedEditorOpen(false);
+  }, [canEditSubmittedDraft, submittedEditorOpen]);
 
   useEffect(() => {
     if (!rewriteTimerActive) {
@@ -964,10 +974,6 @@ export default function Report() {
     i.signal_category === 'authorship_risk' ||
     i.actionability === 'auto_rewrite_candidate'
   );
-  const currentRewrite = rewriteJob || report.rewrite;
-  const rewriteInProgress = isRewriteActive(currentRewrite?.status);
-  const hasCompletedRewrite = currentRewrite?.status === 'completed';
-  const hasRewriteResult = hasCompletedRewrite && Boolean(currentRewrite?.id);
   const submittedWordCount = Number.isFinite(Number(report.word_count)) ? Number(report.word_count) : null;
   const rewriteTokenCost = Number.isFinite(Number(report.rewrite_token_cost)) ? Number(report.rewrite_token_cost) : null;
   const rewriteTokenEstimate = submittedWordCount != null && rewriteTokenCost != null
@@ -1750,17 +1756,19 @@ export default function Report() {
                   <strong>{submittedContent.highlightedCount}</strong>
                   <span>{t('report.submitted.highlightedSections')}</span>
                 </div>
-                <button
-                  type="button"
-                  className="btn btn-secondary submitted-edit-button"
-                  onClick={() => {
-                    setSubmittedEditorOpen(true);
-                    setSubmittedRescanError(null);
-                    setSubmittedHighlightRanges((current) => buildSubmittedHighlightRanges(current));
-                  }}
-                >
-                  {t('report.submitted.editor.editDraft')}
-                </button>
+                {canEditSubmittedDraft && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary submitted-edit-button"
+                    onClick={() => {
+                      setSubmittedEditorOpen(true);
+                      setSubmittedRescanError(null);
+                      setSubmittedHighlightRanges((current) => buildSubmittedHighlightRanges(current));
+                    }}
+                  >
+                    {t('report.submitted.editor.editDraft')}
+                  </button>
+                )}
               </div>
             </div>
             {submittedContent.legend.length > 0 && (
