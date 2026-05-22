@@ -835,18 +835,33 @@ export default function Report() {
   const rewrittenAuthorshipTone = getAuthorshipTone(rewrittenAuthorshipRating);
   const rewrittenAuthorshipRatingFullLabel = rewrittenAuthorshipRating.label || rewrittenBadge.authorship_rating_label || null;
   const rewrittenAuthorshipRatingLabel = rewrittenAuthorshipRating.short_label || rewrittenAuthorshipRatingFullLabel;
+  const rewrittenRequiresExternalReview = Boolean(
+    rewriteResultSummary?.best_candidate_external_review_required === true ||
+    rewriteResultSummary?.public_candidate_warning === 'best_candidate_requires_external_review' ||
+    rewriteResultSummary?.strict_goal_status === 'mitigation_failed_no_safe_candidate' ||
+    rewriteResultSummary?.outcome === 'rewrite_candidate_generated_needs_external_review' ||
+    rewriteResultSummary?.status === 'rewrite_candidate_generated_needs_external_review'
+  );
+  const externalReviewTone = { color: '#92400e', bg: '#fffbeb' };
   const originalColumnRatingBadge = {
     caption: t('report.transformation.originalRating'),
     label: authorshipRatingLabel,
     fullLabel: authorshipRatingFullLabel,
     tone: authorshipTone,
   };
-  const rewrittenColumnRatingBadge = {
-    caption: t('report.transformation.rewrittenRating'),
-    label: rewrittenAuthorshipRatingLabel,
-    fullLabel: rewrittenAuthorshipRatingFullLabel,
-    tone: rewrittenAuthorshipTone,
-  };
+  const rewrittenColumnRatingBadge = rewrittenRequiresExternalReview
+    ? {
+      caption: t('report.transformation.rewrittenRating'),
+      label: t('rewritePage.reviewRequired'),
+      fullLabel: t('rewritePage.externalReviewTitle'),
+      tone: externalReviewTone,
+    }
+    : {
+      caption: t('report.transformation.rewrittenRating'),
+      label: rewrittenAuthorshipRatingLabel,
+      fullLabel: rewrittenAuthorshipRatingFullLabel,
+      tone: rewrittenAuthorshipTone,
+    };
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
   const normalizedReport = { ...report, issues };
@@ -1002,11 +1017,13 @@ export default function Report() {
   const sealTone = sealRatingBadge.tone || sealAiSignalStamp.tone;
   const sealRatingCaption = sealRatingBadge.caption || (hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal'));
   const sealRatingLabel = sealRatingBadge.label || sealAiSignalStamp.label;
-  const sealAuthorshipDetail = formatAuthorshipSealDetailWithReference(
-    hasRewriteSignalComparison ? rewrittenAuthorshipSealDetail : authorshipSealDetail,
-    sealReferenceScore,
-    t
-  );
+  const sealAuthorshipDetail = rewrittenRequiresExternalReview
+    ? t('rewritePage.externalReviewTitle')
+    : formatAuthorshipSealDetailWithReference(
+      hasRewriteSignalComparison ? rewrittenAuthorshipSealDetail : authorshipSealDetail,
+      sealReferenceScore,
+      t
+    );
   const canStartRewrite = hasAIFindings && !hasRewriteResult;
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))

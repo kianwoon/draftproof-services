@@ -75,6 +75,30 @@ def _ai_signal_stamp(score) -> dict:
     return {"label": "Low AI Signal", "color": "#15803d", "bg": "#f0fdf4"}
 
 
+def _requires_external_review(summary: dict) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    return (
+        summary.get("best_candidate_external_review_required") is True
+        or summary.get("public_candidate_warning") == "best_candidate_requires_external_review"
+        or summary.get("strict_goal_status") == "mitigation_failed_no_safe_candidate"
+        or summary.get("outcome") == "rewrite_candidate_generated_needs_external_review"
+        or summary.get("status") == "rewrite_candidate_generated_needs_external_review"
+    )
+
+
+def _rewrite_stamp(summary: dict, risk) -> dict:
+    if _requires_external_review(summary):
+        return {
+            "caption": "Rewritten Rating",
+            "label": "Review Required",
+            "color": "#92400e",
+            "bg": "#fffbeb",
+        }
+    stamp = _ai_signal_stamp(risk)
+    return {"caption": "Rewritten Rating", **stamp}
+
+
 def _wq_score(report: dict) -> float:
     score = _badge(report).get("writing_quality_score", 0)
     return float(score) if isinstance(score, (int, float)) else 0.0
@@ -155,9 +179,17 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
     ai_score = _pct(_ai_score(rewritten_scan)) if rewritten_scan else None
     calibrated = contribution.get("calibrated")
     risk = calibrated if calibrated is not None else ai_score
-    stamp = _ai_signal_stamp(risk)
-    risk_text = f"{risk}% calibrated risk" if risk is not None else "Calibrated risk unavailable"
-    risk_text = _with_ai_reference(risk_text, risk)
+    external_review_required = _requires_external_review(summary)
+    stamp = _rewrite_stamp(summary, risk)
+    risk_text = (
+        "External review required"
+        if external_review_required
+        else f"{risk}% calibrated risk"
+        if risk is not None
+        else "Calibrated risk unavailable"
+    )
+    if not external_review_required:
+        risk_text = _with_ai_reference(risk_text, risk)
     scan_score = f"{ai_score}%" if ai_score is not None else "-"
     human = contribution.get("human")
     ai = contribution.get("ai")
@@ -186,7 +218,7 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
     return f"""
 <div class="dp-rewrite-outcome-panel">
   <div class="dp-rewrite-stamp" style="color:{stamp["color"]};border-color:{stamp["color"]};background:{stamp["bg"]}">
-    <span>Rewritten AI Signal</span>
+    <span>{html.escape(stamp["caption"])}</span>
     <strong>{html.escape(stamp["label"].upper())}</strong>
     <em>{html.escape(risk_text)}</em>
   </div>

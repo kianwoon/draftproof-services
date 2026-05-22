@@ -1022,6 +1022,11 @@ function buildRewriteResultSummary(rewriteReport) {
 
   return {
     outcome: summary.outcome || '',
+    status: rewriteReport?.status || summary.status || '',
+    public_candidate_warning: summary.public_candidate_warning || '',
+    strict_goal_status: summary.strict_goal_status || '',
+    best_candidate_external_review_required: summary.best_candidate_external_review_required === true,
+    best_candidate_author_review_required: summary.best_candidate_author_review_required === true,
     engine_mode: summary.rewrite_engine_mode || '',
     gate: summary.authenticity_mitigation?.selected_gate || summary.authenticity_mitigation?.best_attempt?.gate || null,
     ai_mitigation_selected: Boolean(summary.authenticity_mitigation?.selected || summary.ai_mitigation_search?.selected),
