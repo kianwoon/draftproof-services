@@ -22,6 +22,93 @@ function getSentenceRewritten(row) {
   return row?.new_sentence ?? row?.rewritten ?? '';
 }
 
+function tokenizeDiffText(text) {
+  return String(text || '').match(/\s+|[A-Za-z0-9]+|[^\sA-Za-z0-9]/g) || [];
+}
+
+function compactDiffParts(parts) {
+  const compacted = [];
+  parts.forEach((part) => {
+    if (!part?.text) return;
+    const previous = compacted[compacted.length - 1];
+    if (previous?.type === part.type) {
+      previous.text += part.text;
+    } else {
+      compacted.push({ ...part });
+    }
+  });
+  return compacted;
+}
+
+function lcsTokenDiff(originalTokens, currentTokens) {
+  const originalLength = originalTokens.length;
+  const currentLength = currentTokens.length;
+  const matrix = Array.from({ length: originalLength + 1 }, () => Array(currentLength + 1).fill(0));
+
+  for (let i = originalLength - 1; i >= 0; i -= 1) {
+    for (let j = currentLength - 1; j >= 0; j -= 1) {
+      matrix[i][j] = originalTokens[i] === currentTokens[j]
+        ? matrix[i + 1][j + 1] + 1
+        : Math.max(matrix[i + 1][j], matrix[i][j + 1]);
+    }
+  }
+
+  const parts = [];
+  let i = 0;
+  let j = 0;
+  while (i < originalLength && j < currentLength) {
+    if (originalTokens[i] === currentTokens[j]) {
+      parts.push({ type: 'equal', text: originalTokens[i] });
+      i += 1;
+      j += 1;
+    } else if (matrix[i + 1][j] >= matrix[i][j + 1]) {
+      parts.push({ type: 'delete', text: originalTokens[i] });
+      i += 1;
+    } else {
+      parts.push({ type: 'insert', text: currentTokens[j] });
+      j += 1;
+    }
+  }
+
+  while (i < originalLength) {
+    parts.push({ type: 'delete', text: originalTokens[i] });
+    i += 1;
+  }
+  while (j < currentLength) {
+    parts.push({ type: 'insert', text: currentTokens[j] });
+    j += 1;
+  }
+
+  return compactDiffParts(parts);
+}
+
+function buildSplitDiff(originalText, rewrittenText) {
+  if (!originalText || !rewrittenText || normalizeSentence(originalText) === normalizeSentence(rewrittenText)) {
+    return null;
+  }
+
+  const parts = lcsTokenDiff(tokenizeDiffText(originalText), tokenizeDiffText(rewrittenText));
+  return {
+    original: parts.filter((part) => part.type !== 'insert'),
+    rewritten: parts.filter((part) => part.type !== 'delete'),
+  };
+}
+
+function renderDiffParts(parts, side) {
+  return (parts || []).map((part, index) => {
+    const className = part.type === 'equal'
+      ? 'rewrite-diff-equal'
+      : side === 'original'
+        ? 'rewrite-diff-delete'
+        : 'rewrite-diff-insert';
+    return (
+      <span key={`${side}-${part.type}-${index}`} className={className}>
+        {part.text}
+      </span>
+    );
+  });
+}
+
 function renderPlaceholderText(value) {
   return String(value || '').split(/(\[[^\[\]]+\])/g).map((part, index) => {
     if (!part) return null;
@@ -169,6 +256,8 @@ export default function Rewrite() {
     : { background: '#f0fdf4', color: '#15803d', borderColor: '#bbf7d0' };
   const scanId = rewrite?.scan_id;
   const rewrittenWordCount = countWords(report?.final_text);
+  const originalText = report?.original_text || summary.original_text || '';
+  const documentDiff = buildSplitDiff(originalText, report?.final_text || '');
 
   return (
     <main className="dash-shell">
@@ -210,6 +299,42 @@ export default function Rewrite() {
           <section className="rewrite-status-alert">
             <strong>{t(requiresAuthorReview ? 'rewritePage.authorReviewTitle' : 'rewritePage.externalReviewTitle')}</strong>
             <p>{t(requiresAuthorReview ? 'rewritePage.authorReviewCopy' : 'rewritePage.externalReviewCopy')}</p>
+          </section>
+        )}
+
+        {documentDiff && (
+          <section className="rewrite-diff-section" aria-label={t('rewritePage.compareChanges')}>
+            <div className="rewrite-diff-heading">
+              <div>
+                <span className="rewrite-review-kicker">{t('rewritePage.compareKicker')}</span>
+                <h3>{t('rewritePage.compareChanges')}</h3>
+              </div>
+              <div className="rewrite-diff-legend" aria-hidden="true">
+                <span className="is-delete">{t('rewritePage.removedText')}</span>
+                <span className="is-insert">{t('rewritePage.addedText')}</span>
+              </div>
+            </div>
+            <p className="rewrite-review-copy">{t('rewritePage.compareChangesCopy')}</p>
+            <div className="rewrite-diff-grid">
+              <article className="rewrite-diff-pane">
+                <div className="rewrite-diff-pane-head">
+                  <span>{t('rewritePage.original')}</span>
+                  <strong>{t('rewritePage.word', { count: countWords(originalText) })}</strong>
+                </div>
+                <div className="rewrite-diff-body">
+                  {renderDiffParts(documentDiff.original, 'original')}
+                </div>
+              </article>
+              <article className="rewrite-diff-pane">
+                <div className="rewrite-diff-pane-head">
+                  <span>{t('rewritePage.rewritten')}</span>
+                  <strong>{t('rewritePage.word', { count: rewrittenWordCount })}</strong>
+                </div>
+                <div className="rewrite-diff-body">
+                  {renderDiffParts(documentDiff.rewritten, 'rewritten')}
+                </div>
+              </article>
+            </div>
           </section>
         )}
 
