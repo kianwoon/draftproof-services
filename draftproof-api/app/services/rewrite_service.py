@@ -19,7 +19,10 @@ _ACTIVE_REWRITE_STATUSES = ("pending", "processing", "retrying")
 _STALE_RECOVERY_STATUSES = ("pending", "retrying")
 _V4_REWRITE_PIPELINE_VERSION = "rewrite_v4_normalized_repair"
 _ORIGINAL_PRESERVED_OUTCOME = "original_preserved"
-_EXTERNAL_REVIEW_OUTCOMES = {"rewrite_candidate_generated_needs_external_review"}
+_EXTERNAL_REVIEW_OUTCOMES = {
+    "rewrite_candidate_generated_needs_external_review",
+    "rewrite_candidate_generated_needs_author_review",
+}
 _NON_REUSABLE_STRICT_GOAL_STATUSES = {
     "mitigation_failed_no_safe_candidate",
     "needs_author_context",

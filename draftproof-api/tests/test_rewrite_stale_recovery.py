@@ -24,6 +24,28 @@ def test_completed_external_review_candidate_is_not_reused():
     ) is False
 
 
+def test_completed_author_review_candidate_is_not_reused():
+    assert rewrite_service._completed_rewrite_report_is_reusable(
+        {
+            "status": "rewrite_candidate_generated_needs_author_review",
+            "summary": {
+                "rewrite_pipeline_version": "rewrite_v4_normalized_repair",
+                "outcome": "rewrite_candidate_generated_needs_author_review",
+                "best_candidate_author_review_required": True,
+                "author_proxy_context": {
+                    "active": True,
+                    "review_required": True,
+                    "review_cards": [{"card_id": "target-01"}],
+                },
+                "detect_scores": {
+                    "original_ai": 48.32,
+                    "rewritten_ai": 34.02,
+                },
+            },
+        }
+    ) is False
+
+
 def _stream_id(at: datetime) -> str:
     return f"{int(at.timestamp() * 1000)}-0"
 

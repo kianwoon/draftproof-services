@@ -78,10 +78,12 @@ NON_BILLABLE_REWRITE_OUTCOMES = {
 
 EXTERNAL_REVIEW_REWRITE_STATUSES = {
     "rewrite_candidate_generated_needs_external_review",
+    "rewrite_candidate_generated_needs_author_review",
 }
 
 EXTERNAL_REVIEW_REWRITE_WARNINGS = {
     "best_candidate_requires_external_review",
+    "author_proxy_candidate_requires_review",
 }
 
 

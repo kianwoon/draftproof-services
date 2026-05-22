@@ -31,6 +31,10 @@ from .residual_comb import (
 )
 
 
+AUTHOR_PROXY_REVIEW_STATUS = "rewrite_candidate_generated_needs_author_review"
+AUTHOR_PROXY_WARNING = "author_proxy_candidate_requires_review"
+
+
 def _bool_env(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -109,6 +113,126 @@ def _production_config() -> dict[str, Any]:
         "runtime_max_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_MAX_SECONDS", 1800, minimum=90, maximum=7200),
         "runtime_soft_limit_buffer_seconds": _int_env("DRAFTPROOF_REWRITE_V5_RUNTIME_SOFT_LIMIT_BUFFER_SECONDS", 60, minimum=30, maximum=1800),
     }
+
+
+def _ai_mitigation_plan_from_report(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    direct = report.get("ai_mitigation")
+    if isinstance(direct, dict):
+        return direct
+    nested = (
+        ((report.get("scan_intelligence") or {}).get("mitigation_inputs") or {})
+        .get("ai_mitigation_plan")
+    )
+    return nested if isinstance(nested, dict) else {}
+
+
+def _author_proxy_review_cards(plan: dict[str, Any], *, limit: int = 12) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+
+    for index, target in enumerate(plan.get("target_segments") or [], start=1):
+        if not isinstance(target, dict):
+            continue
+        needed = str(target.get("user_input_needed") or "").strip()
+        if not needed or needed == "none":
+            continue
+        cards.append({
+            "card_id": f"target-{index:02d}",
+            "kind": "target_segment",
+            "provenance": "needs_author_confirmation",
+            "bucket": target.get("bucket"),
+            "lever": target.get("lever"),
+            "target_text": target.get("text"),
+            "where": target.get("paragraph_id") or target.get("sentence_id") or target.get("segment_id"),
+            "instruction": target.get("action"),
+            "user_input_needed": needed,
+            "author_task": "Verify, replace, or remove any drafted context before submission.",
+        })
+        if len(cards) >= limit:
+            return cards
+
+    for index, action in enumerate(plan.get("component_actions") or [], start=1):
+        if not isinstance(action, dict):
+            continue
+        needed = str(action.get("user_input_needed") or "").strip()
+        if not needed or needed == "none":
+            continue
+        cards.append({
+            "card_id": f"component-{index:02d}",
+            "kind": "component_action",
+            "provenance": "needs_author_confirmation",
+            "bucket": action.get("bucket"),
+            "lever": action.get("lever"),
+            "target_text": action.get("component"),
+            "where": action.get("component"),
+            "instruction": action.get("action"),
+            "user_input_needed": needed,
+            "author_task": "Confirm this guidance with real author-owned evidence before submission.",
+        })
+        if len(cards) >= limit:
+            return cards
+
+    return cards
+
+
+def _build_author_proxy_context(report: dict[str, Any], original_text: str) -> dict[str, Any]:
+    plan = _ai_mitigation_plan_from_report(report)
+    readiness = plan.get("readiness") if isinstance(plan.get("readiness"), dict) else {}
+    review_cards = _author_proxy_review_cards(plan)
+    active = bool(readiness.get("requires_user_input") or review_cards)
+    if not active:
+        return {
+            "schema_version": "author_proxy_context.v1",
+            "active": False,
+            "review_required": False,
+            "mode": "none",
+            "review_cards": [],
+        }
+    return {
+        "schema_version": "author_proxy_context.v1",
+        "active": True,
+        "review_required": True,
+        "mode": "non_interrupting_author_proxy_draft",
+        "primary_mode": plan.get("primary_mode"),
+        "required_inputs": readiness.get("required_inputs") or [],
+        "review_cards": review_cards,
+        "allowed_provenance": [
+            "source_preserved",
+            "inferred_from_draft",
+            "needs_author_confirmation",
+            "must_replace",
+        ],
+        "rules": [
+            "Continue the rewrite without waiting for the author.",
+            "Act only as a drafting proxy using the submitted draft, nearby context, and existing source/citation material.",
+            "Produce the strongest polished candidate possible from the submitted content; do not underwrite or leave generic filler.",
+            "Improve clarity, specificity, flow, and academic voice while preserving the author's thesis, scope, and available evidence.",
+            "Do not invent personal experiences, citations, numbers, dates, named events, institutions, or source facts.",
+            "Any added context that is not explicitly present in the draft must remain author-review material.",
+            "When evidence is missing, narrow the claim into a precise, readable statement rather than fabricating support.",
+        ],
+        "quality_bar": {
+            "target": "highest_quality_grounded_candidate",
+            "basis": "submitted_content_only",
+            "priorities": [
+                "meaning_fidelity",
+                "source_grounded_specificity",
+                "coherent_argument_flow",
+                "natural_academic_voice",
+                "author_review_visibility",
+            ],
+        },
+        "original_word_count": word_count(str(original_text or "")),
+    }
+
+
+def _author_proxy_requires_review(context: dict[str, Any] | None, *, final_text: str, original_text: str) -> bool:
+    if not isinstance(context, dict) or not context.get("active"):
+        return False
+    if str(final_text or "").strip() == str(original_text or "").strip():
+        return False
+    return bool(context.get("review_required") or context.get("review_cards"))
 
 
 def _v5_extra_body() -> dict[str, Any] | None:
@@ -232,6 +356,7 @@ def run_rewrite_pipeline_v5(
     original_text = _extract_original_text(detect_json)
     config = _production_config()
     provider_routing = _v5_provider_routing()
+    author_proxy_context = _build_author_proxy_context(detect_json, original_text)
     runtime_budget_seconds = _v5_runtime_budget_seconds(
         original_text,
         config,
@@ -253,11 +378,27 @@ def run_rewrite_pipeline_v5(
         checkpoint_summary = {
             "rewrite_pipeline_version": pipeline_version,
             "rewrite_engine_mode": "v5_residual_cluster_comb_production",
-            "outcome": "rewrite_candidate_generated_needs_external_review",
-            "public_status": "rewrite_candidate_generated_needs_external_review",
+            "outcome": (
+                AUTHOR_PROXY_REVIEW_STATUS
+                if author_proxy_context.get("active")
+                else "rewrite_candidate_generated_needs_external_review"
+            ),
+            "public_status": (
+                AUTHOR_PROXY_REVIEW_STATUS
+                if author_proxy_context.get("active")
+                else "rewrite_candidate_generated_needs_external_review"
+            ),
             "partial_rewrite_preserved": True,
             "partial_rewrite_preservation_reason": "accepted_checkpoint_saved_before_pipeline_completion",
             "checkpoint_recovery_available": True,
+            "public_candidate_warning": (
+                AUTHOR_PROXY_WARNING
+                if author_proxy_context.get("active")
+                else "best_candidate_requires_external_review"
+            ),
+            "best_candidate_author_review_required": bool(author_proxy_context.get("active")),
+            "author_proxy_context": author_proxy_context,
+            "author_review_cards": author_proxy_context.get("review_cards") if author_proxy_context.get("active") else [],
             "checkpoint": _compact_v5_checkpoint(checkpoint),
             "v5_scores": {
                 "original": baseline_scores,
@@ -273,7 +414,7 @@ def run_rewrite_pipeline_v5(
             "no_text_change": False,
         }
         checkpoint_callback({
-            "status": "rewrite_candidate_generated_needs_external_review",
+            "status": checkpoint_summary["public_status"],
             "checkpoint_schema_version": "rewrite_v5_uploaded_checkpoint.v1",
             "original_text": original_text,
             "final_text": checkpoint_text,
@@ -301,6 +442,7 @@ def run_rewrite_pipeline_v5(
         direct_scanner_leapfrog_rounds=int(config["direct_scanner_leapfrog_rounds"]),
         direct_scanner_leapfrog_variant_count=int(config["direct_scanner_leapfrog_variants"]),
         direct_scanner_leapfrog_batches=int(config["direct_scanner_leapfrog_batches"]),
+        author_proxy_context=author_proxy_context,
         progress_callback=progress,
         accepted_checkpoint_callback=emit_checkpoint,
         max_seconds=runtime_budget_seconds,
@@ -374,6 +516,12 @@ def run_rewrite_pipeline_v5(
     no_text_change = final_text.strip() == original_text.strip()
     if no_text_change:
         public_status = RewriteGoalStatus.ORIGINAL_PRESERVED.value
+    elif _author_proxy_requires_review(
+        author_proxy_context,
+        final_text=final_text,
+        original_text=original_text,
+    ) and accepted:
+        public_status = AUTHOR_PROXY_REVIEW_STATUS
     elif final_goal.get("goal_met"):
         public_status = RewriteGoalStatus.AI_MITIGATED.value
     elif accepted:
@@ -406,11 +554,21 @@ def run_rewrite_pipeline_v5(
             else ""
         ),
         "public_candidate_warning": (
+            AUTHOR_PROXY_WARNING
+            if public_status == AUTHOR_PROXY_REVIEW_STATUS
+            else
             "best_candidate_requires_external_review"
             if public_status == "rewrite_candidate_generated_needs_external_review"
             else ""
         ),
         "best_candidate_external_review_required": public_status == "rewrite_candidate_generated_needs_external_review",
+        "best_candidate_author_review_required": public_status == AUTHOR_PROXY_REVIEW_STATUS,
+        "author_proxy_context": author_proxy_context,
+        "author_review_cards": (
+            author_proxy_context.get("review_cards")
+            if isinstance(author_proxy_context, dict) and author_proxy_context.get("active")
+            else []
+        ),
         "rewrite_goal_status": {
             **final_goal,
             "status": public_status if public_status != "no_safe_rewrite_applied" else final_goal.get("status"),

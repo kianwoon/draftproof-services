@@ -76,6 +76,25 @@ def test_rewrite_billing_releases_external_review_candidate_even_when_text_chang
     assert decision["reason"] == "external_review_required_status:rewrite_candidate_generated_needs_external_review"
 
 
+def test_rewrite_billing_releases_author_review_candidate_even_when_text_changed():
+    decision = _rewrite_billing_decision(
+        {"status": "rewrite_candidate_generated_needs_author_review"},
+        {
+            "status": "rewrite_candidate_generated_needs_author_review",
+            "original_text": "This is the original draft.",
+            "final_text": "This is a changed author-proxy candidate.",
+            "summary": {
+                "outcome": "rewrite_candidate_generated_needs_author_review",
+                "best_candidate_author_review_required": True,
+                "public_candidate_warning": "author_proxy_candidate_requires_review",
+            },
+        },
+    )
+
+    assert decision["billable"] is False
+    assert decision["reason"] == "external_review_required_status:rewrite_candidate_generated_needs_author_review"
+
+
 def test_rewrite_billing_releases_original_preserved_text():
     decision = _rewrite_billing_decision(
         {"status": "rewritten"},

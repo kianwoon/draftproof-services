@@ -306,6 +306,50 @@ def test_v5_residual_cluster_prompt_uses_compact_repair_task():
     assert "source-near" not in lowered
 
 
+def test_v5_residual_cluster_prompt_attaches_author_proxy_context():
+    section = build_section_units(
+        "The placement helped me understand the client consultation process. "
+        "I also noticed that timing affected how comfortable the client felt.",
+        {},
+    )[0]
+    author_proxy_context = {
+        "schema_version": "author_proxy_context.v1",
+        "active": True,
+        "mode": "non_interrupting_author_proxy_draft",
+        "review_required": True,
+        "primary_mode": "author_grounded_evidence_rebuild",
+        "required_inputs": ["specific class observation"],
+        "allowed_provenance": ["source_preserved", "inferred_from_draft", "needs_author_confirmation"],
+        "quality_bar": {"target": "highest_quality_grounded_candidate", "basis": "submitted_content_only"},
+        "review_cards": [{
+            "card_id": "target-01",
+            "provenance": "needs_author_confirmation",
+            "target_text": "understand the client consultation process",
+            "user_input_needed": "Confirm the real observation or replace it.",
+        }],
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=2,
+        author_proxy_context=author_proxy_context,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["author_proxy_context"]["mode"] == "non_interrupting_author_proxy_draft"
+    assert payload["author_proxy_context"]["review_required"] is True
+    assert payload["author_proxy_context"]["quality_bar"]["target"] == "highest_quality_grounded_candidate"
+    assert payload["author_proxy_context"]["review_cards"][0]["card_id"] == "target-01"
+    assert payload["author_proxy_quality_contract"]["target"] == "highest_quality_grounded_candidate"
+    assert "submitted source_text" in payload["author_proxy_quality_contract"]["basis"]
+    assert any("No variant contains placeholders" in row for row in payload["author_proxy_quality_contract"]["self_check_before_return"])
+    assert "Do not invent personal experiences" in " ".join(payload["author_proxy_rules"])
+    assert "highest-quality polished candidate" in " ".join(payload["author_proxy_rules"])
+    assert payload["provenance_contract"]["needs_author_confirmation"]
+    assert "acceptance_note" in payload["provenance_contract"]
+
+
 def test_v5_residual_retune_prompt_focuses_on_remaining_sentence_without_scores():
     cluster = type("Cluster", (), {
         "cluster_id": "cluster_002",
@@ -3162,6 +3206,138 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
     assert emitted_checkpoints[0]["status"] == "rewrite_candidate_generated_needs_external_review"
     assert emitted_checkpoints[0]["final_text"] == "This is the rewritten document."
     assert emitted_checkpoints[0]["summary"]["checkpoint_recovery_available"] is True
+
+
+def test_v5_author_proxy_context_is_built_from_mitigation_plan():
+    context = v5_production._build_author_proxy_context(
+        {
+            "input_text": "The draft mentions classroom support but not the author's exact observation.",
+            "ai_mitigation": {
+                "primary_mode": "author_grounded_evidence_rebuild",
+                "readiness": {
+                    "requires_user_input": True,
+                    "required_inputs": ["author observation", "source detail"],
+                },
+                "target_segments": [{
+                    "paragraph_id": "p001",
+                    "bucket": "source_grounding",
+                    "lever": "add_concrete_observation",
+                    "text": "classroom support",
+                    "action": "Add author-owned evidence for this claim.",
+                    "user_input_needed": "The real classroom observation.",
+                }],
+                "component_actions": [{
+                    "component": "evidence bridge",
+                    "action": "Confirm the link to a source.",
+                    "user_input_needed": "Source page or lecture note.",
+                }],
+            },
+        },
+        "The draft mentions classroom support but not the author's exact observation.",
+    )
+
+    assert context["active"] is True
+    assert context["review_required"] is True
+    assert context["mode"] == "non_interrupting_author_proxy_draft"
+    assert context["required_inputs"] == ["author observation", "source detail"]
+    assert context["quality_bar"]["target"] == "highest_quality_grounded_candidate"
+    assert context["quality_bar"]["basis"] == "submitted_content_only"
+    assert context["review_cards"][0]["card_id"] == "target-01"
+    assert context["review_cards"][0]["provenance"] == "needs_author_confirmation"
+
+
+def test_v5_production_author_proxy_candidate_requires_author_review(tmp_path, monkeypatch):
+    emitted_checkpoints: list[dict] = []
+    captured_author_contexts: list[dict] = []
+
+    def fake_residual_comb(**kwargs):
+        captured_author_contexts.append(kwargs["author_proxy_context"])
+        callback = kwargs.get("accepted_checkpoint_callback")
+        assert callback is not None
+        callback({
+            "schema_version": "rewrite_v5_accepted_checkpoint.v1",
+            "stage": "v5_residual_cluster_comb",
+            "sequence": 1,
+            "phase": "unsafe_cluster_cleanup",
+            "round": 1,
+            "reason": "accepted_unsafe_cluster_movement",
+            "baseline_scores": {"ai": 46.0},
+            "scores": {"ai": 36.0},
+            "goal": {"goal_met": False},
+            "accepted": {"section_id": "density_cluster_001", "variant_id": "v1"},
+            "rewritten_document": "This rewritten candidate adds a narrower classroom observation.",
+        })
+        return {
+            "stage": "v5_residual_cluster_comb",
+            "baseline_scores": {"ai": 46.0, "topk": 80.0, "rank": 120.0},
+            "final_scores": {"ai": 36.0, "topk": 72.0, "rank": 100.0},
+            "goal": {"status": "mitigation_failed_no_safe_candidate", "goal_met": False},
+            "rounds": [{
+                "round": 1,
+                "status": "accepted",
+                "accepted": {
+                    "section_id": "density_cluster_001",
+                    "variant_id": "v1",
+                    "text": "This rewritten candidate adds a narrower classroom observation.",
+                    "word_count": 8,
+                    "scores": {"ai_delta": 10.0},
+                },
+                "candidates": [{"variant_id": "v1"}],
+            }],
+            "phase_order": {"unsafe_cluster_first": True, "reason": "eligible_span_density_unsafe"},
+            "rewritten_document": "This rewritten candidate adds a narrower classroom observation.",
+        }
+
+    monkeypatch.setattr(v5_production, "run_v5_residual_cluster_comb_experiment", fake_residual_comb)
+    monkeypatch.setattr(v5_production, "_scan_report", lambda text: {
+        "input_text": text,
+        "ai_score": 36.0,
+        "ai_risk_badge": {"ai_likelihood_score": 36.0},
+        "findings": {},
+    })
+    monkeypatch.setattr(v5_production, "evaluate_rewrite_goal", lambda **_: SimpleNamespace(
+        to_dict=lambda: {
+            "status": "mitigation_failed_no_safe_candidate",
+            "goal_met": False,
+            "reason": "candidate_failed_strict_detector_safe_goal",
+        }
+    ))
+    monkeypatch.setattr(v5_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+
+    result = v5_production.run_rewrite_pipeline_v5(
+        detect_json={
+            "input_text": "The draft says classroom support helped the learner improve.",
+            "ai_score": 46.0,
+            "ai_risk_badge": {"ai_likelihood_score": 46.0},
+            "findings": {},
+            "ai_mitigation": {
+                "primary_mode": "author_grounded_evidence_rebuild",
+                "readiness": {"requires_user_input": True, "required_inputs": ["real observation"]},
+                "target_segments": [{
+                    "paragraph_id": "p001",
+                    "bucket": "source_grounding",
+                    "lever": "specificity",
+                    "text": "classroom support helped the learner improve",
+                    "action": "Confirm this with an author-owned observation.",
+                    "user_input_needed": "Real observed classroom detail.",
+                }],
+            },
+        },
+        output_dir=str(tmp_path),
+        model="deepseek/deepseek-v3.2",
+        checkpoint_callback=emitted_checkpoints.append,
+    )
+
+    summary = json.loads(Path(result["json_path"]).read_text())
+    assert captured_author_contexts[0]["active"] is True
+    assert result["status"] == "rewrite_candidate_generated_needs_author_review"
+    assert summary["outcome"] == "rewrite_candidate_generated_needs_author_review"
+    assert summary["public_candidate_warning"] == "author_proxy_candidate_requires_review"
+    assert summary["best_candidate_author_review_required"] is True
+    assert summary["best_candidate_external_review_required"] is False
+    assert summary["author_review_cards"][0]["card_id"] == "target-01"
+    assert emitted_checkpoints[0]["status"] == "rewrite_candidate_generated_needs_author_review"
+    assert emitted_checkpoints[0]["summary"]["best_candidate_author_review_required"] is True
 
 
 def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_path, monkeypatch):

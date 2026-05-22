@@ -131,8 +131,22 @@ export default function Rewrite() {
     []
   ).filter(Boolean);
   const manualSuggestions = (summary.manual_suggestions || report?.manual_suggestions || []).filter(Boolean);
+  const authorProxyContext = summary.author_proxy_context || report?.author_proxy_context || {};
+  const authorReviewCards = (
+    summary.author_review_cards ||
+    authorProxyContext.review_cards ||
+    report?.author_review_cards ||
+    []
+  ).filter(Boolean);
   const sentenceRows = (report?.sentence_comparison || []).filter(
     (row) => normalizeSentence(getSentenceOriginal(row)) !== normalizeSentence(getSentenceRewritten(row))
+  );
+  const requiresAuthorReview = (
+    summary.best_candidate_author_review_required === true ||
+    summary.public_candidate_warning === 'author_proxy_candidate_requires_review' ||
+    summary.outcome === 'rewrite_candidate_generated_needs_author_review' ||
+    report?.status === 'rewrite_candidate_generated_needs_author_review' ||
+    authorProxyContext.review_required === true
   );
   const requiresExternalReview = (
     summary.best_candidate_external_review_required === true ||
@@ -141,13 +155,16 @@ export default function Rewrite() {
     summary.outcome === 'rewrite_candidate_generated_needs_external_review' ||
     report?.status === 'rewrite_candidate_generated_needs_external_review'
   );
-  const outcome = requiresExternalReview
+  const requiresManualReview = requiresAuthorReview || requiresExternalReview;
+  const outcome = requiresAuthorReview
+    ? 'rewrite_candidate_generated_needs_author_review'
+    : requiresExternalReview
     ? 'rewrite_candidate_generated_needs_external_review'
     : summary.outcome || (rewrite?.status === 'completed' ? 'completed' : rewrite?.status || '');
   const outcomeLabel = outcome
     ? t(`rewritePage.outcomes.${outcome}`, { defaultValue: outcome.replaceAll('_', ' ') })
     : '';
-  const outcomeTone = requiresExternalReview
+  const outcomeTone = requiresManualReview
     ? { background: '#fffbeb', color: '#92400e', borderColor: '#fde68a' }
     : { background: '#f0fdf4', color: '#15803d', borderColor: '#bbf7d0' };
   const scanId = rewrite?.scan_id;
@@ -189,10 +206,10 @@ export default function Rewrite() {
 
         {error && <ErrorReload message={error} />}
 
-        {requiresExternalReview && report?.final_text && (
+        {requiresManualReview && report?.final_text && (
           <section className="rewrite-status-alert">
-            <strong>{t('rewritePage.externalReviewTitle')}</strong>
-            <p>{t('rewritePage.externalReviewCopy')}</p>
+            <strong>{t(requiresAuthorReview ? 'rewritePage.authorReviewTitle' : 'rewritePage.externalReviewTitle')}</strong>
+            <p>{t(requiresAuthorReview ? 'rewritePage.authorReviewCopy' : 'rewritePage.externalReviewCopy')}</p>
           </section>
         )}
 
@@ -279,6 +296,47 @@ export default function Rewrite() {
                       {item.why_it_helps && <p>{item.why_it_helps}</p>}
                       {item.user_note && <p>{item.user_note}</p>}
                     </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {authorReviewCards.length > 0 && (
+          <section className="rewrite-review-section">
+            <div className="rewrite-review-heading">
+              <div>
+                <span className="rewrite-review-kicker">{t('rewritePage.reviewRequired')}</span>
+                <h3>{t('rewritePage.authorReviewCards')}</h3>
+              </div>
+              <span className="rewrite-review-count">{authorReviewCards.length}</span>
+            </div>
+            <p className="rewrite-review-copy">
+              {t('rewritePage.authorReviewCardsCopy')}
+            </p>
+            <div className="rewrite-suggestion-grid">
+              {authorReviewCards.slice(0, 12).map((item, i) => (
+                <article className="rewrite-suggestion-card" key={`${item.card_id || item.kind || 'author-review'}-${i}`}>
+                  <div className="rewrite-suggestion-meta">
+                    <span>{item.provenance ? String(item.provenance).replaceAll('_', ' ') : t('rewritePage.authorProxyDraft')}</span>
+                    <span>{item.where || item.bucket || t('rewritePage.reviewManually')}</span>
+                  </div>
+                  <h4>{item.instruction || item.lever || t('rewritePage.authorTask')}</h4>
+                  {item.target_text && (
+                    <div className="rewrite-target-block">
+                      <span>{t('rewritePage.targetText')}</span>
+                      <p>{item.target_text}</p>
+                    </div>
+                  )}
+                  {item.user_input_needed && (
+                    <div className="rewrite-addition-block">
+                      <span>{t('rewritePage.needed')}</span>
+                      <p>{item.user_input_needed}</p>
+                    </div>
+                  )}
+                  {item.author_task && (
+                    <div className="rewrite-review-note"><p>{item.author_task}</p></div>
                   )}
                 </article>
               ))}

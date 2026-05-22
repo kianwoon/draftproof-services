@@ -148,6 +148,7 @@ def run_v5_residual_cluster_comb_experiment(
     direct_scanner_leapfrog_batches: int | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
     max_seconds: float | None = None,
     cancellation_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
@@ -179,6 +180,7 @@ def run_v5_residual_cluster_comb_experiment(
     current_scores = baseline_scores
     global_best_candidate: dict[str, Any] | None = None
     accepted_checkpoints: list[dict[str, Any]] = []
+    author_proxy_context = author_proxy_context if isinstance(author_proxy_context, dict) else {}
 
     def record_accepted_checkpoint(event: dict[str, Any]) -> None:
         raise_if_canceled()
@@ -525,6 +527,7 @@ def run_v5_residual_cluster_comb_experiment(
                 local_goal=local_source_goal,
                 planner_gateway=planner_gateway,
                 fallback_gateway=gateway,
+                author_proxy_context=author_proxy_context,
             )
             raise_if_canceled()
             (round_dir / "route_plan_prompt.json.txt").write_text(plan_prompt)
@@ -555,6 +558,7 @@ def run_v5_residual_cluster_comb_experiment(
                     gateway=gateway,
                     variant_count=initial_variant_count,
                     route_plan=route_plan,
+                    author_proxy_context=author_proxy_context,
                 )
                 raise_if_canceled()
                 diagnostics = {
@@ -602,6 +606,7 @@ def run_v5_residual_cluster_comb_experiment(
                         variant_count=remaining_variant_count,
                         route_plan=route_plan,
                         adaptive_feedback=feedback,
+                        author_proxy_context=author_proxy_context,
                     )
                     raise_if_canceled()
                     (round_dir / "cluster_adaptive_prompt.json.txt").write_text(adaptive_prompt)
@@ -668,6 +673,7 @@ def run_v5_residual_cluster_comb_experiment(
                 gateway=gateway,
                 variant_count=effective_retune_variant_count,
                 route_plan=route_plan,
+                author_proxy_context=author_proxy_context,
             )
             raise_if_canceled()
             retune_diagnostics = {
@@ -1597,6 +1603,55 @@ def _residual_progress_percent(round_index: int, *, max_rounds: int) -> int:
     return max(67, min(75, 66 + round((min(index, total) / total) * 8)))
 
 
+def _attach_author_proxy_context(payload: dict[str, Any], context: dict[str, Any] | None) -> None:
+    if not isinstance(context, dict) or not context.get("active"):
+        return
+    compact_context = {
+        "schema_version": context.get("schema_version"),
+        "mode": context.get("mode"),
+        "review_required": bool(context.get("review_required")),
+        "primary_mode": context.get("primary_mode"),
+        "required_inputs": context.get("required_inputs") or [],
+        "allowed_provenance": context.get("allowed_provenance") or [],
+        "review_cards": (context.get("review_cards") or [])[:8],
+        "quality_bar": context.get("quality_bar") or {},
+    }
+    payload["author_proxy_context"] = compact_context
+    payload["author_proxy_rules"] = [
+        "Continue the rewrite; do not stop to ask the author questions.",
+        "Produce the highest-quality polished candidate possible from the submitted content, not a cautious stub.",
+        "You may draft provisional bridging/context only from the submitted draft, nearby context, and existing source/citation material.",
+        "Do not invent personal experiences, citations, numbers, dates, named events, institutions, source facts, or classroom details.",
+        "If a needed detail is not in the source text, keep the language conditional or narrow the claim instead of fabricating support.",
+        "Treat author_proxy_context.review_cards as author-review obligations for the final product.",
+        "Do not write bracketed placeholders in the rewritten text; produce a readable candidate that the author can later verify.",
+    ]
+    payload["author_proxy_quality_contract"] = {
+        "target": "highest_quality_grounded_candidate",
+        "basis": "Use only submitted source_text, before_context, after_context, source blocks, phrase anchors, event beats, and existing citation/source material.",
+        "quality_order": [
+            "Preserve the author's meaning, thesis, and scope.",
+            "Make the writing more specific by mining concrete wording, events, relationships, and constraints already present in the submitted content.",
+            "Improve paragraph logic, transitions, and sentence rhythm so the candidate reads like careful human revision.",
+            "Use precise academic wording without generic filler, synonym-swapping, or template-like phrasing.",
+            "When a high-value detail is missing, narrow the claim into a polished author-review statement instead of inventing evidence.",
+        ],
+        "self_check_before_return": [
+            "Every variant is complete, readable, and submission-shaped.",
+            "Every added detail is either present in or reasonably inferred from the submitted content.",
+            "No variant contains placeholders, fake citations, fabricated facts, or vague filler.",
+            "The strongest variant should be useful for the author to revise further, even before author confirmation.",
+        ],
+    }
+    payload["provenance_contract"] = {
+        "source_preserved": "Exact or directly preserved material already present in the submitted text.",
+        "inferred_from_draft": "Low-risk inference from submitted wording or nearby context.",
+        "needs_author_confirmation": "Plausible author-proxy drafting that must be checked by the author.",
+        "must_replace": "Material that should be replaced with a real author/source detail before submission.",
+        "acceptance_note": "Unverified proxy material prevents the candidate from being labelled as final AI mitigation.",
+    }
+
+
 def build_residual_cluster_prompt(
     *,
     section: SectionUnit,
@@ -1604,6 +1659,7 @@ def build_residual_cluster_prompt(
     variant_count: int = 3,
     route_plan: dict[str, Any] | None = None,
     adaptive_feedback: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
     plan = route_plan if _route_plan_valid(route_plan) else None
@@ -1648,6 +1704,7 @@ def build_residual_cluster_prompt(
         payload["custom_route_plan"] = None
         payload["fallback_route_blueprint"] = build_route_blueprint(section=section, local_goal=local_goal or {})
         payload["method"] = _fallback_route_writer_method()
+    _attach_author_proxy_context(payload, author_proxy_context)
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -1658,6 +1715,7 @@ def build_residual_cluster_retune_prompt(
     local_goal: dict[str, Any],
     variant_count: int = 4,
     route_plan: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> str:
     variants = max(1, min(5, int(variant_count or 1)))
     focus = _local_unsafe_previews(local_goal)
@@ -1705,6 +1763,7 @@ def build_residual_cluster_retune_prompt(
         payload["custom_route_plan"] = None
         payload["fallback_route_blueprint"] = build_route_blueprint(section=section, local_goal=local_goal or {})
         payload["method"] = _fallback_route_retune_method()
+    _attach_author_proxy_context(payload, author_proxy_context)
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -1716,6 +1775,7 @@ def generate_residual_cluster_variants(
     variant_count: int = 3,
     route_plan: dict[str, Any] | None = None,
     adaptive_feedback: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     return _generate_loose_variants_from_builder(
         prompt_builder=lambda count: build_residual_cluster_prompt(
@@ -1724,13 +1784,19 @@ def generate_residual_cluster_variants(
             variant_count=count,
             route_plan=route_plan,
             adaptive_feedback=adaptive_feedback,
+            author_proxy_context=author_proxy_context,
         ),
         gateway=gateway,
         variant_count=variant_count,
     )
 
 
-def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal: dict[str, Any] | None = None) -> str:
+def build_residual_cluster_route_plan_prompt(
+    *,
+    section: SectionUnit,
+    local_goal: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> str:
     affected_content_map = _affected_content_map(section=section, local_goal=local_goal or {})
     payload = {
         "task": "score_causal_cluster_route_plan",
@@ -1876,6 +1942,7 @@ def build_residual_cluster_route_plan_prompt(*, section: SectionUnit, local_goal
             }
         },
     }
+    _attach_author_proxy_context(payload, author_proxy_context)
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -1886,6 +1953,7 @@ def generate_residual_cluster_route_plan(
     gateway: LLMGateway | None = None,
     planner_gateway: LLMGateway | None = None,
     fallback_gateway: LLMGateway | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any], str, str]:
     primary_gateway = planner_gateway or gateway
     if primary_gateway is None:
@@ -1894,6 +1962,7 @@ def generate_residual_cluster_route_plan(
         section=section,
         local_goal=local_goal,
         gateway=primary_gateway,
+        author_proxy_context=author_proxy_context,
     )
     diagnostics = {
         **diagnostics,
@@ -1922,6 +1991,7 @@ def generate_residual_cluster_route_plan(
         section=section,
         local_goal=local_goal,
         gateway=fallback_gateway,
+        author_proxy_context=author_proxy_context,
     )
     fallback_diagnostics = {
         **fallback_diagnostics,
@@ -2136,8 +2206,13 @@ def _generate_residual_cluster_route_plan_once(
     section: SectionUnit,
     local_goal: dict[str, Any],
     gateway: LLMGateway,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any], str, str]:
-    prompt = build_residual_cluster_route_plan_prompt(section=section, local_goal=local_goal)
+    prompt = build_residual_cluster_route_plan_prompt(
+        section=section,
+        local_goal=local_goal,
+        author_proxy_context=author_proxy_context,
+    )
     structured = structured_json_request_options(getattr(gateway, "model", None), _route_plan_response_format())
     provider = _merge_provider_options(getattr(gateway, "provider", None), structured.get("provider"))
     started = time.monotonic()
@@ -2591,6 +2666,7 @@ def generate_residual_cluster_retunes(
     gateway: LLMGateway,
     variant_count: int = 4,
     route_plan: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     return _generate_loose_variants_from_builder(
         prompt_builder=lambda count: build_residual_cluster_retune_prompt(
@@ -2599,6 +2675,7 @@ def generate_residual_cluster_retunes(
             local_goal=local_goal,
             variant_count=count,
             route_plan=route_plan,
+            author_proxy_context=author_proxy_context,
         ),
         gateway=gateway,
         variant_count=variant_count,
