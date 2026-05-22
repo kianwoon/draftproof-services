@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport } from '../api/draftproofApi';
+import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, getScanStatus, startScanWithText } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
+import { deleteReportDraft, getReportDraft, saveReportDraft } from '../utils/reportDraftStorage';
 import {
   requestBrowserNotificationPermission,
   showBrowserNotification,
@@ -60,8 +61,77 @@ import {
   buildRewriteEventsUrl,
 } from './report/reportHelpers';
 
+const RESCAN_POLL_INTERVAL = 3000;
+const RESCAN_MAX_POLLS = 200;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function submittedContentToText(model) {
+  return (model?.paragraphs || [])
+    .map((paragraph) => paragraph.segments.map((segment) => segment.text).join(' ').trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function tokenizeTrackedText(text) {
+  const tokens = [];
+  let buffer = '';
+  let bufferIsSpace = null;
+
+  Array.from(String(text || '')).forEach((char) => {
+    const isSpace = char.trim() === '';
+    if (buffer && bufferIsSpace !== isSpace) {
+      tokens.push(buffer);
+      buffer = '';
+    }
+    buffer += char;
+    bufferIsSpace = isSpace;
+  });
+
+  if (buffer) tokens.push(buffer);
+  return tokens;
+}
+
+function buildTrackedDiff(originalText, currentText) {
+  if (originalText === currentText) {
+    return [{ type: 'equal', text: currentText }];
+  }
+
+  const originalTokens = tokenizeTrackedText(originalText);
+  const currentTokens = tokenizeTrackedText(currentText);
+  let prefix = 0;
+  while (
+    prefix < originalTokens.length &&
+    prefix < currentTokens.length &&
+    originalTokens[prefix] === currentTokens[prefix]
+  ) {
+    prefix += 1;
+  }
+
+  let originalSuffix = originalTokens.length - 1;
+  let currentSuffix = currentTokens.length - 1;
+  while (
+    originalSuffix >= prefix &&
+    currentSuffix >= prefix &&
+    originalTokens[originalSuffix] === currentTokens[currentSuffix]
+  ) {
+    originalSuffix -= 1;
+    currentSuffix -= 1;
+  }
+
+  return [
+    { type: 'equal', text: originalTokens.slice(0, prefix).join('') },
+    { type: 'delete', text: originalTokens.slice(prefix, originalSuffix + 1).join('') },
+    { type: 'insert', text: currentTokens.slice(prefix, currentSuffix + 1).join('') },
+    { type: 'equal', text: originalTokens.slice(originalSuffix + 1).join('') },
+  ].filter((part) => part.text);
+}
+
 export default function Report() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { refreshBalance } = useAuth();
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en-SG';
@@ -81,11 +151,20 @@ export default function Report() {
   const [rewriteElapsedSeconds, setRewriteElapsedSeconds] = useState(0);
   const [selectedSegmentId, setSelectedSegmentId] = useState(null);
   const [activeProfileTab, setActiveProfileTab] = useState(null);
+  const [submittedEditorOpen, setSubmittedEditorOpen] = useState(false);
+  const [submittedDraftText, setSubmittedDraftText] = useState('');
+  const [submittedDraftLoaded, setSubmittedDraftLoaded] = useState(false);
+  const [submittedDraftStatus, setSubmittedDraftStatus] = useState('idle');
+  const [submittedDraftUpdatedAt, setSubmittedDraftUpdatedAt] = useState(null);
+  const [submittedRescanBusy, setSubmittedRescanBusy] = useState(false);
+  const [submittedRescanStatus, setSubmittedRescanStatus] = useState(null);
+  const [submittedRescanError, setSubmittedRescanError] = useState(null);
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
   const rewriteTimerStartRef = useRef(null);
   const watchedRewriteIdsRef = useRef(new Set());
   const notifiedRewriteIdsRef = useRef(new Set());
+  const submittedEditorRef = useRef(null);
 
   const notifyRewriteCompleted = useCallback((job) => {
     if (!job?.id || notifiedRewriteIdsRef.current.has(job.id)) return;
@@ -236,6 +315,80 @@ export default function Report() {
       closeRewriteEventSource();
     };
   }, [id, closeRewriteEventSource, connectRewriteEvents, t]);
+
+  useEffect(() => {
+    setSubmittedEditorOpen(false);
+    setSubmittedDraftText('');
+    setSubmittedDraftLoaded(false);
+    setSubmittedDraftStatus('idle');
+    setSubmittedDraftUpdatedAt(null);
+    setSubmittedRescanBusy(false);
+    setSubmittedRescanStatus(null);
+    setSubmittedRescanError(null);
+  }, [id]);
+
+  useEffect(() => {
+    if (!report) return undefined;
+
+    let cancelled = false;
+    const reportIssues = Array.isArray(report.issues) ? report.issues : [];
+    const model = buildSubmittedContentModel({ ...report, issues: reportIssues });
+    const originalText = submittedContentToText(model);
+
+    setSubmittedDraftLoaded(false);
+    setSubmittedDraftText(originalText);
+    setSubmittedDraftStatus('idle');
+    setSubmittedDraftUpdatedAt(null);
+
+    getReportDraft(id)
+      .then((draft) => {
+        if (cancelled) return;
+        if (draft?.text) {
+          setSubmittedDraftText(draft.text);
+          setSubmittedDraftStatus('saved');
+          setSubmittedDraftUpdatedAt(draft.updatedAt || null);
+        }
+        setSubmittedDraftLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSubmittedDraftLoaded(true);
+          setSubmittedDraftStatus('error');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, report?.id]);
+
+  useEffect(() => {
+    if (!report || !submittedDraftLoaded) return undefined;
+
+    const reportIssues = Array.isArray(report.issues) ? report.issues : [];
+    const model = buildSubmittedContentModel({ ...report, issues: reportIssues });
+    const originalText = submittedContentToText(model);
+    if (submittedDraftText === originalText) {
+      setSubmittedDraftStatus('idle');
+      setSubmittedDraftUpdatedAt(null);
+      deleteReportDraft(id).catch(() => {});
+      return undefined;
+    }
+
+    setSubmittedDraftStatus('saving');
+    const timer = window.setTimeout(() => {
+      saveReportDraft(id, submittedDraftText)
+        .then((draft) => {
+          setSubmittedDraftStatus('saved');
+          setSubmittedDraftUpdatedAt(draft?.updatedAt || null);
+        })
+        .catch(() => {
+          setSubmittedDraftStatus('error');
+        });
+    }, 650);
+
+    return () => window.clearTimeout(timer);
+  }, [id, report?.id, submittedDraftLoaded, submittedDraftText]);
 
   useEffect(() => {
     if (rewritePollRef.current) {
@@ -484,6 +637,78 @@ export default function Report() {
     submittedContent.segments.find((segment) => segment.signals.length > 0) ||
     null
   );
+  const originalSubmittedText = submittedContentToText(submittedContent);
+  const submittedDraftChanged = submittedDraftText !== originalSubmittedText;
+  const submittedTrackedDiff = submittedEditorOpen
+    ? buildTrackedDiff(originalSubmittedText, submittedDraftText)
+    : [];
+  const affectedSegments = submittedContent.segments.filter((segment) => segment.signals.length > 0);
+  const selectedSentenceDraftStatus = selectedSegment?.text && submittedDraftText.includes(selectedSegment.text)
+    ? t('report.submitted.editor.sentenceUnchanged')
+    : t('report.submitted.editor.sentenceEdited');
+
+  const focusSentenceInSubmittedEditor = (sentenceText) => {
+    const editor = submittedEditorRef.current;
+    if (!editor || !sentenceText) return;
+    const start = submittedDraftText.indexOf(sentenceText);
+    editor.focus();
+    if (start >= 0) {
+      editor.setSelectionRange(start, start + sentenceText.length);
+    }
+  };
+
+  const resetSubmittedDraft = async () => {
+    setSubmittedDraftText(originalSubmittedText);
+    setSubmittedDraftStatus('idle');
+    setSubmittedDraftUpdatedAt(null);
+    setSubmittedRescanError(null);
+    await deleteReportDraft(id);
+  };
+
+  const rescanSubmittedDraft = async () => {
+    const text = submittedDraftText.trim();
+    if (!text) {
+      setSubmittedRescanError(t('report.submitted.editor.emptyDraft'));
+      return;
+    }
+
+    setSubmittedRescanBusy(true);
+    setSubmittedRescanError(null);
+    setSubmittedRescanStatus(t('report.submitted.editor.rescanQueueing'));
+
+    try {
+      const { data: scan } = await startScanWithText(text);
+      setSubmittedRescanStatus(t('report.submitted.editor.rescanProcessing'));
+
+      if (scan.status === 'completed') {
+        refreshBalance?.();
+        navigate(`/report/${scan.id}`);
+        return;
+      }
+
+      for (let i = 0; i < RESCAN_MAX_POLLS; i += 1) {
+        await sleep(RESCAN_POLL_INTERVAL);
+        const { data } = await getScanStatus(scan.id);
+        if (data.status === 'completed') {
+          refreshBalance?.();
+          navigate(`/report/${scan.id}`);
+          return;
+        }
+        if (data.status === 'failed') {
+          throw new Error(data.error || t('report.submitted.editor.rescanFailed'));
+        }
+        if (data.progress_message) {
+          setSubmittedRescanStatus(data.progress_message);
+        }
+      }
+
+      throw new Error(t('report.submitted.editor.rescanTimedOut'));
+    } catch (err) {
+      setSubmittedRescanError(err.response?.data?.detail || err.message || t('report.submitted.editor.rescanFailed'));
+      setSubmittedRescanStatus(null);
+      setSubmittedRescanBusy(false);
+    }
+  };
 
   const hasAIFindings = issues.some(i =>
     i.category === 'ai_generation' ||
@@ -1272,9 +1497,21 @@ export default function Report() {
                 <span className="submitted-content-kicker">{t('report.submitted.kicker')}</span>
                 <h2>{t('report.submitted.title')}</h2>
               </div>
-              <div className="submitted-content-count">
-                <strong>{submittedContent.highlightedCount}</strong>
-                <span>{t('report.submitted.highlightedSections')}</span>
+              <div className="submitted-content-actions">
+                <div className="submitted-content-count">
+                  <strong>{submittedContent.highlightedCount}</strong>
+                  <span>{t('report.submitted.highlightedSections')}</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary submitted-edit-button"
+                  onClick={() => {
+                    setSubmittedEditorOpen(true);
+                    setSubmittedRescanError(null);
+                  }}
+                >
+                  {t('report.submitted.editor.editDraft')}
+                </button>
               </div>
             </div>
             {submittedContent.legend.length > 0 && (
@@ -1363,6 +1600,159 @@ export default function Report() {
                 )}
               </aside>
             </div>
+            {submittedEditorOpen && (
+              <div className="submitted-editor-backdrop" role="dialog" aria-modal="true" aria-label={t('report.submitted.editor.title')}>
+                <div className="submitted-editor-sheet">
+                  <div className="submitted-editor-head">
+                    <div>
+                      <span className="submitted-content-kicker">{t('report.submitted.editor.kicker')}</span>
+                      <h2>{t('report.submitted.editor.title')}</h2>
+                      <p>{t('report.submitted.editor.priorScanNotice')}</p>
+                    </div>
+                    <div className="submitted-editor-actions">
+                      <span className={`submitted-save-state is-${submittedDraftStatus}`}>
+                        {submittedDraftStatus === 'saving'
+                          ? t('report.submitted.editor.saving')
+                          : submittedDraftStatus === 'saved'
+                            ? t('report.submitted.editor.saved', {
+                              value: submittedDraftUpdatedAt ? formatDate(submittedDraftUpdatedAt, locale) : t('common.lastUpdated'),
+                            })
+                            : submittedDraftStatus === 'error'
+                              ? t('report.submitted.editor.saveError')
+                              : t('report.submitted.editor.noDraft')}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => setSubmittedEditorOpen(false)}
+                        disabled={submittedRescanBusy}
+                      >
+                        {t('report.submitted.editor.close')}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="submitted-editor-grid">
+                    <section className="submitted-editor-main" aria-label={t('report.submitted.editor.documentEditor')}>
+                      <div className="submitted-editor-toolbar">
+                        <div>
+                          <strong>{t('report.submitted.editor.documentEditor')}</strong>
+                          <span>{submittedDraftChanged ? t('report.submitted.editor.changed') : t('report.submitted.editor.unchanged')}</span>
+                        </div>
+                        <div className="submitted-editor-toolbar-actions">
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={resetSubmittedDraft}
+                            disabled={!submittedDraftChanged || submittedRescanBusy}
+                          >
+                            {t('report.submitted.editor.discardDraft')}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={rescanSubmittedDraft}
+                            disabled={submittedRescanBusy || !submittedDraftText.trim()}
+                          >
+                            {submittedRescanBusy ? t('report.submitted.editor.rescanning') : t('report.submitted.editor.rescanDraft')}
+                          </button>
+                        </div>
+                      </div>
+                      <textarea
+                        ref={submittedEditorRef}
+                        className="submitted-editor-textarea"
+                        value={submittedDraftText}
+                        onChange={(event) => {
+                          setSubmittedDraftText(event.target.value);
+                          setSubmittedRescanError(null);
+                        }}
+                        spellCheck="true"
+                      />
+                      {(submittedRescanStatus || submittedRescanError) && (
+                        <div className={`submitted-rescan-status${submittedRescanError ? ' is-error' : ''}`}>
+                          {submittedRescanError || submittedRescanStatus}
+                        </div>
+                      )}
+                      <div className="submitted-tracked-preview" aria-label={t('report.submitted.editor.trackedPreview')}>
+                        <div className="submitted-tracked-head">
+                          <strong>{t('report.submitted.editor.trackedPreview')}</strong>
+                          <span>{t('report.submitted.editor.trackedPreviewBody')}</span>
+                        </div>
+                        <div className="submitted-tracked-body">
+                          {submittedTrackedDiff.map((part, index) => (
+                            <span key={`${part.type}-${index}`} className={`submitted-diff-${part.type}`}>
+                              {part.text}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+
+                    <aside className="submitted-affected-panel" aria-label={t('report.submitted.editor.affectedSentences')}>
+                      <div className="submitted-affected-head">
+                        <span>{t('report.submitted.editor.affectedSentences')}</span>
+                        <strong>{affectedSegments.length}</strong>
+                      </div>
+                      <div className="submitted-affected-list">
+                        {affectedSegments.map((segment) => {
+                          const signal = segment.primarySignal || segment.signals[0];
+                          const isSelected = selectedSegment?.id === segment.id;
+                          return (
+                            <button
+                              key={`affected-${segment.id}`}
+                              type="button"
+                              className={`submitted-affected-item${isSelected ? ' is-selected' : ''}`}
+                              onClick={() => {
+                                setSelectedSegmentId(segment.id);
+                                focusSentenceInSubmittedEditor(segment.text);
+                              }}
+                            >
+                              <span>{segment.sentence_id}</span>
+                              <strong>{signalLabel(signal.key, signal.label, t)}</strong>
+                              <em>{segment.text}</em>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="submitted-editor-detail">
+                        {selectedSegment?.primarySignal ? (
+                          <>
+                            <span className="submitted-panel-kicker">{selectedSegment.sentence_id}</span>
+                            <h3>{signalLabel(selectedSegment.primarySignal.key, selectedSegment.primarySignal.label, t)}</h3>
+                            <div className="submitted-editor-sentence">
+                              <span>{t('report.submitted.editor.affectedSentence')}</span>
+                              <p>{selectedSegment.text}</p>
+                            </div>
+                            <div className="submitted-panel-meta">
+                              <span>{selectedSentenceDraftStatus}</span>
+                              {selectedSegment.primarySignal.score != null && (
+                                <span>{t('report.submitted.signalStrength', { value: Math.round(selectedSegment.primarySignal.score) })}</span>
+                              )}
+                              {selectedSegment.primarySignal.tier && (
+                                <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedSegment.primarySignal.tier}`, { defaultValue: selectedSegment.primarySignal.tier }) })}</span>
+                              )}
+                            </div>
+                            <div className="submitted-editor-signal">
+                              <span>{t('report.submitted.editor.signal')}</span>
+                              <p>{signalDescription(selectedSegment.primarySignal.key, selectedSegment.primarySignal.description, t)}</p>
+                            </div>
+                            {selectedSegment.primarySignal.recommendation && (
+                              <div className="submitted-panel-note">
+                                <span>{t('report.submitted.recommendation')}</span>
+                                <p>{selectedSegment.primarySignal.recommendation}</p>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <p>{t('report.submitted.mapReadyBody')}</p>
+                        )}
+                      </div>
+                    </aside>
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
