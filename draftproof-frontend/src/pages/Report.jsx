@@ -232,6 +232,14 @@ function adjustHighlightedRange(range, previousText, nextText) {
   return { ...range, start, end };
 }
 
+function adjustHighlightedRanges(ranges, previousText, nextText) {
+  return Object.fromEntries(
+    Object.entries(ranges || {})
+      .map(([segmentId, range]) => [segmentId, adjustHighlightedRange(range, previousText, nextText)])
+      .filter(([, range]) => range && range.end > range.start)
+  );
+}
+
 function highlightedEditorParts(text, range) {
   if (!range || range.end <= range.start) return [{ type: 'plain', text }];
   const start = Math.max(0, Math.min(text.length, range.start));
@@ -274,7 +282,7 @@ export default function Report() {
   const [submittedRescanBusy, setSubmittedRescanBusy] = useState(false);
   const [submittedRescanStatus, setSubmittedRescanStatus] = useState(null);
   const [submittedRescanError, setSubmittedRescanError] = useState(null);
-  const [submittedHighlightRange, setSubmittedHighlightRange] = useState(null);
+  const [submittedHighlightRanges, setSubmittedHighlightRanges] = useState({});
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
   const rewriteTimerStartRef = useRef(null);
@@ -442,7 +450,7 @@ export default function Report() {
     setSubmittedRescanBusy(false);
     setSubmittedRescanStatus(null);
     setSubmittedRescanError(null);
-    setSubmittedHighlightRange(null);
+    setSubmittedHighlightRanges({});
   }, [id]);
 
   useEffect(() => {
@@ -777,6 +785,7 @@ export default function Report() {
   const selectedSentenceDraftStatus = selectedSegment?.text && submittedDraftText.includes(selectedSegment.text)
     ? t('report.submitted.editor.sentenceUnchanged')
     : t('report.submitted.editor.sentenceEdited');
+  const submittedHighlightRange = selectedSegment?.id ? submittedHighlightRanges[selectedSegment.id] : null;
   const submittedEditorHighlightParts = highlightedEditorParts(submittedDraftText, submittedHighlightRange);
   const submittedDraftWordCount = countWords(submittedDraftText);
   const submittedDraftTokensRequired = scanTokensRequired(submittedDraftWordCount);
@@ -784,9 +793,12 @@ export default function Report() {
   const focusSentenceInSubmittedEditor = (segment) => {
     const editor = submittedEditorRef.current;
     if (!editor || !segment?.text) return;
-    const existingRange = submittedHighlightRange?.segmentId === segment.id ? submittedHighlightRange : null;
+    const existingRange = submittedHighlightRanges[segment.id] || null;
     const range = findTextRange(submittedDraftText, segment.text) || existingRange;
-    setSubmittedHighlightRange(range ? { ...range, segmentId: segment.id } : null);
+    setSubmittedHighlightRanges((current) => {
+      if (!range) return current;
+      return { ...current, [segment.id]: { ...range, segmentId: segment.id } };
+    });
     editor.focus();
     if (range) {
       editor.setSelectionRange(range.start, range.start);
@@ -801,10 +813,10 @@ export default function Report() {
 
   const resetSubmittedDraft = async () => {
     setSubmittedDraftText(originalSubmittedText);
-    setSubmittedHighlightRange((current) => {
-      if (!selectedSegment?.text || !current) return null;
+    setSubmittedHighlightRanges((current) => {
+      if (!selectedSegment?.text || !Object.keys(current || {}).length) return {};
       const range = findTextRange(originalSubmittedText, selectedSegment.text);
-      return range ? { ...range, segmentId: selectedSegment.id } : null;
+      return range ? { [selectedSegment.id]: { ...range, segmentId: selectedSegment.id } } : {};
     });
     setSubmittedDraftStatus('idle');
     setSubmittedDraftUpdatedAt(null);
@@ -1657,7 +1669,10 @@ export default function Report() {
                     setSubmittedRescanError(null);
                     if (selectedSegment?.text) {
                       const range = findTextRange(submittedDraftText, selectedSegment.text);
-                      setSubmittedHighlightRange(range ? { ...range, segmentId: selectedSegment.id } : null);
+                      setSubmittedHighlightRanges((current) => {
+                        if (!range) return current;
+                        return { ...current, [selectedSegment.id]: { ...range, segmentId: selectedSegment.id } };
+                      });
                     }
                   }}
                 >
@@ -1845,7 +1860,7 @@ export default function Report() {
                           value={submittedDraftText}
                           onChange={(event) => {
                             const nextText = event.target.value;
-                            setSubmittedHighlightRange((range) => adjustHighlightedRange(range, submittedDraftText, nextText));
+                            setSubmittedHighlightRanges((ranges) => adjustHighlightedRanges(ranges, submittedDraftText, nextText));
                             setSubmittedDraftText(nextText);
                             setSubmittedRescanError(null);
                           }}
