@@ -64,6 +64,7 @@ import {
 
 const RESCAN_POLL_INTERVAL = 3000;
 const RESCAN_MAX_POLLS = 200;
+const SUBMITTED_EDITOR_TRANSITION_MS = 240;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -345,6 +346,7 @@ export default function Report() {
   const [selectedSegmentId, setSelectedSegmentId] = useState(null);
   const [activeProfileTab, setActiveProfileTab] = useState(null);
   const [submittedEditorOpen, setSubmittedEditorOpen] = useState(false);
+  const [submittedEditorClosing, setSubmittedEditorClosing] = useState(false);
   const [submittedDraftText, setSubmittedDraftText] = useState('');
   const [submittedDraftLoaded, setSubmittedDraftLoaded] = useState(false);
   const [submittedDraftStatus, setSubmittedDraftStatus] = useState('idle');
@@ -360,6 +362,36 @@ export default function Report() {
   const notifiedRewriteIdsRef = useRef(new Set());
   const submittedEditorRef = useRef(null);
   const submittedHighlightRef = useRef(null);
+  const submittedEditorCloseTimerRef = useRef(null);
+
+  const clearSubmittedEditorCloseTimer = useCallback(() => {
+    if (submittedEditorCloseTimerRef.current) {
+      window.clearTimeout(submittedEditorCloseTimerRef.current);
+      submittedEditorCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const closeSubmittedEditor = useCallback((immediate = false) => {
+    clearSubmittedEditorCloseTimer();
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (immediate || reduceMotion) {
+      setSubmittedEditorOpen(false);
+      setSubmittedEditorClosing(false);
+      return;
+    }
+    setSubmittedEditorClosing(true);
+    submittedEditorCloseTimerRef.current = window.setTimeout(() => {
+      setSubmittedEditorOpen(false);
+      setSubmittedEditorClosing(false);
+      submittedEditorCloseTimerRef.current = null;
+    }, SUBMITTED_EDITOR_TRANSITION_MS);
+  }, [clearSubmittedEditorCloseTimer]);
+
+  const openSubmittedEditor = useCallback(() => {
+    clearSubmittedEditorCloseTimer();
+    setSubmittedEditorOpen(true);
+    setSubmittedEditorClosing(false);
+  }, [clearSubmittedEditorCloseTimer]);
 
   const notifyRewriteCompleted = useCallback((job) => {
     if (!job?.id || notifiedRewriteIdsRef.current.has(job.id)) return;
@@ -512,7 +544,7 @@ export default function Report() {
   }, [id, closeRewriteEventSource, connectRewriteEvents, t]);
 
   useEffect(() => {
-    setSubmittedEditorOpen(false);
+    closeSubmittedEditor(true);
     setSubmittedDraftText('');
     setSubmittedDraftLoaded(false);
     setSubmittedDraftStatus('idle');
@@ -521,7 +553,9 @@ export default function Report() {
     setSubmittedRescanStatus(null);
     setSubmittedRescanError(null);
     setSubmittedHighlightRanges({});
-  }, [id]);
+  }, [id, closeSubmittedEditor]);
+
+  useEffect(() => () => clearSubmittedEditorCloseTimer(), [clearSubmittedEditorCloseTimer]);
 
   useEffect(() => {
     if (!report) return undefined;
@@ -591,13 +625,13 @@ export default function Report() {
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape' && !submittedRescanBusy) {
-        setSubmittedEditorOpen(false);
+        closeSubmittedEditor();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [submittedEditorOpen, submittedRescanBusy]);
+  }, [closeSubmittedEditor, submittedEditorOpen, submittedRescanBusy]);
 
   useEffect(() => {
     if (rewritePollRef.current) {
@@ -664,8 +698,8 @@ export default function Report() {
 
   useEffect(() => {
     if (canEditSubmittedDraft || !submittedEditorOpen) return;
-    setSubmittedEditorOpen(false);
-  }, [canEditSubmittedDraft, submittedEditorOpen]);
+    closeSubmittedEditor();
+  }, [canEditSubmittedDraft, closeSubmittedEditor, submittedEditorOpen]);
 
   useEffect(() => {
     if (!rewriteTimerActive) {
@@ -1802,7 +1836,7 @@ export default function Report() {
                     type="button"
                     className="btn btn-secondary submitted-edit-button"
                     onClick={() => {
-                      setSubmittedEditorOpen(true);
+                      openSubmittedEditor();
                       setSubmittedRescanError(null);
                       setSubmittedHighlightRanges((current) => buildSubmittedHighlightRanges(current));
                     }}
@@ -1897,14 +1931,14 @@ export default function Report() {
               </aside>
             </div>
             {submittedEditorOpen && (
-              <div className="submitted-editor-backdrop" role="dialog" aria-modal="true" aria-label={t('report.submitted.editor.title')}>
+              <div className={`submitted-editor-backdrop${submittedEditorClosing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-label={t('report.submitted.editor.title')}>
                 <div className="submitted-editor-sheet">
                   <button
                     type="button"
                     className="submitted-editor-close-button"
                     aria-label={t('report.submitted.editor.close')}
                     title={t('report.submitted.editor.close')}
-                    onClick={() => setSubmittedEditorOpen(false)}
+                    onClick={() => closeSubmittedEditor()}
                     disabled={submittedRescanBusy}
                   >
                     X
@@ -1930,7 +1964,7 @@ export default function Report() {
                       <button
                         type="button"
                         className="btn btn-ghost"
-                        onClick={() => setSubmittedEditorOpen(false)}
+                        onClick={() => closeSubmittedEditor()}
                         disabled={submittedRescanBusy}
                       >
                         {t('report.submitted.editor.close')}

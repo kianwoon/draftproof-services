@@ -1455,6 +1455,10 @@ th {
   .code-row { animation: none !important; }
   .scan-progress-fill::after,
   .rewrite-progress-pulse,
+  .submitted-editor-backdrop,
+  .submitted-editor-backdrop.is-closing,
+  .submitted-editor-sheet,
+  .submitted-editor-backdrop.is-closing .submitted-editor-sheet,
   .sample-report-preview:not(.is-paused) .sample-preview-tabs button.is-active::after,
   .sample-preview-panel > * { animation: none !important; }
 }
@@ -6306,6 +6310,12 @@ th {
   align-items: flex-end;
   background: rgba(15, 23, 42, .42);
   backdrop-filter: blur(6px);
+  animation: submitted-editor-backdrop-in .22s ease-out;
+}
+
+.submitted-editor-backdrop.is-closing {
+  pointer-events: none;
+  animation: submitted-editor-backdrop-out .24s ease-in forwards;
 }
 
 .submitted-editor-sheet {
@@ -6323,6 +6333,10 @@ th {
   box-shadow: 0 -24px 70px rgba(15, 23, 42, .26);
   animation: submitted-editor-slide-up .28s cubic-bezier(.2, .8, .2, 1);
   overflow: hidden;
+}
+
+.submitted-editor-backdrop.is-closing .submitted-editor-sheet {
+  animation: submitted-editor-slide-down .24s cubic-bezier(.4, 0, .2, 1) forwards;
 }
 
 .submitted-editor-close-button {
@@ -6368,6 +6382,35 @@ th {
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+@keyframes submitted-editor-slide-down {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(64px);
+    opacity: .86;
+  }
+}
+
+@keyframes submitted-editor-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes submitted-editor-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
   }
 }
 
