@@ -2124,6 +2124,11 @@ def _author_proxy_quality_score(
     )
     sentence_shape_window = max(8.0, ideal_sentence_words * 1.25)
     sentence_shape_score = 1.0 - min(abs(avg_sentence_words - ideal_sentence_words) / sentence_shape_window, 1.0)
+    compiler_audit = _author_proxy_revision_compiler_audit(
+        source_text=source_text,
+        candidate_text=candidate_text,
+    )
+    compiler_score = _number(compiler_audit.get("score")) if compiler_audit.get("active") else 0.5
     placeholder_penalty = 0.25 if re.search(r"\[[^\[\]]+\]|\bTBD\b|<[^>]+>", candidate_text, re.IGNORECASE) else 0.0
     audit_data = audit if isinstance(audit, dict) else {}
     safety_gate = audit_data.get("safety_gate") if isinstance(audit_data.get("safety_gate"), dict) else {}
@@ -2139,7 +2144,8 @@ def _author_proxy_quality_score(
         support_ratio * 0.28
         + coverage_ratio * 0.18
         + length_ratio * 0.16
-        + sentence_shape_score * 0.12
+        + sentence_shape_score * 0.08
+        + compiler_score * 0.04
         + provenance_score * 0.14
         + review_specificity * 0.06
         + safety_score * 0.06
@@ -2155,6 +2161,8 @@ def _author_proxy_quality_score(
         "source_coverage_ratio": round(coverage_ratio, 4),
         "length_ratio": round(length_ratio, 4),
         "sentence_shape_score": round(max(0.0, sentence_shape_score), 4),
+        "revision_compiler_score": round(compiler_score, 4),
+        "revision_compiler_audit": compiler_audit,
         "provenance_item_count": provenance_count,
         "review_item_count": review_count,
         "novel_reference_count": novel_count,
@@ -2239,6 +2247,7 @@ def _attach_author_proxy_context(payload: dict[str, Any], context: dict[str, Any
         "quality_order": [
             "Preserve the author's meaning, thesis, and scope.",
             "Make the writing more specific by mining concrete wording, events, relationships, and constraints already present in the submitted content.",
+            "Follow the revision compiler contract for sentence shape, abstraction density, citation rhythm, and paragraph closure before optimizing wording.",
             "Improve paragraph logic, transitions, and sentence rhythm so the candidate reads like careful human revision.",
             "Use precise academic wording without generic filler, synonym-swapping, or template-like phrasing.",
             "When a high-value detail is missing, narrow the claim into a polished author-review statement instead of inventing evidence.",
@@ -2349,6 +2358,258 @@ def _safe_band_kpi_contract(current_scores: dict[str, Any], current_goal: dict[s
             "Do not trade lower top-k for unsupported claims, fabricated evidence, or compressed coverage.",
         ],
     }
+
+
+def _author_proxy_revision_compiler_contract(
+    *,
+    source_text: str = "",
+    section_count: int = 1,
+) -> dict[str, Any]:
+    profile = _author_proxy_revision_texture_profile(source_text)
+    return {
+        "schema_version": "author_proxy_revision_compiler_contract.v1",
+        "purpose": (
+            "Compile the Author-Proxy draft before writing: preserve submitted meaning while changing the prose shape "
+            "that can remain detector-facing after anchor insertion."
+        ),
+        "single_judge_boundary": "This compiler is a candidate-generation and materiality gate; DraftProof scanner scoring remains the only acceptance judge.",
+        "source_profile": profile,
+        "section_count": max(1, int(section_count or 1)),
+        "control_axes": {
+            "sentence_shape": [
+                "Vary sentence starts, sentence lengths, and clause routes across the section.",
+                "Avoid repeating a polished claim -> citation -> explanation -> closure pattern.",
+                "Keep at least one concrete author/process sentence near each abstract explanatory sentence when the source supports it.",
+            ],
+            "abstraction_density": [
+                "Turn broad claims into narrower claims tied to submitted actions, constraints, source relations, or limits.",
+                "Do not add new facts to lower abstraction; narrow or qualify the claim instead.",
+            ],
+            "citation_rhythm": [
+                "Preserve existing citations and citation meaning.",
+                "Do not add new citation markers.",
+                "Avoid clustering every citation into the same sentence role or placing citations as identical academic wrappers.",
+            ],
+            "paragraph_closure": [
+                "Avoid universal polished takeaway endings.",
+                "Prefer a concrete consequence, limitation, next teaching decision, or author-owned observation already supported by the section.",
+            ],
+        },
+        "hard_rejections": [
+            "candidate adds citations, dates, statistics, institutions, or named events not present in the source",
+            "candidate compresses author evidence into a smooth summary",
+            "candidate keeps the same academic wrapper while only inserting anchors",
+            "candidate ends multiple sections with generic implication or importance statements",
+        ],
+    }
+
+
+def _author_proxy_revision_texture_profile(text: str) -> dict[str, Any]:
+    sentences = [sentence.strip() for sentence in _sentences(str(text or "")) if sentence.strip()]
+    lengths = [max(1, word_count(sentence)) for sentence in sentences]
+    sentence_count = len(sentences)
+    avg_length = sum(lengths) / max(1, len(lengths))
+    variance = sum((length - avg_length) ** 2 for length in lengths) / max(1, len(lengths))
+    length_cv = (variance ** 0.5) / max(1.0, avg_length)
+    openers = [_sentence_opener_key(sentence) for sentence in sentences if _sentence_opener_key(sentence)]
+    opener_diversity = len(set(openers)) / max(1, len(openers))
+    qualifying = [sentence for sentence in sentences if _safe_band_density_qualifying_sentence(sentence)]
+    contextual = [sentence for sentence in qualifying if _sentence_has_concrete_or_context(sentence)]
+    contextual_density = len(contextual) / max(1, len(qualifying))
+    citations = _author_proxy_citation_markers(text)
+    citation_sentence_indexes = [
+        index
+        for index, sentence in enumerate(sentences)
+        if _author_proxy_citation_markers(sentence)
+    ]
+    max_citation_run = _max_adjacent_index_run(citation_sentence_indexes)
+    closing_sentence = sentences[-1] if sentences else ""
+    return {
+        "sentence_count": sentence_count,
+        "average_sentence_words": round(avg_length, 3),
+        "sentence_length_cv": round(length_cv, 3),
+        "opener_diversity": round(opener_diversity, 3),
+        "qualifying_sentence_count": len(qualifying),
+        "contextual_sentence_density": round(contextual_density, 3),
+        "citation_count": len(citations),
+        "citation_sentence_count": len(citation_sentence_indexes),
+        "max_adjacent_citation_sentence_run": max_citation_run,
+        "closing_sentence_has_context": bool(closing_sentence and _sentence_has_concrete_or_context(closing_sentence)),
+        "closing_sentence_words": word_count(closing_sentence),
+    }
+
+
+def _author_proxy_revision_compiler_audit(
+    *,
+    source_text: str,
+    candidate_text: str,
+) -> dict[str, Any]:
+    source = _author_proxy_revision_texture_profile(source_text)
+    candidate = _author_proxy_revision_texture_profile(candidate_text)
+    if not candidate.get("sentence_count"):
+        return {
+            "schema_version": "author_proxy_revision_compiler_audit.v1",
+            "active": True,
+            "passed": False,
+            "score": 0.0,
+            "reason": "empty_candidate",
+            "source_profile": source,
+            "candidate_profile": candidate,
+            "checks": [],
+        }
+    checks: list[dict[str, Any]] = []
+
+    def add_check(name: str, passed: bool, detail: dict[str, Any]) -> None:
+        checks.append({"name": name, "passed": bool(passed), **detail})
+
+    source_citations = int(source.get("citation_count") or 0)
+    candidate_citations = int(candidate.get("citation_count") or 0)
+    add_check(
+        "citation_rhythm_not_expanded",
+        candidate_citations <= source_citations,
+        {
+            "source_citation_count": source_citations,
+            "candidate_citation_count": candidate_citations,
+        },
+    )
+    add_check(
+        "citation_cluster_not_worse",
+        int(candidate.get("max_adjacent_citation_sentence_run") or 0)
+        <= max(1, int(source.get("max_adjacent_citation_sentence_run") or 0) + 1),
+        {
+            "source_max_run": source.get("max_adjacent_citation_sentence_run"),
+            "candidate_max_run": candidate.get("max_adjacent_citation_sentence_run"),
+        },
+    )
+    add_check(
+        "contextual_density_not_worse",
+        _number(candidate.get("contextual_sentence_density")) + 0.08
+        >= _number(source.get("contextual_sentence_density")),
+        {
+            "source_contextual_density": source.get("contextual_sentence_density"),
+            "candidate_contextual_density": candidate.get("contextual_sentence_density"),
+        },
+    )
+    if int(candidate.get("sentence_count") or 0) >= 3:
+        add_check(
+            "sentence_shape_has_variation",
+            _number(candidate.get("sentence_length_cv")) >= _float_env(
+                "DRAFTPROOF_AUTHOR_PROXY_COMPILER_MIN_SENTENCE_LENGTH_CV",
+                0.22,
+                minimum=0.0,
+                maximum=1.0,
+            )
+            or _number(candidate.get("opener_diversity")) >= _float_env(
+                "DRAFTPROOF_AUTHOR_PROXY_COMPILER_MIN_OPENER_DIVERSITY",
+                0.58,
+                minimum=0.0,
+                maximum=1.0,
+            ),
+            {
+                "candidate_sentence_length_cv": candidate.get("sentence_length_cv"),
+                "candidate_opener_diversity": candidate.get("opener_diversity"),
+            },
+        )
+    if int(candidate.get("sentence_count") or 0) >= 2:
+        add_check(
+            "closure_keeps_context_or_short_limit",
+            bool(candidate.get("closing_sentence_has_context"))
+            or int(candidate.get("closing_sentence_words") or 0) <= _int_env(
+                "DRAFTPROOF_AUTHOR_PROXY_COMPILER_MAX_UNGROUNDED_CLOSING_WORDS",
+                13,
+                minimum=6,
+                maximum=30,
+            ),
+            {
+                "candidate_closing_sentence_has_context": candidate.get("closing_sentence_has_context"),
+                "candidate_closing_sentence_words": candidate.get("closing_sentence_words"),
+            },
+        )
+        add_check(
+            "closure_not_polished_wrapper",
+            not _closing_sentence_has_polished_wrapper(candidate_text),
+            {
+                "candidate_closing_sentence_words": candidate.get("closing_sentence_words"),
+            },
+        )
+
+    passed_checks = sum(1 for check in checks if check.get("passed"))
+    score = passed_checks / max(1, len(checks))
+    failed = [check.get("name") for check in checks if not check.get("passed")]
+    return {
+        "schema_version": "author_proxy_revision_compiler_audit.v1",
+        "active": True,
+        "passed": not failed,
+        "score": round(score, 4),
+        "reason": "revision_compiler_passed" if not failed else "revision_compiler_failed",
+        "failed_checks": failed,
+        "source_profile": source,
+        "candidate_profile": candidate,
+        "checks": checks,
+    }
+
+
+def _sentence_opener_key(sentence: str) -> str:
+    tokens = _normalized_word_tokens(sentence)
+    if not tokens:
+        return ""
+    if tokens[0] in {"the", "a", "an"} and len(tokens) > 1:
+        return f"{tokens[0]} {tokens[1]}"
+    return tokens[0]
+
+
+def _author_proxy_citation_markers(text: str) -> list[str]:
+    value = str(text or "")
+    markers: list[str] = []
+    patterns = [
+        r"\([A-Z][A-Za-z .,&'-]+,\s*(?:n\.d\.|(?:19|20)\d{2})[^)]*\)",
+        r"\b[A-Z][A-Za-z .,&'-]{1,60}\s+\((?:n\.d\.|(?:19|20)\d{2})\)",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, value):
+            marker = match.group(0)
+            if marker not in markers:
+                markers.append(marker)
+    return markers
+
+
+def _closing_sentence_has_polished_wrapper(text: str) -> bool:
+    sentences = [sentence.strip() for sentence in _sentences(str(text or "")) if sentence.strip()]
+    if not sentences:
+        return False
+    closing = sentences[-1]
+    tokens = _normalized_word_tokens(closing)
+    if len(tokens) < 10:
+        return False
+    opener = " ".join(tokens[:3])
+    wrapper_opener = tokens[0] in {
+        "this",
+        "these",
+        "that",
+        "therefore",
+        "overall",
+        "ultimately",
+    } or opener.startswith("as a")
+    abstract_nouns = [
+        token
+        for token in tokens
+        if token.endswith(("tion", "ment", "ity", "ness", "ance", "ence", "ism"))
+    ]
+    return wrapper_opener and len(abstract_nouns) >= 2 and not _first_person_count(closing)
+
+
+def _max_adjacent_index_run(indexes: list[int]) -> int:
+    if not indexes:
+        return 0
+    ordered = sorted(set(int(index) for index in indexes))
+    best = current = 1
+    for previous, item in zip(ordered, ordered[1:]):
+        if item == previous + 1:
+            current += 1
+        else:
+            best = max(best, current)
+            current = 1
+    return max(best, current)
 
 
 def _target_sentence_context(current_text: str, sentence: str) -> dict[str, Any]:
@@ -7477,6 +7738,10 @@ def build_safe_band_author_proxy_revision_plan_prompt(
             "reason": "The planner must improve grounded authorship and safe-band blockers, not optimize for another detector.",
         },
         "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+        "revision_compiler_contract": _author_proxy_revision_compiler_contract(
+            source_text="\n\n".join(section.text for section in sections),
+            section_count=len(sections),
+        ),
         "required_section_ids": [row["section_id"] for row in section_rows],
         "reconstruction_mode": {
             "mode": "density_blocker_author_proxy_pack" if density_section_count else "safe_band_author_proxy_pack",
@@ -7496,6 +7761,8 @@ def build_safe_band_author_proxy_revision_plan_prompt(
             "When materiality_gate.contract is density_section_repair, plan a section-level route rebuild that preserves coverage and voice while lowering generic density.",
             "Use the exact section_id values from required_section_ids; do not invent generic IDs such as safe_band_evidence_repair_t001.",
             "Make the writer's job explicit: which sentences to rebuild, which source evidence to retain, which claims to narrow, and what must be marked for author review.",
+            "For each section, plan sentence shape, abstraction density, citation rhythm, and paragraph closure before writing.",
+            "Do not allow author/context anchors to sit inside the same polished academic wrapper; change the route around the anchors.",
         ],
         "output_schema": {
             "evidence_ledger": {
@@ -7520,6 +7787,10 @@ def build_safe_band_author_proxy_revision_plan_prompt(
                     "required_moves": ["specific route and evidence moves the writer must perform"],
                     "sentences_to_rebuild": ["target or surrounding source sentence to materially rebuild"],
                     "claim_narrowing": ["unsupported claim to narrow, or empty"],
+                    "prose_shape_plan": ["sentence start, length, or clause-route changes to avoid uniform academic wrapping"],
+                    "abstraction_density_plan": ["which broad claim becomes concrete, qualified, or evidence-linked"],
+                    "citation_rhythm_plan": ["how citations/source references are preserved without repeated wrapper rhythm"],
+                    "closure_plan": "concrete consequence, limit, next decision, or author-owned observation for the section ending",
                     "materiality_requirement": "change target route and at least minimum_changed_source_sentences",
                     "author_review_items": ["review obligation, or empty"],
                 }
@@ -7559,11 +7830,20 @@ def build_safe_band_evidence_repair_prompt(
             "selection_reason": metadata.get("selection_reason"),
             "target_sentence": metadata.get("target_sentence"),
             "scanner_focus": metadata.get("scanner_focus"),
+            "revision_compiler_contract": _author_proxy_revision_compiler_contract(
+                source_text=section.text,
+                section_count=1,
+            ),
         },
         "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+        "revision_compiler_contract": _author_proxy_revision_compiler_contract(
+            source_text=section.text,
+            section_count=1,
+        ),
         "method": [
             "Treat this as paragraph evidence repair, not sentence polishing.",
             "Find the paragraph's actual job in the submitted draft, then rebuild the route around author-owned detail already present in source_text or nearby context.",
+            "Compile the paragraph shape first: sentence route, abstraction density, citation rhythm, and closure.",
             "Replace generic claims with narrower, concrete, evidence-linked wording when the draft supports it.",
             "If the needed detail is missing, narrow the claim and mark the gap for author review instead of inventing support.",
             "Keep citations, quotations, named people, technical codes, classroom events, and source anchors intact.",
@@ -7590,6 +7870,7 @@ def build_safe_band_evidence_repair_prompt(
             "Do not introduce slang, deliberate errors, or decorative humanizing noise.",
             "Keep the replacement near the source word count unless a slight expansion is needed to preserve evidence.",
             "Do not return a near-copy of section.source_text; the replacement must pass materiality_gate.",
+            "Do not leave author/context anchors inside a uniformly polished academic wrapper.",
         ],
         "variant_plan": [
             {
@@ -7712,6 +7993,10 @@ def build_safe_band_evidence_pack_prompt(
             "decision": "Candidates are accepted only by scanner movement, safe-band gap movement, materiality, and authorship integrity.",
         },
         "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+        "revision_compiler_contract": _author_proxy_revision_compiler_contract(
+            source_text="\n\n".join(section.text for section in sections),
+            section_count=len(sections),
+        ),
         "required_section_ids": [row["section_id"] for row in section_rows],
         "reconstruction_mode": {
             "mode": "density_blocker_author_proxy_pack" if density_section_count else "safe_band_author_proxy_pack",
@@ -7743,6 +8028,7 @@ def build_safe_band_evidence_pack_prompt(
             "Use the exact section_id values from required_section_ids; do not invent generic IDs.",
             "Each replacement must be only the replacement text for that section.",
             "Follow revision_plan before writing; do not write directly from scanner pressure.",
+            "Follow revision_compiler_contract before writing; anchors alone are insufficient if sentence shape, abstraction density, citation rhythm, and closure remain uniform.",
             "Coordinate the replacements so the document reads as one author-owned revision, not separate paraphrases.",
             "Use submitted material, nearby context, citations, and source anchors only.",
             "Narrow unsupported claims instead of adding new evidence.",
@@ -7755,6 +8041,7 @@ def build_safe_band_evidence_pack_prompt(
             "For density_section_repair sections, preserve the section word-count band, voice markers, citations, and source anchors while changing the section route.",
             "For density_section_repair sections, replacement word count must stay within materiality_gate.minimum_word_count and materiality_gate.maximum_word_count.",
             "Do not solve density by compressing coverage, adding decorative noise, or making the prose more detached and polished.",
+            "Do not finish sections with smooth universal academic takeaways when a concrete consequence, limit, or next decision is available in the source.",
             "Preserve section facts, citations, named people, technical codes, author stance, and paragraph role.",
             "Keep author_proxy_provenance and author_review_items compact: include only the highest-risk items, maximum four of each per variant.",
         ],
@@ -7763,6 +8050,7 @@ def build_safe_band_evidence_pack_prompt(
             "Choose author-owned details, citations, classroom actions, and constraints already present in source_text or nearby context.",
             "Turn broad claims into narrower claims when evidence is thin.",
             "Rebuild the section route around concrete author evidence rather than synonym substitution.",
+            "Break repeated academic wrapper rhythm before adding or preserving anchors.",
             "Keep any provisional bridge visible in author_proxy_provenance or author_review_items.",
         ],
         "variant_plan": [
@@ -7837,6 +8125,10 @@ def _safe_band_pack_section_payload(section: SectionUnit, *, index: int) -> dict
         "after_context": metadata.get("after_context"),
         "scanner_focus": metadata.get("scanner_focus"),
         "materiality_gate": materiality_gate,
+        "revision_compiler_contract": _author_proxy_revision_compiler_contract(
+            source_text=section.text,
+            section_count=1,
+        ),
     }
 
 
@@ -9161,6 +9453,17 @@ def _apply_safe_band_evidence_pack_variant(
                     "reason": "candidate_introduced_unbalanced_double_quote",
                 },
             }
+        compiler_audit = _author_proxy_revision_compiler_audit(
+            source_text=section.text,
+            candidate_text=replacement,
+        )
+        materiality_row["revision_compiler_audit"] = compiler_audit
+        if materiality_row.get("passed") is not False and compiler_audit.get("passed") is False:
+            materiality_row = {
+                **materiality_row,
+                "passed": False,
+                "reason": "candidate_revision_compiler_failed",
+            }
         materiality_row["section_id"] = section.section_id
         materiality_rows.append(materiality_row)
         if section.start_char < 0 or section.end_char <= section.start_char or section.end_char > len(candidate_text):
@@ -9792,6 +10095,10 @@ def _sanitize_safe_band_author_proxy_revision_plan(
             "required_moves": text_list(row, "required_moves", limit=10),
             "sentences_to_rebuild": text_list(row, "sentences_to_rebuild", limit=8),
             "claim_narrowing": text_list(row, "claim_narrowing", limit=6),
+            "prose_shape_plan": text_list(row, "prose_shape_plan", limit=6),
+            "abstraction_density_plan": text_list(row, "abstraction_density_plan", limit=6),
+            "citation_rhythm_plan": text_list(row, "citation_rhythm_plan", limit=6),
+            "closure_plan": str(row.get("closure_plan") or "")[:500],
             "materiality_requirement": str(row.get("materiality_requirement") or "")[:500],
             "author_review_items": text_list(row, "author_review_items", limit=8),
         })
@@ -9849,6 +10156,10 @@ def _safe_band_author_proxy_revision_plan_response_format(section_count: int) ->
             "required_moves": text_array_schema,
             "sentences_to_rebuild": text_array_schema,
             "claim_narrowing": text_array_schema,
+            "prose_shape_plan": text_array_schema,
+            "abstraction_density_plan": text_array_schema,
+            "citation_rhythm_plan": text_array_schema,
+            "closure_plan": {"type": "string"},
             "materiality_requirement": {"type": "string"},
             "author_review_items": text_array_schema,
         },
@@ -9858,6 +10169,10 @@ def _safe_band_author_proxy_revision_plan_response_format(section_count: int) ->
             "required_moves",
             "sentences_to_rebuild",
             "claim_narrowing",
+            "prose_shape_plan",
+            "abstraction_density_plan",
+            "citation_rhythm_plan",
+            "closure_plan",
             "materiality_requirement",
             "author_review_items",
         ],
@@ -10378,14 +10693,24 @@ def _attach_safe_band_quality_materiality(row: dict[str, Any], *, current_text: 
 
 def _safe_band_document_quality_materiality(*, source_text: str, candidate_text: str) -> dict[str, Any]:
     repetition = _safe_band_density_repetition_audit(source_text, candidate_text)
+    compiler = _author_proxy_revision_compiler_audit(
+        source_text=source_text,
+        candidate_text=candidate_text,
+    )
+    passed = repetition.get("passed") is True and compiler.get("passed") is not False
     return {
-        "passed": repetition.get("passed") is True,
+        "passed": passed,
         "reason": (
             "document_quality_preserved"
-            if repetition.get("passed") is True
-            else "document_repetition_regression"
+            if passed
+            else (
+                "document_repetition_regression"
+                if repetition.get("passed") is not True
+                else "document_revision_compiler_failed"
+            )
         ),
         "repetition_audit": repetition,
+        "revision_compiler_audit": compiler,
     }
 
 

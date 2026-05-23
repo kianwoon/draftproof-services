@@ -932,6 +932,8 @@ def test_v5_safe_band_evidence_pack_prompt_requires_all_section_replacements():
     assert payload["architecture_stage"] == "author_proxy_writer_from_evidence_ledger_and_revision_plan"
     assert payload["single_product_judge"]["judge"] == "DraftProof internal safe-band and authorship-integrity scoring"
     assert payload["single_product_judge"]["ignored_as_acceptance_judge"] == "external AI flag score"
+    assert payload["revision_compiler_contract"]["schema_version"] == "author_proxy_revision_compiler_contract.v1"
+    assert "citation_rhythm" in payload["revision_compiler_contract"]["control_axes"]
     assert payload["evidence_ledger"]["sections"][0]["author_owned_evidence"][0] == "group reflection"
     assert payload["revision_plan"][1]["required_moves"][0] == "connect video polish to sectioning obstacle"
     assert [row["section_id"] for row in payload["sections"]] == [
@@ -1195,11 +1197,79 @@ def test_v5_safe_band_author_proxy_revision_plan_prompt_precedes_writer():
     assert payload["task"] == "safe_band_author_proxy_evidence_ledger_and_revision_plan"
     assert payload["architecture_stage"] == "evidence_ledger_then_revision_plan_before_writer"
     assert payload["single_product_judge"]["ignored_as_acceptance_judge"] == "external AI flag score"
+    assert payload["revision_compiler_contract"]["schema_version"] == "author_proxy_revision_compiler_contract.v1"
+    assert "sentence_shape" in payload["revision_compiler_contract"]["control_axes"]
     assert payload["kpi_contract"]["gaps"]["topk_calibrated_risk"] == 5.0
     assert payload["sections"][0]["materiality_gate"]["minimum_changed_source_sentences"] == 2
+    assert payload["sections"][0]["revision_compiler_contract"]["source_profile"]["sentence_count"] == 3
     assert payload["output_schema"]["evidence_ledger"]["sections"][0]["author_owned_evidence"]
     assert payload["output_schema"]["revision_plan"][0]["required_moves"]
+    assert payload["output_schema"]["revision_plan"][0]["prose_shape_plan"]
+    assert payload["output_schema"]["revision_plan"][0]["abstraction_density_plan"]
+    assert payload["output_schema"]["revision_plan"][0]["citation_rhythm_plan"]
+    assert payload["output_schema"]["revision_plan"][0]["closure_plan"]
     assert payload["author_proxy_context"]["mode"] == "non_interrupting_author_proxy_draft"
+
+
+def test_v5_author_proxy_revision_compiler_audit_catches_polished_wrapper_risk():
+    audit = v5_residual_comb._author_proxy_revision_compiler_audit(
+        source_text=(
+            "I watched the student stop at the mirror. "
+            "Her sectioning slipped when she turned the comb. "
+            "I changed the next demonstration to slow that step down."
+        ),
+        candidate_text=(
+            "This experience demonstrates the importance of effective teaching practice. "
+            "According to Smith (2024), reflective pedagogy supports student learning. "
+            "As a result, the overall process highlights the significance of inclusive educational development."
+        ),
+    )
+
+    assert audit["schema_version"] == "author_proxy_revision_compiler_audit.v1"
+    assert audit["passed"] is False
+    assert "citation_rhythm_not_expanded" in audit["failed_checks"]
+    assert "closure_not_polished_wrapper" in audit["failed_checks"]
+
+
+def test_v5_safe_band_pack_rejects_candidate_that_only_wraps_anchors():
+    source = (
+        "I watched the student stop at the mirror. "
+        "Her sectioning slipped when she turned the comb. "
+        "I changed the next demonstration to slow that step down."
+    )
+    section = SectionUnit(
+        section_id="safe_band_evidence_repair_t001",
+        heading="Safe-band evidence repair",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=24,
+        metadata={"target_sentence": "Her sectioning slipped when she turned the comb."},
+    )
+    candidate, status, materiality = v5_residual_comb._apply_safe_band_evidence_pack_variant(
+        current_text=source,
+        sections=[section],
+        variant={
+            "variant_id": "v1",
+            "replacements": [
+                {
+                    "section_id": "safe_band_evidence_repair_t001",
+                    "text": (
+                        "This classroom moment demonstrates the importance of effective practice. "
+                        "According to Smith (2024), reflective pedagogy supports student learning. "
+                        "As a result, the process highlights the significance of inclusive educational development."
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert candidate
+    assert status["applied"] is False
+    assert materiality["passed"] is False
+    assert materiality["sections"][0]["reason"] == "candidate_revision_compiler_failed"
+    assert materiality["sections"][0]["revision_compiler_audit"]["passed"] is False
 
 
 def test_v5_safe_band_author_proxy_revision_plan_sanitizer_requires_all_sections():
