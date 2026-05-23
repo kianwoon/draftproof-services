@@ -4648,6 +4648,104 @@ def test_v5_adaptive_runtime_budget_scales_with_length_and_pressure(monkeypatch)
     assert high_pressure <= 720.0
 
 
+def test_v5_author_proxy_safe_band_runs_before_legacy_cleanup(tmp_path, monkeypatch):
+    calls: list[str] = []
+    current_scores = {
+        "ai": 48.0,
+        "risky_window_count": 1,
+        "unsafe_word_ratio": 52.0,
+        "unsafe_cluster_count": 10,
+        "topk_calibrated_risk": 80.0,
+        "qualifying_text_ai_density": 65.0,
+        "ai_authorship": 48.0,
+    }
+    current_goal = {
+        "status": "mitigation_failed_no_safe_candidate",
+        "goal_met": False,
+        "reason": "candidate_failed_strict_detector_safe_goal",
+        "ai_footprint_gate": {
+            "safe_band": False,
+            "safe_band_thresholds": {
+                "topk_calibrated_risk": 25.0,
+                "qualifying_text_ai_density": 35.0,
+            },
+            "remaining_ai_footprint_drivers": [
+                {"driver": "topk_calibrated_risk", "value": 80.0, "safe_band": 25.0},
+                {"driver": "qualifying_text_ai_density", "value": 65.0, "safe_band": 35.0},
+            ],
+        },
+    }
+
+    monkeypatch.setattr(v5_residual_comb, "_scan_report", lambda _text: {})
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "evaluate_rewrite_goal",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: dict(current_goal)),
+    )
+    monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, goal: dict(goal))
+    monkeypatch.setattr(v5_residual_comb, "_score_summary", lambda *_args, **_kwargs: dict(current_scores))
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_density_gate_for_report",
+        lambda *_args, **_kwargs: {
+            "safe": False,
+            "unsafe_cluster_count": 10,
+            "unsafe_eligible_word_ratio": 52.0,
+            "thresholds": {
+                "max_unsafe_cluster_count": 4,
+                "max_unsafe_eligible_word_ratio": 35.0,
+            },
+        },
+    )
+    monkeypatch.setattr(v5_residual_comb, "build_cluster_repair_units", lambda **_kwargs: [])
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_repair_should_run", lambda **_kwargs: True)
+    monkeypatch.setattr(v5_residual_comb, "_borderline_verdict_should_run", lambda **_kwargs: False)
+    monkeypatch.setattr(v5_residual_comb, "_final_topk_sentence_route_should_run", lambda **_kwargs: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_first_repair_should_run", lambda **_kwargs: False)
+
+    def fake_safe_band_pack(**kwargs):
+        calls.append("safe_band")
+        return (
+            kwargs["current_text"],
+            kwargs["current_report"],
+            kwargs["current_goal"],
+            kwargs["current_scores"],
+            [{"phase": "safe_band_evidence_pack", "status": "skipped"}],
+            kwargs["global_best_candidate"],
+            False,
+        )
+
+    def fake_risky_cleanup(**kwargs):
+        calls.append("risky_window_cleanup")
+        return (
+            kwargs["current_text"],
+            kwargs["current_report"],
+            kwargs["current_goal"],
+            kwargs["current_scores"],
+            [{"phase": "risky_window_cleanup", "status": "skipped"}],
+            kwargs["global_best_candidate"],
+        )
+
+    monkeypatch.setattr(v5_residual_comb, "_run_safe_band_evidence_pack_attempt", fake_safe_band_pack)
+    monkeypatch.setattr(v5_residual_comb, "_run_risky_window_cleanup_pass", fake_risky_cleanup)
+
+    payload = run_v5_residual_cluster_comb_experiment(
+        input_text="The submitted draft needs author-owned repair.",
+        output_dir=tmp_path,
+        max_rounds=1,
+        risky_window_cleanup_rounds=1,
+        unsafe_cluster_cleanup_rounds=0,
+        final_risky_window_cleanup_rounds=0,
+        direct_scanner_leapfrog_rounds=0,
+        max_seconds=999,
+        api_key="test-key",
+    )
+
+    assert calls == ["safe_band", "risky_window_cleanup"]
+    assert payload["phase_order"]["safe_band_evidence_repair"]["pre_core_author_proxy_pack"] is True
+    assert payload["safe_band_evidence_repair_rounds"][0]["phase"] == "safe_band_evidence_pack"
+
+
 def test_v5_borderline_verdict_runs_only_after_local_blockers_are_safe(monkeypatch):
     monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_CLEANUP", raising=False)
     safe_density = {
@@ -6725,6 +6823,20 @@ def test_v5_author_proxy_context_is_built_from_mitigation_plan():
     assert any("qualifying AI density" in item for item in evidence_contract["kpi_alignment"])
 
 
+def test_v5_author_proxy_context_defaults_to_non_interrupting_author_proxy():
+    context = v5_production._build_author_proxy_context(
+        {"input_text": "The submitted draft already contains the author's examples."},
+        "The submitted draft already contains the author's examples.",
+    )
+
+    assert context["active"] is True
+    assert context["review_required"] is False
+    assert context["mode"] == "non_interrupting_author_proxy_draft"
+    assert context["review_cards"] == []
+    assert context["quality_bar"]["target"] == "highest_quality_grounded_candidate"
+    assert context["authorship_evidence_contract"]["basis"] == "submitted_content_only"
+
+
 def test_v5_author_proxy_runtime_uses_legacy_budget_floor(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_RUNTIME_BASE_SECONDS", "900")
     monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_RUNTIME_SECONDS_PER_100_WORDS", "0")
@@ -7310,7 +7422,7 @@ def test_v5_residual_comb_routes_density_blocker_to_safe_band_before_final_topk(
             "external_ai_flag_risk": 51.918,
         }
 
-    def fake_safe_band(**kwargs):
+    def fake_safe_band_pack(**kwargs):
         call_order.append("safe_band")
         return (
             kwargs["current_text"],
@@ -7319,6 +7431,7 @@ def test_v5_residual_comb_routes_density_blocker_to_safe_band_before_final_topk(
             kwargs["current_scores"],
             [{"phase": "safe_band_density_section_repair", "status": "skipped"}],
             kwargs["global_best_candidate"],
+            False,
         )
 
     def fake_final_topk(**kwargs):
@@ -7336,7 +7449,7 @@ def test_v5_residual_comb_routes_density_blocker_to_safe_band_before_final_topk(
     monkeypatch.setattr(v5_residual_comb, "evaluate_rewrite_goal", fake_goal)
     monkeypatch.setattr(v5_residual_comb, "_score_summary", fake_score)
     monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, goal: goal)
-    monkeypatch.setattr(v5_residual_comb, "_run_safe_band_evidence_repair_pass", fake_safe_band)
+    monkeypatch.setattr(v5_residual_comb, "_run_safe_band_evidence_pack_attempt", fake_safe_band_pack)
     monkeypatch.setattr(v5_residual_comb, "_run_final_topk_sentence_route_pass", fake_final_topk)
     monkeypatch.setattr(v5_residual_comb, "_final_topk_sentence_route_should_run", lambda **_kwargs: True)
     monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_ENABLED", "0")
@@ -7358,7 +7471,7 @@ def test_v5_residual_comb_routes_density_blocker_to_safe_band_before_final_topk(
     )
 
     assert call_order[:2] == ["safe_band", "final_topk"]
-    assert payload["phase_order"]["safe_band_evidence_repair"]["density_first_route"] is True
+    assert payload["phase_order"]["safe_band_evidence_repair"]["pre_core_author_proxy_pack"] is True
     assert payload["safe_band_evidence_repair_rounds"][0]["phase"] == "safe_band_density_section_repair"
 
 

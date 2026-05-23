@@ -443,6 +443,41 @@ def run_v5_residual_cluster_comb_experiment(
             "reason": "historical_seed_targeted_safe_band_repair",
             "current_scores": current_scores,
         })
+    if (
+        safe_band_evidence_repair_enabled
+        and not _runtime_budget_exhausted(started_at, budget_seconds)
+        and not _candidate_strict_safe_band_achieved({"candidate_goal": current_goal, "scores": current_scores})
+        and _safe_band_evidence_repair_should_run(current_scores=current_scores, current_goal=current_goal)
+    ):
+        phase_order["safe_band_evidence_repair"]["pre_core_author_proxy_pack"] = True
+        _emit_progress(progress_callback, 67, "Running V5 author-proxy compiler pack")
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            safe_band_evidence_repair_rounds,
+            global_best_candidate,
+            _pack_accepted,
+        ) = _run_safe_band_evidence_pack_attempt(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "safe_band_evidence_repair" / "pre_core_pack",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=67,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
+            started_at=started_at,
+            max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
+        )
+        raise_if_canceled()
     if direct_scanner_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds):
         _emit_progress(progress_callback, 67, "Running V5 direct scanner-cluster leapfrog")
         (
@@ -898,6 +933,42 @@ def run_v5_residual_cluster_comb_experiment(
             ))
             break
 
+    if (
+        safe_band_evidence_repair_enabled
+        and not safe_band_evidence_repair_rounds
+        and not _runtime_budget_exhausted(started_at, budget_seconds)
+        and not _candidate_strict_safe_band_achieved({"candidate_goal": current_goal, "scores": current_scores})
+        and _safe_band_evidence_repair_should_run(current_scores=current_scores, current_goal=current_goal)
+    ):
+        phase_order["safe_band_evidence_repair"]["pre_cleanup_author_proxy_route"] = True
+        _emit_progress(progress_callback, 76, "Running V5 author-proxy safe-band compiler")
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            safe_band_evidence_repair_rounds,
+            global_best_candidate,
+        ) = _run_safe_band_evidence_repair_pass(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "safe_band_evidence_repair",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=76,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
+            started_at=started_at,
+            max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
+        )
+        raise_if_canceled()
+
     event = (
         _adaptive_cutoff_stop_event(
             phase="before_risky_window_cleanup",
@@ -1091,6 +1162,7 @@ def run_v5_residual_cluster_comb_experiment(
 
     if (
         safe_band_evidence_repair_enabled
+        and not safe_band_evidence_repair_rounds
         and not _runtime_budget_exhausted(started_at, budget_seconds)
         and _safe_band_density_first_repair_should_run(current_scores=current_scores, current_goal=current_goal)
     ):

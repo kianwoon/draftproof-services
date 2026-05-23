@@ -220,19 +220,11 @@ def _build_author_proxy_context(report: dict[str, Any], original_text: str) -> d
     plan = _ai_mitigation_plan_from_report(report)
     readiness = plan.get("readiness") if isinstance(plan.get("readiness"), dict) else {}
     review_cards = _author_proxy_review_cards(plan)
-    active = bool(readiness.get("requires_user_input") or review_cards)
-    if not active:
-        return {
-            "schema_version": "author_proxy_context.v1",
-            "active": False,
-            "review_required": False,
-            "mode": "none",
-            "review_cards": [],
-        }
+    review_required = bool(readiness.get("requires_user_input") or review_cards)
     return {
         "schema_version": "author_proxy_context.v1",
         "active": True,
-        "review_required": True,
+        "review_required": review_required,
         "mode": "non_interrupting_author_proxy_draft",
         "primary_mode": plan.get("primary_mode"),
         "required_inputs": readiness.get("required_inputs") or [],
@@ -928,7 +920,13 @@ def _v5_runtime_budget_seconds(
     if adaptive_budget is None:
         return legacy_budget
     author_proxy_context = _build_author_proxy_context(original_report or {}, original_text)
-    if isinstance(author_proxy_context, dict) and author_proxy_context.get("active"):
+    if (
+        isinstance(author_proxy_context, dict)
+        and (
+            author_proxy_context.get("review_required")
+            or author_proxy_context.get("review_cards")
+        )
+    ):
         return legacy_budget
     return max(
         60,
