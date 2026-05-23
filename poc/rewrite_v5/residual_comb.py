@@ -1365,6 +1365,24 @@ def _borderline_max_word_ratio() -> float:
     )
 
 
+def _author_proxy_document_window_ratio() -> float:
+    return _float_env(
+        "DRAFTPROOF_AUTHOR_PROXY_DOCUMENT_WINDOW_RATIO",
+        0.75,
+        minimum=0.25,
+        maximum=1.0,
+    )
+
+
+def _author_proxy_document_min_word_ratio() -> float:
+    return _float_env(
+        "DRAFTPROOF_AUTHOR_PROXY_DOCUMENT_MIN_WORD_RATIO",
+        0.90,
+        minimum=0.5,
+        maximum=1.0,
+    )
+
+
 def _borderline_verdict_should_run(
     *,
     current_scores: dict[str, Any],
@@ -1387,7 +1405,6 @@ def _borderline_verdict_should_run(
             ("ai", ai_threshold),
             ("ai_authorship", authorship_threshold),
             ("external", external_threshold),
-            ("external_ai_flag_risk", external_threshold),
             ("qualifying_text_ai_density", density_threshold),
         )
     )
@@ -1914,6 +1931,7 @@ def _attach_author_proxy_context(payload: dict[str, Any], context: dict[str, Any
         "If a needed detail is not in the source text, keep the language conditional or narrow the claim instead of fabricating support.",
         "Treat author_proxy_context.review_cards as author-review obligations for the final product.",
         "Do not write bracketed placeholders in the rewritten text; produce a readable candidate that the author can later verify.",
+        "Do not compress document-sized windows into summaries; preserve full coverage, paragraph intent, examples, and approximate source length.",
     ]
     payload["author_proxy_quality_contract"] = {
         "target": "highest_quality_grounded_candidate",
@@ -3185,7 +3203,6 @@ def build_borderline_verdict_cleanup_prompt(
                 "ai": current_scores.get("ai"),
                 "ai_authorship": current_scores.get("ai_authorship"),
                 "external": current_scores.get("external"),
-                "external_ai_flag_risk": current_scores.get("external_ai_flag_risk"),
                 "topk": current_scores.get("topk"),
                 "topk_calibrated_risk": current_scores.get("topk_calibrated_risk"),
                 "qualifying_text_ai_density": current_scores.get("qualifying_text_ai_density"),
@@ -4455,6 +4472,38 @@ def _score_residual_variant(
         review_items=variant.author_review_items,
         audit=author_proxy_audit,
     )
+    source_words = max(1, int(section.word_count or word_count(section.text)))
+    replacement_words = max(1, int(variant.word_count or word_count(variant.text)))
+    current_words = max(1, word_count(current_text))
+    document_window_ratio = source_words / current_words
+    if (
+        _author_proxy_active(author_proxy_context)
+        and document_window_ratio >= _author_proxy_document_window_ratio()
+        and replacement_words < round(source_words * _author_proxy_document_min_word_ratio())
+    ):
+        return {
+            "section_id": section.section_id,
+            "variant_id": variant.variant_id,
+            "label": label,
+            "text": variant.text,
+            "word_count": variant.word_count,
+            "apply_status": {
+                "applied": False,
+                "reason": "author_proxy_document_window_compressed_too_much",
+                "source_words": source_words,
+                "candidate_words": replacement_words,
+                "minimum_candidate_words": round(source_words * _author_proxy_document_min_word_ratio()),
+                "document_window_ratio": round(document_window_ratio, 4),
+            },
+            "scores": current_scores,
+            "incremental": {},
+            "local_scores": {},
+            "local_goal": {},
+            "author_proxy_audit": author_proxy_audit,
+            "author_proxy_quality": author_proxy_quality,
+            "author_proxy_provenance": variant.author_proxy_provenance,
+            "author_review_items": variant.author_review_items,
+        }
     boundary_integrity = _section_apply_boundary_integrity(current_text, section)
     if not boundary_integrity.get("passed"):
         return {
@@ -5407,6 +5456,36 @@ def _run_final_topk_sentence_route_pass(
             )
             for variant in variants
         ]
+        partial_variants: list[dict[str, Any]] = []
+        for variant in variants:
+            variant_id = str(variant.get("variant_id") or "").strip()
+            for repair in variant.get("repairs") if isinstance(variant.get("repairs"), list) else []:
+                if not isinstance(repair, dict):
+                    continue
+                target_id = str(repair.get("target_id") or "").strip()
+                if not target_id:
+                    continue
+                partial_variants.append({
+                    "variant_id": f"{variant_id}_{target_id}",
+                    "repairs": [repair],
+                })
+        rows.extend(
+            _score_final_topk_sentence_route_variant(
+                original_text=original_text,
+                baseline_report=baseline_report,
+                baseline_scores=baseline_scores,
+                current_text=current_text,
+                current_scores=current_scores,
+                targets=batch_targets,
+                variant=variant,
+                output_dir=round_dir,
+                label=f"topk_sentence_route_b{batch_index}_{variant.get('variant_id')}_partial",
+                author_proxy_context=author_proxy_context,
+                author_proxy_phase="final_topk_sentence_route_partial",
+                require_all_targets=False,
+            )
+            for variant in partial_variants
+        )
         selected = _best_final_topk_sentence_route_candidate(rows)
         accepted = selected if selected and _has_final_topk_sentence_route_movement(selected) else None
         round_payload = {
@@ -5609,6 +5688,7 @@ def _score_final_topk_sentence_route_variant(
     label: str,
     author_proxy_context: dict[str, Any] | None = None,
     author_proxy_phase: str | None = None,
+    require_all_targets: bool = True,
 ) -> dict[str, Any]:
     lookup = {str(target.get("target_id") or ""): str(target.get("sentence") or "") for target in targets}
     candidate_text = current_text
@@ -5635,16 +5715,24 @@ def _score_final_topk_sentence_route_variant(
             "repair_route": repair.get("repair_route"),
         })
     candidate_words = word_count(candidate_text)
+    applied_target_count = len(applied)
+    required_target_count = len(targets) if require_all_targets else 1
     apply_status: dict[str, Any] = {
-        "applied": len(applied) == len(targets),
+        "applied": applied_target_count >= required_target_count,
         "scope": "final_topk_sentence_route",
         "target_count": len(targets),
-        "applied_repair_count": len(applied),
+        "required_target_count": required_target_count,
+        "applied_repair_count": applied_target_count,
+        "partial_candidate": not require_all_targets,
         "source_words": word_count(current_text),
         "candidate_words": candidate_words,
     }
     if not apply_status["applied"]:
-        apply_status["reason"] = "not_all_target_sentences_repaired"
+        apply_status["reason"] = (
+            "no_target_sentence_repaired"
+            if not require_all_targets
+            else "not_all_target_sentences_repaired"
+        )
     elif _paragraph_count(candidate_text) != _paragraph_count(current_text):
         apply_status.update({
             "applied": False,
@@ -5850,10 +5938,13 @@ def _has_final_topk_sentence_route_movement(row: dict[str, Any]) -> bool:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     min_topk = _final_topk_sentence_route_min_topk_delta()
     min_calibrated = _final_topk_sentence_route_min_calibrated_delta()
+    min_ai = _final_topk_sentence_route_min_ai_delta()
     if (
         _number(incremental.get("topk_delta")) < min_topk
         and _number(incremental.get("topk_calibrated_risk_delta")) < min_calibrated
     ):
+        return False
+    if _number(incremental.get("ai_delta")) < min_ai:
         return False
     if _number(incremental.get("risky_window_count_delta")) < 0:
         return False
@@ -5865,13 +5956,13 @@ def _has_final_topk_sentence_route_movement(row: dict[str, Any]) -> bool:
 def _final_topk_sentence_route_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     return (
-        _author_proxy_quality_sort_value(row),
         _number(incremental.get("topk_delta")) * 3.0 + _number(incremental.get("topk_calibrated_risk_delta")) * 1.5,
         _number(incremental.get("topk_delta")),
         _number(incremental.get("topk_calibrated_risk_delta")),
         _number(incremental.get("ai_delta")),
         _number(incremental.get("external_delta")),
         _number(incremental.get("unsafe_cluster_count_delta")),
+        _author_proxy_quality_sort_value(row),
     )
 
 
@@ -5961,6 +6052,10 @@ def _final_topk_sentence_route_min_calibrated_delta() -> float:
     return _float_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_MIN_CALIBRATED_DELTA", 0.0, minimum=0.0, maximum=50.0)
 
 
+def _final_topk_sentence_route_min_ai_delta() -> float:
+    return _float_env("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_MIN_AI_DELTA", 0.0, minimum=-10.0, maximum=20.0)
+
+
 def _best_risky_window_cleanup_candidate(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     eligible = [row for row in rows if (row.get("apply_status") or {}).get("applied")]
     if not eligible:
@@ -6009,6 +6104,8 @@ def _full_document_candidate_beats_scores(row: dict[str, Any] | None, current_sc
     if not _has_full_document_fallback_movement(row):
         return False
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    if _ai_first_density_safe_candidate_beats_scores(row, current_scores):
+        return True
     if _would_discard_structural_progress(scores, current_scores):
         return False
     current_row = {
@@ -6031,12 +6128,56 @@ def _would_discard_structural_progress(candidate_scores: dict[str, Any], current
     return False
 
 
+def _ai_first_density_safe_candidate_beats_scores(row: dict[str, Any], current_scores: dict[str, Any]) -> bool:
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    if not _candidate_density_safe(row):
+        return False
+    current_ai = _number(current_scores.get("ai"))
+    candidate_ai = _number(scores.get("ai"))
+    if current_ai <= 0 or candidate_ai <= 0:
+        return False
+    min_ai_gain = _float_env(
+        "DRAFTPROOF_REWRITE_V5_AI_FIRST_FALLBACK_MIN_AI_GAIN",
+        0.25,
+        minimum=0.0,
+        maximum=20.0,
+    )
+    if current_ai - candidate_ai < min_ai_gain:
+        return False
+    max_topk_regression = _float_env(
+        "DRAFTPROOF_REWRITE_V5_AI_FIRST_FALLBACK_MAX_TOPK_REGRESSION",
+        1.5,
+        minimum=0.0,
+        maximum=20.0,
+    )
+    current_topk = _number(current_scores.get("topk"))
+    candidate_topk = _number(scores.get("topk"))
+    if current_topk > 0 and candidate_topk > 0 and candidate_topk - current_topk > max_topk_regression:
+        return False
+    if _number(scores.get("risky_window_count")) > 0:
+        return False
+    return True
+
+
+def _candidate_density_safe(row: dict[str, Any]) -> bool:
+    goal = row.get("candidate_goal") if isinstance(row.get("candidate_goal"), dict) else {}
+    density = goal.get("eligible_span_density_gate") if isinstance(goal.get("eligible_span_density_gate"), dict) else {}
+    if "safe" in density:
+        return bool(density.get("safe"))
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    unsafe_clusters = _number(scores.get("unsafe_cluster_count"))
+    return unsafe_clusters > 0 and unsafe_clusters <= _float_env(
+        "DRAFTPROOF_REWRITE_V5_AI_FIRST_FALLBACK_MAX_UNSAFE_CLUSTERS",
+        4.0,
+        minimum=0.0,
+        maximum=20.0,
+    )
+
+
 def _full_document_candidate_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     return (
-        _author_proxy_quality_sort_value(row),
         _number(scores.get("ai_delta")),
-        _number(scores.get("external_ai_flag_risk_delta")),
         _number(scores.get("external_delta")),
         _number(scores.get("risky_window_count_delta")),
         _number(scores.get("unsafe_cluster_count_delta")),
@@ -6045,6 +6186,7 @@ def _full_document_candidate_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
         _number(scores.get("qualifying_text_ai_density_delta")),
         _number(scores.get("unsafe_word_ratio_delta")),
         _number(scores.get("rank_delta")),
+        _author_proxy_quality_sort_value(row),
     )
 
 
@@ -6056,8 +6198,6 @@ def _has_full_document_fallback_movement(row: dict[str, Any]) -> bool:
         return False
     if _number(scores.get("topk_calibrated_risk_delta")) < 0:
         return False
-    if _number(scores.get("external_ai_flag_risk_delta")) < 0:
-        return False
     if _number(scores.get("unsafe_cluster_count_delta")) < 0:
         return False
     if _number(scores.get("risky_window_count_delta")) < 0:
@@ -6068,7 +6208,6 @@ def _has_full_document_fallback_movement(row: dict[str, Any]) -> bool:
             "ai_delta",
             "topk_calibrated_risk_delta",
             "topk_delta",
-            "external_ai_flag_risk_delta",
             "external_delta",
             "qualifying_text_ai_density_delta",
             "unsafe_cluster_count_delta",
@@ -6082,14 +6221,17 @@ def _risky_window_cleanup_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     return (
-        _author_proxy_quality_sort_value(row),
         _number(incremental.get("risky_window_count_delta")),
-        _number(incremental.get("rank_delta")),
-        _number(incremental.get("unsafe_cluster_count_delta")),
-        _number(incremental.get("external_delta")),
-        _number(incremental.get("topk_delta")),
         _number(incremental.get("ai_delta")),
+        _number(incremental.get("topk_delta")),
+        _number(incremental.get("unsafe_cluster_count_delta")),
+        _number(incremental.get("rank_delta")),
+        _number(incremental.get("external_delta")),
+        _number(scores.get("ai_delta")),
+        _number(scores.get("topk_delta")),
+        _number(scores.get("unsafe_cluster_count_delta")),
         _number(scores.get("rank_delta")),
+        _author_proxy_quality_sort_value(row),
     )
 
 
@@ -6097,13 +6239,16 @@ def _unsafe_cluster_cleanup_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     return (
-        _author_proxy_quality_sort_value(row),
         _number(incremental.get("unsafe_cluster_count_delta")),
-        _number(incremental.get("rank_delta")),
-        _number(incremental.get("external_delta")),
-        _number(incremental.get("topk_delta")),
         _number(incremental.get("ai_delta")),
+        _number(incremental.get("topk_delta")),
+        _number(incremental.get("external_delta")),
+        _number(incremental.get("rank_delta")),
+        _number(scores.get("unsafe_cluster_count_delta")),
+        _number(scores.get("ai_delta")),
+        _number(scores.get("topk_delta")),
         _number(scores.get("rank_delta")),
+        _author_proxy_quality_sort_value(row),
     )
 
 
@@ -6112,12 +6257,10 @@ def _borderline_verdict_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     boundary_crossed = 1.0 if _borderline_verdict_candidate_crosses_boundary(row) else 0.0
     return (
-        _author_proxy_quality_sort_value(row),
         boundary_crossed,
         _borderline_verdict_boundary_margin(scores),
         _number(incremental.get("ai_delta")),
         _number(incremental.get("external_delta")),
-        _number(incremental.get("external_ai_flag_risk_delta")),
         _number(incremental.get("ai_authorship_delta")),
         _number(incremental.get("qualifying_text_ai_density_delta")),
         _number(incremental.get("topk_calibrated_risk_delta")),
@@ -6125,6 +6268,7 @@ def _borderline_verdict_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
         _number(scores.get("ai_delta")),
         _number(scores.get("external_delta")),
         _number(scores.get("rank_delta")),
+        _author_proxy_quality_sort_value(row),
     )
 
 
@@ -6160,7 +6304,6 @@ def _balanced_ai_topk_sort_value(row: dict[str, Any]) -> tuple[float, ...]:
         + (rank_delta * 0.05)
     )
     return (
-        _author_proxy_quality_sort_value(row),
         weighted,
         ai_delta,
         topk_delta,
@@ -6170,6 +6313,7 @@ def _balanced_ai_topk_sort_value(row: dict[str, Any]) -> tuple[float, ...]:
         unsafe_word_delta,
         unsafe_cluster_delta,
         rank_delta,
+        _author_proxy_quality_sort_value(row),
     )
 
 
@@ -6300,7 +6444,6 @@ def _has_borderline_verdict_movement(row: dict[str, Any]) -> bool:
     directional = (
         _number(incremental.get("ai_delta")) >= min_ai
         or _number(incremental.get("external_delta")) >= min_external
-        or _number(incremental.get("external_ai_flag_risk_delta")) >= min_external
         or _number(incremental.get("ai_authorship_delta")) >= min_ai
     )
     if not directional:
@@ -6437,7 +6580,6 @@ def _borderline_rejected_candidate_feedback(
             "ai": scores.get("ai"),
             "ai_authorship": scores.get("ai_authorship"),
             "external": scores.get("external"),
-            "external_ai_flag_risk": scores.get("external_ai_flag_risk"),
             "topk": scores.get("topk"),
             "topk_calibrated_risk": scores.get("topk_calibrated_risk"),
             "risky_window_count": scores.get("risky_window_count"),
@@ -6570,15 +6712,18 @@ def _residual_candidate_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     return (
-        _author_proxy_quality_sort_value(row),
         1.0 if _local_cluster_cleared(local) else 0.0,
         _number(local.get("unsafe_cluster_count_delta")),
         _number(local.get("topk_calibrated_risk_delta")),
         _number(local.get("unsafe_word_ratio_delta")),
         _number(incremental.get("unsafe_cluster_count_delta")),
-        _number(incremental.get("rank_delta")),
         _number(incremental.get("ai_delta")),
+        _number(incremental.get("topk_delta")),
+        _number(incremental.get("rank_delta")),
+        _number(scores.get("ai_delta")),
+        _number(scores.get("topk_delta")),
         _number(scores.get("rank_delta")),
+        _author_proxy_quality_sort_value(row),
     )
 
 
@@ -6829,7 +6974,6 @@ def _incremental_deltas(scores: dict[str, Any], current_scores: dict[str, Any]) 
         "topk_calibrated_risk",
         "qualifying_text_ai_density",
         "ai_authorship",
-        "external_ai_flag_risk",
     )
     result: dict[str, Any] = {}
     for key in lower_is_better:

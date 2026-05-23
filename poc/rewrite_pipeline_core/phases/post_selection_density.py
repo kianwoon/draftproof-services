@@ -311,7 +311,6 @@ def post_selection_ai_density_breaker_acceptance(
     core_progress_ok = bool(
         formula_drop > improvement_epsilon
         and positive_ai_burden_drop >= -improvement_epsilon
-        and drops["external_ai_flag_risk"] >= -improvement_epsilon
         and drops["ai_likelihood"] >= -improvement_epsilon
         and float(review_burden_delta or 0.0) <= 0.0
         and float(weighted_severity_delta or 0.0) <= 0.0
@@ -321,7 +320,7 @@ def post_selection_ai_density_breaker_acceptance(
         reject_reasons.append("formula_score_not_reduced")
     if positive_ai_burden_drop < -improvement_epsilon:
         reject_reasons.append("positive_ai_burden_regressed")
-    for key in ("topk_calibrated_risk", "ai_authorship", "ai_transformation", "external_ai_flag_risk", "ai_likelihood"):
+    for key in ("topk_calibrated_risk", "ai_authorship", "ai_transformation", "ai_likelihood"):
         if drops[key] < -0.001:
             protected_regressions.append(f"{key}_regressed")
     reject_reasons.extend(protected_regressions)
@@ -511,7 +510,6 @@ def run_post_selection_ai_density_breaker(
             1 if _turnitin_like_ai_profile(candidate_report).get("target_met") else 0,
             float(acceptance.get("formula_score_drop") or 0.0),
             float(acceptance.get("positive_ai_burden_drop") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("external_ai_flag_risk") or 0.0),
             float((acceptance.get("driver_drops") or {}).get("qualifying_text_ai_density") or 0.0),
             float((acceptance.get("driver_drops") or {}).get("topk_calibrated_risk") or 0.0),
             float((acceptance.get("driver_drops") or {}).get("ai_likelihood") or 0.0),

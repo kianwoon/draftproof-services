@@ -805,6 +805,9 @@ def _v5_runtime_budget_seconds(
     )
     if adaptive_budget is None:
         return legacy_budget
+    author_proxy_context = _build_author_proxy_context(original_report or {}, original_text)
+    if isinstance(author_proxy_context, dict) and author_proxy_context.get("active"):
+        return legacy_budget
     return max(
         60,
         min(

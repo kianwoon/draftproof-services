@@ -652,7 +652,6 @@ def _stack_summary(
                 "rank",
                 "topk_calibrated_risk",
                 "qualifying_text_ai_density",
-                "external_ai_flag_risk",
             )
         ),
     }
@@ -726,7 +725,6 @@ def _is_safe_candidate(row: dict[str, Any]) -> bool:
         _num(scores.get("topk_delta")),
         _num(scores.get("topk_calibrated_risk_delta")),
         _num(scores.get("qualifying_text_ai_density_delta")),
-        _num(scores.get("external_ai_flag_risk_delta")),
         _num(scores.get("unsafe_word_ratio_delta")),
     )
     primary_blocker_delta = max(core_deltas[2:])

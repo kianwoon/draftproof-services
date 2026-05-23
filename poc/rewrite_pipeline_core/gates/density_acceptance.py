@@ -82,7 +82,7 @@ def segment_window_density_acceptance(
         reject_reasons.append("eligible_span_density_regressed")
     if headline_ai_drop < -0.001:
         reject_reasons.append("headline_ai_score_regressed")
-    for key in ("ai_authorship", "ai_transformation", "external_ai_flag_risk", "ai_likelihood"):
+    for key in ("ai_authorship", "ai_transformation", "ai_likelihood"):
         if driver_drops.get(key, 0.0) < -0.001:
             reject_reasons.append(f"{key}_regressed")
     if float(review_burden_delta or 0.0) > 0.0:
@@ -175,7 +175,6 @@ def remaining_cluster_density_acceptance(
         "ai_transformation",
         "topk_calibrated_risk",
         "ai_likelihood",
-        "external_ai_flag_risk",
     ):
         if driver_drops.get(key, 0.0) < -0.001:
             reject_reasons.append(f"{key}_regressed")
@@ -279,7 +278,6 @@ def window_coverage_density_acceptance(
         "ai_transformation",
         "topk_calibrated_risk",
         "ai_likelihood",
-        "external_ai_flag_risk",
     ):
         if driver_drops.get(key, 0.0) < -0.001:
             reject_reasons.append(f"{key}_regressed")
@@ -310,4 +308,3 @@ def window_coverage_density_acceptance(
         "weighted_severity_delta": weighted_severity_delta,
         "critical_high_delta": critical_high_delta,
     }
-

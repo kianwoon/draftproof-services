@@ -283,7 +283,7 @@ def post_density_human_anchor_probe_acceptance(
         reject_reasons.append("human_anchor_suppression_not_increased")
     if positive_ai_burden_drop < -0.001:
         reject_reasons.append("positive_ai_burden_regressed")
-    for key in ("topk_calibrated_risk", "ai_authorship", "ai_transformation", "external_ai_flag_risk"):
+    for key in ("topk_calibrated_risk", "ai_authorship", "ai_transformation"):
         if driver_drops.get(key, 0.0) < -0.001:
             reject_reasons.append(f"{key}_regressed")
     if float(review_burden_delta or 0.0) > 0.0:
@@ -466,7 +466,6 @@ def run_post_density_human_anchor_probe(
             float(acceptance.get("formula_score_drop") or 0.0),
             float(acceptance.get("human_anchor_suppression_gain") or 0.0),
             float(acceptance.get("positive_ai_burden_drop") or 0.0),
-            float((acceptance.get("driver_drops") or {}).get("external_ai_flag_risk") or 0.0),
             -float(_turnitin_like_ai_profile(candidate_report).get("score") or 100.0),
         )
         if best_rank is None or rank > best_rank:

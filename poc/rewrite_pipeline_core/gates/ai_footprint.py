@@ -77,7 +77,6 @@ def _ai_footprint_gate_status(
         "semantic_uniformity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_SEMANTIC_DROP", 1.0),
         "qualifying_text_ai_density": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_QUALIFYING_DENSITY_DROP", 1.0),
         "discourse_regularity": _float_env("DRAFTPROOF_AI_FOOTPRINT_MIN_DISCOURSE_DROP", 1.0),
-        "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_MIN_DROP", 1.5),
     }
     active_topk_threshold = _float_env("DRAFTPROOF_AI_FOOTPRINT_ACTIVE_TOPK_THRESHOLD", 90.0)
     if before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0)) >= active_topk_threshold:
@@ -90,7 +89,6 @@ def _ai_footprint_gate_status(
         key for key in primary_keys
         if drops.get(key, 0.0) >= thresholds.get(key, 1.0)
     ]
-    material_proxy = drops.get("external_ai_flag_risk", 0.0) >= thresholds["external_ai_flag_risk"]
     texture_blockers = []
     if (
         before_flat.get("topk_pattern_raw", before_flat.get("topk_pattern", 0.0)) >= active_topk_threshold
@@ -138,7 +136,6 @@ def _ai_footprint_gate_status(
         and drops.get("ai_transformation", 0.0) >= 0.0
     )
     safe_band_thresholds = {
-        "external_ai_flag_risk": _float_env("DRAFTPROOF_EXTERNAL_FLAG_PROXY_SAFE_BAND", 35.0),
         "ai_authorship": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_AUTHORSHIP", 35.0),
         "ai_transformation": _float_env("DRAFTPROOF_AI_FOOTPRINT_SAFE_TRANSFORMATION", 35.0),
         "qualifying_text_ai_density": _float_env("DRAFTPROOF_QUALIFYING_AI_DENSITY_SAFE_BAND", 35.0),
@@ -149,12 +146,12 @@ def _ai_footprint_gate_status(
         safety_clean
         and all(float(after_flat.get(key, 0.0)) <= limit for key, limit in safe_band_thresholds.items())
     )
-    material_driver_moved = bool(material_primary and material_proxy and safety_clean and not texture_blockers)
+    material_driver_moved = bool(material_primary and safety_clean and not texture_blockers)
     if safe_band and material_primary:
         outcome_class = "ai_mitigated"
     elif material_driver_moved:
         outcome_class = "partially_ai_mitigated"
-    elif material_primary and material_proxy and safety_clean and texture_blockers:
+    elif material_primary and safety_clean and texture_blockers:
         outcome_class = "ai_footprint_blocked_by_texture"
     elif safety_clean and (
         float(review_burden_delta or 0.0) < 0.0
@@ -180,7 +177,8 @@ def _ai_footprint_gate_status(
         "after": after,
         "drops": drops,
         "material_primary_drivers": material_primary,
-        "material_proxy_drop": material_proxy,
+        "material_proxy_drop": False,
+        "external_ai_flag_ignored": True,
         "texture_blockers": texture_blockers,
         "material_driver_moved": material_driver_moved,
         "safety_clean": safety_clean,

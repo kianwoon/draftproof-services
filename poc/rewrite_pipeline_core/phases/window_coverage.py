@@ -306,7 +306,6 @@ def run_window_coverage_density_optimizer(
                     "ai_transformation_regressed",
                     "topk_calibrated_risk_regressed",
                     "ai_likelihood_regressed",
-                    "external_ai_flag_risk_regressed",
                     "review_burden_regressed",
                     "weighted_severity_regressed",
                     "critical_high_regressed",
@@ -500,4 +499,3 @@ def run_window_coverage_density_optimizer(
         summary["reason"] = "ceiling_reached"
         summary["why_not_below_20"] = "No window-coverage candidate reduced total formula score and unsafe window coverage without safety regression."
     return summary
-

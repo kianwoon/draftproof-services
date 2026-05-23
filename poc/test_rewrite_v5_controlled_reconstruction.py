@@ -72,6 +72,7 @@ from rewrite_v5.residual_comb import (
     _has_borderline_verdict_movement,
     _borderline_rejected_candidate_feedback,
     _borderline_verdict_candidate_crosses_boundary,
+    _incremental_deltas,
     _score_full_document_variant,
     _should_generate_adaptive_remainder,
     _should_retune_residual_candidate,
@@ -400,12 +401,13 @@ def test_v5_author_proxy_structured_output_requires_candidate_review_fields():
     assert variant_schema["properties"]["author_review_items"]["type"] == "array"
 
 
-def test_v5_author_proxy_quality_prioritizes_grounded_candidate():
+def test_v5_author_proxy_quality_does_not_override_scanner_movement():
     context = {"active": True, "review_required": True, "review_cards": [{"card_id": "target-01"}]}
     grounded = {
         "apply_status": {"applied": True},
         "local_scores": {"unsafe_cluster_count_delta": 0},
-        "incremental": {"ai_delta": 1.0},
+        "incremental": {"ai_delta": 1.0, "topk_delta": 1.0},
+        "scores": {"ai_delta": 1.0, "topk_delta": 1.0},
         "author_proxy_quality": {
             "active": True,
             "score": 0.92,
@@ -414,7 +416,8 @@ def test_v5_author_proxy_quality_prioritizes_grounded_candidate():
     thin_scanner_win = {
         "apply_status": {"applied": True},
         "local_scores": {"unsafe_cluster_count_delta": 0},
-        "incremental": {"ai_delta": 4.0},
+        "incremental": {"ai_delta": 4.0, "topk_delta": 4.0},
+        "scores": {"ai_delta": 4.0, "topk_delta": 4.0},
         "author_proxy_quality": {
             "active": True,
             "score": 0.41,
@@ -431,7 +434,126 @@ def test_v5_author_proxy_quality_prioritizes_grounded_candidate():
     )
 
     assert quality["score"] > 0.5
-    assert v5_residual_comb._residual_candidate_sort_key(grounded) > v5_residual_comb._residual_candidate_sort_key(thin_scanner_win)
+    assert v5_residual_comb._residual_candidate_sort_key(thin_scanner_win) > v5_residual_comb._residual_candidate_sort_key(grounded)
+
+
+def test_v5_author_proxy_quality_is_tiebreaker_after_scanner_scores():
+    high_quality = {
+        "apply_status": {"applied": True},
+        "incremental": {"risky_window_count_delta": 1.0, "ai_delta": 4.0, "topk_delta": 4.0},
+        "scores": {"ai_delta": 4.0, "topk_delta": 4.0, "rank_delta": 10.0},
+        "author_proxy_quality": {"active": True, "score": 0.91},
+    }
+    low_quality = {
+        "apply_status": {"applied": True},
+        "incremental": {"risky_window_count_delta": 1.0, "ai_delta": 4.0, "topk_delta": 4.0},
+        "scores": {"ai_delta": 4.0, "topk_delta": 4.0, "rank_delta": 10.0},
+        "author_proxy_quality": {"active": True, "score": 0.42},
+    }
+    stronger_scanner = {
+        "apply_status": {"applied": True},
+        "incremental": {"risky_window_count_delta": 1.0, "ai_delta": 8.0, "topk_delta": 7.0},
+        "scores": {"ai_delta": 8.0, "topk_delta": 7.0, "rank_delta": 20.0},
+        "author_proxy_quality": {"active": True, "score": 0.5},
+    }
+
+    assert v5_residual_comb._risky_window_cleanup_sort_key(high_quality) > v5_residual_comb._risky_window_cleanup_sort_key(low_quality)
+    assert v5_residual_comb._risky_window_cleanup_sort_key(stronger_scanner) > v5_residual_comb._risky_window_cleanup_sort_key(high_quality)
+
+
+def test_v5_final_topk_sentence_route_rejects_ai_regression_by_default():
+    topk_only = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "topk_delta": 1.0,
+            "topk_calibrated_risk_delta": 1.0,
+            "ai_delta": -0.1,
+            "risky_window_count_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+        },
+    }
+    balanced = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "topk_delta": 0.5,
+            "topk_calibrated_risk_delta": 0.5,
+            "ai_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+        },
+    }
+
+    assert not v5_residual_comb._has_final_topk_sentence_route_movement(topk_only)
+    assert v5_residual_comb._has_final_topk_sentence_route_movement(balanced)
+
+
+def test_v5_final_topk_sentence_route_can_score_single_repair_salvage(tmp_path, monkeypatch):
+    original_text = "First risky sentence. Second risky sentence. Stable ending."
+    current_scores = {"ai": 40.0, "topk": 80.0, "unsafe_cluster_count": 2}
+    scan_scores = iter([
+        {"ai": 41.0, "topk": 79.0, "unsafe_cluster_count": 1},
+        {"ai": 39.0, "topk": 78.0, "unsafe_cluster_count": 2},
+    ])
+
+    monkeypatch.setattr(v5_residual_comb, "_scan_report", lambda _text: {"input_text": _text})
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "evaluate_rewrite_goal",
+        lambda **_: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, goal: goal)
+    monkeypatch.setattr(v5_residual_comb, "_score_summary", lambda *_args: next(scan_scores))
+    monkeypatch.setattr(v5_residual_comb, "_add_deltas", lambda scores, baseline: scores.update({
+        "ai_delta": 50.0 - scores["ai"],
+        "topk_delta": 90.0 - scores["topk"],
+        "unsafe_cluster_count_delta": 3.0 - scores["unsafe_cluster_count"],
+    }))
+
+    full_row = v5_residual_comb._score_final_topk_sentence_route_variant(
+        original_text=original_text,
+        baseline_report={},
+        baseline_scores={"ai": 50.0, "topk": 90.0, "unsafe_cluster_count": 3},
+        current_text=original_text,
+        current_scores=current_scores,
+        targets=[
+            {"target_id": "t001", "sentence": "First risky sentence."},
+            {"target_id": "t002", "sentence": "Second risky sentence."},
+        ],
+        variant={
+            "variant_id": "v1",
+            "repairs": [
+                {"target_id": "t001", "after": "First repair."},
+                {"target_id": "t002", "after": "Second repair."},
+            ],
+        },
+        output_dir=tmp_path,
+        label="full",
+    )
+    partial_row = v5_residual_comb._score_final_topk_sentence_route_variant(
+        original_text=original_text,
+        baseline_report={},
+        baseline_scores={"ai": 50.0, "topk": 90.0, "unsafe_cluster_count": 3},
+        current_text=original_text,
+        current_scores=current_scores,
+        targets=[
+            {"target_id": "t001", "sentence": "First risky sentence."},
+            {"target_id": "t002", "sentence": "Second risky sentence."},
+        ],
+        variant={
+            "variant_id": "v1_t002",
+            "repairs": [{"target_id": "t002", "after": "Second repair."}],
+        },
+        output_dir=tmp_path,
+        label="partial",
+        require_all_targets=False,
+    )
+
+    assert full_row["apply_status"]["partial_candidate"] is False
+    assert partial_row["apply_status"]["partial_candidate"] is True
+    assert partial_row["apply_status"]["applied_repair_count"] == 1
+    assert not v5_residual_comb._has_final_topk_sentence_route_movement(full_row)
+    assert v5_residual_comb._has_final_topk_sentence_route_movement(partial_row)
+    assert v5_residual_comb._best_final_topk_sentence_route_candidate([full_row, partial_row]) is partial_row
 
 
 def test_v5_author_proxy_context_is_attached_to_all_accept_capable_prompts():
@@ -1852,6 +1974,32 @@ def test_v5_borderline_feedback_for_rejected_boundary_candidate():
     assert feedback["status"] == "previous_candidate_reduced_verdict_score_but_failed_local_safety"
     assert feedback["previous_variant_id"] == "v2"
     assert any("unsafe cluster" in item for item in feedback["must_fix"])
+    assert "external_ai_flag_risk" not in feedback["previous_scores"]
+
+
+def test_v5_incremental_deltas_ignore_external_ai_flag_as_second_judge():
+    scores = {
+        "ai": 31.0,
+        "topk": 72.0,
+        "external": 30.0,
+        "ai_authorship": 32.0,
+        "external_ai_flag_risk": 80.0,
+    }
+    current_scores = {
+        "ai": 34.0,
+        "topk": 75.0,
+        "external": 33.0,
+        "ai_authorship": 34.0,
+        "external_ai_flag_risk": 20.0,
+    }
+
+    deltas = _incremental_deltas(scores, current_scores)
+
+    assert deltas["ai_delta"] == 3.0
+    assert deltas["topk_delta"] == 3.0
+    assert deltas["external_delta"] == 3.0
+    assert deltas["ai_authorship_delta"] == 2.0
+    assert "external_ai_flag_risk_delta" not in deltas
 
 
 def test_v5_full_document_variant_rejects_compression_before_scan(tmp_path):
@@ -1871,6 +2019,42 @@ def test_v5_full_document_variant_rejects_compression_before_scan(tmp_path):
 
     assert row["apply_status"]["applied"] is False
     assert row["apply_status"]["reason"] == "candidate_compressed_too_much"
+
+
+def test_v5_author_proxy_document_window_rejects_compression_before_scan(tmp_path):
+    current_text = " ".join(f"source{i}" for i in range(120))
+    section = SectionUnit(
+        section_id="w001",
+        heading="Full document window",
+        text=current_text,
+        start_char=0,
+        end_char=len(current_text),
+        paragraph_count=1,
+        word_count=120,
+        metadata={},
+    )
+    candidate = RecompositionVariant(
+        variant_id="v1",
+        text=" ".join(f"candidate{i}" for i in range(96)),
+        word_count=96,
+    )
+
+    row = v5_residual_comb._score_residual_variant(
+        original_text=current_text,
+        baseline_report={},
+        baseline_scores={},
+        current_text=current_text,
+        current_scores={"ai": 50.0},
+        section=section,
+        variant=candidate,
+        output_dir=tmp_path,
+        label="window_v1",
+        author_proxy_context={"active": True},
+    )
+
+    assert row["apply_status"]["applied"] is False
+    assert row["apply_status"]["reason"] == "author_proxy_document_window_compressed_too_much"
+    assert row["apply_status"]["minimum_candidate_words"] == 108
 
 
 def test_v5_residual_seed_generator_stays_disabled_for_content_agnostic_output():
@@ -3214,6 +3398,42 @@ def test_v5_global_best_fallback_does_not_discard_accepted_structural_progress()
     )
 
 
+def test_v5_global_best_fallback_keeps_density_safe_ai_breakthrough():
+    current_scores = {
+        "ai": 35.18,
+        "topk": 73.68,
+        "unsafe_cluster_count": 2,
+        "risky_window_count": 0,
+        "unsafe_cluster_count_delta": 10.0,
+        "topk_delta": 19.09,
+        "topk_calibrated_risk_delta": 49.691,
+    }
+    candidate = {
+        "apply_status": {"applied": True},
+        "candidate_goal": {
+            "eligible_span_density_gate": {
+                "safe": True,
+                "unsafe_cluster_count": 4,
+            }
+        },
+        "scores": {
+            "ai": 33.58,
+            "topk": 74.81,
+            "risky_window_count": 0,
+            "unsafe_cluster_count": 4,
+            "ai_delta": 14.74,
+            "topk_delta": 17.96,
+            "topk_calibrated_risk_delta": 48.652,
+            "external_ai_flag_risk_delta": 20.971,
+            "unsafe_cluster_count_delta": 8.0,
+            "risky_window_count_delta": 1.0,
+        },
+    }
+
+    assert _would_discard_structural_progress(candidate["scores"], current_scores)
+    assert _full_document_candidate_beats_scores(candidate, current_scores)
+
+
 def test_v5_global_best_fallback_keeps_partial_ai_and_window_movement_despite_rank_regression():
     current_scores = {
         "ai_delta": 0.0,
@@ -3518,6 +3738,38 @@ def test_v5_author_proxy_context_is_built_from_mitigation_plan():
     assert context["quality_bar"]["basis"] == "submitted_content_only"
     assert context["review_cards"][0]["card_id"] == "target-01"
     assert context["review_cards"][0]["provenance"] == "needs_author_confirmation"
+
+
+def test_v5_author_proxy_runtime_uses_legacy_budget_floor(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_RUNTIME_BASE_SECONDS", "900")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_RUNTIME_SECONDS_PER_100_WORDS", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_RUNTIME_MIN_SECONDS", "900")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_RUNTIME_MAX_SECONDS", "1800")
+    monkeypatch.setenv("REWRITE_SOFT_TIME_LIMIT_SECONDS", "1800")
+    monkeypatch.setattr(v5_production, "_v5_adaptive_runtime_budget_seconds", lambda **_: 120.0)
+
+    config = v5_production._production_config()
+    budget = v5_production._v5_runtime_budget_seconds(
+        "The draft needs author-owned evidence.",
+        config,
+        original_report={
+            "input_text": "The draft needs author-owned evidence.",
+            "ai_mitigation": {
+                "readiness": {
+                    "requires_user_input": True,
+                    "required_inputs": ["author observation"],
+                },
+                "target_segments": [{
+                    "paragraph_id": "p001",
+                    "text": "author-owned evidence",
+                    "action": "Confirm evidence.",
+                    "user_input_needed": "author observation",
+                }],
+            },
+        },
+    )
+
+    assert budget == 900
 
 
 def test_v5_production_author_proxy_candidate_requires_author_review(tmp_path, monkeypatch):

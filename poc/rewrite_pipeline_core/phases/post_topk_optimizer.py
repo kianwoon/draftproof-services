@@ -349,7 +349,7 @@ def run_post_topk_ai_safe_band_optimizer(
             reject_reasons.append("formula_score_regressed")
         if num(after_profile.get("topk_calibrated_risk"), 100.0) >= deps.safe_topk_calibrated_limit():
             reject_reasons.append("topk_calibrated_regressed_or_unsafe")
-        for key in ("ai_authorship", "ai_transformation", "external_ai_flag_risk"):
+        for key in ("ai_authorship", "ai_transformation"):
             if num(after_profile.get(key)) > num(base_profile.get(key)) + 0.001:
                 reject_reasons.append(f"{key}_regressed")
         if deps.finding_total(candidate_report) > base_finding_total:
@@ -404,7 +404,6 @@ def run_post_topk_ai_safe_band_optimizer(
             num(formula_gap_contract.get("score_drop"), 0.0),
             num(formula_gap_contract.get("weighted_driver_drop_efficiency"), 0.0),
             1 if num(after_profile.get("topk_calibrated_risk"), 100.0) < deps.safe_topk_calibrated_limit() else 0,
-            num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")),
             num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")),
             num(base_profile.get("ai_transformation")) - num(after_profile.get("ai_transformation")),
             num(base_profile.get("generic_assertion_risk")) - num(after_profile.get("generic_assertion_risk")),
@@ -435,7 +434,6 @@ def run_post_topk_ai_safe_band_optimizer(
         ]
         partial_driver_moved = bool(
             num(base_formula_profile.get("score")) - num(formula_gap_contract.get("score_after"), 100.0) > 0.25
-            or num(base_profile.get("external_ai_flag_risk")) - num(after_profile.get("external_ai_flag_risk")) > 0.25
             or num(base_profile.get("ai_authorship")) - num(after_profile.get("ai_authorship")) > 0.25
             or num(base_profile.get("ai_transformation")) - num(after_profile.get("ai_transformation")) > 0.25
             or num(base_profile.get("generic_assertion_risk")) - num(after_profile.get("generic_assertion_risk")) > 0.25

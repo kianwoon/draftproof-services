@@ -61,7 +61,7 @@ def authorship_transformation_texture_patch_prompt(
         "Return only valid JSON. No markdown.\n\n"
         "Hard controller rules:\n"
         "- topk_calibrated_risk must stay below 25\n"
-        "- reduce ai_authorship, ai_transformation, or external_ai_flag_risk\n"
+        "- reduce ai_authorship or ai_transformation\n"
         "- do not increase review burden, weighted severity, or critical/high findings\n"
         "- no full-document rewrite; patch selected paragraphs only\n"
         "- no new facts, citations, names, numbers, dates, examples, or author evidence\n"
@@ -461,7 +461,7 @@ def authorship_transformation_texture_candidates(
                 "expected_driver": (
                     "ai_authorship" if family == "AUTHORSHIP_SUPPRESSION"
                     else "ai_transformation" if family == "TRANSFORMATION_DETEMPLATE"
-                    else "external_ai_flag_risk" if family == "HYBRID_TEXTURE_COLLAPSE"
+                    else "ai_transformation" if family == "HYBRID_TEXTURE_COLLAPSE"
                     else "ai_transformation"
                 ),
             },
