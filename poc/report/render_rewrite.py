@@ -78,27 +78,31 @@ def _ai_signal_stamp(score) -> dict:
 def _requires_external_review(summary: dict) -> bool:
     if not isinstance(summary, dict):
         return False
-    if _requires_author_review(summary):
-        return False
-    return (
-        summary.get("best_candidate_external_review_required") is True
-        or summary.get("public_candidate_warning") == "best_candidate_requires_external_review"
-        or summary.get("strict_goal_status") == "mitigation_failed_no_safe_candidate"
-        or summary.get("outcome") == "rewrite_candidate_generated_needs_external_review"
-        or summary.get("status") == "rewrite_candidate_generated_needs_external_review"
-    )
+    return False
 
 
 def _requires_author_review(summary: dict) -> bool:
     if not isinstance(summary, dict):
         return False
+    if summary.get("no_text_change") is True:
+        return False
+    if summary.get("outcome") == "original_preserved" or summary.get("status") == "original_preserved":
+        return False
     author_proxy_context = summary.get("author_proxy_context") if isinstance(summary.get("author_proxy_context"), dict) else {}
+    strict_safe = (
+        summary.get("strict_safe_band_achieved") is True
+        or summary.get("kpi_finalization_status") in {
+            "strict_safe_auto_finalized",
+            "strict_safe_author_review_required",
+        }
+    )
     return (
         summary.get("best_candidate_author_review_required") is True
         or summary.get("public_candidate_warning") == "author_proxy_candidate_requires_review"
         or summary.get("outcome") == "rewrite_candidate_generated_needs_author_review"
         or summary.get("status") == "rewrite_candidate_generated_needs_author_review"
-        or author_proxy_context.get("review_required") is True
+        or summary.get("kpi_finalization_status") == "strict_safe_author_review_required"
+        or (strict_safe and author_proxy_context.get("review_required") is True)
     )
 
 

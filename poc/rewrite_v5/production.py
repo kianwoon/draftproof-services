@@ -33,6 +33,7 @@ from .residual_comb import (
 
 AUTHOR_PROXY_REVIEW_STATUS = "rewrite_candidate_generated_needs_author_review"
 AUTHOR_PROXY_WARNING = "author_proxy_candidate_requires_review"
+PARTIAL_NOT_STRICT_STATUS = "partial_candidate_not_strict_safe"
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -176,6 +177,45 @@ def _author_proxy_review_cards(plan: dict[str, Any], *, limit: int = 12) -> list
     return cards
 
 
+def _authorship_evidence_contract(plan: dict[str, Any], review_cards: list[dict[str, Any]], original_text: str) -> dict[str, Any]:
+    required_inputs = []
+    readiness = plan.get("readiness") if isinstance(plan.get("readiness"), dict) else {}
+    for item in readiness.get("required_inputs") or []:
+        value = str(item or "").strip()
+        if value and value not in required_inputs:
+            required_inputs.append(value)
+    evidence_slots = []
+    for card in review_cards:
+        if not isinstance(card, dict):
+            continue
+        evidence_slots.append({
+            "slot_id": card.get("card_id"),
+            "kind": card.get("kind"),
+            "bucket": card.get("bucket"),
+            "target_text": card.get("target_text"),
+            "required_input": card.get("user_input_needed"),
+            "provenance": card.get("provenance"),
+        })
+    return {
+        "schema_version": "authorship_evidence_contract.v1",
+        "basis": "submitted_content_only",
+        "original_word_count": word_count(str(original_text or "")),
+        "required_inputs": required_inputs,
+        "evidence_slots": evidence_slots,
+        "rules": [
+            "Use submitted draft material as the evidence source of record.",
+            "If a claim lacks evidence, narrow the claim instead of inventing support.",
+            "Preserve author-owned thesis, stance, examples, source anchors, and citation material.",
+            "Mark any provisional bridge as author-review material through provenance/review items.",
+        ],
+        "kpi_alignment": [
+            "Reduce uniform high-probability phrasing by adding grounded specificity from existing draft material.",
+            "Reduce qualifying AI density by replacing generic claims with source-supported or narrower claims.",
+            "Do not improve scanner texture by adding unsupported facts or fabricated personal evidence.",
+        ],
+    }
+
+
 def _build_author_proxy_context(report: dict[str, Any], original_text: str) -> dict[str, Any]:
     plan = _ai_mitigation_plan_from_report(report)
     readiness = plan.get("readiness") if isinstance(plan.get("readiness"), dict) else {}
@@ -197,6 +237,7 @@ def _build_author_proxy_context(report: dict[str, Any], original_text: str) -> d
         "primary_mode": plan.get("primary_mode"),
         "required_inputs": readiness.get("required_inputs") or [],
         "review_cards": review_cards,
+        "authorship_evidence_contract": _authorship_evidence_contract(plan, review_cards, original_text),
         "allowed_provenance": [
             "source_preserved",
             "inferred_from_draft",
@@ -318,6 +359,53 @@ def _accepted_author_proxy_review_required(
     )
 
 
+def _strict_safe_band_achieved(goal: dict[str, Any] | None) -> bool:
+    if not isinstance(goal, dict):
+        return False
+    if goal.get("strict_ai_safe_band_achieved") is True:
+        return True
+    gate = goal.get("ai_footprint_gate") if isinstance(goal.get("ai_footprint_gate"), dict) else {}
+    return bool(gate.get("safe_band"))
+
+
+def _kpi_finalization_status(
+    *,
+    strict_safe_band_achieved: bool,
+    author_review_required: bool,
+    accepted_count: int,
+    no_text_change: bool,
+) -> str:
+    if no_text_change:
+        return "original_preserved"
+    if strict_safe_band_achieved and author_review_required:
+        return "strict_safe_author_review_required"
+    if strict_safe_band_achieved:
+        return "strict_safe_auto_finalized"
+    if accepted_count > 0:
+        return "partial_candidate_not_strict_safe"
+    return "no_safe_candidate"
+
+
+def _final_goal_from_scan(
+    *,
+    original_text: str,
+    final_text: str,
+    original_report: dict[str, Any],
+    final_report: dict[str, Any],
+    fallback_goal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        goal = evaluate_rewrite_goal(
+            original_text=original_text,
+            candidate_text=final_text,
+            original_report=original_report,
+            candidate_report=final_report,
+        ).to_dict()
+    except Exception:
+        goal = dict(fallback_goal or {})
+    return _with_v5_density_gate(final_text, final_report, goal)
+
+
 def _v5_extra_body() -> dict[str, Any] | None:
     extra: dict[str, Any] = {}
     effort = os.environ.get("DRAFTPROOF_REWRITE_V5_REASONING_EFFORT", "none").strip() or "none"
@@ -422,6 +510,7 @@ def run_rewrite_pipeline_v5(
     base_url: str | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    seed_candidate_texts: list[str] | None = None,
     cancellation_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     started = time.time()
@@ -469,10 +558,12 @@ def run_rewrite_pipeline_v5(
             final_text=checkpoint_text,
             original_text=original_text,
         )
+        checkpoint_goal = checkpoint.get("goal") if isinstance(checkpoint.get("goal"), dict) else {}
+        checkpoint_strict_safe = _strict_safe_band_achieved(checkpoint_goal)
         checkpoint_status = (
             AUTHOR_PROXY_REVIEW_STATUS
-            if checkpoint_author_review_required
-            else "rewrite_candidate_generated_needs_external_review"
+            if checkpoint_strict_safe and checkpoint_author_review_required
+            else PARTIAL_NOT_STRICT_STATUS
         )
         checkpoint_summary = {
             "rewrite_pipeline_version": pipeline_version,
@@ -484,10 +575,18 @@ def run_rewrite_pipeline_v5(
             "checkpoint_recovery_available": True,
             "public_candidate_warning": (
                 AUTHOR_PROXY_WARNING
-                if checkpoint_author_review_required
-                else "best_candidate_requires_external_review"
+                if checkpoint_status == AUTHOR_PROXY_REVIEW_STATUS
+                else "candidate_not_strict_safe"
             ),
-            "best_candidate_author_review_required": checkpoint_author_review_required,
+            "best_candidate_author_review_required": checkpoint_status == AUTHOR_PROXY_REVIEW_STATUS,
+            "best_candidate_external_review_required": False,
+            "strict_safe_band_achieved": checkpoint_strict_safe,
+            "kpi_finalization_status": _kpi_finalization_status(
+                strict_safe_band_achieved=checkpoint_strict_safe,
+                author_review_required=checkpoint_author_review_required,
+                accepted_count=1,
+                no_text_change=False,
+            ),
             "author_proxy_context": author_proxy_context,
             "author_review_cards": checkpoint_author_review_cards if checkpoint_author_review_required else [],
             "checkpoint": _compact_v5_checkpoint(checkpoint),
@@ -534,6 +633,7 @@ def run_rewrite_pipeline_v5(
         direct_scanner_leapfrog_variant_count=int(config["direct_scanner_leapfrog_variants"]),
         direct_scanner_leapfrog_batches=int(config["direct_scanner_leapfrog_batches"]),
         author_proxy_context=author_proxy_context,
+        seed_candidate_texts=seed_candidate_texts,
         progress_callback=progress,
         accepted_checkpoint_callback=emit_checkpoint,
         max_seconds=runtime_budget_seconds,
@@ -545,17 +645,14 @@ def run_rewrite_pipeline_v5(
     original_report = detect_json
     final_report = _scan_report(final_text) if final_text.strip() != original_text.strip() else original_report
     raise_if_canceled()
-    payload_goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else None
-    if payload_goal:
-        final_goal = dict(payload_goal)
-    else:
-        final_goal = evaluate_rewrite_goal(
-            original_text=original_text,
-            candidate_text=final_text,
-            original_report=original_report,
-            candidate_report=final_report,
-        ).to_dict()
-    final_goal = _with_v5_density_gate(final_text, final_report, final_goal)
+    payload_goal = payload.get("goal") if isinstance(payload.get("goal"), dict) else {}
+    final_goal = _final_goal_from_scan(
+        original_text=original_text,
+        final_text=final_text,
+        original_report=original_report,
+        final_report=final_report,
+        fallback_goal=payload_goal,
+    )
     rounds = payload.get("rounds") if isinstance(payload.get("rounds"), list) else []
     direct_scanner_leapfrog_rounds = (
         payload.get("direct_scanner_leapfrog_rounds")
@@ -587,6 +684,11 @@ def run_rewrite_pipeline_v5(
         if isinstance(payload.get("final_topk_sentence_route_rounds"), list)
         else []
     )
+    safe_band_evidence_repair_rounds = (
+        payload.get("safe_band_evidence_repair_rounds")
+        if isinstance(payload.get("safe_band_evidence_repair_rounds"), list)
+        else []
+    )
     all_rounds = (
         direct_scanner_leapfrog_rounds
         + rounds
@@ -595,6 +697,7 @@ def run_rewrite_pipeline_v5(
         + final_risky_window_cleanup_rounds
         + borderline_verdict_cleanup_rounds
         + final_topk_sentence_route_rounds
+        + safe_band_evidence_repair_rounds
     )
     accepted = [
         row.get("accepted")
@@ -604,6 +707,9 @@ def run_rewrite_pipeline_v5(
     global_best_fallback = payload.get("global_best_fallback") if isinstance(payload.get("global_best_fallback"), dict) else {}
     if global_best_fallback.get("applied") and isinstance(global_best_fallback.get("selected"), dict):
         accepted.append(global_best_fallback["selected"])
+    seed_recovery = payload.get("seed_recovery") if isinstance(payload.get("seed_recovery"), dict) else {}
+    if seed_recovery.get("applied") and isinstance(seed_recovery.get("selected"), dict):
+        accepted.append(seed_recovery["selected"])
     selected_author_review_cards = _author_review_cards_from_candidate(
         author_proxy_context,
         accepted[-1] if accepted else None,
@@ -615,18 +721,19 @@ def run_rewrite_pipeline_v5(
         final_text=final_text,
         original_text=original_text,
     )
+    strict_safe_band_achieved = _strict_safe_band_achieved(final_goal)
     if no_text_change:
         public_status = RewriteGoalStatus.ORIGINAL_PRESERVED.value
-    elif author_proxy_review_required and accepted:
+    elif strict_safe_band_achieved and author_proxy_review_required and accepted:
         public_status = AUTHOR_PROXY_REVIEW_STATUS
     elif final_goal.get("goal_met"):
         public_status = RewriteGoalStatus.AI_MITIGATED.value
     elif accepted:
-        public_status = "rewrite_candidate_generated_needs_external_review"
+        public_status = PARTIAL_NOT_STRICT_STATUS
     else:
         public_status = "no_safe_rewrite_applied"
     partial_rewrite_preserved = (
-        public_status == "rewrite_candidate_generated_needs_external_review"
+        public_status == PARTIAL_NOT_STRICT_STATUS
         and not no_text_change
         and bool(accepted)
         and not bool(final_goal.get("goal_met"))
@@ -639,6 +746,13 @@ def run_rewrite_pipeline_v5(
     detect_scores = _detect_scores(original_report, final_report, original_scores, final_scores)
     original_scan_compact = _compact_scan_for_rewrite_report(original_report)
     final_scan_compact = _compact_scan_for_rewrite_report(final_report)
+    candidate_ledger = _candidate_ledger_from_v5_payload(
+        payload=payload,
+        accepted=accepted,
+        final_text=final_text,
+        final_scores=final_scores,
+        final_goal=final_goal,
+    )
     summary = {
         "rewrite_pipeline_version": pipeline_version,
         "rewrite_engine_mode": "v5_residual_cluster_comb_production",
@@ -654,12 +768,19 @@ def run_rewrite_pipeline_v5(
             AUTHOR_PROXY_WARNING
             if public_status == AUTHOR_PROXY_REVIEW_STATUS
             else
-            "best_candidate_requires_external_review"
-            if public_status == "rewrite_candidate_generated_needs_external_review"
+            "candidate_not_strict_safe"
+            if public_status == PARTIAL_NOT_STRICT_STATUS
             else ""
         ),
-        "best_candidate_external_review_required": public_status == "rewrite_candidate_generated_needs_external_review",
+        "best_candidate_external_review_required": False,
         "best_candidate_author_review_required": public_status == AUTHOR_PROXY_REVIEW_STATUS,
+        "strict_safe_band_achieved": strict_safe_band_achieved,
+        "kpi_finalization_status": _kpi_finalization_status(
+            strict_safe_band_achieved=strict_safe_band_achieved,
+            author_review_required=author_proxy_review_required and bool(accepted),
+            accepted_count=len(accepted),
+            no_text_change=no_text_change,
+        ),
         "author_proxy_context": author_proxy_context,
         "author_review_cards": (
             selected_author_review_cards
@@ -702,6 +823,7 @@ def run_rewrite_pipeline_v5(
             "accepted_count": len(accepted),
             "reason": pipeline_version,
         },
+        "candidate_ledger": candidate_ledger,
         "candidate_trace": _compact_v5_candidate_trace(accepted),
         "candidate_loop_trace": _compact_v5_rounds(all_rounds),
         "selected_candidate": _compact_v5_candidate_trace([accepted[-1]])[0] if accepted else None,
@@ -852,6 +974,97 @@ def _generated_candidate_count(rounds: list[Any]) -> int:
     return count
 
 
+def _candidate_ledger_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float]:
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    goal = row.get("goal") if isinstance(row.get("goal"), dict) else {}
+    strict = 0.0 if goal.get("goal_met") is True or goal.get("strict_ai_safe_band_achieved") is True else 1.0
+    return (
+        strict,
+        float(scores.get("topk_calibrated_risk") or 999.0),
+        float(scores.get("qualifying_text_ai_density") or 999.0),
+        float(scores.get("ai") or 999.0),
+        float(scores.get("unsafe_cluster_count") or 999.0),
+    )
+
+
+def _candidate_ledger_text_from_row(row: dict[str, Any]) -> str:
+    candidate_text = str(row.get("candidate_text") or "").strip()
+    if candidate_text:
+        return candidate_text
+    apply_status = row.get("apply_status") if isinstance(row.get("apply_status"), dict) else {}
+    if row.get("section_id") == "full_document" or apply_status.get("scope") == "full_document":
+        return str(row.get("text") or "").strip()
+    return ""
+
+
+def _candidate_ledger_from_v5_payload(
+    *,
+    payload: dict[str, Any],
+    accepted: list[dict[str, Any]],
+    final_text: str,
+    final_scores: dict[str, Any],
+    final_goal: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add_row(source: str, row: dict[str, Any] | None, *, fallback_text: str = "") -> None:
+        if not isinstance(row, dict):
+            return
+        text = _candidate_ledger_text_from_row(row) or str(fallback_text or "").strip()
+        normalized = " ".join(text.split())
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+        goal = row.get("candidate_goal") if isinstance(row.get("candidate_goal"), dict) else row.get("goal")
+        goal = goal if isinstance(goal, dict) else {}
+        rows.append({
+            "schema_version": "rewrite_candidate_ledger.v1",
+            "source": source,
+            "section_id": row.get("section_id"),
+            "variant_id": row.get("variant_id"),
+            "label": row.get("label"),
+            "word_count": row.get("word_count") or word_count(text),
+            "scores": scores,
+            "goal": {
+                "status": goal.get("status"),
+                "goal_met": goal.get("goal_met"),
+                "reason": goal.get("reason"),
+                "strict_ai_safe_band_achieved": goal.get("strict_ai_safe_band_achieved"),
+            },
+            "text": text,
+        })
+
+    for row in payload.get("candidate_ledger") if isinstance(payload.get("candidate_ledger"), list) else []:
+        add_row(str(row.get("source") or "candidate_ledger"), row)
+    for row in payload.get("seed_candidate_rows") if isinstance(payload.get("seed_candidate_rows"), list) else []:
+        add_row("historical_seed_candidate", row)
+    seed_recovery = payload.get("seed_recovery") if isinstance(payload.get("seed_recovery"), dict) else {}
+    add_row("historical_seed_recovery", seed_recovery.get("selected"))
+    for row in accepted:
+        add_row("accepted_candidate", row)
+    global_best_fallback = payload.get("global_best_fallback") if isinstance(payload.get("global_best_fallback"), dict) else {}
+    add_row("global_best_fallback", global_best_fallback.get("selected"))
+    add_row(
+        "final_text",
+        {
+            "section_id": "full_document",
+            "variant_id": "final",
+            "label": "final_text",
+            "word_count": word_count(final_text),
+            "scores": final_scores,
+            "goal": final_goal,
+            "text": final_text,
+        },
+    )
+
+    rows.sort(key=_candidate_ledger_sort_key)
+    for index, row in enumerate(rows[:5], start=1):
+        row["rank"] = index
+    return rows[:5]
+
+
 def _compact_v5_candidate_trace(rows: list[Any]) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
     for row in rows:
@@ -988,6 +1201,11 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload.get("final_topk_sentence_route_rounds"), list)
         else []
     )
+    safe_band_evidence_repair_rounds = (
+        payload.get("safe_band_evidence_repair_rounds")
+        if isinstance(payload.get("safe_band_evidence_repair_rounds"), list)
+        else []
+    )
     all_rounds = (
         direct_scanner_leapfrog_rounds
         + rounds
@@ -996,12 +1214,14 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         + final_risky_window_cleanup_rounds
         + borderline_verdict_cleanup_rounds
         + final_topk_sentence_route_rounds
+        + safe_band_evidence_repair_rounds
     )
     return {
         "stage": payload.get("stage"),
         "baseline_scores": payload.get("baseline_scores"),
         "final_scores": payload.get("final_scores"),
         "eligible_span_density_gate": payload.get("eligible_span_density_gate"),
+        "candidate_ledger": payload.get("candidate_ledger") if isinstance(payload.get("candidate_ledger"), list) else [],
         "runtime_budget": payload.get("runtime_budget") if isinstance(payload.get("runtime_budget"), dict) else None,
         "phase_order": payload.get("phase_order") if isinstance(payload.get("phase_order"), dict) else None,
         "accepted_checkpoints": payload.get("accepted_checkpoints") if isinstance(payload.get("accepted_checkpoints"), list) else [],
@@ -1014,5 +1234,8 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "final_risky_window_cleanup_rounds": _compact_v5_rounds(final_risky_window_cleanup_rounds),
         "borderline_verdict_cleanup_rounds": _compact_v5_rounds(borderline_verdict_cleanup_rounds),
         "final_topk_sentence_route_rounds": _compact_v5_rounds(final_topk_sentence_route_rounds),
+        "safe_band_evidence_repair_rounds": _compact_v5_rounds(safe_band_evidence_repair_rounds),
+        "seed_candidate_rows": _compact_v5_rounds(payload.get("seed_candidate_rows") if isinstance(payload.get("seed_candidate_rows"), list) else []),
+        "seed_recovery": payload.get("seed_recovery") if isinstance(payload.get("seed_recovery"), dict) else None,
         "global_best_fallback": payload.get("global_best_fallback"),
     }

@@ -53,6 +53,8 @@ import {
   buildRewriteResultSummary,
   buildRewriteContributionOverride,
   buildSubmittedContentModel,
+  requiresRewriteAuthorReview,
+  requiresRewriteExternalReview,
   isRewriteActive,
   normalizeRewriteProgressMessage,
   normalizeRewriteJob,
@@ -869,26 +871,28 @@ export default function Report() {
   const rewrittenAuthorshipTone = getAuthorshipTone(rewrittenAuthorshipRating);
   const rewrittenAuthorshipRatingFullLabel = rewrittenAuthorshipRating.label || rewrittenBadge.authorship_rating_label || null;
   const rewrittenAuthorshipRatingLabel = rewrittenAuthorshipRating.short_label || rewrittenAuthorshipRatingFullLabel;
-  const rewrittenRequiresExternalReview = Boolean(
-    rewriteResultSummary?.best_candidate_external_review_required === true ||
-    rewriteResultSummary?.public_candidate_warning === 'best_candidate_requires_external_review' ||
-    rewriteResultSummary?.strict_goal_status === 'mitigation_failed_no_safe_candidate' ||
-    rewriteResultSummary?.outcome === 'rewrite_candidate_generated_needs_external_review' ||
-    rewriteResultSummary?.status === 'rewrite_candidate_generated_needs_external_review'
-  );
-  const externalReviewTone = { color: '#92400e', bg: '#fffbeb' };
+  const rewrittenRequiresAuthorReview = requiresRewriteAuthorReview(rewriteResultSummary);
+  const rewrittenRequiresExternalReview = requiresRewriteExternalReview(rewriteResultSummary);
+  const manualReviewTone = { color: '#92400e', bg: '#fffbeb' };
   const originalColumnRatingBadge = {
     caption: t('report.transformation.originalRating'),
     label: authorshipRatingLabel,
     fullLabel: authorshipRatingFullLabel,
     tone: authorshipTone,
   };
-  const rewrittenColumnRatingBadge = rewrittenRequiresExternalReview
+  const rewrittenColumnRatingBadge = rewrittenRequiresAuthorReview
+    ? {
+      caption: t('report.transformation.rewrittenRating'),
+      label: t('rewritePage.reviewRequired'),
+      fullLabel: t('rewritePage.authorReviewTitle'),
+      tone: manualReviewTone,
+    }
+    : rewrittenRequiresExternalReview
     ? {
       caption: t('report.transformation.rewrittenRating'),
       label: t('rewritePage.reviewRequired'),
       fullLabel: t('rewritePage.externalReviewTitle'),
-      tone: externalReviewTone,
+      tone: manualReviewTone,
     }
     : {
       caption: t('report.transformation.rewrittenRating'),
@@ -1074,7 +1078,9 @@ export default function Report() {
   const sealTone = sealRatingBadge.tone || sealAiSignalStamp.tone;
   const sealRatingCaption = sealRatingBadge.caption || (hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal'));
   const sealRatingLabel = sealRatingBadge.label || sealAiSignalStamp.label;
-  const sealAuthorshipDetail = rewrittenRequiresExternalReview
+  const sealAuthorshipDetail = rewrittenRequiresAuthorReview
+    ? t('rewritePage.authorReviewTitle')
+    : rewrittenRequiresExternalReview
     ? t('rewritePage.externalReviewTitle')
     : formatAuthorshipSealDetailWithReference(
       hasRewriteSignalComparison ? rewrittenAuthorshipSealDetail : authorshipSealDetail,

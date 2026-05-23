@@ -886,6 +886,45 @@ function isRewriteOriginalPreserved(rewriteReport) {
   );
 }
 
+function isRewriteSummaryOriginalPreserved(summary) {
+  if (!summary) return false;
+  return Boolean(
+    summary.status === 'original_preserved' ||
+    summary.pipeline_status === 'original_preserved' ||
+    summary.outcome === 'original_preserved' ||
+    summary.no_text_change === true ||
+    summary.kpi_finalization_status === 'original_preserved'
+  );
+}
+
+function isRewriteStrictSafeFinalization(summary) {
+  if (!summary) return false;
+  return Boolean(
+    summary.strict_safe_band_achieved === true ||
+    summary.kpi_finalization_status === 'strict_safe_auto_finalized' ||
+    summary.kpi_finalization_status === 'strict_safe_author_review_required'
+  );
+}
+
+function requiresRewriteAuthorReview(summary) {
+  if (!summary || isRewriteSummaryOriginalPreserved(summary)) return false;
+  const authorProxyContext = summary.author_proxy_context || {};
+  const strictSafeFinalization = isRewriteStrictSafeFinalization(summary);
+  return Boolean(
+    summary.best_candidate_author_review_required === true ||
+    summary.public_candidate_warning === 'author_proxy_candidate_requires_review' ||
+    summary.outcome === 'rewrite_candidate_generated_needs_author_review' ||
+    summary.status === 'rewrite_candidate_generated_needs_author_review' ||
+    summary.kpi_finalization_status === 'strict_safe_author_review_required' ||
+    (strictSafeFinalization && authorProxyContext.review_required === true)
+  );
+}
+
+function requiresRewriteExternalReview(summary) {
+  if (!summary || isRewriteSummaryOriginalPreserved(summary)) return false;
+  return false;
+}
+
 function hasRewriteComparisonData(rewriteReport) {
   if (!rewriteReport) return false;
   const summary = getRewritePayloadSummary(rewriteReport);
@@ -1027,6 +1066,11 @@ function buildRewriteResultSummary(rewriteReport) {
     strict_goal_status: summary.strict_goal_status || '',
     best_candidate_external_review_required: summary.best_candidate_external_review_required === true,
     best_candidate_author_review_required: summary.best_candidate_author_review_required === true,
+    strict_safe_band_achieved: summary.strict_safe_band_achieved === true,
+    kpi_finalization_status: summary.kpi_finalization_status || '',
+    no_text_change: summary.no_text_change === true || rewriteReport?.no_text_change === true,
+    author_proxy_context: summary.author_proxy_context || rewriteReport?.author_proxy_context || null,
+    author_review_cards: summary.author_review_cards || rewriteReport?.author_review_cards || [],
     engine_mode: summary.rewrite_engine_mode || '',
     gate: summary.authenticity_mitigation?.selected_gate || summary.authenticity_mitigation?.best_attempt?.gate || null,
     ai_mitigation_selected: Boolean(summary.authenticity_mitigation?.selected || summary.ai_mitigation_search?.selected),
@@ -1300,6 +1344,9 @@ export {
   getOriginalDetectScan,
   getRewrittenDetectScan,
   hasRewriteComparisonData,
+  isRewriteStrictSafeFinalization,
+  requiresRewriteAuthorReview,
+  requiresRewriteExternalReview,
   mergeScanSummary,
   getScanDocumentContext,
   getScanTransformationSignals,

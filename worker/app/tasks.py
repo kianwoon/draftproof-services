@@ -72,6 +72,7 @@ NON_BILLABLE_REWRITE_OUTCOMES = {
     "needs_author_context",
     "no_safe_rewrite_applied",
     "original_preserved",
+    "partial_candidate_not_strict_safe",
     "skipped",
     "topk_blocked",
 }
@@ -543,8 +544,8 @@ def _bounded_json_debug_log(log_data: dict, *, max_bytes: int = MAX_REWRITE_DEBU
         "pipeline_elapsed": log_data.get("pipeline_elapsed"),
         "debug_truncated": True,
         "debug_truncation_reason": f"debug log exceeded {max_bytes} bytes",
-        "input_scan": _compact_debug_mapping(log_data.get("input_scan"), max_items=12),
         "rewrite_summary": _compact_debug_mapping(log_data.get("rewrite_summary"), max_items=48),
+        "input_scan": _compact_debug_mapping(log_data.get("input_scan"), max_items=12),
         "loop_history_count": len(log_data.get("loop_history") or []) if isinstance(log_data.get("loop_history"), list) else None,
         "sentence_comparison_count": log_data.get("sentence_comparison_count"),
         "sentence_comparison_changes": log_data.get("sentence_comparison_changes"),
@@ -569,6 +570,10 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         "public_status",
         "public_candidate_warning",
         "best_candidate_external_review_required",
+        "best_candidate_author_review_required",
+        "strict_safe_band_achieved",
+        "kpi_finalization_status",
+        "author_review_cards",
         "rewrite_goal_status",
         "strict_goal_status",
         "reference_ai",
@@ -585,6 +590,7 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         "converged",
         "convergence_reason",
         "candidate_generation_status",
+        "candidate_ledger",
         "candidate_trace",
         "candidate_loop_trace",
         "selected_candidate",
@@ -600,11 +606,14 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         "attempted_scores",
         "final_scores",
     )
-    compact_summary = {
-        key: _compact_debug_value(summary.get(key))
-        for key in compact_summary_keys
-        if key in summary
-    }
+    compact_summary = {}
+    for key in compact_summary_keys:
+        if key not in summary:
+            continue
+        if key == "candidate_ledger":
+            compact_summary[key] = _compact_rewrite_candidate_ledger(summary.get(key))
+        else:
+            compact_summary[key] = _compact_debug_value(summary.get(key))
     compact_payload = {
         "status": payload.get("status"),
         "elapsed": payload.get("elapsed"),
@@ -654,6 +663,7 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
             for key in (
                 "public_status",
                 "rewrite_goal_status",
+                "candidate_ledger",
                 "v4_scores",
                 "detect_scores",
                 "detect_scan_original",
@@ -688,6 +698,29 @@ def _compact_debug_value(value):
     if isinstance(value, list):
         return [_compact_debug_value(item) for item in value[:8]] + ([{"omitted": len(value) - 8}] if len(value) > 8 else [])
     return _truncate_debug_value(value, 500)
+
+
+def _compact_rewrite_candidate_ledger(value, *, limit: int = 5, max_text_chars: int = 80_000):
+    if not isinstance(value, list):
+        return []
+    compact = []
+    for entry in value[: max(1, int(limit or 1))]:
+        if not isinstance(entry, dict):
+            continue
+        text = str(entry.get("text") or entry.get("candidate_text") or entry.get("rewritten_document") or "").strip()
+        compact.append({
+            "schema_version": entry.get("schema_version") or "rewrite_candidate_ledger.v1",
+            "rank": entry.get("rank"),
+            "source": entry.get("source"),
+            "section_id": entry.get("section_id"),
+            "variant_id": entry.get("variant_id"),
+            "label": entry.get("label"),
+            "word_count": entry.get("word_count"),
+            "scores": entry.get("scores") if isinstance(entry.get("scores"), dict) else {},
+            "goal": entry.get("goal") if isinstance(entry.get("goal"), dict) else {},
+            "text": _truncate_debug_value(text, max_text_chars),
+        })
+    return compact
 
 
 def _compact_debug_list(items, limit: int = 10):
@@ -819,6 +852,110 @@ def _extract_rewrite_scan_summary(report_dict: dict) -> dict:
 def _fetch_r2_json(s3, bucket: str, key: str) -> dict:
     resp = s3.get_object(Bucket=bucket, Key=key)
     return json.loads(resp["Body"].read())
+
+
+def _seed_text_word_count(text: str) -> int:
+    return len(str(text or "").split())
+
+
+def _historical_seed_is_full_document_candidate(text: str, original_text: str) -> bool:
+    text_words = _seed_text_word_count(text)
+    original_words = _seed_text_word_count(original_text)
+    if text_words <= 0:
+        return False
+    if original_words <= 0:
+        return text_words >= 120
+    if original_words < 120:
+        return text_words >= max(4, int(original_words * 0.55))
+    return text_words >= max(120, int(original_words * 0.55))
+
+
+def _historical_seed_text_from_entry(entry) -> str:
+    if isinstance(entry, str):
+        return entry.strip()
+    if not isinstance(entry, dict):
+        return ""
+    for key in ("text", "candidate_text", "rewritten_document", "final_text", "rewritten_text"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    selected = entry.get("selected") if isinstance(entry.get("selected"), dict) else {}
+    accepted = entry.get("accepted") if isinstance(entry.get("accepted"), dict) else {}
+    for nested in (selected, accepted):
+        if not nested:
+            continue
+        text = _historical_seed_text_from_entry(nested)
+        if text:
+            return text
+    return ""
+
+
+def _append_historical_seed_candidates(candidates: list[str], entries, original_text: str) -> None:
+    if isinstance(entries, dict):
+        text = _historical_seed_text_from_entry(entries)
+        if _historical_seed_is_full_document_candidate(text, original_text):
+            candidates.append(text)
+        return
+    if not isinstance(entries, list):
+        return
+    ordered = sorted(
+        [entry for entry in entries if isinstance(entry, (dict, str))],
+        key=lambda entry: (
+            entry.get("rank") if isinstance(entry, dict) and isinstance(entry.get("rank"), (int, float)) else 999,
+        ),
+    )
+    for entry in ordered:
+        text = _historical_seed_text_from_entry(entry)
+        if _historical_seed_is_full_document_candidate(text, original_text):
+            candidates.append(text)
+
+
+def _dedupe_historical_seed_texts(candidates: list[str], original_text: str, *, limit: int) -> list[str]:
+    original_normalized = _normalized_billable_text(original_text)
+    seen: set[str] = set()
+    seeds: list[str] = []
+    for value in candidates:
+        text = str(value or "").strip()
+        normalized = _normalized_billable_text(text)
+        if (
+            not normalized
+            or normalized == original_normalized
+            or normalized in seen
+            or not _historical_seed_is_full_document_candidate(text, original_text)
+        ):
+            continue
+        seen.add(normalized)
+        seeds.append(text)
+        if len(seeds) >= max(1, int(limit or 1)):
+            break
+    return seeds
+
+
+def _historical_rewrite_seed_texts(rewrite_json: dict | None, original_text: str, *, limit: int = 3) -> list[str]:
+    if not isinstance(rewrite_json, dict):
+        return []
+    summary = rewrite_json.get("summary") if isinstance(rewrite_json.get("summary"), dict) else {}
+    candidates: list[str] = []
+    _append_historical_seed_candidates(candidates, rewrite_json.get("candidate_ledger"), original_text)
+    _append_historical_seed_candidates(candidates, summary.get("candidate_ledger"), original_text)
+    layers = summary.get("rewrite_layers") if isinstance(summary.get("rewrite_layers"), dict) else {}
+    v5_layer = layers.get("v5_residual_cluster_comb") if isinstance(layers.get("v5_residual_cluster_comb"), dict) else {}
+    _append_historical_seed_candidates(candidates, v5_layer.get("seed_candidate_rows"), original_text)
+    _append_historical_seed_candidates(candidates, v5_layer.get("seed_recovery"), original_text)
+    _append_historical_seed_candidates(candidates, v5_layer.get("global_best_fallback"), original_text)
+    _append_historical_seed_candidates(candidates, v5_layer.get("accepted_checkpoints"), original_text)
+    candidates.extend([
+        rewrite_json.get("final_text"),
+        summary.get("final_text"),
+        rewrite_json.get("rewritten_text"),
+        summary.get("rewritten_document"),
+    ])
+    selected = summary.get("selected_candidate") if isinstance(summary.get("selected_candidate"), dict) else {}
+    candidates.extend([
+        selected.get("candidate_text"),
+        selected.get("text"),
+    ])
+    return _dedupe_historical_seed_texts(candidates, original_text, limit=limit)
 
 
 def _target_contexts(plan_items, findings_by_id: dict) -> list:
@@ -1111,6 +1248,12 @@ def _build_rewrite_debug_log(
         "rewrite_summary": {
             "rewrite_pipeline_version": summary.get("rewrite_pipeline_version"),
             "outcome": summary.get("outcome"),
+            "public_status": summary.get("public_status"),
+            "public_candidate_warning": summary.get("public_candidate_warning"),
+            "best_candidate_external_review_required": summary.get("best_candidate_external_review_required"),
+            "best_candidate_author_review_required": summary.get("best_candidate_author_review_required"),
+            "strict_safe_band_achieved": summary.get("strict_safe_band_achieved"),
+            "kpi_finalization_status": summary.get("kpi_finalization_status"),
             "rewrite_goal_status": summary.get("rewrite_goal_status"),
             "strict_goal_status": summary.get("strict_goal_status"),
             "reference_ai": summary.get("reference_ai"),
@@ -1575,7 +1718,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         scores = ((summary.get("v5_scores") or {}).get("deltas") or {}) if isinstance(summary.get("v5_scores"), dict) else {}
         return "\n\n".join([
             "# Rewrite checkpoint",
-            f"Status: {checkpoint_json.get('status') or 'rewrite_candidate_generated_needs_external_review'}",
+            f"Status: {checkpoint_json.get('status') or 'partial_candidate_not_strict_safe'}",
             f"AI delta: {scores.get('ai_delta', '-')}",
             "This is the latest scanner-accepted rewrite saved before the full pipeline completed.",
             "## Rewritten content",
@@ -1705,6 +1848,39 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             )
             release_rewrite_credits(rewrite_id)
             return {"status": "failed", "error": "report not found"}
+
+        previous_rewrite_seed_texts: list[str] = []
+        try:
+            previous_rewrite_json = _fetch_r2_json(
+                s3,
+                worker_settings.R2_BUCKET_NAME,
+                f"reports/{scan_id}/rewrite/rewrite.json",
+            )
+            previous_rewrite_seed_texts.extend(_historical_rewrite_seed_texts(
+                previous_rewrite_json,
+                str(report_json.get("input_text") or ""),
+                limit=8,
+            ))
+        except Exception:
+            pass
+        try:
+            previous_checkpoint_json = _fetch_r2_json(
+                s3,
+                worker_settings.R2_BUCKET_NAME,
+                f"reports/{scan_id}/rewrite/checkpoint.json",
+            )
+            previous_rewrite_seed_texts.extend(_historical_rewrite_seed_texts(
+                previous_checkpoint_json,
+                str(report_json.get("input_text") or ""),
+                limit=8,
+            ))
+        except Exception:
+            pass
+        previous_rewrite_seed_texts = _dedupe_historical_seed_texts(
+            previous_rewrite_seed_texts,
+            str(report_json.get("input_text") or ""),
+            limit=8,
+        )
 
         # 2. Filter findings: only rephrase-fixable ones
         update_rewrite_status(
@@ -1875,6 +2051,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         base_url=settings.LLM_BASE_URL or None,
                         progress_callback=report_rewrite_progress,
                         checkpoint_callback=persist_rewrite_checkpoint,
+                        seed_candidate_texts=previous_rewrite_seed_texts,
                         cancellation_check=raise_if_canceled,
                     )
                 elif pipeline_choice == "v4":

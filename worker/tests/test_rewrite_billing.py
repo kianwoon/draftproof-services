@@ -1,6 +1,12 @@
 from types import SimpleNamespace
 
-from app.tasks import _rewrite_billing_decision, _selected_rewrite_pipeline
+from app.tasks import (
+    _bounded_json_debug_log,
+    _bounded_rewrite_json_payload,
+    _historical_rewrite_seed_texts,
+    _rewrite_billing_decision,
+    _selected_rewrite_pipeline,
+)
 
 
 def test_rewrite_pipeline_selection_prefers_v5_when_enabled():
@@ -95,6 +101,88 @@ def test_rewrite_billing_releases_author_review_candidate_even_when_text_changed
     assert decision["reason"] == "external_review_required_status:rewrite_candidate_generated_needs_author_review"
 
 
+def test_rewrite_billing_releases_partial_candidate_not_strict_safe():
+    decision = _rewrite_billing_decision(
+        {"status": "partial_candidate_not_strict_safe"},
+        {
+            "status": "partial_candidate_not_strict_safe",
+            "original_text": "This is the original draft.",
+            "final_text": "This is a changed partial candidate.",
+            "summary": {
+                "outcome": "partial_candidate_not_strict_safe",
+                "public_candidate_warning": "candidate_not_strict_safe",
+                "strict_safe_band_achieved": False,
+                "kpi_finalization_status": "partial_candidate_not_strict_safe",
+            },
+        },
+    )
+
+    assert decision["billable"] is False
+    assert decision["reason"] == "non_billable_status:partial_candidate_not_strict_safe"
+
+
+def test_historical_rewrite_seed_texts_extracts_distinct_changed_candidates():
+    seeds = _historical_rewrite_seed_texts(
+        {
+            "final_text": "Rewritten candidate with stronger author detail.",
+            "summary": {
+                "final_text": "Rewritten candidate with stronger author detail.",
+                "selected_candidate": {"text": "Alternative candidate from selected row."},
+            },
+        },
+        "Original draft.",
+    )
+
+    assert seeds == [
+        "Rewritten candidate with stronger author detail.",
+        "Alternative candidate from selected row.",
+    ]
+
+
+def test_historical_rewrite_seed_texts_prefers_ranked_candidate_ledger():
+    original = " ".join(["original"] * 220)
+    best = " ".join(["best"] * 218)
+    second = " ".join(["second"] * 216)
+    delivered = " ".join(["delivered"] * 214)
+
+    seeds = _historical_rewrite_seed_texts(
+        {
+            "final_text": delivered,
+            "summary": {
+                "candidate_ledger": [
+                    {
+                        "rank": 2,
+                        "source": "final_text",
+                        "text": delivered,
+                        "scores": {"topk_calibrated_risk": 31.0},
+                    },
+                    {
+                        "rank": 1,
+                        "source": "global_best_fallback",
+                        "text": best,
+                        "scores": {"topk_calibrated_risk": 24.9},
+                    },
+                ],
+                "rewrite_layers": {
+                    "v5_residual_cluster_comb": {
+                        "seed_candidate_rows": [
+                            {
+                                "section_id": "full_document",
+                                "text": second,
+                                "scores": {"topk_calibrated_risk": 25.2},
+                            }
+                        ]
+                    }
+                },
+            },
+        },
+        original,
+        limit=3,
+    )
+
+    assert seeds == [best, delivered, second]
+
+
 def test_rewrite_billing_releases_original_preserved_text():
     decision = _rewrite_billing_decision(
         {"status": "rewritten"},
@@ -123,3 +211,80 @@ def test_rewrite_billing_releases_empty_final_text():
 
     assert decision["billable"] is False
     assert decision["reason"] == "empty_final_text"
+
+
+def test_bounded_rewrite_json_preserves_author_proxy_kpi_status():
+    ledger_text = " ".join(["candidate-ledger-text"] * 100)
+    payload = {
+        "status": "rewrite_candidate_generated_needs_author_review",
+        "elapsed": 1.0,
+        "original_text": "source",
+        "final_text": "final",
+        "summary": {
+            "outcome": "rewrite_candidate_generated_needs_author_review",
+            "public_status": "rewrite_candidate_generated_needs_author_review",
+            "public_candidate_warning": "author_proxy_candidate_requires_review",
+            "best_candidate_author_review_required": True,
+            "best_candidate_external_review_required": False,
+            "strict_safe_band_achieved": True,
+            "kpi_finalization_status": "strict_safe_author_review_required",
+            "strict_goal_status": "ai_mitigated",
+            "rewrite_goal_status": {"status": "rewrite_candidate_generated_needs_author_review", "goal_met": True},
+            "author_review_cards": [{"card_id": "target-01", "target_text": "confirm source detail"}],
+            "candidate_ledger": [
+                {
+                    "rank": 1,
+                    "source": "global_best_fallback",
+                    "section_id": "full_document",
+                    "variant_id": "seed_01",
+                    "text": ledger_text,
+                    "scores": {"ai": 31.0, "topk_calibrated_risk": 24.8},
+                    "goal": {"status": "ai_mitigated", "goal_met": True},
+                }
+            ],
+            "candidate_loop_trace": [{"candidate_report": {"blob": "x" * 2000}} for _ in range(300)],
+            "rewrite_layers": {"full_trace": [{"candidate_report": "y" * 2000} for _ in range(300)]},
+        },
+        "sentence_comparison": [{"original": "a" * 2000, "rewritten": "b" * 2000} for _ in range(300)],
+    }
+
+    bounded = _bounded_rewrite_json_payload(payload, max_bytes=12000)
+    summary = bounded["summary"]
+
+    assert bounded["rewrite_json_truncated"] is True
+    assert summary["strict_safe_band_achieved"] is True
+    assert summary["kpi_finalization_status"] == "strict_safe_author_review_required"
+    assert summary["best_candidate_author_review_required"] is True
+    assert summary["best_candidate_external_review_required"] is False
+    assert summary["author_review_cards"][0]["card_id"] == "target-01"
+    assert summary["candidate_ledger"][0]["text"] == ledger_text
+    assert summary["candidate_ledger"][0]["scores"]["topk_calibrated_risk"] == 24.8
+    assert "rewrite_layers" not in summary
+
+
+def test_bounded_debug_log_preserves_author_proxy_kpi_status():
+    debug_text = _bounded_json_debug_log(
+        {
+            "debug_export_version": "test",
+            "rewrite_id": "rw_test",
+            "scan_id": "scan_test",
+            "input_scan": {"findings": [{"detail": "x" * 2000} for _ in range(300)]},
+            "rewrite_summary": {
+                "outcome": "rewrite_candidate_generated_needs_author_review",
+                "public_status": "rewrite_candidate_generated_needs_author_review",
+                "public_candidate_warning": "author_proxy_candidate_requires_review",
+                "best_candidate_author_review_required": True,
+                "best_candidate_external_review_required": False,
+                "strict_safe_band_achieved": True,
+                "kpi_finalization_status": "strict_safe_author_review_required",
+                "strict_goal_status": "ai_mitigated",
+                "candidate_loop_trace": [{"candidate_report": {"blob": "y" * 2000}} for _ in range(300)],
+            },
+        },
+        max_bytes=4096,
+    )
+
+    assert len(debug_text.encode("utf-8")) <= 4096
+    assert '"debug_truncated": true' in debug_text
+    assert '"strict_safe_band_achieved": true' in debug_text
+    assert '"kpi_finalization_status": "strict_safe_author_review_required"' in debug_text

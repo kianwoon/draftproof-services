@@ -4,6 +4,10 @@ import { useTranslation } from 'react-i18next';
 import { getRewriteStatus, getRewriteReport, getRewriteDownload } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import { useAuth } from '../context/AuthContext';
+import {
+  requiresRewriteAuthorReview,
+  requiresRewriteExternalReview,
+} from './report/reportHelpers';
 
 function normalizeSentence(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -240,20 +244,14 @@ export default function Rewrite() {
     report?.author_review_cards ||
     []
   ).filter(Boolean);
-  const requiresAuthorReview = (
-    summary.best_candidate_author_review_required === true ||
-    summary.public_candidate_warning === 'author_proxy_candidate_requires_review' ||
-    summary.outcome === 'rewrite_candidate_generated_needs_author_review' ||
-    report?.status === 'rewrite_candidate_generated_needs_author_review' ||
-    authorProxyContext.review_required === true
-  );
-  const requiresExternalReview = (
-    summary.best_candidate_external_review_required === true ||
-    summary.public_candidate_warning === 'best_candidate_requires_external_review' ||
-    summary.strict_goal_status === 'mitigation_failed_no_safe_candidate' ||
-    summary.outcome === 'rewrite_candidate_generated_needs_external_review' ||
-    report?.status === 'rewrite_candidate_generated_needs_external_review'
-  );
+  const finalizationSummary = {
+    ...summary,
+    status: report?.status || summary.status || '',
+    no_text_change: summary.no_text_change === true || report?.no_text_change === true,
+    author_proxy_context: authorProxyContext,
+  };
+  const requiresAuthorReview = requiresRewriteAuthorReview(finalizationSummary);
+  const requiresExternalReview = requiresRewriteExternalReview(finalizationSummary);
   const requiresManualReview = requiresAuthorReview || requiresExternalReview;
   const outcome = requiresAuthorReview
     ? 'rewrite_candidate_generated_needs_author_review'

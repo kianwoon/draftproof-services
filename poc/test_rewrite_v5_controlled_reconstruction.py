@@ -25,11 +25,15 @@ from rewrite_v5.residual_comb import (
     build_residual_cluster_retune_prompt,
     build_borderline_verdict_cleanup_prompt,
     build_final_topk_sentence_route_prompt,
+    build_safe_band_author_proxy_revision_plan_prompt,
+    build_safe_band_evidence_pack_prompt,
+    build_safe_band_evidence_repair_prompt,
     build_route_blueprint,
     build_unsafe_cluster_cleanup_prompt,
     generate_residual_cluster_route_plan,
     run_v5_residual_cluster_comb_experiment,
     _best_full_document_candidate,
+    _best_safe_band_evidence_repair_candidate,
     _best_balanced_ai_topk_candidate,
     _best_borderline_verdict_candidate,
     _balanced_ai_topk_sort_value,
@@ -46,6 +50,7 @@ from rewrite_v5.residual_comb import (
     _has_balanced_ai_topk_movement,
     _has_unsafe_cluster_cleanup_movement,
     _has_full_document_fallback_movement,
+    _has_safe_band_evidence_repair_movement,
     _ordered_density_cluster_rows,
     _parallel_single_variant_max_tokens,
     _parse_route_plan,
@@ -347,6 +352,7 @@ def test_v5_residual_cluster_prompt_attaches_author_proxy_context():
     assert payload["author_proxy_context"]["review_required"] is True
     assert payload["author_proxy_context"]["quality_bar"]["target"] == "highest_quality_grounded_candidate"
     assert payload["author_proxy_context"]["review_cards"][0]["card_id"] == "target-01"
+    assert payload["author_proxy_context"]["authorship_evidence_contract"]["schema_version"] == "authorship_evidence_contract.v1"
     assert payload["author_proxy_quality_contract"]["target"] == "highest_quality_grounded_candidate"
     assert "submitted source_text" in payload["author_proxy_quality_contract"]["basis"]
     assert any("No variant contains placeholders" in row for row in payload["author_proxy_quality_contract"]["self_check_before_return"])
@@ -556,6 +562,2627 @@ def test_v5_final_topk_sentence_route_can_score_single_repair_salvage(tmp_path, 
     assert v5_residual_comb._best_final_topk_sentence_route_candidate([full_row, partial_row]) is partial_row
 
 
+def test_v5_final_topk_prompt_carries_safe_band_kpi_contract():
+    prompt = build_final_topk_sentence_route_prompt(
+        current_scores={
+            "ai": 33.32,
+            "topk": 73.68,
+            "topk_calibrated_risk": 30.586,
+            "qualifying_text_ai_density": 40.73,
+        },
+        current_goal={
+            "ai_footprint_gate": {
+                "safe_band_thresholds": {
+                    "topk_calibrated_risk": 25.0,
+                    "qualifying_text_ai_density": 35.0,
+                },
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "topk_calibrated_risk", "value": 30.586, "safe_band": 25.0},
+                    {"driver": "qualifying_text_ai_density", "value": 40.73, "safe_band": 35.0},
+                ],
+                "texture_blockers": [{"driver": "topk_calibrated_risk"}],
+                "after": {
+                    "semantic_footprint": {
+                        "generic_assertion_risk": 80.0,
+                        "unsupported_claim_risk": 70.0,
+                        "qualifying_text_ai_density": 40.73,
+                    },
+                    "authorship_footprint": {
+                        "rewrite_smoothness": 36.2,
+                    },
+                },
+            }
+        },
+        targets=[{
+            "target_id": "t001",
+            "sentence": "This shows that support matters for learning.",
+        }],
+        variant_count=1,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["kpi_contract"]["objective"] == "clear_strict_ai_safe_band_with_grounded_author_proxy_revision"
+    assert payload["kpi_contract"]["targets"]["topk_calibrated_risk"] == 25.0
+    assert payload["kpi_contract"]["targets"]["qualifying_text_ai_density"] == 35.0
+    assert payload["kpi_contract"]["gaps"]["topk_calibrated_risk"] == 5.586
+    assert payload["kpi_contract"]["secondary_density_drivers"]["generic_assertion_risk"] == 80.0
+    assert payload["kpi_contract"]["secondary_density_drivers"]["unsupported_claim_risk"] == 70.0
+    assert payload["current_scores"]["qualifying_text_ai_density"] == 40.73
+    assert any("qualifying_text_ai_density" in rule for rule in payload["rules"])
+    assert payload["safe_band_replacement_method"][0].startswith("Treat kpi_contract.gaps")
+    assert any("secondary_density_drivers" in row for row in payload["safe_band_replacement_method"])
+    assert any("repeat" in row for row in payload["safe_band_replacement_method"])
+    assert any("self-repetition" in row for row in payload["rules"])
+    assert "safe-band gap" in payload["variant_plan"][0]["goal"]
+    assert any("kpi_contract" in rule for rule in payload["rules"])
+
+
+def test_v5_final_topk_targets_include_paragraph_evidence_context():
+    text = (
+        "The class began with a short demonstration. "
+        "Students talk during this time, and their comments expose what they learned. "
+        "I used those comments to decide what to show again.\n\n"
+        "The second paragraph is unrelated."
+    )
+    targets = v5_residual_comb._final_topk_sentence_route_targets(
+        text,
+        {},
+        {
+            "eligible_span_density_gate": {
+                "top_sentence_targets": [{
+                    "sentence_id": "s002",
+                    "preview": "Students talk during this time, and their comments expose what they learned.",
+                    "top10_ratio": 0.7,
+                    "top50_ratio": 0.9,
+                    "predictability_risk": 0.5,
+                }]
+            }
+        },
+    )
+
+    assert targets[0]["context"]["paragraph_index"] == 1
+    assert "short demonstration" in targets[0]["context"]["paragraph"]
+    assert targets[0]["context"]["before_sentences"] == ["The class began with a short demonstration."]
+    assert targets[0]["context"]["after_sentences"] == ["I used those comments to decide what to show again."]
+
+
+def test_v5_final_topk_selector_prefers_strict_safe_band_clearance():
+    partial_movement = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "topk_delta": 3.0,
+            "topk_calibrated_risk_delta": 6.0,
+            "ai_delta": 1.0,
+        },
+        "scores": {
+            "topk_calibrated_risk": 30.0,
+            "qualifying_text_ai_density": 41.0,
+        },
+        "candidate_goal": {
+            "strict_ai_safe_band_achieved": False,
+            "ai_footprint_gate": {
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "topk_calibrated_risk", "value": 30.0, "safe_band": 25.0},
+                    {"driver": "qualifying_text_ai_density", "value": 41.0, "safe_band": 35.0},
+                ]
+            },
+        },
+    }
+    strict_safe = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "topk_delta": 0.5,
+            "topk_calibrated_risk_delta": 1.0,
+            "ai_delta": 0.1,
+        },
+        "scores": {
+            "topk_calibrated_risk": 24.0,
+            "qualifying_text_ai_density": 34.0,
+        },
+        "candidate_goal": {
+            "strict_ai_safe_band_achieved": True,
+            "ai_footprint_gate": {
+                "safe_band": True,
+                "remaining_ai_footprint_drivers": [],
+            },
+        },
+    }
+
+    assert v5_residual_comb._best_final_topk_sentence_route_candidate([partial_movement, strict_safe]) is strict_safe
+
+
+def test_v5_safe_band_evidence_repair_prompt_carries_kpi_and_author_contract():
+    section = SectionUnit(
+        section_id="safe_band_evidence_repair_t001",
+        heading="Safe-band evidence repair",
+        text="Students talk after practice, and I use those comments to decide what to show again.",
+        start_char=0,
+        end_char=81,
+        paragraph_count=1,
+        word_count=15,
+        metadata={
+            "selection_reason": "top_safe_band_sentence_target",
+            "target_sentence": "Students talk after practice.",
+            "scanner_focus": {"top10_ratio": 0.7},
+            "before_context": "Before this paragraph.",
+            "after_context": "After this paragraph.",
+        },
+    )
+    prompt = build_safe_band_evidence_repair_prompt(
+        section=section,
+        current_scores={
+            "ai": 33.32,
+            "topk_calibrated_risk": 30.586,
+            "qualifying_text_ai_density": 40.73,
+            "ai_authorship": 33.0,
+        },
+        current_goal={
+            "ai_footprint_gate": {
+                "safe_band_thresholds": {
+                    "topk_calibrated_risk": 25.0,
+                    "qualifying_text_ai_density": 35.0,
+                },
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "topk_calibrated_risk", "value": 30.586, "safe_band": 25.0},
+                    {"driver": "qualifying_text_ai_density", "value": 40.73, "safe_band": 35.0},
+                ],
+            }
+        },
+        variant_count=2,
+        author_proxy_context={
+            "active": True,
+            "mode": "non_interrupting_author_proxy_draft",
+            "review_required": True,
+            "required_inputs": ["confirm class observation"],
+            "allowed_provenance": ["source_preserved", "inferred_from_draft", "needs_author_confirmation"],
+            "review_cards": [{"card_id": "target-01", "target_text": "class observation"}],
+            "quality_bar": {"target": "highest_quality_grounded_candidate"},
+        },
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "safe_band_evidence_repair"
+    assert payload["section"]["selection_reason"] == "top_safe_band_sentence_target"
+    assert payload["kpi_contract"]["gaps"]["qualifying_text_ai_density"] == 5.73
+    assert payload["materiality_gate"]["minimum_changed_source_sentences"] == 1
+    assert payload["author_proxy_context"]["authorship_evidence_contract"]["schema_version"] == "authorship_evidence_contract.v1"
+    assert "author_proxy_provenance" in payload["output_schema"]["variants"][0]
+
+
+def test_v5_safe_band_evidence_repair_section_uses_whole_target_paragraph():
+    text = (
+        "The first paragraph is not the problem.\n\n"
+        "My teaching now includes actions that build emotional safety. "
+        "Students talk during this time, and their comments expose what they learned. "
+        "From this sharing, I learn from them too.\n\n"
+        "The last paragraph is separate."
+    )
+
+    section = v5_residual_comb._safe_band_evidence_repair_section(
+        text,
+        {},
+        {
+            "eligible_span_density_gate": {
+                "top_sentence_targets": [{
+                    "sentence_id": "s002",
+                    "preview": "Students talk during this time, and their comments expose what they learned.",
+                    "top10_ratio": 0.7,
+                    "top50_ratio": 0.9,
+                    "predictability_risk": 0.5,
+                }]
+            }
+        },
+    )
+
+    assert section is not None
+    assert section.metadata["paragraph_index"] == 2
+    assert section.metadata["selection_reason"] == "top_safe_band_sentence_target"
+    assert section.text.startswith("My teaching now includes actions")
+    assert section.text.endswith("I learn from them too.")
+    assert text[section.start_char:section.end_char] == section.text
+
+
+def test_v5_safe_band_evidence_repair_section_handles_single_newline_paragraphs():
+    text = (
+        "Title line\n"
+        "The setup paragraph is separate.\n"
+        "Students talk during this time, and their comments expose what they learned. "
+        "I use those comments to decide what to show again.\n"
+        "The last paragraph is separate."
+    )
+
+    section = v5_residual_comb._safe_band_evidence_repair_section(
+        text,
+        {},
+        {
+            "eligible_span_density_gate": {
+                "top_sentence_targets": [{
+                    "sentence_id": "s003",
+                    "preview": "Students talk during this time, and their comments expose what they learned.",
+                }]
+            }
+        },
+    )
+
+    assert section is not None
+    assert section.metadata["paragraph_delimiter"] == "single_newline"
+    assert section.metadata["paragraph_index"] == 3
+    assert section.text.startswith("Students talk during this time")
+    assert "The setup paragraph" not in section.text
+    assert "The last paragraph" not in section.text
+
+
+def test_v5_safe_band_evidence_repair_sections_start_with_composite_window():
+    text = (
+        "Opening paragraph.\n"
+        "Students talk during this time, and their comments expose what they learned. "
+        "I use those comments to decide what to show again.\n"
+        "A middle paragraph links the two target areas.\n"
+        "This creates an illusion of simplicity, prompting the thought, \"I can do that.\" "
+        "The class then needs sectioning practice.\n"
+        "Closing paragraph."
+    )
+
+    sections = v5_residual_comb._safe_band_evidence_repair_sections(
+        text,
+        {},
+        {
+            "eligible_span_density_gate": {
+                "top_sentence_targets": [
+                    {
+                        "sentence_id": "s002",
+                        "preview": "Students talk during this time, and their comments expose what they learned.",
+                    },
+                    {
+                        "sentence_id": "s004",
+                        "preview": "This creates an illusion of simplicity, prompting the thought, \"I can do that.\"",
+                    },
+                ]
+            }
+        },
+        limit=3,
+    )
+
+    assert sections[0].metadata["selection_reason"] == "composite_top_safe_band_sections"
+    assert "Students talk during this time" in sections[0].text
+    assert "This creates an illusion" in sections[0].text
+    assert sections[1].metadata["selection_reason"] == "top_safe_band_sentence_target"
+
+
+def test_v5_safe_band_evidence_pack_prompt_requires_all_section_replacements():
+    sections = [
+        SectionUnit(
+            section_id="safe_band_evidence_repair_t001",
+            heading="Safe-band evidence repair",
+            text=(
+                "Each lesson ends with group reflection. "
+                "Students talk during this time, and their comments expose what they learned. "
+                "I use those comments to decide what to show again."
+            ),
+            start_char=10,
+            end_char=170,
+            paragraph_count=1,
+            word_count=25,
+            metadata={"target_sentence": "Students talk during this time, and their comments expose what they learned."},
+        ),
+        SectionUnit(
+            section_id="safe_band_evidence_repair_t002",
+            heading="Safe-band evidence repair",
+            text=(
+                "Videos can make the haircut look easy. "
+                "This creates an illusion of simplicity. "
+                "The classroom task exposes the sectioning problem."
+            ),
+            start_char=200,
+            end_char=330,
+            paragraph_count=1,
+            word_count=20,
+            metadata={"target_sentence": "This creates an illusion of simplicity."},
+        ),
+    ]
+    revision_plan = {
+        "evidence_ledger": {
+            "sections": [
+                {
+                    "section_id": "safe_band_evidence_repair_t001",
+                    "author_owned_evidence": ["group reflection", "comments decide what to show again"],
+                    "weak_or_generic_claims": ["comments expose what they learned"],
+                    "protected_anchors": ["group reflection"],
+                    "author_review_gaps": [],
+                },
+                {
+                    "section_id": "safe_band_evidence_repair_t002",
+                    "author_owned_evidence": ["videos make haircut look easy", "sectioning problem"],
+                    "weak_or_generic_claims": ["illusion of simplicity"],
+                    "protected_anchors": ["sectioning"],
+                    "author_review_gaps": [],
+                },
+            ],
+        },
+        "revision_plan": [
+            {
+                "section_id": "safe_band_evidence_repair_t001",
+                "required_moves": ["rebuild reflection route around what students said"],
+                "sentences_to_rebuild": ["Students talk during this time"],
+            },
+            {
+                "section_id": "safe_band_evidence_repair_t002",
+                "required_moves": ["connect video polish to sectioning obstacle"],
+                "sentences_to_rebuild": ["This creates an illusion of simplicity"],
+            },
+        ],
+    }
+
+    prompt = build_safe_band_evidence_pack_prompt(
+        sections=sections,
+        current_scores={"topk_calibrated_risk": 30.0, "qualifying_text_ai_density": 40.0},
+        current_goal={"ai_footprint_gate": {"remaining_ai_footprint_drivers": []}},
+        variant_count=2,
+        revision_plan=revision_plan,
+        author_proxy_context={
+            "active": True,
+            "mode": "non_interrupting_author_proxy_draft",
+            "review_required": True,
+            "allowed_provenance": ["source_preserved", "inferred_from_draft", "needs_author_confirmation"],
+        },
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "safe_band_evidence_multi_replacement_pack"
+    assert payload["architecture_stage"] == "author_proxy_writer_from_evidence_ledger_and_revision_plan"
+    assert payload["single_product_judge"]["judge"] == "DraftProof internal safe-band and authorship-integrity scoring"
+    assert payload["single_product_judge"]["ignored_as_acceptance_judge"] == "external AI flag score"
+    assert payload["evidence_ledger"]["sections"][0]["author_owned_evidence"][0] == "group reflection"
+    assert payload["revision_plan"][1]["required_moves"][0] == "connect video polish to sectioning obstacle"
+    assert [row["section_id"] for row in payload["sections"]] == [
+        "safe_band_evidence_repair_t001",
+        "safe_band_evidence_repair_t002",
+    ]
+    replacements = payload["output_schema"]["variants"][0]["replacements"]
+    assert [row["section_id"] for row in replacements] == [
+        "safe_band_evidence_repair_t001",
+        "safe_band_evidence_repair_t002",
+    ]
+    assert payload["author_proxy_context"]["authorship_evidence_contract"]["schema_version"] == "authorship_evidence_contract.v1"
+
+
+def test_v5_safe_band_evidence_pack_uses_density_sections_for_density_blocker(monkeypatch):
+    current_text = (
+        "Each lesson ends with group reflection. Students talk during this time, and their comments expose what they learned. "
+        "I use those comments to decide what to show again.\n\n"
+        "Videos can make the haircut look easy. This creates an illusion of simplicity. "
+        "The classroom task exposes the sectioning problem."
+    )
+    density_section = SectionUnit(
+        section_id="safe_band_density_section_t001",
+        heading="Safe-band density section repair",
+        text="Each lesson ends with group reflection. Students talk during this time, and their comments expose what they learned.",
+        start_char=0,
+        end_char=107,
+        paragraph_count=1,
+        word_count=15,
+        metadata={"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_safe_band_density_section_repair_sections",
+        lambda *_args, **_kwargs: [density_section],
+    )
+
+    sections = v5_residual_comb._safe_band_evidence_pack_sections(
+        current_text,
+        {},
+        {
+            "ai_footprint_gate": {
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "qualifying_text_ai_density", "value": 39.2, "safe_band": 35.0},
+                ],
+            }
+        },
+        limit=4,
+    )
+
+    assert sections == [density_section]
+    payload = v5_residual_comb._safe_band_pack_section_payload(density_section, index=1)
+    assert payload["materiality_gate"]["contract"] == "density_section_repair"
+    assert payload["materiality_gate"]["minimum_changed_source_sentence_ratio"] == 0.4
+
+
+def test_v5_safe_band_evidence_pack_prompt_lists_density_hard_rejection_contract():
+    section = SectionUnit(
+        section_id="safe_band_density_section_large",
+        heading="Density",
+        text=" ".join(f"Source sentence {index} keeps author evidence." for index in range(1, 11)),
+        start_char=0,
+        end_char=400,
+        paragraph_count=1,
+        word_count=60,
+        metadata={"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+
+    prompt = build_safe_band_evidence_pack_prompt(
+        sections=[section],
+        current_scores={
+            "topk_calibrated_risk": 24.3,
+            "qualifying_text_ai_density": 38.4,
+            "unsafe_cluster_count": 0,
+            "risky_window_count": 0,
+        },
+        current_goal={
+            "ai_footprint_gate": {
+                "safe_band_thresholds": {
+                    "topk_calibrated_risk": 25.0,
+                    "qualifying_text_ai_density": 35.0,
+                },
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "qualifying_text_ai_density", "value": 38.4, "safe_band": 35.0},
+                ],
+            }
+        },
+        variant_count=1,
+    )
+    payload = json.loads(prompt.split("\n", 1)[1])
+    contract = payload["density_pack_hard_rejection_contract"]
+
+    assert contract["applies"] is True
+    assert contract["requirements"][0]["section_id"] == "safe_band_density_section_large"
+    assert contract["requirements"][0]["minimum_changed_source_sentences"] >= 4
+    assert "whole pack is rejected" in contract["rule"]
+    section_contract = payload["sections"][0]["materiality_gate"]["contextual_anchor_contract"]
+    assert section_contract["target_contextual_anchor_density"] == 0.45
+    assert "low_context_sentence_examples" in section_contract
+    assert any("contextual_anchor_contract" in rule for rule in payload["pack_rules"])
+
+
+def test_v5_safe_band_density_section_prompt_exposes_contextual_anchor_contract():
+    section = SectionUnit(
+        section_id="safe_band_density_section_s001",
+        heading="Density",
+        text=(
+            "The first broad sentence explains learning in general. "
+            "I ask students to hold the comb while they check the sectioning. "
+            "The final broad sentence explains why this matters for confidence."
+        ),
+        start_char=0,
+        end_char=170,
+        paragraph_count=1,
+        word_count=27,
+        metadata={"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+
+    prompt = v5_residual_comb.build_safe_band_density_section_repair_prompt(
+        section=section,
+        current_scores={"topk_calibrated_risk": 24.3, "qualifying_text_ai_density": 38.4},
+        current_goal={
+            "ai_footprint_gate": {
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "qualifying_text_ai_density", "value": 38.4, "safe_band": 35.0},
+                ],
+            }
+        },
+        variant_count=1,
+    )
+    payload = json.loads(prompt.split("\n", 1)[1])
+    contract = payload["section"]["contextual_anchor_contract"]
+
+    assert contract["schema_version"] == "safe_band_density_contextual_anchor_contract.v1"
+    assert contract["target_contextual_anchor_density"] == 0.45
+    assert contract["additional_contextual_sentences_needed"] >= 1
+    assert "contextual_anchor_contract" in " ".join(payload["rules"])
+
+
+def test_v5_safe_band_evidence_pack_skips_oversized_density_sections(monkeypatch):
+    sections = [
+        SectionUnit("safe_band_density_section_small1", "Density", "Small first section.", 0, 20, 1, 76, {"selection_reason": "ai_mitigation_density_target_segment"}),
+        SectionUnit("safe_band_density_section_large", "Density", "Large section.", 21, 50, 1, 278, {"selection_reason": "ai_mitigation_density_target_segment"}),
+        SectionUnit("safe_band_density_section_small2", "Density", "Small second section.", 51, 80, 1, 196, {"selection_reason": "ai_mitigation_density_target_segment"}),
+        SectionUnit("safe_band_density_section_small3", "Density", "Small third section.", 81, 110, 1, 100, {"selection_reason": "ai_mitigation_density_target_segment"}),
+    ]
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_sections", lambda *_args, **_kwargs: sections)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_pack_max_section_words", lambda: 220)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_pack_max_source_words", lambda: 420)
+
+    selected = v5_residual_comb._safe_band_evidence_pack_sections(
+        "source text",
+        {},
+        {
+            "ai_footprint_gate": {
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "qualifying_text_ai_density", "value": 39.2, "safe_band": 35.0},
+                ],
+            }
+        },
+        limit=4,
+    )
+
+    assert [section.section_id for section in selected] == [
+        "safe_band_density_section_small1",
+        "safe_band_density_section_small2",
+        "safe_band_density_section_small3",
+    ]
+    assert sum(section.word_count for section in selected) == 372
+
+
+def test_v5_safe_band_evidence_pack_defaults_cover_large_density_windows(monkeypatch):
+    sections = [
+        SectionUnit("safe_band_density_section_intro", "Density", "Intro density section.", 0, 20, 1, 74, {"selection_reason": "ai_mitigation_density_target_segment"}),
+        SectionUnit("safe_band_density_section_large", "Density", "Large density section.", 21, 50, 1, 278, {"selection_reason": "ai_mitigation_density_target_segment"}),
+        SectionUnit("safe_band_density_section_method", "Density", "Method density section.", 51, 80, 1, 196, {"selection_reason": "ai_mitigation_density_target_segment"}),
+        SectionUnit("safe_band_density_section_video", "Density", "Video density section.", 81, 110, 1, 100, {"selection_reason": "ai_mitigation_density_target_segment"}),
+    ]
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_MAX_SECTION_WORDS", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_MAX_SOURCE_WORDS", raising=False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_sections", lambda *_args, **_kwargs: sections)
+
+    selected = v5_residual_comb._safe_band_evidence_pack_sections(
+        "source text",
+        {},
+        {
+            "ai_footprint_gate": {
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "qualifying_text_ai_density", "value": 38.44, "safe_band": 35.0},
+                ],
+            }
+        },
+        limit=4,
+    )
+
+    assert [section.section_id for section in selected] == [
+        "safe_band_density_section_intro",
+        "safe_band_density_section_large",
+        "safe_band_density_section_method",
+        "safe_band_density_section_video",
+    ]
+    assert sum(section.word_count for section in selected) == 648
+
+
+def test_v5_safe_band_author_proxy_revision_plan_prompt_precedes_writer():
+    sections = [
+        SectionUnit(
+            section_id="safe_band_evidence_repair_t001",
+            heading="Safe-band evidence repair",
+            text=(
+                "Each lesson ends with group reflection. "
+                "Students talk during this time, and their comments expose what they learned. "
+                "I use those comments to decide what to show again."
+            ),
+            start_char=10,
+            end_char=170,
+            paragraph_count=1,
+            word_count=25,
+            metadata={
+                "target_sentence": "Students talk during this time, and their comments expose what they learned.",
+                "before_context": "The class struggled with projection.",
+                "after_context": "The next lesson returns to sectioning.",
+            },
+        ),
+        SectionUnit(
+            section_id="safe_band_evidence_repair_t002",
+            heading="Safe-band evidence repair",
+            text=(
+                "Videos can make the haircut look easy. "
+                "This creates an illusion of simplicity. "
+                "The classroom task exposes the sectioning problem."
+            ),
+            start_char=200,
+            end_char=330,
+            paragraph_count=1,
+            word_count=20,
+            metadata={"target_sentence": "This creates an illusion of simplicity."},
+        ),
+    ]
+
+    prompt = build_safe_band_author_proxy_revision_plan_prompt(
+        sections=sections,
+        current_scores={"topk_calibrated_risk": 30.0, "qualifying_text_ai_density": 40.0},
+        current_goal={
+            "ai_footprint_gate": {
+                "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "topk_calibrated_risk", "value": 30.0, "safe_band": 25.0},
+                ],
+            }
+        },
+        author_proxy_context={
+            "active": True,
+            "mode": "non_interrupting_author_proxy_draft",
+            "review_required": True,
+            "allowed_provenance": ["source_preserved", "inferred_from_draft", "needs_author_confirmation"],
+        },
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "safe_band_author_proxy_evidence_ledger_and_revision_plan"
+    assert payload["architecture_stage"] == "evidence_ledger_then_revision_plan_before_writer"
+    assert payload["single_product_judge"]["ignored_as_acceptance_judge"] == "external AI flag score"
+    assert payload["kpi_contract"]["gaps"]["topk_calibrated_risk"] == 5.0
+    assert payload["sections"][0]["materiality_gate"]["minimum_changed_source_sentences"] == 2
+    assert payload["output_schema"]["evidence_ledger"]["sections"][0]["author_owned_evidence"]
+    assert payload["output_schema"]["revision_plan"][0]["required_moves"]
+    assert payload["author_proxy_context"]["mode"] == "non_interrupting_author_proxy_draft"
+
+
+def test_v5_safe_band_author_proxy_revision_plan_sanitizer_requires_all_sections():
+    sections = [
+        SectionUnit(
+            section_id="s1",
+            heading="A",
+            text="One source sentence. Another sentence.",
+            start_char=0,
+            end_char=37,
+            paragraph_count=1,
+            word_count=5,
+            metadata={},
+        ),
+        SectionUnit(
+            section_id="s2",
+            heading="B",
+            text="Third source sentence. Fourth sentence.",
+            start_char=38,
+            end_char=75,
+            paragraph_count=1,
+            word_count=5,
+            metadata={},
+        ),
+    ]
+    incomplete = {
+        "evidence_ledger": {
+            "sections": [
+                {
+                    "section_id": "s1",
+                    "author_owned_evidence": ["One source sentence"],
+                    "weak_or_generic_claims": [],
+                    "protected_anchors": [],
+                    "author_review_gaps": [],
+                }
+            ]
+        },
+        "revision_plan": [
+            {
+                "section_id": "s1",
+                "section_job": "repair first section",
+                "required_moves": ["change route"],
+                "sentences_to_rebuild": ["One source sentence"],
+                "claim_narrowing": [],
+                "materiality_requirement": "change two sentences",
+                "author_review_items": [],
+            }
+        ],
+    }
+    plan, diagnostics = v5_residual_comb._sanitize_safe_band_author_proxy_revision_plan(
+        incomplete,
+        sections=sections,
+    )
+
+    assert plan is None
+    assert diagnostics["reason"] == "plan_missing_required_sections"
+    assert diagnostics["missing_ledger_section_ids"] == ["s2"]
+    assert diagnostics["missing_plan_section_ids"] == ["s2"]
+
+
+def test_v5_safe_band_evidence_pack_response_keeps_author_proxy_fields_compact():
+    schema = v5_residual_comb._safe_band_evidence_pack_response_format(
+        2,
+        3,
+        include_author_proxy_fields=True,
+    )
+    variant_schema = schema["json_schema"]["schema"]["properties"]["variants"]["items"]
+
+    assert variant_schema["properties"]["author_proxy_provenance"]["maxItems"] == 4
+    assert variant_schema["properties"]["author_review_items"]["maxItems"] == 4
+
+
+def test_v5_safe_band_evidence_pack_composite_combines_material_sections():
+    first = SectionUnit(
+        section_id="s1",
+        heading="Safe-band evidence repair",
+        text="First source sentence stays here. Target sentence must change. Third source sentence stays.",
+        start_char=0,
+        end_char=82,
+        paragraph_count=1,
+        word_count=11,
+        metadata={"target_sentence": "Target sentence must change."},
+    )
+    second = SectionUnit(
+        section_id="s2",
+        heading="Safe-band evidence repair",
+        text="Fourth source sentence stays here. Another target must change. Sixth source sentence stays.",
+        start_char=83,
+        end_char=169,
+        paragraph_count=1,
+        word_count=11,
+        metadata={"target_sentence": "Another target must change."},
+    )
+    variants = [
+        {
+            "variant_id": "v1",
+            "replacements": [
+                {
+                    "section_id": "s1",
+                    "text": "First idea is rebuilt around the author action. The target is recast with a new route. The closing sentence changes too.",
+                },
+                {"section_id": "s2", "text": second.text},
+            ],
+            "author_proxy_provenance": [{"item_id": "p1", "target_text": "s1", "generated_text": "rebuilt", "provenance": "inferred_from_draft"}],
+            "author_review_items": [],
+        },
+        {
+            "variant_id": "v2",
+            "replacements": [
+                {"section_id": "s1", "text": first.text},
+                {
+                    "section_id": "s2",
+                    "text": "Fourth idea is rebuilt around the teaching choice. The second target is recast. The ending changes as well.",
+                },
+            ],
+            "author_proxy_provenance": [{"item_id": "p2", "target_text": "s2", "generated_text": "rebuilt", "provenance": "inferred_from_draft"}],
+            "author_review_items": [],
+        },
+    ]
+
+    composite = v5_residual_comb._safe_band_evidence_pack_composite_variant(
+        sections=[first, second],
+        variants=variants,
+    )
+
+    assert composite["variant_id"] == "composite_material_pack"
+    assert composite["source_variant_ids"] == ["v1", "v2"]
+    assert composite["replacements"][0]["text"] != first.text
+    assert composite["replacements"][1]["text"] != second.text
+    assert [item["target_text"] for item in composite["author_proxy_provenance"]] == ["s1", "s2"]
+
+
+def test_v5_safe_band_evidence_pack_partial_material_variant_keeps_only_passing_sections(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.5)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 1.8)
+    first = SectionUnit(
+        section_id="safe_band_density_section_s1",
+        heading="Density",
+        text="First source sentence stays. Target sentence must change. Third source sentence stays.",
+        start_char=0,
+        end_char=75,
+        paragraph_count=1,
+        word_count=10,
+        metadata={"selection_reason": "ai_mitigation_density_target_segment", "target_sentence": "Target sentence must change."},
+    )
+    second = SectionUnit(
+        section_id="safe_band_density_section_s2",
+        heading="Density",
+        text="Fourth source sentence stays. Another target must change. Sixth source sentence stays.",
+        start_char=76,
+        end_char=150,
+        paragraph_count=1,
+        word_count=10,
+        metadata={"selection_reason": "ai_mitigation_density_target_segment", "target_sentence": "Another target must change."},
+    )
+    variants = [
+        {
+            "variant_id": "v1",
+            "replacements": [
+                {
+                    "section_id": "safe_band_density_section_s1",
+                    "text": "The first idea is rebuilt around the author action. The target changes route. The ending changes too.",
+                },
+                {"section_id": "safe_band_density_section_s2", "text": second.text},
+            ],
+        },
+        {
+            "variant_id": "v2",
+            "replacements": [
+                {"section_id": "safe_band_density_section_s1", "text": first.text},
+                {
+                    "section_id": "safe_band_density_section_s2",
+                    "text": "The fourth idea is rebuilt around the teaching choice. The second target is recast. The ending changes as well.",
+                },
+            ],
+        },
+    ]
+
+    partial = v5_residual_comb._safe_band_evidence_pack_partial_material_variant(
+        sections=[first, second],
+        variants=variants,
+    )
+
+    assert partial["variant_id"] == "partial_material_pack"
+    assert partial["partial_pack"] is True
+    assert [row["section_id"] for row in partial["replacements"]] == [
+        "safe_band_density_section_s1",
+        "safe_band_density_section_s2",
+    ]
+
+
+def test_v5_safe_band_evidence_pack_section_probe_variants_deduplicate_by_section_text():
+    section = SectionUnit(
+        section_id="safe_band_density_section_s1",
+        heading="Density",
+        text="The source sentence needs a new route. The second sentence should also move.",
+        start_char=0,
+        end_char=72,
+        paragraph_count=1,
+        word_count=12,
+        metadata={"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+    variants = [
+        {
+            "variant_id": "v1",
+            "replacements": [
+                {
+                    "section_id": "safe_band_density_section_s1",
+                    "text": "I rebuild the first point around the class moment. The second point now moves with it.",
+                }
+            ],
+        },
+        {
+            "variant_id": "v2",
+            "replacements": [
+                {
+                    "section_id": "safe_band_density_section_s1",
+                    "text": "I rebuild the first point around the class moment. The second point now moves with it.",
+                }
+            ],
+        },
+    ]
+
+    probes = v5_residual_comb._safe_band_evidence_pack_section_probe_variants(
+        sections=[section],
+        variants=variants,
+    )
+
+    assert len(probes) == 1
+    assert probes[0]["partial_pack"] is True
+    assert probes[0]["replacements"] == [
+        {
+            "section_id": "safe_band_density_section_s1",
+            "text": "I rebuild the first point around the class moment. The second point now moves with it.",
+        }
+    ]
+
+
+def test_v5_safe_band_evidence_pack_section_probes_add_length_normalized_density_variant(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.5)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 1.5)
+    section = SectionUnit(
+        section_id="safe_band_density_section_s1",
+        heading="Density",
+        text=(
+            "First source idea stays here for class. "
+            "Target sentence must change route today. "
+            "Third source idea stays here too."
+        ),
+        start_char=0,
+        end_char=103,
+        paragraph_count=1,
+        word_count=17,
+        metadata={
+            "selection_reason": "ai_mitigation_density_target_segment",
+            "target_sentence": "Target sentence must change route today.",
+        },
+    )
+    variants = [
+        {
+            "variant_id": "v1",
+            "replacements": [
+                {
+                    "section_id": "safe_band_density_section_s1",
+                    "text": (
+                        "I start with the class moment before naming the problem. "
+                        "The target idea now follows the student's hesitation. "
+                        "The closing point links it back to practice. "
+                        "Extra background sentence adds unnecessary detail beyond the source."
+                    ),
+                }
+            ],
+        }
+    ]
+
+    probes = v5_residual_comb._safe_band_evidence_pack_section_probe_variants(
+        sections=[section],
+        variants=variants,
+    )
+    normalized = [probe for probe in probes if probe["variant_id"].endswith("_length_normalized")]
+
+    assert len(normalized) == 1
+    replacement = normalized[0]["replacements"][0]["text"]
+    assert v5_residual_comb.word_count(replacement) <= round(v5_residual_comb.word_count(section.text) * 1.5)
+    materiality = v5_residual_comb._safe_band_density_section_repair_materiality(
+        source_text=section.text,
+        candidate_text=replacement,
+        target_sentence=section.metadata["target_sentence"],
+    )
+    assert materiality["passed"] is True
+
+
+def test_v5_safe_band_evidence_pack_scored_section_composite_uses_only_internal_judge_movers():
+    current_scores = {
+        "ai": 30.63,
+        "topk_calibrated_risk": 24.357,
+        "qualifying_text_ai_density": 38.44,
+        "ai_authorship": 31.0,
+        "unsafe_cluster_count": 0,
+        "unsafe_word_ratio": 0.0,
+        "risky_window_count": 0,
+    }
+    safe_row = {
+        "variant_id": "section_probe_safe_band_density_section_s1_v1",
+        "text": "The author-owned replacement moves the density section.",
+        "apply_status": {
+            "applied": True,
+            "applied_sections": [{"section_id": "safe_band_density_section_s1"}],
+        },
+        "safe_band_evidence_materiality": {
+            "passed": True,
+            "sections": [{"contract": "density_section_repair", "passed": True}],
+        },
+        "safe_band_evidence_pack_materiality": {
+            "passed": True,
+            "sections": [{"contract": "density_section_repair", "passed": True}],
+        },
+        "safe_band_quality_materiality": {"passed": True},
+        "scores": {
+            "ai": 30.5,
+            "topk_calibrated_risk": 24.2,
+            "qualifying_text_ai_density": 37.4,
+            "ai_authorship": 31.0,
+            "unsafe_cluster_count": 0,
+            "unsafe_word_ratio": 0.0,
+            "risky_window_count": 0,
+        },
+        "incremental": {
+            "ai_delta": 0.13,
+            "topk_calibrated_risk_delta": 0.157,
+            "qualifying_text_ai_density_delta": 1.04,
+            "ai_authorship_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+        },
+    }
+    unsafe_regression = {
+        **safe_row,
+        "variant_id": "section_probe_safe_band_density_section_s2_v1",
+        "text": "A replacement that looks material but introduces an unsafe cluster.",
+        "apply_status": {
+            "applied": True,
+            "applied_sections": [{"section_id": "safe_band_density_section_s2"}],
+        },
+        "scores": {
+            "ai": 30.2,
+            "topk_calibrated_risk": 23.9,
+            "qualifying_text_ai_density": 37.1,
+            "ai_authorship": 31.0,
+            "unsafe_cluster_count": 1,
+            "unsafe_word_ratio": 4.0,
+            "risky_window_count": 0,
+        },
+        "incremental": {
+            "ai_delta": 0.43,
+            "topk_calibrated_risk_delta": 0.457,
+            "qualifying_text_ai_density_delta": 1.34,
+            "ai_authorship_delta": 0.0,
+            "unsafe_cluster_count_delta": -1.0,
+            "unsafe_word_ratio_delta": -4.0,
+            "risky_window_count_delta": 0.0,
+        },
+    }
+    small_safe_mover = {
+        **safe_row,
+        "variant_id": "section_probe_safe_band_density_section_s3_v1",
+        "text": "A small replacement that is safe enough to compose.",
+        "apply_status": {
+            "applied": True,
+            "applied_sections": [{"section_id": "safe_band_density_section_s3"}],
+        },
+        "scores": {
+            "ai": 30.61,
+            "topk_calibrated_risk": 24.32,
+            "qualifying_text_ai_density": 38.4,
+            "ai_authorship": 31.0,
+            "unsafe_cluster_count": 0,
+            "unsafe_word_ratio": 0.0,
+            "risky_window_count": 0,
+        },
+        "incremental": {
+            "ai_delta": 0.02,
+            "topk_calibrated_risk_delta": 0.037,
+            "qualifying_text_ai_density_delta": 0.04,
+            "ai_authorship_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+        },
+    }
+
+    composite = v5_residual_comb._safe_band_evidence_pack_scored_section_composite_variant(
+        [safe_row, unsafe_regression, small_safe_mover],
+        current_scores=current_scores,
+    )
+
+    assert composite["variant_id"] == "scored_section_composite"
+    assert composite["partial_pack"] is True
+    assert composite["replacements"] == [
+        {
+            "section_id": "safe_band_density_section_s1",
+            "text": "The author-owned replacement moves the density section.",
+        },
+        {
+            "section_id": "safe_band_density_section_s3",
+            "text": "A small replacement that is safe enough to compose.",
+        },
+    ]
+
+
+def test_v5_safe_band_controlled_operation_deletes_exact_target_sentence(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_CONTROLLED_OPERATION_MIN_WORD_RATIO", "0.5")
+    current_text = (
+        "The reflection starts after class. "
+        "Students talk during this time, and their comments expose what they learned. "
+        "I use the comments to choose the next demonstration."
+    )
+    variant = {
+        "variant_id": "delete_t001",
+        "operation": "delete_exact_target_sentence",
+        "target_id": "t001",
+        "sentence": "Students talk during this time, and their comments expose what they learned.",
+    }
+
+    candidate, apply_status, materiality = v5_residual_comb._apply_safe_band_controlled_operation_variant(
+        current_text=current_text,
+        variant=variant,
+    )
+
+    assert apply_status["applied"] is True
+    assert apply_status["scope"] == "safe_band_controlled_operation"
+    assert materiality["passed"] is True
+    assert "Students talk during this time" not in candidate
+    assert "The reflection starts after class." in candidate
+    assert "I use the comments" in candidate
+
+
+def test_v5_safe_band_controlled_operation_keeps_suffix_after_strong_punctuation(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_CONTROLLED_OPERATION_MIN_WORD_RATIO", "0.5")
+    current_text = (
+        "The reflection starts after class. "
+        "In standard class activities, it's genuinely hard to see what he's capable of — he tends to fade into the background. "
+        "I use the comments to choose the next demonstration."
+    )
+    sentence = "In standard class activities, it's genuinely hard to see what he's capable of — he tends to fade into the background."
+    variant = {
+        "variant_id": "suffix_t002",
+        "operation": "keep_suffix_after_strong_punctuation",
+        "target_id": "t002",
+        "sentence": sentence,
+        "replacement": "He tends to fade into the background.",
+    }
+
+    candidate, apply_status, materiality = v5_residual_comb._apply_safe_band_controlled_operation_variant(
+        current_text=current_text,
+        variant=variant,
+    )
+
+    assert apply_status["applied"] is True
+    assert apply_status["operation"] == "keep_suffix_after_strong_punctuation"
+    assert materiality["reason"] == "controlled_strong_punctuation_suffix_kept"
+    assert "standard class activities" not in candidate
+    assert "He tends to fade into the background." in candidate
+
+
+def test_v5_safe_band_controlled_operation_suffix_candidate_rejects_short_fragment(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_CONTROLLED_OPERATION_MIN_SUFFIX_WORDS", "4")
+
+    assert v5_residual_comb._strong_punctuation_suffix_candidate("Broad setup — done.") is None
+
+
+def test_v5_safe_band_controlled_operation_variants_include_suffix_candidate():
+    sentence = "The setup is broad — the specific result remains visible."
+    variants = v5_residual_comb._safe_band_controlled_operation_variants(
+        current_text=f"Opening. {sentence} Closing.",
+        targets=[{"target_id": "t001", "sentence": sentence}],
+    )
+
+    operations = {variant["operation"] for variant in variants}
+    suffix_variant = next(variant for variant in variants if variant["operation"] == "keep_suffix_after_strong_punctuation")
+    assert operations == {"delete_exact_target_sentence", "keep_suffix_after_strong_punctuation"}
+    assert suffix_variant["replacement"] == "The specific result remains visible."
+
+
+def test_v5_safe_band_controlled_operation_targets_include_density_segments():
+    broad_sentence = (
+        "Demonstrations and scaffolding support this shift, but their value lies in enabling the necessary cycle "
+        "where students try, get it wrong, receive feedback, and try again."
+    )
+    text = f"Concrete source detail stays. {broad_sentence}"
+    targets = v5_residual_comb._safe_band_controlled_operation_targets(
+        text,
+        {
+            "ai_mitigation": {
+                "target_segments": [
+                    {
+                        "segment_id": "s026",
+                        "sentence_id": "s026",
+                        "text": broad_sentence,
+                        "lever": "predictability_reduction",
+                        "bucket": "auto_candidate",
+                        "user_input_needed": "none if no evidence/source gap is attached",
+                        "primary_signal": {
+                            "key": "ai_likelihood",
+                            "score": 40,
+                            "rewrite_permission": "suggestion_only",
+                        },
+                    },
+                    {
+                        "segment_id": "s001",
+                        "sentence_id": "s001",
+                        "text": "Concrete source detail stays.",
+                        "lever": "reasoning_continuity",
+                        "bucket": "structure_revision",
+                        "user_input_needed": "the missing connection between adjacent claims",
+                        "primary_signal": {
+                            "key": "authorship_risk",
+                            "score": 73,
+                            "rewrite_permission": "suggestion_only",
+                        },
+                    },
+                ]
+            }
+        },
+        {
+            "ai_footprint_gate": {
+                "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+                ],
+            }
+        },
+        current_scores={
+            "topk_calibrated_risk": 22.296,
+            "qualifying_text_ai_density": 38.41,
+            "unsafe_cluster_count": 0,
+            "risky_window_count": 0,
+        },
+    )
+
+    assert targets[0]["source"] == "ai_mitigation_density_target_segments"
+    assert targets[0]["sentence"] == broad_sentence
+    assert all(target["sentence"] != "Concrete source detail stays." for target in targets)
+
+
+def test_v5_safe_band_controlled_operation_rejects_non_unique_target_sentence():
+    current_text = "Repeat this sentence. Keep middle. Repeat this sentence."
+    variant = {
+        "variant_id": "delete_t001",
+        "operation": "delete_exact_target_sentence",
+        "target_id": "t001",
+        "sentence": "Repeat this sentence.",
+    }
+
+    _candidate, apply_status, materiality = v5_residual_comb._apply_safe_band_controlled_operation_variant(
+        current_text=current_text,
+        variant=variant,
+    )
+
+    assert apply_status["applied"] is False
+    assert apply_status["reason"] == "target_sentence_not_unique"
+    assert materiality["match_count"] == 2
+
+
+def test_v5_safe_band_controlled_operation_best_candidate_uses_existing_movement_gate():
+    current_scores = {"topk_calibrated_risk": 30.0, "qualifying_text_ai_density": 40.0}
+    row = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "ai_delta": 0.1,
+            "ai_authorship_delta": 0.0,
+            "unsafe_cluster_count_delta": 1.0,
+            "unsafe_word_ratio_delta": 2.0,
+            "risky_window_count_delta": 0.0,
+        },
+        "scores": {"topk_calibrated_risk": 29.6, "qualifying_text_ai_density": 39.9},
+        "safe_band_evidence_materiality": {"passed": True},
+    }
+
+    assert _has_safe_band_evidence_repair_movement(row, current_scores=current_scores)
+    assert _best_safe_band_evidence_repair_candidate([row], current_scores=current_scores) is row
+
+
+def test_v5_safe_band_evidence_repair_allows_tiny_unsafe_word_ratio_regression(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_UNSAFE_WORD_RATIO_REGRESSION_TOLERANCE", "0.1")
+    current_scores = {"topk_calibrated_risk": 30.0, "qualifying_text_ai_density": 40.0}
+    row = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "ai_delta": 0.1,
+            "ai_authorship_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": -0.05,
+            "risky_window_count_delta": 0.0,
+        },
+        "scores": {"topk_calibrated_risk": 29.7, "qualifying_text_ai_density": 39.9},
+        "safe_band_evidence_materiality": {"passed": True},
+    }
+    too_much_regression = {
+        **row,
+        "incremental": {
+            **row["incremental"],
+            "unsafe_word_ratio_delta": -0.2,
+        },
+    }
+
+    assert _has_safe_band_evidence_repair_movement(row, current_scores=current_scores)
+    assert not _has_safe_band_evidence_repair_movement(too_much_regression, current_scores=current_scores)
+
+
+def test_v5_density_checkpoint_accepts_topk_regression_when_topk_remains_safe(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_checkpoint_min_density_delta", lambda: 0.5)
+    current_scores = {
+        "ai": 30.49,
+        "topk_calibrated_risk": 23.916,
+        "qualifying_text_ai_density": 38.3,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "safe_band_density_section_materiality": {"passed": True},
+        "scores": {
+            "ai": 30.09,
+            "topk_calibrated_risk": 24.449,
+            "qualifying_text_ai_density": 36.29,
+            "ai_authorship": 30.0,
+            "unsafe_cluster_count": 0,
+            "unsafe_word_ratio": 0.0,
+            "risky_window_count": 0,
+        },
+        "candidate_goal": {
+            "ai_footprint_gate": {
+                "safe_band_thresholds": {
+                    "topk_calibrated_risk": 25.0,
+                    "qualifying_text_ai_density": 35.0,
+                    "ai_authorship": 35.0,
+                },
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "qualifying_text_ai_density", "value": 36.29, "safe_band": 35.0},
+                ],
+            }
+        },
+        "incremental": {
+            "ai_delta": 0.4,
+            "ai_authorship_delta": 0.0,
+            "topk_calibrated_risk_delta": -0.533,
+            "qualifying_text_ai_density_delta": 2.01,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+        },
+    }
+
+    assert v5_residual_comb._has_density_safe_band_checkpoint_movement(row, current_scores=current_scores)
+
+
+def test_v5_safe_band_controlled_operation_loop_rescores_after_acceptance(monkeypatch, tmp_path):
+    accepted_checkpoints = []
+    current_scores = {"ai": 33.0, "topk_calibrated_risk": 30.0, "qualifying_text_ai_density": 40.0}
+    current_goal = {
+        "ai_footprint_gate": {
+            "remaining_ai_footprint_drivers": [
+                {"driver": "topk_calibrated_risk", "value": 30.0, "safe_band": 25.0},
+                {"driver": "qualifying_text_ai_density", "value": 40.0, "safe_band": 35.0},
+            ]
+        }
+    }
+
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_controlled_operation_round_limit", lambda: 3)
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_safe_band_controlled_operation_targets",
+        lambda text, _report, _goal, **_kwargs: [{"target_id": "t001", "sentence": "Before target."}] if text == "before text" else [],
+    )
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_safe_band_controlled_operation_variants",
+        lambda current_text, targets: [{"variant_id": "delete_t001", "operation": "delete_exact_target_sentence", "sentence": "Before target."}]
+        if targets else [],
+    )
+
+    def fake_score(**_kwargs):
+        return {
+            "section_id": "safe_band_controlled_operation",
+            "variant_id": "delete_t001",
+            "apply_status": {"applied": True},
+            "scores": {"ai": 32.9, "topk_calibrated_risk": 29.6, "qualifying_text_ai_density": 39.8},
+            "incremental": {
+                "ai_delta": 0.1,
+                "ai_authorship_delta": 0.0,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "candidate_text": "after one",
+            "candidate_report": {},
+            "candidate_goal": {
+                "ai_footprint_gate": {
+                    "remaining_ai_footprint_drivers": [
+                        {"driver": "topk_calibrated_risk", "value": 29.6, "safe_band": 25.0},
+                        {"driver": "qualifying_text_ai_density", "value": 39.8, "safe_band": 35.0},
+                    ]
+                }
+            },
+            "safe_band_evidence_materiality": {"passed": True},
+            "safe_band_controlled_operation_materiality": {"passed": True},
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_safe_band_controlled_operation_variant", fake_score)
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_controlled_operation_loop(
+        original_text="original text",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text="before text",
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        output_dir=tmp_path,
+        global_best_candidate=None,
+        accepted_checkpoint_callback=accepted_checkpoints.append,
+    )
+
+    assert text == "after one"
+    assert scores["topk_calibrated_risk"] == 29.6
+    assert [row["status"] for row in rounds] == ["accepted", "skipped"]
+    assert rounds[1]["reason"] == "no_safe_band_controlled_operation_targets"
+    assert accepted_checkpoints[0]["round"] == 1
+
+
+def test_v5_safe_band_sentence_replacement_loop_accepts_scanner_gap_movement(monkeypatch, tmp_path):
+    accepted_checkpoints = []
+    current_scores = {"ai": 33.0, "topk_calibrated_risk": 30.0, "qualifying_text_ai_density": 40.0}
+    current_goal = {
+        "ai_footprint_gate": {
+            "remaining_ai_footprint_drivers": [
+                {"driver": "topk_calibrated_risk", "value": 30.0, "safe_band": 25.0},
+                {"driver": "qualifying_text_ai_density", "value": 40.0, "safe_band": 35.0},
+            ]
+        }
+    }
+
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_sentence_replacement_round_limit", lambda: 1)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_sentence_replacement_target_limit", lambda: 2)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_sentence_replacement_variant_count", lambda: 2)
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_safe_band_controlled_operation_targets",
+        lambda *_args, **_kwargs: [
+            {"target_id": "t001", "sentence": "The generic sentence remains."},
+            {"target_id": "t002", "sentence": "The second generic sentence remains."},
+        ],
+    )
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "generate_safe_band_sentence_replacement_variants",
+        lambda **_kwargs: ([{"variant_id": "v1", "repairs": []}], {"status": "ok"}, "prompt", "completion"),
+    )
+
+    def fake_score(**_kwargs):
+        return {
+            "section_id": "safe_band_sentence_replacement",
+            "variant_id": "v1",
+            "apply_status": {"applied": True},
+            "scores": {"ai": 32.8, "topk_calibrated_risk": 29.4, "qualifying_text_ai_density": 39.7},
+            "incremental": {
+                "ai_delta": 0.2,
+                "ai_authorship_delta": 0.0,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "candidate_text": "replacement text",
+            "candidate_report": {},
+            "candidate_goal": {
+                "ai_footprint_gate": {
+                    "remaining_ai_footprint_drivers": [
+                        {"driver": "topk_calibrated_risk", "value": 29.4, "safe_band": 25.0},
+                        {"driver": "qualifying_text_ai_density", "value": 39.7, "safe_band": 35.0},
+                    ]
+                }
+            },
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_final_topk_sentence_route_variant", fake_score)
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_sentence_replacement_loop(
+        original_text="original text",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text="current text",
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+        accepted_checkpoint_callback=accepted_checkpoints.append,
+    )
+
+    assert text == "replacement text"
+    assert scores["topk_calibrated_risk"] == 29.4
+    assert rounds[0]["status"] == "accepted"
+    assert rounds[0]["phase"] == "safe_band_sentence_replacement"
+    assert accepted_checkpoints[0]["phase"] == "safe_band_sentence_replacement"
+
+
+def test_v5_safe_band_sentence_replacement_defaults_are_bounded_density_pass():
+    assert v5_residual_comb._safe_band_sentence_replacement_round_limit() == 3
+    assert v5_residual_comb._safe_band_sentence_replacement_variant_count() == 5
+
+
+def test_v5_safe_band_density_section_repair_runs_only_when_density_is_remaining_blocker():
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        }
+    }
+
+    assert v5_residual_comb._safe_band_density_section_repair_should_run(
+        current_scores={
+            "topk_calibrated_risk": 22.296,
+            "qualifying_text_ai_density": 38.41,
+            "unsafe_cluster_count": 0,
+            "risky_window_count": 0,
+        },
+        current_goal=current_goal,
+    )
+    assert not v5_residual_comb._safe_band_density_section_repair_should_run(
+        current_scores={
+            "topk_calibrated_risk": 26.2,
+            "qualifying_text_ai_density": 38.41,
+            "unsafe_cluster_count": 0,
+            "risky_window_count": 0,
+        },
+        current_goal=current_goal,
+    )
+    assert v5_residual_comb._safe_band_density_section_repair_should_run(
+        current_scores={
+            "topk_calibrated_risk": 25.636,
+            "qualifying_text_ai_density": 39.37,
+            "unsafe_cluster_count": 0,
+            "risky_window_count": 0,
+        },
+        current_goal={
+            "ai_footprint_gate": {
+                "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "topk_calibrated_risk", "value": 25.636, "safe_band": 25.0},
+                    {"driver": "qualifying_text_ai_density", "value": 39.37, "safe_band": 35.0},
+                ],
+            }
+        },
+    )
+    assert not v5_residual_comb._safe_band_density_section_repair_should_run(
+        current_scores={
+            "topk_calibrated_risk": 22.296,
+            "qualifying_text_ai_density": 38.41,
+            "unsafe_cluster_count": 1,
+            "risky_window_count": 0,
+        },
+        current_goal=current_goal,
+    )
+
+
+def test_v5_safe_band_density_section_prompt_is_author_proxy_density_first():
+    section = SectionUnit(
+        section_id="safe_band_density_section_s001",
+        heading="Safe-band density section repair",
+        text="The student needs support in practical class. This matters because inclusive teaching is important.",
+        start_char=0,
+        end_char=93,
+        paragraph_count=1,
+        word_count=14,
+        metadata={
+            "selection_reason": "ai_mitigation_density_target_segment",
+            "scanner_focus": {"source": "ai_mitigation.target_segments"},
+        },
+    )
+    prompt = v5_residual_comb.build_safe_band_density_section_repair_prompt(
+        section=section,
+        current_scores={"topk_calibrated_risk": 22.296, "qualifying_text_ai_density": 38.41},
+        current_goal={
+            "ai_footprint_gate": {
+                "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+                ],
+                "after": {
+                    "semantic_footprint": {
+                        "generic_assertion_risk": 80.0,
+                        "unsupported_claim_risk": 55.0,
+                    }
+                },
+            }
+        },
+        variant_count=2,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["task"] == "safe_band_density_section_repair"
+    assert payload["single_product_judge"]["judge"] == "DraftProof internal safe-band and authorship-integrity scoring"
+    assert payload["single_product_judge"]["ignored_as_acceptance_judge"] == "external AI flag score"
+    assert payload["density_only_trigger"]["remaining_target"] == "qualifying_text_ai_density"
+    assert payload["density_only_trigger"]["ai_authorship_must_not_increase"] is True
+    assert payload["kpi_contract"]["secondary_density_drivers"]["generic_assertion_risk"] == 80.0
+    assert payload["section"]["source_voice_profile"]["first_person_count"] == 0
+    assert payload["materiality_gate"]["minimum_changed_source_sentences"] == 2
+    assert payload["materiality_gate"]["minimum_changed_source_sentence_ratio"] == 0.4
+    assert payload["materiality_gate"]["minimum_word_count"] >= 1
+    assert payload["materiality_gate"]["maximum_word_count"] >= payload["materiality_gate"]["minimum_word_count"]
+    assert any("only changes one target sentence" in rule for rule in payload["materiality_gate"]["reject_if"])
+    assert any("between" in rule and "words" in rule for rule in payload["rules"])
+    assert any("Change at least" in rule for rule in payload["rules"])
+    assert any("repeat" in rule for rule in payload["rules"])
+    assert payload["writer_variant_plan"][0]["goal"].startswith("Density-only section rebuild")
+
+
+def test_v5_safe_band_density_section_selection_prefers_authorship_gap_segment():
+    paragraph_one = "Predictable sentence stays here. It has no missing author-owned evidence."
+    paragraph_two = "The report says students struggle with sectioning before cutting. The current bridge is too broad."
+    current_text = f"{paragraph_one}\n\n{paragraph_two}"
+    sections = v5_residual_comb._safe_band_density_section_repair_sections(
+        current_text,
+        {
+            "ai_mitigation": {
+                "target_segments": [
+                    {
+                        "segment_id": "s001",
+                        "text": "Predictable sentence stays here.",
+                        "lever": "predictability_reduction",
+                        "bucket": "auto_candidate",
+                        "user_input_needed": "none if no evidence/source gap is attached",
+                        "primary_signal": {"key": "ai_likelihood", "score": 40, "tier": "low"},
+                    },
+                    {
+                        "segment_id": "s002",
+                        "text": "The current bridge is too broad.",
+                        "lever": "reasoning_continuity",
+                        "bucket": "structure_revision",
+                        "user_input_needed": "the missing connection between the classroom evidence and the claim",
+                        "primary_signal": {"key": "authorship_risk", "score": 73, "tier": "high"},
+                    },
+                ]
+            }
+        },
+        {},
+        limit=1,
+    )
+
+    assert len(sections) == 1
+    assert sections[0].text == paragraph_two
+    assert sections[0].metadata["selection_reason"] == "ai_mitigation_density_target_segment"
+
+
+def test_v5_safe_band_density_section_selection_skips_spent_ranges():
+    paragraph_one = "The first broad bridge remains generic. It needs a grounded route."
+    paragraph_two = "The second broad bridge remains generic. It needs a grounded route."
+    current_text = f"{paragraph_one}\n\n{paragraph_two}"
+    first_start = current_text.index(paragraph_one)
+    first_end = first_start + len(paragraph_one)
+
+    sections = v5_residual_comb._safe_band_density_section_repair_sections(
+        current_text,
+        {
+            "ai_mitigation": {
+                "target_segments": [
+                    {
+                        "segment_id": "s001",
+                        "text": "The first broad bridge remains generic.",
+                        "lever": "reasoning_continuity",
+                        "bucket": "structure_revision",
+                        "user_input_needed": "none",
+                        "primary_signal": {"key": "authorship_risk", "score": 80, "tier": "high"},
+                    },
+                    {
+                        "segment_id": "s002",
+                        "text": "The second broad bridge remains generic.",
+                        "lever": "reasoning_continuity",
+                        "bucket": "structure_revision",
+                        "user_input_needed": "none",
+                        "primary_signal": {"key": "authorship_risk", "score": 78, "tier": "high"},
+                    },
+                ]
+            }
+        },
+        {},
+        limit=2,
+        exclude_ranges={(first_start, first_end)},
+    )
+
+    assert [section.section_id for section in sections] == ["safe_band_density_section_s002"]
+
+
+def test_v5_safe_band_density_materiality_rejects_repetition_and_compression(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.75)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 2.0)
+    source = (
+        "Students first need to see how sectioning controls the haircut. "
+        "The teacher demonstration gives them a visible starting point. "
+        "Practice then shows where their hand position still needs feedback."
+    )
+    repeated = (
+        "Sectioning has to come before the cut because it gives the student a route. "
+        "Sectioning has to come before the cut because it gives the student a route. "
+        "The teacher can then use the attempt to point out hand position and next feedback."
+    )
+    compressed = "Sectioning should come first. Feedback follows."
+
+    repeated_result = v5_residual_comb._safe_band_density_section_repair_materiality(
+        source_text=source,
+        candidate_text=repeated,
+    )
+    compressed_result = v5_residual_comb._safe_band_density_section_repair_materiality(
+        source_text=source,
+        candidate_text=compressed,
+    )
+
+    assert not repeated_result["passed"]
+    assert repeated_result["reason"] == "density_section_repair_repetition_regression"
+    assert not compressed_result["passed"]
+    assert compressed_result["reason"] == "density_section_repair_length_out_of_bounds"
+
+
+def test_v5_safe_band_density_materiality_requires_section_level_change(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.5)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 1.8)
+    source = (
+        "The opening claim stays mostly the same. "
+        "The second sentence keeps the same bridge. "
+        "The third sentence is the target sentence. "
+        "The fourth sentence keeps the same implication. "
+        "The final sentence keeps the same closure."
+    )
+    candidate = (
+        "The opening claim stays mostly the same. "
+        "The second sentence keeps the same bridge. "
+        "The target sentence now describes the classroom action in different words. "
+        "The fourth sentence keeps the same implication. "
+        "The final sentence keeps the same closure."
+    )
+
+    result = v5_residual_comb._safe_band_density_section_repair_materiality(
+        source_text=source,
+        candidate_text=candidate,
+        target_sentence="The third sentence is the target sentence.",
+    )
+
+    assert not result["passed"]
+    assert result["reason"] == "density_section_repair_too_few_changed_sentences"
+    assert result["density_required_changed_sentence_count"] == 2
+
+
+def test_v5_safe_band_density_materiality_allows_long_section_tightening(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.88)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_long_section_word_threshold", lambda: 12)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_long_section_min_word_ratio", lambda: 0.82)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 1.12)
+    source = (
+        "First sentence keeps the author voice and classroom context. "
+        "Second sentence explains the same source material in a broad way. "
+        "Third sentence is the target sentence that needs a new route. "
+        "Fourth sentence keeps a practical implication. "
+        "Fifth sentence adds the closing observation."
+    )
+    candidate = (
+        "First sentence keeps the author voice and classroom context. "
+        "The second sentence narrows the source material to practical class. "
+        "The target now follows the classroom action instead of a broad route. "
+        "Fourth sentence keeps a practical implication."
+    )
+
+    result = v5_residual_comb._safe_band_density_section_repair_materiality(
+        source_text=source,
+        candidate_text=candidate,
+        target_sentence="Third sentence is the target sentence that needs a new route.",
+    )
+
+    assert result["passed"]
+    assert result["minimum_word_ratio"] == 0.82
+    assert result["word_ratio"] < 0.88
+
+
+def test_v5_safe_band_density_materiality_allows_adjacent_duplicate_cleanup(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.88)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 1.12)
+    source = (
+        "In my AT2 report, I focused on inclusive learning design. "
+        "In my AT2 report, I focused on inclusive learning design. "
+        "I then linked the issue to practical haircut structures."
+    )
+    candidate = (
+        "In my AT2 report, I focused on inclusive learning design. "
+        "I then linked the issue to practical haircut structures."
+    )
+
+    result = v5_residual_comb._safe_band_density_section_repair_materiality(
+        source_text=source,
+        candidate_text=candidate,
+    )
+
+    assert result["passed"] is True
+    assert result["reason"] == "density_section_adjacent_duplicate_cleanup"
+    assert result["word_ratio"] < result["minimum_word_ratio"]
+    assert result["duplicate_cleanup_audit"]["removed_duplicate_sentence_count"] == 1
+
+
+def test_v5_safe_band_density_section_repair_adds_deterministic_duplicate_cleanup_variant():
+    section = SectionUnit(
+        "safe_band_density_section_s001",
+        "Density",
+        (
+            "In my AT2 report, I focused on inclusive learning design. "
+            "In my AT2 report, I focused on inclusive learning design. "
+            "I then linked the issue to practical haircut structures."
+        ),
+        0,
+        160,
+        1,
+        23,
+        {},
+    )
+
+    variants = v5_residual_comb._safe_band_density_section_repair_deterministic_variants(section)
+
+    assert len(variants) == 1
+    assert variants[0].variant_id == "deterministic_adjacent_duplicate_cleanup"
+    assert variants[0].text.count("inclusive learning design") == 1
+    assert variants[0].author_proxy_provenance[0]["provenance"] == "duplicate_source_cleanup"
+
+
+def test_v5_safe_band_density_materiality_rejects_source_voice_shift(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.5)
+    source = (
+        "In my AT2 report, I wrote about what it's actually like for students in the practical class. "
+        "They're trying to manage sectioning and cutting at the same time. "
+        "I use that example to show why support has to be concrete."
+    )
+    candidate = (
+        "The AT2 report examined the practical realities for students in the practical class. "
+        "The students are trying to manage sectioning and cutting at the same time. "
+        "This example demonstrates why support has to be concrete."
+    )
+
+    result = v5_residual_comb._safe_band_density_section_repair_materiality(
+        source_text=source,
+        candidate_text=candidate,
+    )
+
+    assert not result["passed"]
+    assert result["reason"] == "density_section_repair_voice_shift"
+    assert result["voice_audit"]["first_person_preserved"] is False
+    assert result["voice_audit"]["contractions_preserved"] is False
+
+
+def test_v5_safe_band_density_section_loop_accepts_density_gap_movement(monkeypatch, tmp_path):
+    accepted_checkpoints = []
+    section = SectionUnit(
+        section_id="safe_band_density_section_s001",
+        heading="Safe-band density section repair",
+        text="The broad sentence remains. Another broad sentence remains. A third sentence remains.",
+        start_char=0,
+        end_char=75,
+        paragraph_count=1,
+        word_count=11,
+        metadata={"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+    current_scores = {
+        "ai": 31.24,
+        "topk_calibrated_risk": 22.296,
+        "qualifying_text_ai_density": 38.41,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        }
+    }
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_round_limit", lambda: 1)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_sections", lambda *_args, **_kwargs: [section])
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "generate_safe_band_density_section_repair_variants",
+        lambda **_kwargs: (
+            [RecompositionVariant("v1", "The classroom example now carries the claim. The teacher links support to the visible task. The limit stays clear.", 18)],
+            {"status": "ok"},
+            "prompt",
+            "completion",
+        ),
+    )
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_safe_band_density_section_repair_materiality",
+        lambda **_kwargs: {"passed": True, "reason": "material_density_section_route_change"},
+    )
+
+    def fake_score(**_kwargs):
+        return {
+            "section_id": "safe_band_density_section_s001",
+            "variant_id": "v1",
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 31.0,
+                "topk_calibrated_risk": 22.0,
+                "qualifying_text_ai_density": 34.9,
+                "unsafe_cluster_count": 0,
+                "risky_window_count": 0,
+            },
+            "incremental": {
+                "ai_delta": 0.24,
+                "ai_authorship_delta": 0.0,
+                "topk_calibrated_risk_delta": 0.296,
+                "qualifying_text_ai_density_delta": 3.51,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "candidate_text": "accepted density text",
+            "candidate_report": {},
+            "candidate_goal": {
+                "strict_ai_safe_band_achieved": True,
+                "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []},
+            },
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score)
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_density_section_repair_loop(
+        original_text="original",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text=section.text,
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+        accepted_checkpoint_callback=accepted_checkpoints.append,
+    )
+
+    assert text == "accepted density text"
+    assert scores["qualifying_text_ai_density"] == 34.9
+    assert rounds[0]["phase"] == "safe_band_density_section_repair"
+    assert rounds[0]["status"] == "accepted"
+    assert accepted_checkpoints[0]["phase"] == "safe_band_density_section_repair"
+
+
+def test_v5_safe_band_density_section_loop_excludes_accepted_section_next_round(monkeypatch, tmp_path):
+    first = SectionUnit(
+        "density_s001",
+        "Density",
+        "First broad sentence. More broad text. Third broad text.",
+        0,
+        55,
+        1,
+        9,
+        {},
+    )
+    second = SectionUnit(
+        "density_s002",
+        "Density",
+        "Second broad sentence. More broad text. Third broad text.",
+        57,
+        113,
+        1,
+        9,
+        {},
+    )
+    current_scores = {
+        "ai": 31.24,
+        "topk_calibrated_risk": 22.296,
+        "qualifying_text_ai_density": 38.41,
+        "unsafe_cluster_count": 0,
+        "unsafe_word_ratio": 0.0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        }
+    }
+    selector_calls: list[set[tuple[int, int]]] = []
+
+    def fake_sections(*_args, **kwargs):
+        excluded = set(kwargs.get("exclude_ranges") or set())
+        selector_calls.append(excluded)
+        if not excluded:
+            return [first]
+        return [second]
+
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_round_limit", lambda: 2)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_sections", fake_sections)
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "generate_safe_band_density_section_repair_variants",
+        lambda **_kwargs: (
+            [RecompositionVariant("v1", "replacement text with enough words for materiality", 7)],
+            {"status": "ok"},
+            "prompt",
+            "completion",
+        ),
+    )
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_materiality", lambda **_kwargs: {"passed": True})
+
+    def fake_score(**kwargs):
+        section = kwargs["section"]
+        first_round = section.section_id == "density_s001"
+        density = 37.8 if first_round else 34.8
+        return {
+            "section_id": section.section_id,
+            "variant_id": "v1",
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 31.0,
+                "topk_calibrated_risk": 22.0,
+                "qualifying_text_ai_density": density,
+                "unsafe_cluster_count": 0,
+                "unsafe_word_ratio": 0.0,
+                "risky_window_count": 0,
+            },
+            "incremental": {
+                "ai_delta": 0.24,
+                "ai_authorship_delta": 0.0,
+                "topk_calibrated_risk_delta": 0.296,
+                "qualifying_text_ai_density_delta": 0.61 if first_round else 3.0,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "candidate_text": "after first density repair" if first_round else "after second density repair",
+            "candidate_report": {},
+            "candidate_goal": (
+                {
+                    "ai_footprint_gate": {
+                        "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+                        "remaining_ai_footprint_drivers": [
+                            {"driver": "qualifying_text_ai_density", "value": 37.8, "safe_band": 35.0},
+                        ],
+                    }
+                }
+                if first_round
+                else {"strict_ai_safe_band_achieved": True, "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []}}
+            ),
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score)
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_density_section_repair_loop(
+        original_text="original",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text=f"{first.text}\n\n{second.text}",
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+    )
+
+    assert text == "after second density repair"
+    assert scores["qualifying_text_ai_density"] == 34.8
+    assert rounds[0]["accepted"]["section_id"] == "density_s001"
+    assert rounds[1]["sections"][0]["section_id"] == "density_s002"
+    assert selector_calls[0] == set()
+    assert selector_calls[1] == {(0, 55)}
+
+
+def test_v5_safe_band_density_section_loop_tries_next_section_after_no_movement(monkeypatch, tmp_path):
+    first = SectionUnit("density_s001", "Density", "First broad sentence. More broad text. Third broad text.", 0, 55, 1, 9, {})
+    second = SectionUnit("density_s002", "Density", "Second broad sentence. More broad text. Third broad text.", 57, 113, 1, 9, {})
+    current_scores = {
+        "ai": 31.24,
+        "topk_calibrated_risk": 22.296,
+        "qualifying_text_ai_density": 38.41,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        }
+    }
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_round_limit", lambda: 1)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_sections", lambda *_args, **_kwargs: [first, second])
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "generate_safe_band_density_section_repair_variants",
+        lambda **_kwargs: ([RecompositionVariant("v1", "replacement text with enough words for materiality", 7)], {"status": "ok"}, "prompt", "completion"),
+    )
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_materiality", lambda **_kwargs: {"passed": True})
+
+    def fake_score(**kwargs):
+        section = kwargs["section"]
+        accepted = section.section_id == "density_s002"
+        return {
+            "section_id": section.section_id,
+            "variant_id": "v1",
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 31.0 if accepted else 31.24,
+                "topk_calibrated_risk": 22.0,
+                "qualifying_text_ai_density": 34.9 if accepted else 38.4,
+                "unsafe_cluster_count": 0,
+                "risky_window_count": 0,
+            },
+            "incremental": {
+                "ai_delta": 0.24 if accepted else 0.0,
+                "ai_authorship_delta": 0.0,
+                "topk_calibrated_risk_delta": 0.296,
+                "qualifying_text_ai_density_delta": 3.51 if accepted else 0.01,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "candidate_text": "accepted second section" if accepted else "first section no movement",
+            "candidate_report": {},
+            "candidate_goal": (
+                {"strict_ai_safe_band_achieved": True, "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []}}
+                if accepted
+                else current_goal
+            ),
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score)
+
+    text, _report, _goal, _scores, rounds, _best = v5_residual_comb._run_safe_band_density_section_repair_loop(
+        original_text="original",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text=f"{first.text}\n\n{second.text}",
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+    )
+
+    assert text == "accepted second section"
+    assert rounds[0]["status"] == "accepted"
+    assert len(rounds[0]["section_attempts"]) == 2
+    assert rounds[0]["accepted"]["section_id"] == "density_s002"
+
+
+def test_v5_safe_band_density_section_loop_selects_strongest_section_candidate(monkeypatch, tmp_path):
+    first = SectionUnit("density_s001", "Density", "First broad sentence. More broad text. Third broad text.", 0, 55, 1, 9, {})
+    second = SectionUnit("density_s002", "Density", "Second broad sentence. More broad text. Third broad text.", 57, 113, 1, 9, {})
+    current_scores = {
+        "ai": 31.24,
+        "topk_calibrated_risk": 22.296,
+        "qualifying_text_ai_density": 38.41,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        }
+    }
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_round_limit", lambda: 1)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_sections", lambda *_args, **_kwargs: [first, second])
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "generate_safe_band_density_section_repair_variants",
+        lambda **_kwargs: ([RecompositionVariant("v1", "replacement text with enough words for materiality", 7)], {"status": "ok"}, "prompt", "completion"),
+    )
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_materiality", lambda **_kwargs: {"passed": True})
+
+    def fake_score(**kwargs):
+        section = kwargs["section"]
+        strong = section.section_id == "density_s002"
+        density = 34.8 if strong else 38.2
+        return {
+            "section_id": section.section_id,
+            "variant_id": "v1",
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 31.0,
+                "topk_calibrated_risk": 22.0,
+                "qualifying_text_ai_density": density,
+                "unsafe_cluster_count": 0,
+                "risky_window_count": 0,
+            },
+            "incremental": {
+                "ai_delta": 0.24,
+                "ai_authorship_delta": 0.0,
+                "topk_calibrated_risk_delta": 0.296,
+                "qualifying_text_ai_density_delta": 3.61 if strong else 0.21,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "candidate_text": "strong second section" if strong else "weak first section",
+            "candidate_report": {},
+            "candidate_goal": (
+                {"strict_ai_safe_band_achieved": True, "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []}}
+                if strong
+                else {
+                    "ai_footprint_gate": {
+                        "remaining_ai_footprint_drivers": [
+                            {"driver": "qualifying_text_ai_density", "value": density, "safe_band": 35.0}
+                        ]
+                    }
+                }
+            ),
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score)
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_density_section_repair_loop(
+        original_text="original",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text=f"{first.text}\n\n{second.text}",
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+    )
+
+    assert text == "strong second section"
+    assert scores["qualifying_text_ai_density"] == 34.8
+    assert len(rounds[0]["section_attempts"]) == 2
+    assert rounds[0]["accepted"]["section_id"] == "density_s002"
+
+
+def test_v5_safe_band_evidence_repair_runs_density_section_loop_first(monkeypatch, tmp_path):
+    call_order: list[str] = []
+    section = SectionUnit("density_s001", "Density", "First broad sentence. More broad text.", 0, 45, 1, 7, {})
+    current_scores = {
+        "ai": 31.24,
+        "topk_calibrated_risk": 25.1,
+        "qualifying_text_ai_density": 38.41,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band": False,
+            "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+            "remaining_ai_footprint_drivers": [
+                {"driver": "topk_calibrated_risk", "value": 25.1, "safe_band": 25.0},
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        }
+    }
+
+    def unchanged(name):
+        def inner(**kwargs):
+            call_order.append(name)
+            return (
+                kwargs["current_text"],
+                kwargs["current_report"],
+                kwargs["current_goal"],
+                kwargs["current_scores"],
+                [{"phase": name, "status": "skipped"}],
+                kwargs["global_best_candidate"],
+            )
+        return inner
+
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_repair_sections", lambda *_args, **_kwargs: [section])
+    monkeypatch.setattr(v5_residual_comb, "_run_safe_band_density_section_repair_loop", unchanged("density"))
+    monkeypatch.setattr(v5_residual_comb, "_run_safe_band_controlled_operation_loop", unchanged("controlled"))
+    monkeypatch.setattr(v5_residual_comb, "_run_safe_band_sentence_replacement_loop", unchanged("sentence"))
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_pack_enabled", lambda: False)
+
+    _text, _report, _goal, _scores, rounds, _best = v5_residual_comb._run_safe_band_evidence_repair_pass(
+        original_text="original",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text=section.text,
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+    )
+
+    assert call_order[:3] == ["density", "controlled", "sentence"]
+    assert [row["phase"] for row in rounds[:3]] == ["density", "controlled", "sentence"]
+
+
+def test_v5_safe_band_evidence_pack_apply_uses_all_replacements_in_reverse_offset_order():
+    current_text = (
+        "Intro paragraph.\n"
+        "Each lesson ends with group reflection. Students talk during this time, and their comments expose what they learned. I use those comments again.\n"
+        "Middle paragraph.\n"
+        "Videos can make the haircut look easy. This creates an illusion of simplicity. The classroom task exposes sectioning."
+    )
+    first = v5_residual_comb._section_from_paragraph_containing_text(
+        current_text,
+        "Students talk during this time, and their comments expose what they learned.",
+        section_id="s1",
+        selection_reason="test",
+        scanner_focus={},
+    )
+    second = v5_residual_comb._section_from_paragraph_containing_text(
+        current_text,
+        "This creates an illusion of simplicity.",
+        section_id="s2",
+        selection_reason="test",
+        scanner_focus={},
+    )
+    variant = {
+        "variant_id": "v1",
+        "replacements": [
+            {
+                "section_id": "s1",
+                "text": (
+                    "I close the lesson with group reflection. Students name what made sense and where the work caught them. "
+                    "Those comments tell me what to demonstrate again."
+                ),
+            },
+            {
+                "section_id": "s2",
+                "text": (
+                    "Online videos make the haircut look finished before the hard part is visible. "
+                    "In class, the first barrier is sectioning, not confidence. "
+                    "That is where I slow the task down."
+                ),
+            },
+        ],
+    }
+
+    candidate, apply_status, materiality = v5_residual_comb._apply_safe_band_evidence_pack_variant(
+        current_text=current_text,
+        sections=[first, second],
+        variant=variant,
+    )
+
+    assert apply_status["applied"] is True
+    assert materiality["passed"] is True
+    assert "Students name what made sense" in candidate
+    assert "Online videos make the haircut look finished" in candidate
+    assert "Students talk during this time" not in candidate
+    assert "This creates an illusion of simplicity" not in candidate
+
+
+def test_v5_safe_band_evidence_pack_applies_density_materiality_contract(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.5)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 1.8)
+    current_text = (
+        "I start with a quick demonstration. The explanation still sounds broad and polished. "
+        "I then ask students to mark what they missed."
+    )
+    section = SectionUnit(
+        section_id="safe_band_density_section_t001",
+        heading="Safe-band density section repair",
+        text=current_text,
+        start_char=0,
+        end_char=len(current_text),
+        paragraph_count=1,
+        word_count=21,
+        metadata={"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+    weak_variant = {
+        "variant_id": "v1",
+        "replacements": [
+            {
+                "section_id": "safe_band_density_section_t001",
+                "text": (
+                    "I start with a quick demonstration. The broad explanation is recast around what students missed. "
+                    "I then ask students to mark what they missed."
+                ),
+            }
+        ],
+    }
+
+    _candidate, apply_status, materiality = v5_residual_comb._apply_safe_band_evidence_pack_variant(
+        current_text=current_text,
+        sections=[section],
+        variant=weak_variant,
+    )
+
+    assert apply_status["applied"] is False
+    assert materiality["sections"][0]["contract"] == "density_section_repair"
+    assert materiality["sections"][0]["reason"] == "density_section_repair_too_few_changed_sentences"
+
+
+def test_v5_safe_band_evidence_pack_rejects_author_placeholders_in_candidate_text(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.5)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 1.8)
+    current_text = (
+        "I start with a quick demonstration. The explanation still sounds broad and polished. "
+        "I then ask students to mark what they missed."
+    )
+    section = SectionUnit(
+        section_id="safe_band_density_section_t001",
+        heading="Safe-band density section repair",
+        text=current_text,
+        start_char=0,
+        end_char=len(current_text),
+        paragraph_count=1,
+        word_count=21,
+        metadata={"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+    variant = {
+        "variant_id": "v1",
+        "replacements": [
+            {
+                "section_id": "safe_band_density_section_t001",
+                "text": (
+                    "I begin with the demonstration before naming the gap. "
+                    "The explanation changes route around what students missed. "
+                    "I then ask them to mark the unclear step [needs_author: add exact class detail]."
+                ),
+            }
+        ],
+    }
+
+    _candidate, apply_status, materiality = v5_residual_comb._apply_safe_band_evidence_pack_variant(
+        current_text=current_text,
+        sections=[section],
+        variant=variant,
+    )
+
+    assert apply_status["applied"] is False
+    assert materiality["sections"][0]["reason"] == "candidate_contains_author_placeholder"
+
+
+def test_v5_safe_band_evidence_pack_rejects_unbalanced_double_quote(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.5)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 1.8)
+    current_text = (
+        "I start with a quick demonstration. The explanation still sounds broad and polished. "
+        "I then ask students to mark what they missed."
+    )
+    section = SectionUnit(
+        section_id="safe_band_density_section_t001",
+        heading="Safe-band density section repair",
+        text=current_text,
+        start_char=0,
+        end_char=len(current_text),
+        paragraph_count=1,
+        word_count=21,
+        metadata={"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+    variant = {
+        "variant_id": "v1",
+        "replacements": [
+            {
+                "section_id": "safe_band_density_section_t001",
+                "text": (
+                    "I begin with the demonstration before naming the gap. "
+                    "The explanation changes route around what students missed. "
+                    "I then ask students to say \"what step confused them."
+                ),
+            }
+        ],
+    }
+
+    _candidate, apply_status, materiality = v5_residual_comb._apply_safe_band_evidence_pack_variant(
+        current_text=current_text,
+        sections=[section],
+        variant=variant,
+    )
+
+    assert apply_status["applied"] is False
+    assert materiality["sections"][0]["reason"] == "candidate_quote_integrity_issue"
+
+
+def test_v5_safe_band_evidence_repair_selector_prefers_strict_safe_and_rejects_authorship_regression():
+    current_scores = {
+        "ai": 33.32,
+        "ai_authorship": 33.0,
+        "topk_calibrated_risk": 30.586,
+        "qualifying_text_ai_density": 40.73,
+        "unsafe_cluster_count": 2,
+        "risky_window_count": 0,
+    }
+    partial = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "ai_delta": 0.1,
+            "ai_authorship_delta": 0.1,
+            "topk_calibrated_risk_delta": 0.4,
+            "qualifying_text_ai_density_delta": 1.0,
+            "unsafe_cluster_count_delta": 0,
+            "risky_window_count_delta": 0,
+        },
+        "scores": {
+            "topk_calibrated_risk": 30.186,
+            "qualifying_text_ai_density": 39.73,
+        },
+        "candidate_goal": {
+            "ai_footprint_gate": {
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "topk_calibrated_risk", "value": 30.186, "safe_band": 25.0},
+                    {"driver": "qualifying_text_ai_density", "value": 39.73, "safe_band": 35.0},
+                ]
+            }
+        },
+        "safe_band_evidence_materiality": {"passed": True},
+    }
+    authorship_regression = {
+        **partial,
+        "incremental": {
+            **partial["incremental"],
+            "ai_authorship_delta": -0.2,
+            "qualifying_text_ai_density_delta": 2.0,
+        },
+    }
+    strict_safe = {
+        **partial,
+        "incremental": {
+            **partial["incremental"],
+            "topk_calibrated_risk_delta": 0.2,
+            "qualifying_text_ai_density_delta": 0.2,
+        },
+        "candidate_goal": {
+            "strict_ai_safe_band_achieved": True,
+            "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []},
+        },
+    }
+
+    assert _has_safe_band_evidence_repair_movement(partial, current_scores=current_scores)
+    assert not _has_safe_band_evidence_repair_movement(authorship_regression, current_scores=current_scores)
+    assert _best_safe_band_evidence_repair_candidate([partial, authorship_regression, strict_safe], current_scores=current_scores) is strict_safe
+
+
+def test_v5_density_checkpoint_movement_allows_bounded_ai_tradeoff(monkeypatch):
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_checkpoint_min_density_delta", lambda: 0.5)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_checkpoint_ai_regression_tolerance", lambda: 1.0)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_checkpoint_authorship_regression_tolerance", lambda: 1.0)
+    current_scores = {
+        "ai": 31.97,
+        "ai_authorship": 32.0,
+        "topk_calibrated_risk": 25.112,
+        "qualifying_text_ai_density": 39.23,
+        "unsafe_cluster_count": 0,
+        "unsafe_word_ratio": 0.0,
+        "risky_window_count": 0,
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai": 32.41,
+            "ai_authorship": 32.0,
+            "topk_calibrated_risk": 23.548,
+            "qualifying_text_ai_density": 38.2,
+            "unsafe_cluster_count": 0,
+            "unsafe_word_ratio": 0.0,
+            "risky_window_count": 0,
+        },
+        "incremental": {
+            "ai_delta": -0.44,
+            "ai_authorship_delta": 0.0,
+            "topk_calibrated_risk_delta": 1.564,
+            "qualifying_text_ai_density_delta": 1.03,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+        },
+        "safe_band_density_section_materiality": {"passed": True},
+        "safe_band_evidence_materiality": {"passed": True},
+    }
+
+    assert v5_residual_comb._has_density_safe_band_checkpoint_movement(row, current_scores=current_scores)
+    assert _has_safe_band_evidence_repair_movement(row, current_scores=current_scores)
+
+    row["incremental"] = {**row["incremental"], "ai_delta": -1.1}
+    assert not v5_residual_comb._has_density_safe_band_checkpoint_movement(row, current_scores=current_scores)
+
+    bounded_authorship_tradeoff = {
+        **row,
+        "scores": {
+            **row["scores"],
+            "ai": 32.64,
+            "ai_authorship": 33.0,
+            "topk_calibrated_risk": 24.541,
+            "qualifying_text_ai_density": 38.47,
+        },
+        "incremental": {
+            **row["incremental"],
+            "ai_delta": -0.67,
+            "ai_authorship_delta": -1.0,
+            "topk_calibrated_risk_delta": 0.571,
+            "qualifying_text_ai_density_delta": 0.76,
+        },
+    }
+    assert v5_residual_comb._has_density_safe_band_checkpoint_movement(
+        bounded_authorship_tradeoff,
+        current_scores=current_scores,
+    )
+
+    too_much_authorship_tradeoff = {
+        **bounded_authorship_tradeoff,
+        "incremental": {
+            **bounded_authorship_tradeoff["incremental"],
+            "ai_authorship_delta": -1.1,
+        },
+    }
+    assert not v5_residual_comb._has_density_safe_band_checkpoint_movement(
+        too_much_authorship_tradeoff,
+        current_scores=current_scores,
+    )
+
+
+def test_v5_safe_band_evidence_repair_rejects_document_repetition_regression():
+    current_scores = {"ai": 33.0, "topk_calibrated_risk": 30.0, "qualifying_text_ai_density": 40.0}
+    row = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "ai_delta": 0.2,
+            "ai_authorship_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.2,
+            "qualifying_text_ai_density_delta": 1.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+        },
+        "scores": {"topk_calibrated_risk": 29.8, "qualifying_text_ai_density": 39.0},
+        "candidate_goal": {
+            "ai_footprint_gate": {
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "topk_calibrated_risk", "value": 29.8, "safe_band": 25.0},
+                    {"driver": "qualifying_text_ai_density", "value": 39.0, "safe_band": 35.0},
+                ]
+            }
+        },
+        "safe_band_evidence_materiality": {"passed": True},
+        "safe_band_quality_materiality": {
+            "passed": False,
+            "reason": "document_repetition_regression",
+        },
+    }
+
+    assert not _has_safe_band_evidence_repair_movement(row, current_scores=current_scores)
+
+
+def test_v5_safe_band_evidence_repair_materiality_rejects_near_copy():
+    source = (
+        "Each lesson ends with my group reflection. "
+        "Students talk during this time, and their comments expose what they learned. "
+        "From this sharing, I learn from them too."
+    )
+    near_copy = source.replace("time, and", "time;")
+    rebuilt = (
+        "I close the lesson with group reflection rather than treating practice as finished. "
+        "During that discussion, students name what made sense and where the task still caught them. "
+        "Those comments give me a second source of evidence for what I need to demonstrate again."
+    )
+
+    rejected = v5_residual_comb._safe_band_evidence_repair_materiality(
+        source_text=source,
+        candidate_text=near_copy,
+        target_sentence="Students talk during this time, and their comments expose what they learned.",
+    )
+    accepted = v5_residual_comb._safe_band_evidence_repair_materiality(
+        source_text=source,
+        candidate_text=rebuilt,
+        target_sentence="Students talk during this time, and their comments expose what they learned.",
+    )
+
+    assert not rejected["passed"]
+    assert rejected["reason"] == "near_copy_or_target_route_unchanged"
+    assert accepted["passed"]
+    assert accepted["changed_sentence_count"] >= 2
+
+
 def test_v5_author_proxy_context_is_attached_to_all_accept_capable_prompts():
     section = SectionUnit(
         section_id="density_cluster_001",
@@ -621,6 +3248,25 @@ def test_v5_author_proxy_context_is_attached_to_all_accept_capable_prompts():
             variant_count=2,
             author_proxy_context=author_proxy_context,
         ),
+        build_safe_band_evidence_repair_prompt(
+            section=section,
+            current_scores={
+                "ai": 33.0,
+                "topk_calibrated_risk": 30.0,
+                "qualifying_text_ai_density": 40.0,
+                "risky_window_count": 0,
+                "unsafe_cluster_count": 1,
+            },
+            current_goal={
+                "ai_footprint_gate": {
+                    "remaining_ai_footprint_drivers": [
+                        {"driver": "topk_calibrated_risk", "value": 30.0, "safe_band": 25.0},
+                    ],
+                },
+            },
+            variant_count=2,
+            author_proxy_context=author_proxy_context,
+        ),
     ]
 
     for prompt in prompts:
@@ -658,6 +3304,197 @@ def test_v5_author_proxy_audit_flags_new_concrete_references():
     assert "Riverdale" in audit["novel_candidate_references"]["named_references"]
     assert audit["safety_gate"]["passed"] is False
     assert audit["safety_gate"]["requires_author_review"] is True
+
+
+def test_v5_safe_band_repair_rejects_failed_author_proxy_safety_gate():
+    row = {
+        "apply_status": {"applied": True},
+        "candidate_goal": {"strict_ai_safe_band_achieved": True},
+        "scores": {
+            "ai_delta": 6.0,
+            "topk_calibrated_risk_delta": 8.0,
+            "unsafe_cluster_count_delta": 2.0,
+            "risky_window_count_delta": 1.0,
+        },
+        "incremental": {
+            "ai_delta": 1.0,
+            "ai_authorship_delta": 1.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+        },
+        "safe_band_evidence_materiality": {"passed": True},
+        "safe_band_quality_materiality": {"passed": True},
+        "author_proxy_audit": {
+            "active": True,
+            "safety_gate": {
+                "passed": False,
+                "reason": "candidate_introduced_concrete_references_not_present_in_source",
+            },
+        },
+    }
+
+    assert not _has_safe_band_evidence_repair_movement(row, current_scores={"ai": 32.0})
+    assert _best_safe_band_evidence_repair_candidate([row], current_scores={"ai": 32.0}) is None
+    assert not _has_full_document_fallback_movement(row)
+    assert _best_full_document_candidate([row]) is None
+
+
+def test_v5_safe_band_repair_skips_pack_after_strict_safe_checkpoint(monkeypatch, tmp_path):
+    section = SectionUnit(
+        "safe_band_s001",
+        "Safe-band",
+        "The draft still has a density gap that needs a grounded author-owned repair.",
+        0,
+        74,
+        1,
+        13,
+        {},
+    )
+    current_scores = {
+        "ai": 31.24,
+        "topk_calibrated_risk": 22.296,
+        "qualifying_text_ai_density": 38.41,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {
+                "topk_calibrated_risk": 25.0,
+                "qualifying_text_ai_density": 35.0,
+            },
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        },
+    }
+
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_repair_sections", lambda *_args, **_kwargs: [section])
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_controlled_operation_enabled", lambda: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_sentence_replacement_enabled", lambda: True)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_should_run", lambda **_kwargs: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_pack_enabled", lambda: True)
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_safe_band_evidence_pack_sections",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("pack should not run")),
+    )
+
+    def fake_sentence_loop(**kwargs):
+        return (
+            "strict safe text",
+            {"input_text": "strict safe text"},
+            {"strict_ai_safe_band_achieved": True, "ai_footprint_gate": {"safe_band": True}},
+            {
+                "ai": 27.79,
+                "topk_calibrated_risk": 21.938,
+                "qualifying_text_ai_density": 33.18,
+                "unsafe_cluster_count": 0,
+                "risky_window_count": 0,
+            },
+            [{"round": 1, "phase": "safe_band_sentence_replacement", "status": "accepted"}],
+            kwargs["global_best_candidate"],
+        )
+
+    monkeypatch.setattr(v5_residual_comb, "_run_safe_band_sentence_replacement_loop", fake_sentence_loop)
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_evidence_repair_pass(
+        original_text="original text",
+        baseline_report={},
+        baseline_scores={"ai": 33.0},
+        current_text=section.text,
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+    )
+
+    assert text == "strict safe text"
+    assert scores["qualifying_text_ai_density"] == 33.18
+    assert rounds[-1]["phase"] == "safe_band_evidence_pack"
+    assert rounds[-1]["status"] == "skipped"
+    assert rounds[-1]["reason"] == "strict_safe_band_already_achieved"
+
+
+def test_v5_safe_band_density_first_runs_pack_before_single_section_loop(monkeypatch, tmp_path):
+    section = SectionUnit(
+        "safe_band_density_section_s001",
+        "Density",
+        "This section still needs coordinated author-owned density repair.",
+        0,
+        65,
+        1,
+        9,
+        {"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+    current_scores = {
+        "ai": 31.97,
+        "topk_calibrated_risk": 25.112,
+        "qualifying_text_ai_density": 39.23,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {
+                "topk_calibrated_risk": 25.0,
+                "qualifying_text_ai_density": 35.0,
+            },
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 39.23, "safe_band": 35.0},
+            ],
+        },
+    }
+    calls: list[str] = []
+
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_repair_sections", lambda *_args, **_kwargs: [section])
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_first_repair_should_run", lambda **_kwargs: True)
+
+    def fake_pack_attempt(**kwargs):
+        calls.append("pack")
+        return (
+            "strict density pack text",
+            {"input_text": "strict density pack text"},
+            {"strict_ai_safe_band_achieved": True, "ai_footprint_gate": {"safe_band": True}},
+            {
+                "ai": 28.0,
+                "topk_calibrated_risk": 24.8,
+                "qualifying_text_ai_density": 34.7,
+                "unsafe_cluster_count": 0,
+                "risky_window_count": 0,
+            },
+            [{"round": 0, "phase": "safe_band_evidence_pack", "status": "accepted"}],
+            kwargs["global_best_candidate"],
+            True,
+        )
+
+    monkeypatch.setattr(v5_residual_comb, "_run_safe_band_evidence_pack_attempt", fake_pack_attempt)
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_run_safe_band_density_section_repair_loop",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("single-section density loop should be fallback only")),
+    )
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_evidence_repair_pass(
+        original_text="original text",
+        baseline_report={},
+        baseline_scores={"ai": 48.0},
+        current_text=section.text,
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+    )
+
+    assert calls == ["pack"]
+    assert text == "strict density pack text"
+    assert scores["qualifying_text_ai_density"] == 34.7
+    assert rounds[0]["phase"] == "safe_band_evidence_pack"
 
 
 def test_v5_author_proxy_active_prevents_direct_scanner_core_skip(monkeypatch):
@@ -726,6 +3563,35 @@ def test_v5_rewrite_report_author_proxy_status_overrides_external_stamp():
     assert "AUTHOR REVIEW" in html
     assert "Author review required" in html
     assert "External review required" not in html
+
+
+def test_v5_rewrite_report_strict_safe_kpi_suppresses_legacy_external_stamp():
+    summary = {
+        "outcome": "rewrite_candidate_generated_needs_author_review",
+        "strict_goal_status": "mitigation_failed_no_safe_candidate",
+        "public_candidate_warning": "author_proxy_candidate_requires_review",
+        "best_candidate_author_review_required": True,
+        "best_candidate_external_review_required": False,
+        "strict_safe_band_achieved": True,
+        "kpi_finalization_status": "strict_safe_author_review_required",
+    }
+
+    assert rewrite_report._requires_author_review(summary)
+    assert not rewrite_report._requires_external_review(summary)
+
+
+def test_v5_rewrite_report_does_not_mark_preserved_original_as_author_review():
+    summary = {
+        "outcome": "original_preserved",
+        "status": "original_preserved",
+        "no_text_change": True,
+        "author_proxy_context": {"active": True, "review_required": True},
+    }
+
+    stamp = rewrite_report._rewrite_stamp(summary, 31.0)
+
+    assert not rewrite_report._requires_author_review(summary)
+    assert stamp["label"] != "Author Review"
 
 
 def test_v5_rewrite_report_includes_author_review_cards():
@@ -3082,11 +5948,11 @@ def test_v5_core_route_runs_before_unsafe_cluster_probe_by_default(tmp_path, mon
         max_rounds=1,
         variant_count=1,
         retune_variant_count=1,
+        api_key="test-key",
         risky_window_cleanup_rounds=0,
         unsafe_cluster_cleanup_rounds=4,
         final_risky_window_cleanup_rounds=0,
         max_seconds=60,
-        api_key="test-key",
     )
 
     assert result["phase_order"]["unsafe_cluster_first"] is False
@@ -3398,7 +6264,7 @@ def test_v5_global_best_fallback_does_not_discard_accepted_structural_progress()
     )
 
 
-def test_v5_global_best_fallback_keeps_density_safe_ai_breakthrough():
+def test_v5_global_best_fallback_rejects_density_safe_ai_breakthrough_with_unsafe_regression():
     current_scores = {
         "ai": 35.18,
         "topk": 73.68,
@@ -3431,6 +6297,45 @@ def test_v5_global_best_fallback_keeps_density_safe_ai_breakthrough():
     }
 
     assert _would_discard_structural_progress(candidate["scores"], current_scores)
+    assert not _full_document_candidate_beats_scores(candidate, current_scores)
+
+
+def test_v5_global_best_fallback_keeps_density_safe_ai_breakthrough_without_unsafe_regression():
+    current_scores = {
+        "ai": 35.18,
+        "topk": 73.68,
+        "topk_calibrated_risk": 31.2,
+        "unsafe_word_ratio": 12.0,
+        "unsafe_cluster_count": 4,
+        "risky_window_count": 0,
+        "unsafe_cluster_count_delta": 8.0,
+        "topk_delta": 19.09,
+        "topk_calibrated_risk_delta": 49.691,
+    }
+    candidate = {
+        "apply_status": {"applied": True},
+        "candidate_goal": {
+            "eligible_span_density_gate": {
+                "safe": True,
+                "unsafe_cluster_count": 2,
+            }
+        },
+        "scores": {
+            "ai": 33.58,
+            "topk": 74.81,
+            "topk_calibrated_risk": 31.0,
+            "unsafe_word_ratio": 10.0,
+            "risky_window_count": 0,
+            "unsafe_cluster_count": 2,
+            "ai_delta": 14.74,
+            "topk_delta": 17.96,
+            "topk_calibrated_risk_delta": 48.652,
+            "external_ai_flag_risk_delta": 20.971,
+            "unsafe_cluster_count_delta": 10.0,
+            "risky_window_count_delta": 1.0,
+        },
+    }
+
     assert _full_document_candidate_beats_scores(candidate, current_scores)
 
 
@@ -3681,12 +6586,15 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
     )
 
     summary = json.loads(Path(result["json_path"]).read_text())
-    assert result["status"] == "rewrite_candidate_generated_needs_external_review"
+    assert result["status"] == "partial_candidate_not_strict_safe"
     assert summary["rewrite_pipeline_version"] == "rewrite_v5_residual_cluster_comb"
     assert summary["rewrite_engine_mode"] == "v5_residual_cluster_comb_production"
     assert summary["candidate_generation_status"]["accepted_count"] == 1
     assert summary["partial_rewrite_preserved"] is True
     assert summary["partial_rewrite_preservation_reason"] == "safe_progress_kept_despite_strict_goal_miss"
+    assert summary["public_candidate_warning"] == "candidate_not_strict_safe"
+    assert summary["best_candidate_external_review_required"] is False
+    assert summary["kpi_finalization_status"] == "partial_candidate_not_strict_safe"
     assert summary["v5_scores"]["deltas"]["ai_delta"] == 6.0
     assert summary["rewrite_effective_config"]["provider_routing"] == provider_routing
     assert summary["rewrite_effective_config"]["planner_model"] == "z-ai/glm-5.1"
@@ -3697,9 +6605,10 @@ def test_v5_production_adapter_returns_v5_report_contract(tmp_path, monkeypatch)
     layer = summary["rewrite_layers"]["v5_residual_cluster_comb"]
     assert layer["phase_order"]["unsafe_cluster_first"] is True
     assert emitted_checkpoints
-    assert emitted_checkpoints[0]["status"] == "rewrite_candidate_generated_needs_external_review"
+    assert emitted_checkpoints[0]["status"] == "partial_candidate_not_strict_safe"
     assert emitted_checkpoints[0]["final_text"] == "This is the rewritten document."
     assert emitted_checkpoints[0]["summary"]["checkpoint_recovery_available"] is True
+    assert emitted_checkpoints[0]["summary"]["best_candidate_external_review_required"] is False
 
 
 def test_v5_author_proxy_context_is_built_from_mitigation_plan():
@@ -3738,6 +6647,12 @@ def test_v5_author_proxy_context_is_built_from_mitigation_plan():
     assert context["quality_bar"]["basis"] == "submitted_content_only"
     assert context["review_cards"][0]["card_id"] == "target-01"
     assert context["review_cards"][0]["provenance"] == "needs_author_confirmation"
+    evidence_contract = context["authorship_evidence_contract"]
+    assert evidence_contract["schema_version"] == "authorship_evidence_contract.v1"
+    assert evidence_contract["basis"] == "submitted_content_only"
+    assert evidence_contract["required_inputs"] == ["author observation", "source detail"]
+    assert evidence_contract["evidence_slots"][0]["slot_id"] == "target-01"
+    assert any("qualifying AI density" in item for item in evidence_contract["kpi_alignment"])
 
 
 def test_v5_author_proxy_runtime_uses_legacy_budget_floor(monkeypatch):
@@ -3885,10 +6800,11 @@ def test_v5_production_author_proxy_candidate_requires_author_review(tmp_path, m
 
     summary = json.loads(Path(result["json_path"]).read_text())
     assert captured_author_contexts[0]["active"] is True
-    assert result["status"] == "rewrite_candidate_generated_needs_author_review"
-    assert summary["outcome"] == "rewrite_candidate_generated_needs_author_review"
-    assert summary["public_candidate_warning"] == "author_proxy_candidate_requires_review"
-    assert summary["best_candidate_author_review_required"] is True
+    assert result["status"] == "partial_candidate_not_strict_safe"
+    assert summary["outcome"] == "partial_candidate_not_strict_safe"
+    assert summary["public_candidate_warning"] == "candidate_not_strict_safe"
+    assert summary["kpi_finalization_status"] == "partial_candidate_not_strict_safe"
+    assert summary["best_candidate_author_review_required"] is False
     assert summary["best_candidate_external_review_required"] is False
     assert summary["author_review_cards"][0]["card_id"] == "target-01"
     assert any(
@@ -3896,12 +6812,197 @@ def test_v5_production_author_proxy_candidate_requires_author_review(tmp_path, m
         and card.get("target_text") == "narrower classroom observation"
         for card in summary["author_review_cards"]
     )
-    assert emitted_checkpoints[0]["status"] == "rewrite_candidate_generated_needs_author_review"
-    assert emitted_checkpoints[0]["summary"]["best_candidate_author_review_required"] is True
+    assert emitted_checkpoints[0]["status"] == "partial_candidate_not_strict_safe"
+    assert emitted_checkpoints[0]["summary"]["best_candidate_author_review_required"] is False
     assert any(
         card.get("kind") == "candidate_author_review"
         for card in emitted_checkpoints[0]["summary"]["author_review_cards"]
     )
+
+
+def test_v5_production_reports_strict_safe_author_proxy_kpi_separately(tmp_path, monkeypatch):
+    def fake_residual_comb(**kwargs):
+        callback = kwargs.get("accepted_checkpoint_callback")
+        assert callback is not None
+        accepted = {
+            "section_id": "safe_band_sentence_replacement",
+            "variant_id": "v2",
+            "text": "This is the strict-safe author-proxy candidate.",
+            "word_count": 7,
+            "scores": {
+                "ai": 27.79,
+                "topk_calibrated_risk": 21.938,
+                "qualifying_text_ai_density": 33.18,
+                "unsafe_cluster_count": 0,
+            },
+            "author_proxy_audit": {
+                "active": True,
+                "review_required": True,
+                "safety_gate": {"passed": True, "requires_author_review": True},
+            },
+        }
+        goal = {
+            "status": "ai_mitigated",
+            "goal_met": True,
+            "strict_ai_safe_band_achieved": True,
+            "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []},
+        }
+        callback({
+            "schema_version": "rewrite_v5_accepted_checkpoint.v1",
+            "stage": "v5_residual_cluster_comb",
+            "sequence": 1,
+            "phase": "safe_band_sentence_replacement",
+            "round": 1,
+            "reason": "accepted_safe_band_sentence_replacement",
+            "baseline_scores": {"ai": 31.24},
+            "scores": accepted["scores"],
+            "goal": goal,
+            "accepted": accepted,
+            "rewritten_document": accepted["text"],
+        })
+        return {
+            "stage": "v5_residual_cluster_comb",
+            "baseline_scores": {"ai": 31.24, "topk": 64.67, "rank": 60.945},
+            "final_scores": {
+                "ai": 27.79,
+                "topk": 64.28,
+                "rank": 59.635,
+                "topk_calibrated_risk": 21.938,
+                "qualifying_text_ai_density": 33.18,
+                "unsafe_cluster_count": 0,
+            },
+            "goal": goal,
+            "safe_band_evidence_repair_rounds": [{
+                "round": 1,
+                "phase": "safe_band_sentence_replacement",
+                "status": "accepted",
+                "accepted": accepted,
+            }],
+            "rounds": [],
+            "phase_order": {"unsafe_cluster_first": False, "reason": "safe_band_evidence_repair"},
+            "rewritten_document": accepted["text"],
+        }
+
+    monkeypatch.setattr(v5_production, "run_v5_residual_cluster_comb_experiment", fake_residual_comb)
+    monkeypatch.setattr(v5_production, "_scan_report", lambda text: {
+        "input_text": text,
+        "ai_score": 27.79,
+        "ai_risk_badge": {"ai_likelihood_score": 27.79},
+        "findings": {},
+    })
+    monkeypatch.setattr(v5_production, "evaluate_rewrite_goal", lambda **_: SimpleNamespace(
+        to_dict=lambda: {
+            "status": "ai_mitigated",
+            "goal_met": True,
+            "strict_ai_safe_band_achieved": True,
+            "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []},
+        }
+    ))
+    monkeypatch.setattr(v5_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+
+    result = v5_production.run_rewrite_pipeline_v5(
+        detect_json={
+            "input_text": "This is the original author-proxy draft.",
+            "ai_score": 31.24,
+            "ai_risk_badge": {"ai_likelihood_score": 31.24},
+            "findings": {},
+            "ai_mitigation": {
+                "primary_mode": "author_grounded_evidence_rebuild",
+                "readiness": {"requires_user_input": True, "required_inputs": ["real observation"]},
+                "target_segments": [{
+                    "paragraph_id": "p001",
+                    "bucket": "source_grounding",
+                    "lever": "specificity",
+                    "text": "original author-proxy draft",
+                    "action": "Confirm this with author-owned evidence.",
+                    "user_input_needed": "Real observed detail.",
+                }],
+            },
+        },
+        output_dir=str(tmp_path),
+        model="deepseek/deepseek-v3.2",
+    )
+
+    summary = json.loads(Path(result["json_path"]).read_text())
+    assert result["status"] == "rewrite_candidate_generated_needs_author_review"
+    assert summary["strict_goal_status"] == "ai_mitigated"
+    assert summary["rewrite_goal_status"]["goal_met"] is True
+    assert summary["strict_safe_band_achieved"] is True
+    assert summary["kpi_finalization_status"] == "strict_safe_author_review_required"
+    assert summary["best_candidate_author_review_required"] is True
+    assert summary["best_candidate_external_review_required"] is False
+
+
+def test_v5_production_recomputes_full_goal_when_experiment_goal_is_compact(tmp_path, monkeypatch):
+    def fake_residual_comb(**_kwargs):
+        return {
+            "stage": "v5_residual_cluster_comb",
+            "baseline_scores": {"ai": 48.0, "topk": 80.0, "rank": 100.0},
+            "final_scores": {
+                "ai": 32.0,
+                "topk": 55.0,
+                "rank": 70.0,
+                "topk_calibrated_risk": 21.0,
+                "qualifying_text_ai_density": 20.0,
+                "unsafe_cluster_count": 0,
+            },
+            "goal": {
+                "status": "mitigation_failed_no_safe_candidate",
+                "goal_met": False,
+                "reason": "compact_experiment_goal",
+            },
+            "rounds": [{
+                "round": 1,
+                "status": "accepted",
+                "accepted": {
+                    "section_id": "safe_band_repair",
+                    "variant_id": "v1",
+                    "text": "safe candidate",
+                },
+                "candidates": [{"variant_id": "v1"}],
+            }],
+            "phase_order": {"unsafe_cluster_first": False, "reason": "default_route_then_cleanup"},
+            "rewritten_document": "This is the safe candidate.",
+        }
+
+    monkeypatch.setattr(v5_production, "run_v5_residual_cluster_comb_experiment", fake_residual_comb)
+    monkeypatch.setattr(v5_production, "_scan_report", lambda text: {
+        "input_text": text,
+        "ai_score": 32.0,
+        "ai_risk_badge": {"ai_likelihood_score": 32.0},
+        "findings": {},
+    })
+    monkeypatch.setattr(v5_production, "evaluate_rewrite_goal", lambda **_: SimpleNamespace(
+        to_dict=lambda: {
+            "status": "ai_mitigated",
+            "goal_met": True,
+            "strict_ai_safe_band_achieved": True,
+            "ai_footprint_gate": {
+                "safe_band": True,
+                "remaining_ai_footprint_drivers": [],
+            },
+            "eligible_span_density_gate": {"safe": True},
+        }
+    ))
+    monkeypatch.setattr(v5_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+
+    result = v5_production.run_rewrite_pipeline_v5(
+        detect_json={
+            "input_text": "This is the original risky draft.",
+            "ai_score": 48.0,
+            "ai_risk_badge": {"ai_likelihood_score": 48.0},
+            "findings": {},
+        },
+        output_dir=str(tmp_path),
+        model="deepseek/deepseek-v3.2",
+    )
+
+    summary = json.loads(Path(result["json_path"]).read_text())
+    assert result["status"] == "ai_mitigated"
+    assert summary["strict_goal_status"] == "ai_mitigated"
+    assert summary["rewrite_goal_status"]["ai_footprint_gate"]["safe_band"] is True
+    assert summary["strict_safe_band_achieved"] is True
+    assert summary["kpi_finalization_status"] == "strict_safe_auto_finalized"
 
 
 def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_path, monkeypatch):
@@ -3909,7 +7010,7 @@ def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_pat
         return {
             "stage": "v5_residual_cluster_comb",
             "baseline_scores": {"ai": 55.0, "rank": 140.0},
-            "final_scores": {"ai": 51.0, "rank": 135.0},
+            "final_scores": {"ai": 51.0, "rank": 135.0, "topk_calibrated_risk": 24.5},
             "goal": {
                 "status": "mitigation_failed_no_safe_candidate",
                 "goal_met": False,
@@ -3921,6 +7022,19 @@ def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_pat
             "final_risky_window_cleanup_rounds": [],
             "eligible_span_density_gate": {},
             "phase_order": {"unsafe_cluster_first": False, "reason": "default_route_then_cleanup"},
+            "candidate_ledger": [
+                {
+                    "rank": 1,
+                    "source": "global_best_candidate",
+                    "section_id": "full_document",
+                    "variant_id": "fallback",
+                    "label": "fallback_full_document",
+                    "word_count": 5,
+                    "scores": {"ai": 51.0, "topk_calibrated_risk": 24.5},
+                    "goal": {"status": "mitigation_failed_no_safe_candidate", "goal_met": False},
+                    "text": "This is the fallback-selected document.",
+                }
+            ],
             "global_best_fallback": {
                 "applied": True,
                 "reason": "best_full_document_candidate_superseded_phase_accepted_result",
@@ -3965,11 +7079,217 @@ def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_pat
 
     summary = json.loads(Path(result["json_path"]).read_text())
     layer = summary["rewrite_layers"]["v5_residual_cluster_comb"]
-    assert result["status"] == "rewrite_candidate_generated_needs_external_review"
+    assert result["status"] == "partial_candidate_not_strict_safe"
     assert summary["candidate_generation_status"]["accepted_count"] == 1
+    assert summary["public_candidate_warning"] == "candidate_not_strict_safe"
+    assert summary["best_candidate_external_review_required"] is False
+    assert summary["kpi_finalization_status"] == "partial_candidate_not_strict_safe"
     assert summary["selected_candidate"]["section_id"] == "density_cluster_004"
+    assert summary["candidate_ledger"][0]["text"] == "This is the fallback-selected document."
+    assert summary["candidate_ledger"][0]["scores"]["topk_calibrated_risk"] == 24.5
     assert layer["global_best_fallback"]["applied"] is True
+    assert layer["candidate_ledger"][0]["text"] == "This is the fallback-selected document."
     assert layer["phase_order"]["reason"] == "default_route_then_cleanup"
+
+
+def test_v5_residual_comb_starts_from_historical_seed_when_it_beats_original(tmp_path, monkeypatch):
+    original = (
+        "The original draft explains the teaching problem in a broad way and repeats the same conclusion. "
+        "It says the lesson was useful but does not tie the observation to a concrete classroom decision."
+    )
+    seed = (
+        "The revised draft keeps the teaching problem focused on the observed classroom decision. "
+        "It links the lesson to the student's response and explains the limit without repeating the conclusion."
+    )
+
+    def fake_scan(text):
+        return {"input_text": text}
+
+    def fake_goal(**kwargs):
+        text = kwargs["candidate_text"]
+        topk = 31.69 if text == seed else 80.277
+        density = 42.61 if text == seed else 65.12
+        return SimpleNamespace(to_dict=lambda: {
+            "status": "mitigation_failed_no_safe_candidate",
+            "goal_met": False,
+            "ai_footprint_gate": {
+                "safe_band": False,
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "topk_calibrated_risk", "value": topk, "safe_band": 25.0},
+                    {"driver": "qualifying_text_ai_density", "value": density, "safe_band": 35.0},
+                ],
+            },
+        })
+
+    def fake_score(_input_text, report, _goal):
+        text = report["input_text"]
+        if text == seed:
+            return {
+                "ai": 34.02,
+                "topk": 74.88,
+                "external": 32.577,
+                "rank": 65.076,
+                "risky_window_count": 0,
+                "unsafe_word_ratio": 3.403,
+                "unsafe_cluster_count": 2,
+                "topk_calibrated_risk": 31.69,
+                "qualifying_text_ai_density": 42.61,
+                "ai_authorship": 34.0,
+                "external_ai_flag_risk": 32.224,
+            }
+        return {
+            "ai": 48.32,
+            "topk": 92.77,
+            "external": 45.634,
+            "rank": 136.22,
+            "risky_window_count": 1,
+            "unsafe_word_ratio": 54.535,
+            "unsafe_cluster_count": 12,
+            "topk_calibrated_risk": 80.277,
+            "qualifying_text_ai_density": 65.12,
+            "ai_authorship": 48.0,
+            "external_ai_flag_risk": 51.918,
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_scan_report", fake_scan)
+    monkeypatch.setattr(v5_residual_comb, "evaluate_rewrite_goal", fake_goal)
+    monkeypatch.setattr(v5_residual_comb, "_score_summary", fake_score)
+    monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, goal: goal)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", "0")
+
+    payload = v5_residual_comb.run_v5_residual_cluster_comb_experiment(
+        input_text=original,
+        output_dir=tmp_path,
+        max_rounds=0,
+        variant_count=1,
+        retune_variant_count=1,
+        api_key="test-key",
+        risky_window_cleanup_rounds=0,
+        unsafe_cluster_cleanup_rounds=0,
+        final_risky_window_cleanup_rounds=0,
+        direct_scanner_leapfrog_rounds=0,
+        seed_candidate_texts=[seed],
+    )
+
+    assert payload["rewritten_document"] == seed
+    assert payload["seed_recovery"]["applied"] is True
+    assert payload["seed_recovery"]["selected"]["variant_id"] == "seed_01"
+    assert payload["accepted_checkpoints"][0]["phase"] == "historical_seed_recovery"
+    assert payload["phase_order"]["reason"] == "historical_seed_targeted_safe_band_repair"
+    assert payload["phase_order"]["seed_recovery_targeted_repair"] is True
+    assert payload["phase_order"]["core_route_rounds"] == 0
+    assert payload["rounds"][0]["status"] == "skipped"
+    assert payload["rounds"][0]["reason"] == "historical_seed_targeted_safe_band_repair"
+    assert payload["final_scores"]["topk_calibrated_risk"] == 31.69
+
+
+def test_v5_residual_comb_routes_density_blocker_to_safe_band_before_final_topk(tmp_path, monkeypatch):
+    original = "The original draft repeats a broad teaching point without grounded classroom movement."
+    seed = "The revised draft keeps the classroom movement but still has a density gap."
+    call_order: list[str] = []
+
+    def fake_scan(text):
+        return {"input_text": text}
+
+    def fake_goal(**kwargs):
+        text = kwargs["candidate_text"]
+        density = 39.23 if text == seed else 65.12
+        topk = 25.112 if text == seed else 80.277
+        return SimpleNamespace(to_dict=lambda: {
+            "status": "mitigation_failed_no_safe_candidate",
+            "goal_met": False,
+            "ai_footprint_gate": {
+                "safe_band": False,
+                "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+                "remaining_ai_footprint_drivers": [
+                    {"driver": "topk_calibrated_risk", "value": topk, "safe_band": 25.0},
+                    {"driver": "qualifying_text_ai_density", "value": density, "safe_band": 35.0},
+                ],
+            },
+        })
+
+    def fake_score(_input_text, report, _goal):
+        text = report["input_text"]
+        if text == seed:
+            return {
+                "ai": 31.97,
+                "topk": 67.73,
+                "external": 29.525,
+                "rank": 61.278,
+                "risky_window_count": 0,
+                "unsafe_word_ratio": 0.0,
+                "unsafe_cluster_count": 0,
+                "topk_calibrated_risk": 25.112,
+                "qualifying_text_ai_density": 39.23,
+                "ai_authorship": 32.0,
+                "external_ai_flag_risk": 30.901,
+            }
+        return {
+            "ai": 48.32,
+            "topk": 92.77,
+            "external": 45.634,
+            "rank": 136.22,
+            "risky_window_count": 1,
+            "unsafe_word_ratio": 54.535,
+            "unsafe_cluster_count": 12,
+            "topk_calibrated_risk": 80.277,
+            "qualifying_text_ai_density": 65.12,
+            "ai_authorship": 48.0,
+            "external_ai_flag_risk": 51.918,
+        }
+
+    def fake_safe_band(**kwargs):
+        call_order.append("safe_band")
+        return (
+            kwargs["current_text"],
+            kwargs["current_report"],
+            kwargs["current_goal"],
+            kwargs["current_scores"],
+            [{"phase": "safe_band_density_section_repair", "status": "skipped"}],
+            kwargs["global_best_candidate"],
+        )
+
+    def fake_final_topk(**kwargs):
+        call_order.append("final_topk")
+        return (
+            kwargs["current_text"],
+            kwargs["current_report"],
+            kwargs["current_goal"],
+            kwargs["current_scores"],
+            [{"phase": "final_topk_sentence_route", "status": "skipped"}],
+            kwargs["global_best_candidate"],
+        )
+
+    monkeypatch.setattr(v5_residual_comb, "_scan_report", fake_scan)
+    monkeypatch.setattr(v5_residual_comb, "evaluate_rewrite_goal", fake_goal)
+    monkeypatch.setattr(v5_residual_comb, "_score_summary", fake_score)
+    monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, goal: goal)
+    monkeypatch.setattr(v5_residual_comb, "_run_safe_band_evidence_repair_pass", fake_safe_band)
+    monkeypatch.setattr(v5_residual_comb, "_run_final_topk_sentence_route_pass", fake_final_topk)
+    monkeypatch.setattr(v5_residual_comb, "_final_topk_sentence_route_should_run", lambda **_kwargs: True)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", "1")
+    monkeypatch.setenv("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", "1")
+
+    payload = v5_residual_comb.run_v5_residual_cluster_comb_experiment(
+        input_text=original,
+        output_dir=tmp_path,
+        max_rounds=0,
+        variant_count=1,
+        retune_variant_count=1,
+        api_key="test-key",
+        risky_window_cleanup_rounds=0,
+        unsafe_cluster_cleanup_rounds=0,
+        final_risky_window_cleanup_rounds=0,
+        direct_scanner_leapfrog_rounds=0,
+        seed_candidate_texts=[seed],
+    )
+
+    assert call_order[:2] == ["safe_band", "final_topk"]
+    assert payload["phase_order"]["safe_band_evidence_repair"]["density_first_route"] is True
+    assert payload["safe_band_evidence_repair_rounds"][0]["phase"] == "safe_band_density_section_repair"
 
 
 def test_v5_route_blueprint_moves_generic_opener_after_concrete_event():

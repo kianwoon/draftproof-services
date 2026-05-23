@@ -17,6 +17,7 @@ import time
 from typing import Any, Callable
 
 from llm.gateway import LLMConfig, LLMGateway
+from detect.layer3_scoring import _sentence_has_concrete_or_context
 from rewrite_v2.goal_contract import evaluate_rewrite_goal
 from rewrite_v2.structured_output import structured_json_request_options
 from rewrite_v3.document_units import word_count
@@ -150,6 +151,7 @@ def run_v5_residual_cluster_comb_experiment(
     progress_callback: Callable[[int, str], None] | None = None,
     accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     author_proxy_context: dict[str, Any] | None = None,
+    seed_candidate_texts: list[str] | None = None,
     max_seconds: float | None = None,
     cancellation_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
@@ -180,6 +182,8 @@ def run_v5_residual_cluster_comb_experiment(
     current_goal = baseline_goal
     current_scores = baseline_scores
     global_best_candidate: dict[str, Any] | None = None
+    seed_candidate_rows: list[dict[str, Any]] = []
+    seed_recovery: dict[str, Any] = {"applied": False, "reason": "no_seed_candidate"}
     accepted_checkpoints: list[dict[str, Any]] = []
     author_proxy_context = author_proxy_context if isinstance(author_proxy_context, dict) else {}
 
@@ -201,6 +205,49 @@ def run_v5_residual_cluster_comb_experiment(
             accepted_checkpoints[-1]["callback_error"] = {
                 "error_type": type(exc).__name__,
                 "error": str(exc),
+            }
+
+    if seed_candidate_texts:
+        seed_candidate_rows = _score_seed_candidate_texts(
+            seed_candidate_texts,
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_scores=current_scores,
+            output_dir=out_dir / "seed_candidates",
+            author_proxy_context=author_proxy_context,
+        )
+        global_best_candidate = _best_full_document_candidate([global_best_candidate, *seed_candidate_rows])
+        if global_best_candidate and _full_document_candidate_beats_scores(global_best_candidate, current_scores):
+            previous_scores = current_scores
+            current_text, current_report, current_goal, current_scores = _accepted_state(
+                accepted=global_best_candidate,
+                original_text=original_text,
+                baseline_report=baseline_report,
+            )
+            (out_dir / "after_seed_recovery.txt").write_text(current_text)
+            record_accepted_checkpoint({
+                "phase": "historical_seed_recovery",
+                "round": None,
+                "reason": "historical_candidate_superseded_original_start",
+                "accepted": global_best_candidate,
+                "rewritten_document": current_text,
+                "scores": current_scores,
+                "goal": current_goal,
+            })
+            seed_recovery = {
+                "applied": True,
+                "reason": "historical_candidate_superseded_original_start",
+                "selected": _compact_residual_row(global_best_candidate),
+                "previous_scores": previous_scores,
+                "final_scores": current_scores,
+            }
+        else:
+            seed_recovery = {
+                "applied": False,
+                "reason": "no_seed_candidate_beat_current_state",
+                "selected": _compact_residual_row(global_best_candidate),
             }
     gateway = LLMGateway(LLMConfig(
         api_key=api_key,
@@ -242,6 +289,7 @@ def run_v5_residual_cluster_comb_experiment(
     )
     borderline_verdict_variant_count = _borderline_verdict_variant_count(cleanup_variants)
     final_topk_sentence_route_enabled = _final_topk_sentence_route_enabled()
+    safe_band_evidence_repair_enabled = _safe_band_evidence_repair_enabled()
     direct_scanner_limit = _cleanup_round_limit(
         direct_scanner_leapfrog_rounds,
         env_name="DRAFTPROOF_REWRITE_V5_DIRECT_SCANNER_LEAPFROG_ROUNDS",
@@ -261,6 +309,15 @@ def run_v5_residual_cluster_comb_experiment(
             ),
         ),
     )
+    seed_recovery_targeted_repair = bool(seed_recovery.get("applied")) and _bool_env(
+        "DRAFTPROOF_REWRITE_V5_SEED_RECOVERY_TARGETED_REPAIR_ONLY",
+        True,
+    )
+    if seed_recovery_targeted_repair:
+        direct_scanner_limit = 0
+        risky_window_limit = 0
+        unsafe_cluster_limit = 0
+        final_risky_window_limit = 0
     baseline_density_gate = _density_gate_for_report(current_text, current_report)
     if budget_seconds is None:
         budget_seconds = _adaptive_cutoff_runtime_budget_seconds(
@@ -282,10 +339,17 @@ def run_v5_residual_cluster_comb_experiment(
         if unsafe_cluster_first
         else unsafe_cluster_limit
     )
-    core_round_limit = max(1, int(max_rounds or 1))
+    core_round_limit = 0 if seed_recovery_targeted_repair else max(1, int(max_rounds or 1))
     phase_order = {
         "unsafe_cluster_first": unsafe_cluster_first,
-        "reason": "eligible_span_density_unsafe" if unsafe_cluster_first else "default_route_then_cleanup",
+        "reason": (
+            "historical_seed_targeted_safe_band_repair"
+            if seed_recovery_targeted_repair
+            else "eligible_span_density_unsafe"
+            if unsafe_cluster_first
+            else "default_route_then_cleanup"
+        ),
+        "seed_recovery_targeted_repair": seed_recovery_targeted_repair,
         "unsafe_cluster_selection_mode": "clearable" if unsafe_cluster_first and budget_seconds is not None else "scanner",
         "unsafe_cluster_probe_rounds": unsafe_cluster_probe_limit,
         "remaining_unsafe_cluster_rounds": remaining_unsafe_cluster_limit,
@@ -315,6 +379,42 @@ def run_v5_residual_cluster_comb_experiment(
             "min_topk_delta": _final_topk_sentence_route_min_topk_delta(),
             "min_calibrated_delta": _final_topk_sentence_route_min_calibrated_delta(),
         },
+        "safe_band_evidence_repair": {
+            "enabled": safe_band_evidence_repair_enabled,
+            "variant_count": _safe_band_evidence_repair_variant_count(),
+            "section_limit": _safe_band_evidence_repair_section_limit(),
+            "composite_window_enabled": _safe_band_evidence_repair_composite_window_enabled(),
+            "composite_max_words": _safe_band_evidence_repair_composite_max_words(),
+            "controlled_operation_enabled": _safe_band_controlled_operation_enabled(),
+            "controlled_operation_target_limit": _safe_band_controlled_operation_target_limit(),
+            "controlled_operation_round_limit": _safe_band_controlled_operation_round_limit(),
+            "controlled_operation_min_suffix_words": _safe_band_controlled_operation_min_suffix_words(),
+            "sentence_replacement_enabled": _safe_band_sentence_replacement_enabled(),
+            "sentence_replacement_round_limit": _safe_band_sentence_replacement_round_limit(),
+            "sentence_replacement_target_limit": _safe_band_sentence_replacement_target_limit(),
+            "sentence_replacement_variant_count": _safe_band_sentence_replacement_variant_count(),
+            "density_section_repair_enabled": _safe_band_density_section_repair_enabled(),
+            "density_section_repair_round_limit": _safe_band_density_section_repair_round_limit(),
+            "density_section_repair_section_limit": _safe_band_density_section_repair_section_limit(),
+            "density_section_repair_variant_count": _safe_band_density_section_repair_variant_count(),
+            "density_section_repair_min_section_words": _safe_band_density_section_repair_min_section_words(),
+            "density_section_repair_max_section_words": _safe_band_density_section_repair_max_section_words(),
+            "pack_enabled": _safe_band_evidence_pack_enabled(),
+            "author_proxy_plan_enabled": _safe_band_author_proxy_plan_enabled(),
+            "pack_composite_enabled": _safe_band_evidence_pack_composite_enabled(),
+            "pack_variant_count": _safe_band_evidence_pack_variant_count(),
+            "pack_section_limit": _safe_band_evidence_pack_section_limit(),
+            "pack_max_section_words": _safe_band_evidence_pack_max_section_words(),
+            "pack_max_source_words": _safe_band_evidence_pack_max_source_words(),
+            "pack_partial_min_sections": _safe_band_evidence_pack_partial_min_sections(),
+            "min_gap_delta": _safe_band_evidence_repair_min_gap_delta(),
+            "density_checkpoint_min_density_delta": _safe_band_density_checkpoint_min_density_delta(),
+            "density_checkpoint_ai_regression_tolerance": _safe_band_density_checkpoint_ai_regression_tolerance(),
+            "density_checkpoint_authorship_regression_tolerance": _safe_band_density_checkpoint_authorship_regression_tolerance(),
+            "density_checkpoint_max_ai_score": _safe_band_density_checkpoint_max_ai_score(),
+            "density_checkpoint_topk_regression_tolerance": _safe_band_density_checkpoint_topk_regression_tolerance(),
+            "unsafe_word_ratio_regression_tolerance": _safe_band_evidence_repair_unsafe_word_ratio_regression_tolerance(),
+        },
         "adaptive_cutoff": {
             "enabled": _adaptive_cutoff_enabled(),
             "runtime_budget_enabled": budget_seconds is not None,
@@ -333,7 +433,16 @@ def run_v5_residual_cluster_comb_experiment(
     final_risky_window_rounds: list[dict[str, Any]] = []
     borderline_verdict_rounds: list[dict[str, Any]] = []
     final_topk_sentence_route_rounds: list[dict[str, Any]] = []
+    safe_band_evidence_repair_rounds: list[dict[str, Any]] = []
     skipped_core_signatures: set[tuple[Any, ...]] = set()
+    if seed_recovery_targeted_repair:
+        rounds.append({
+            "round": 0,
+            "phase": "residual_cluster_comb",
+            "status": "skipped",
+            "reason": "historical_seed_targeted_safe_band_repair",
+            "current_scores": current_scores,
+        })
     if direct_scanner_limit > 0 and not _runtime_budget_exhausted(started_at, budget_seconds):
         _emit_progress(progress_callback, 67, "Running V5 direct scanner-cluster leapfrog")
         (
@@ -981,6 +1090,40 @@ def run_v5_residual_cluster_comb_experiment(
         raise_if_canceled()
 
     if (
+        safe_band_evidence_repair_enabled
+        and not _runtime_budget_exhausted(started_at, budget_seconds)
+        and _safe_band_density_first_repair_should_run(current_scores=current_scores, current_goal=current_goal)
+    ):
+        phase_order["safe_band_evidence_repair"]["density_first_route"] = True
+        _emit_progress(progress_callback, 80, "Running V5 density-first safe-band repair")
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            safe_band_evidence_repair_rounds,
+            global_best_candidate,
+        ) = _run_safe_band_evidence_repair_pass(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "safe_band_evidence_repair",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=80,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
+            started_at=started_at,
+            max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
+        )
+        raise_if_canceled()
+
+    if (
         final_topk_sentence_route_enabled
         and not _runtime_budget_exhausted(started_at, budget_seconds)
         and _final_topk_sentence_route_should_run(current_scores=current_scores, density_gate=_density_gate_for_report(current_text, current_report))
@@ -1006,6 +1149,40 @@ def run_v5_residual_cluster_comb_experiment(
             global_best_candidate=global_best_candidate,
             progress_callback=progress_callback,
             progress_percent=80,
+            accepted_checkpoint_callback=record_accepted_checkpoint,
+            started_at=started_at,
+            max_seconds=budget_seconds,
+            author_proxy_context=author_proxy_context,
+        )
+        raise_if_canceled()
+
+    if (
+        safe_band_evidence_repair_enabled
+        and not safe_band_evidence_repair_rounds
+        and not _runtime_budget_exhausted(started_at, budget_seconds)
+        and _safe_band_evidence_repair_should_run(current_scores=current_scores, current_goal=current_goal)
+    ):
+        _emit_progress(progress_callback, 81, "Running V5 safe-band evidence repair")
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            safe_band_evidence_repair_rounds,
+            global_best_candidate,
+        ) = _run_safe_band_evidence_repair_pass(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=out_dir / "safe_band_evidence_repair",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=81,
             accepted_checkpoint_callback=record_accepted_checkpoint,
             started_at=started_at,
             max_seconds=budget_seconds,
@@ -1045,6 +1222,13 @@ def run_v5_residual_cluster_comb_experiment(
         }
 
     density_gate = _density_gate_for_report(current_text, current_report)
+    candidate_ledger = _residual_candidate_ledger(
+        seed_candidate_rows=seed_candidate_rows,
+        global_best_candidate=global_best_candidate,
+        final_text=current_text,
+        final_scores=current_scores,
+        final_goal=current_goal,
+    )
     payload = {
         "stage": "v5_residual_cluster_comb",
         "baseline_scores": baseline_scores,
@@ -1055,11 +1239,15 @@ def run_v5_residual_cluster_comb_experiment(
         "final_risky_window_cleanup_rounds": final_risky_window_rounds,
         "borderline_verdict_cleanup_rounds": borderline_verdict_rounds,
         "final_topk_sentence_route_rounds": final_topk_sentence_route_rounds,
+        "safe_band_evidence_repair_rounds": safe_band_evidence_repair_rounds,
+        "seed_candidate_rows": [_compact_residual_row(row) for row in seed_candidate_rows],
+        "seed_recovery": seed_recovery,
         "phase_order": phase_order,
         "accepted_checkpoints": accepted_checkpoints,
         "global_best_fallback": global_best_fallback,
         "final_scores": current_scores,
         "eligible_span_density_gate": density_gate,
+        "candidate_ledger": candidate_ledger,
         "adaptive_cutoff": {
             "enabled": _adaptive_cutoff_enabled(),
             "events": adaptive_cutoff_events,
@@ -1132,6 +1320,88 @@ def _compact_accepted_checkpoint(checkpoint: dict[str, Any]) -> dict[str, Any]:
         "accepted": checkpoint.get("accepted"),
         "rewritten_word_count": word_count(str(checkpoint.get("rewritten_document") or "")),
     }
+
+
+def _residual_candidate_ledger_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float]:
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    goal = row.get("goal") if isinstance(row.get("goal"), dict) else {}
+    strict = 0.0 if goal.get("goal_met") is True or goal.get("strict_ai_safe_band_achieved") is True else 1.0
+    return (
+        strict,
+        _number(scores.get("topk_calibrated_risk") or 999.0),
+        _number(scores.get("qualifying_text_ai_density") or 999.0),
+        _number(scores.get("ai") or 999.0),
+        _number(scores.get("unsafe_cluster_count") or 999.0),
+    )
+
+
+def _residual_candidate_ledger_text(row: dict[str, Any] | None) -> str:
+    if not isinstance(row, dict):
+        return ""
+    return str(row.get("candidate_text") or row.get("text") or row.get("rewritten_document") or "").strip()
+
+
+def _residual_candidate_ledger_entry(source: str, row: dict[str, Any], text: str) -> dict[str, Any]:
+    goal = row.get("candidate_goal") if isinstance(row.get("candidate_goal"), dict) else row.get("goal")
+    goal = goal if isinstance(goal, dict) else {}
+    return {
+        "schema_version": "rewrite_candidate_ledger.v1",
+        "source": source,
+        "section_id": row.get("section_id"),
+        "variant_id": row.get("variant_id"),
+        "label": row.get("label"),
+        "word_count": row.get("word_count") or word_count(text),
+        "scores": row.get("scores") if isinstance(row.get("scores"), dict) else {},
+        "goal": {
+            "status": goal.get("status"),
+            "goal_met": goal.get("goal_met"),
+            "reason": goal.get("reason"),
+            "strict_ai_safe_band_achieved": goal.get("strict_ai_safe_band_achieved"),
+        },
+        "text": text,
+    }
+
+
+def _residual_candidate_ledger(
+    *,
+    seed_candidate_rows: list[dict[str, Any]],
+    global_best_candidate: dict[str, Any] | None,
+    final_text: str,
+    final_scores: dict[str, Any],
+    final_goal: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(source: str, row: dict[str, Any] | None, *, fallback_text: str = "") -> None:
+        if not isinstance(row, dict):
+            return
+        text = _residual_candidate_ledger_text(row) or str(fallback_text or "").strip()
+        normalized = " ".join(text.split())
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        rows.append(_residual_candidate_ledger_entry(source, row, text))
+
+    for row in seed_candidate_rows or []:
+        add("historical_seed_candidate", row)
+    add("global_best_candidate", global_best_candidate)
+    add(
+        "final_text",
+        {
+            "section_id": "full_document",
+            "variant_id": "final",
+            "label": "final_text",
+            "word_count": word_count(final_text),
+            "scores": final_scores,
+            "goal": final_goal,
+            "text": final_text,
+        },
+    )
+    rows.sort(key=_residual_candidate_ledger_sort_key)
+    for index, row in enumerate(rows[:5], start=1):
+        row["rank"] = index
+    return rows[:5]
 
 
 def _should_start_with_unsafe_cluster_cleanup(
@@ -1909,6 +2179,35 @@ def _should_skip_core_after_direct_accept(
     )
 
 
+def _author_proxy_evidence_contract(context: dict[str, Any]) -> dict[str, Any]:
+    existing = context.get("authorship_evidence_contract")
+    if isinstance(existing, dict) and existing.get("schema_version"):
+        return existing
+    evidence_slots = []
+    for card in context.get("review_cards") if isinstance(context.get("review_cards"), list) else []:
+        if not isinstance(card, dict):
+            continue
+        evidence_slots.append({
+            "slot_id": card.get("card_id"),
+            "kind": card.get("kind"),
+            "bucket": card.get("bucket"),
+            "target_text": card.get("target_text"),
+            "required_input": card.get("user_input_needed"),
+            "provenance": card.get("provenance"),
+        })
+    return {
+        "schema_version": "authorship_evidence_contract.v1",
+        "basis": "submitted_content_only",
+        "required_inputs": context.get("required_inputs") or [],
+        "evidence_slots": evidence_slots,
+        "rules": [
+            "Use submitted draft material as the evidence source of record.",
+            "Narrow unsupported claims instead of inventing support.",
+            "Keep provisional bridge material visible through review provenance.",
+        ],
+    }
+
+
 def _attach_author_proxy_context(payload: dict[str, Any], context: dict[str, Any] | None) -> None:
     if not isinstance(context, dict) or not context.get("active"):
         return
@@ -1921,6 +2220,7 @@ def _attach_author_proxy_context(payload: dict[str, Any], context: dict[str, Any
         "allowed_provenance": context.get("allowed_provenance") or [],
         "review_cards": (context.get("review_cards") or [])[:8],
         "quality_bar": context.get("quality_bar") or {},
+        "authorship_evidence_contract": _author_proxy_evidence_contract(context),
     }
     payload["author_proxy_context"] = compact_context
     payload["author_proxy_rules"] = [
@@ -1980,6 +2280,100 @@ def _attach_author_proxy_context(payload: dict[str, Any], context: dict[str, Any
     if uses_text_variant_schema:
         output_schema["variants"] = [_author_proxy_output_variant_template()]
         payload["output_schema"] = output_schema
+
+
+def _safe_band_kpi_contract(current_scores: dict[str, Any], current_goal: dict[str, Any] | None = None) -> dict[str, Any]:
+    goal = current_goal if isinstance(current_goal, dict) else {}
+    gate = goal.get("ai_footprint_gate") if isinstance(goal.get("ai_footprint_gate"), dict) else {}
+    after = gate.get("after") if isinstance(gate.get("after"), dict) else {}
+    remaining = gate.get("remaining_ai_footprint_drivers") if isinstance(gate.get("remaining_ai_footprint_drivers"), list) else []
+    blockers = gate.get("texture_blockers") if isinstance(gate.get("texture_blockers"), list) else []
+    safe_thresholds = gate.get("safe_band_thresholds") if isinstance(gate.get("safe_band_thresholds"), dict) else {}
+
+    def threshold_for(driver: str, default: float) -> float:
+        value = safe_thresholds.get(driver)
+        return _number(value) if value is not None else default
+
+    def footprint_value(driver: str) -> float | None:
+        for bucket in ("authorship_footprint", "semantic_footprint", "grounding_footprint", "structural_footprint"):
+            values = after.get(bucket) if isinstance(after.get(bucket), dict) else {}
+            if driver in values:
+                return _number(values.get(driver))
+        if driver in after:
+            return _number(after.get(driver))
+        return None
+
+    targets = {
+        "topk_calibrated_risk": threshold_for("topk_calibrated_risk", 25.0),
+        "qualifying_text_ai_density": threshold_for("qualifying_text_ai_density", 35.0),
+    }
+    current = {
+        "ai": current_scores.get("ai"),
+        "topk": current_scores.get("topk"),
+        "topk_calibrated_risk": current_scores.get("topk_calibrated_risk"),
+        "qualifying_text_ai_density": current_scores.get("qualifying_text_ai_density"),
+        "ai_authorship": current_scores.get("ai_authorship"),
+        "unsafe_cluster_count": current_scores.get("unsafe_cluster_count"),
+        "risky_window_count": current_scores.get("risky_window_count"),
+    }
+    density_driver_names = (
+        "generic_assertion_risk",
+        "unsupported_claim_risk",
+        "broad_claim_risk",
+        "source_grounding_risk",
+        "rewrite_smoothness",
+        "semantic_uniformity",
+        "discourse_regularity",
+    )
+    secondary_density_drivers = {
+        name: value
+        for name in density_driver_names
+        if (value := footprint_value(name)) is not None
+    }
+    gaps = {
+        key: round(max(0.0, _number(current.get(key)) - _number(limit)), 3)
+        for key, limit in targets.items()
+    }
+    return {
+        "schema_version": "rewrite_kpi_contract.v1",
+        "objective": "clear_strict_ai_safe_band_with_grounded_author_proxy_revision",
+        "current": current,
+        "targets": targets,
+        "gaps": gaps,
+        "secondary_density_drivers": secondary_density_drivers,
+        "remaining_ai_footprint_drivers": remaining,
+        "texture_blockers": blockers,
+        "acceptance_priority": [
+            "Prefer candidates that clear every strict safe-band target.",
+            "If no candidate clears the band, prefer the largest combined reduction in topk_calibrated_risk and qualifying_text_ai_density without AI/authorship regression.",
+            "Do not trade lower top-k for unsupported claims, fabricated evidence, or compressed coverage.",
+        ],
+    }
+
+
+def _target_sentence_context(current_text: str, sentence: str) -> dict[str, Any]:
+    sentence = str(sentence or "").strip()
+    if not sentence:
+        return {}
+    paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n", current_text or "") if paragraph.strip()]
+    for paragraph_index, paragraph in enumerate(paragraphs, start=1):
+        if sentence not in paragraph:
+            continue
+        sentences = _sentences(paragraph)
+        sentence_index = next((index for index, item in enumerate(sentences) if item.strip() == sentence), None)
+        before = sentences[max(0, sentence_index - 2):sentence_index] if sentence_index is not None else []
+        after = sentences[sentence_index + 1:sentence_index + 3] if sentence_index is not None else []
+        return {
+            "paragraph_index": paragraph_index,
+            "paragraph": paragraph[:1800],
+            "before_sentences": before,
+            "after_sentences": after,
+            "context_rule": (
+                "Use this paragraph context to rebuild the target sentence route with grounded specificity; "
+                "do not introduce facts outside the paragraph or authorship evidence contract."
+            ),
+        }
+    return {}
 
 
 def build_residual_cluster_prompt(
@@ -4738,6 +5132,60 @@ def _score_full_document_variant(
     }
 
 
+def _score_seed_candidate_texts(
+    seed_candidate_texts: list[str],
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_scores: dict[str, Any],
+    output_dir: Path,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    limit = _int_env(
+        "DRAFTPROOF_REWRITE_V5_SEED_CANDIDATE_LIMIT",
+        3,
+        minimum=1,
+        maximum=8,
+    )
+    original_normalized = " ".join(str(original_text or "").split())
+    for index, text in enumerate(seed_candidate_texts or [], start=1):
+        candidate_text = str(text or "").strip()
+        normalized = " ".join(candidate_text.split())
+        if not normalized or normalized == original_normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        if len(rows) >= limit:
+            break
+        variant = RecompositionVariant(
+            variant_id=f"seed_{len(rows) + 1:02d}",
+            text=candidate_text,
+            word_count=word_count(candidate_text),
+        )
+        row = _score_full_document_variant(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_scores=current_scores,
+            variant=variant,
+            output_dir=output_dir,
+            label=f"historical_seed_{len(rows) + 1:02d}",
+            author_proxy_context=author_proxy_context,
+            author_proxy_phase="historical_rewrite_seed",
+        )
+        row["seed_candidate"] = {
+            "source": "historical_rewrite_candidate",
+            "input_index": index,
+        }
+        rows.append(row)
+    return rows
+
+
 def _run_direct_scanner_leapfrog_pass(
     *,
     original_text: str,
@@ -5431,12 +5879,13 @@ def _run_final_topk_sentence_route_pass(
         round_dir = output_dir / f"batch_{batch_index:02d}"
         round_dir.mkdir(parents=True, exist_ok=True)
         variants, llm_diagnostics, prompt, completion = generate_final_topk_sentence_route_variants(
-            current_text=current_text,
-            current_scores=current_scores,
-            targets=batch_targets,
-            gateway=gateway,
-            variant_count=variant_count,
-            author_proxy_context=author_proxy_context,
+                current_text=current_text,
+                current_scores=current_scores,
+                current_goal=current_goal,
+                targets=batch_targets,
+                gateway=gateway,
+                variant_count=variant_count,
+                author_proxy_context=author_proxy_context,
         )
         (round_dir / "topk_sentence_route_prompt.json.txt").write_text(prompt)
         (round_dir / "topk_sentence_route_completion.json.txt").write_text(completion)
@@ -5526,6 +5975,1037 @@ def _run_final_topk_sentence_route_pass(
     return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
 
 
+def _run_safe_band_evidence_pack_attempt(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    current_scores: dict[str, Any],
+    gateway: LLMGateway,
+    output_dir: Path,
+    global_best_candidate: dict[str, Any] | None,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int = 81,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    started_at: float | None = None,
+    max_seconds: float | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None, bool]:
+    if not _safe_band_evidence_pack_enabled() or _runtime_budget_exhausted(started_at, max_seconds):
+        return current_text, current_report, current_goal, current_scores, [], global_best_candidate, False
+    pack_sections = _safe_band_evidence_pack_sections(
+        current_text,
+        current_report,
+        current_goal,
+        limit=_safe_band_evidence_pack_section_limit(),
+    )
+    if len(pack_sections) < 2:
+        return current_text, current_report, current_goal, current_scores, [], global_best_candidate, False
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pack_revision_plan: dict[str, Any] | None = None
+    plan_diagnostics: dict[str, Any] = {"status": "skipped", "reason": "safe_band_author_proxy_plan_disabled"}
+    if _safe_band_author_proxy_plan_enabled() and not _runtime_budget_exhausted(started_at, max_seconds):
+        _emit_progress(progress_callback, progress_percent, "V5 safe-band author-proxy evidence plan")
+        pack_revision_plan, plan_diagnostics, plan_prompt, plan_completion = generate_safe_band_author_proxy_revision_plan(
+            sections=pack_sections,
+            current_scores=current_scores,
+            current_goal=current_goal,
+            gateway=gateway,
+            author_proxy_context=author_proxy_context,
+        )
+        (output_dir / "safe_band_author_proxy_revision_plan_prompt.json.txt").write_text(plan_prompt)
+        (output_dir / "safe_band_author_proxy_revision_plan_completion.json.txt").write_text(plan_completion)
+        (output_dir / "safe_band_author_proxy_revision_plan.json").write_text(
+            json.dumps(pack_revision_plan or {}, ensure_ascii=False, indent=2)
+        )
+    _emit_progress(progress_callback, progress_percent, "V5 safe-band evidence repair pack")
+    pack_variants, pack_diagnostics, pack_prompt, pack_completion = generate_safe_band_evidence_pack_variants(
+        sections=pack_sections,
+        current_scores=current_scores,
+        current_goal=current_goal,
+        gateway=gateway,
+        variant_count=_safe_band_evidence_pack_variant_count(),
+        revision_plan=pack_revision_plan,
+        author_proxy_context=author_proxy_context,
+    )
+    (output_dir / "safe_band_evidence_pack_prompt.json.txt").write_text(pack_prompt)
+    (output_dir / "safe_band_evidence_pack_completion.json.txt").write_text(pack_completion)
+    if _safe_band_evidence_pack_composite_enabled():
+        composite_variant = _safe_band_evidence_pack_composite_variant(
+            sections=pack_sections,
+            variants=pack_variants,
+        )
+        if composite_variant is not None:
+            pack_variants = [*pack_variants, composite_variant]
+    partial_variant = _safe_band_evidence_pack_partial_material_variant(
+        sections=pack_sections,
+        variants=pack_variants,
+    )
+    if partial_variant is not None:
+        pack_variants = [*pack_variants, partial_variant]
+    pack_rows = [
+        _score_safe_band_evidence_pack_variant(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_scores=current_scores,
+            sections=pack_sections,
+            variant=variant,
+            output_dir=output_dir,
+            label=f"safe_band_evidence_pack_{variant.get('variant_id')}",
+            author_proxy_context=author_proxy_context,
+        )
+        for variant in pack_variants
+    ]
+    for row in pack_rows:
+        _attach_safe_band_quality_materiality(row, current_text=current_text)
+    section_probe_rows = _score_safe_band_evidence_pack_section_probes(
+        original_text=original_text,
+        baseline_report=baseline_report,
+        baseline_scores=baseline_scores,
+        current_text=current_text,
+        current_scores=current_scores,
+        sections=pack_sections,
+        variants=pack_variants,
+        output_dir=output_dir,
+        author_proxy_context=author_proxy_context,
+    )
+    for row in section_probe_rows:
+        _attach_safe_band_quality_materiality(row, current_text=current_text)
+    section_composite_variant = _safe_band_evidence_pack_scored_section_composite_variant(
+        section_probe_rows,
+        current_scores=current_scores,
+    )
+    section_composite_row: dict[str, Any] | None = None
+    if section_composite_variant is not None:
+        section_composite_row = _score_safe_band_evidence_pack_variant(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_scores=current_scores,
+            sections=pack_sections,
+            variant=section_composite_variant,
+            output_dir=output_dir,
+            label="safe_band_evidence_pack_scored_section_composite",
+            author_proxy_context=author_proxy_context,
+        )
+        _attach_safe_band_quality_materiality(section_composite_row, current_text=current_text)
+        pack_rows.append(section_composite_row)
+    pack_selected = _best_safe_band_evidence_repair_candidate(pack_rows, current_scores=current_scores)
+    pack_accepted = (
+        pack_selected
+        if pack_selected and _has_safe_band_evidence_repair_movement(pack_selected, current_scores=current_scores)
+        else None
+    )
+    pack_payload = {
+        "round": 0,
+        "phase": "safe_band_evidence_pack",
+        "status": "accepted" if pack_accepted else "skipped",
+        "reason": "accepted_safe_band_evidence_pack_movement" if pack_accepted else "no_safe_band_evidence_pack_movement",
+        "sections": [section.to_dict() for section in pack_sections],
+        "generator_diagnostics": pack_diagnostics,
+        "revision_plan_diagnostics": plan_diagnostics,
+        "revision_plan": pack_revision_plan,
+        "current_scores": current_scores,
+        "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+        "candidates": [_compact_residual_row(row) for row in pack_rows],
+        "section_probe_candidates": [_compact_residual_row(row) for row in section_probe_rows],
+        "section_composite": _compact_residual_row(section_composite_row),
+        "selected": _compact_residual_row(pack_selected),
+        "accepted": _compact_residual_row(pack_accepted),
+    }
+    (output_dir / "round_result.json").write_text(json.dumps(pack_payload, ensure_ascii=False, indent=2))
+    global_best_candidate = _best_full_document_candidate([global_best_candidate, *pack_rows])
+    if not pack_accepted:
+        return current_text, current_report, current_goal, current_scores, [pack_payload], global_best_candidate, False
+
+    current_text, current_report, current_goal, current_scores = _accepted_state(
+        accepted=pack_accepted,
+        original_text=original_text,
+        baseline_report=baseline_report,
+    )
+    (output_dir.parent / "after_safe_band_evidence_pack.txt").write_text(current_text)
+    if accepted_checkpoint_callback is not None:
+        accepted_checkpoint_callback({
+            "phase": "safe_band_evidence_pack",
+            "round": 0,
+            "reason": "accepted_safe_band_evidence_pack_movement",
+            "accepted": pack_accepted,
+            "rewritten_document": current_text,
+            "scores": current_scores,
+            "goal": current_goal,
+        })
+    return current_text, current_report, current_goal, current_scores, [pack_payload], global_best_candidate, True
+
+
+def _run_safe_band_evidence_repair_pass(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    current_scores: dict[str, Any],
+    gateway: LLMGateway,
+    output_dir: Path,
+    global_best_candidate: dict[str, Any] | None,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int = 81,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    started_at: float | None = None,
+    max_seconds: float | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rounds: list[dict[str, Any]] = []
+    if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+        rounds.append(_runtime_budget_stop_record(
+            phase="safe_band_evidence_repair",
+            round_index=1,
+            started_at=started_at,
+            max_seconds=max_seconds,
+            current_scores=current_scores,
+        ))
+        return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+    sections = _safe_band_evidence_repair_sections(
+        current_text,
+        current_report,
+        current_goal,
+        limit=_safe_band_evidence_repair_section_limit(),
+    )
+    if not sections:
+        rounds.append({
+            "round": 1,
+            "phase": "safe_band_evidence_repair",
+            "status": "skipped",
+            "reason": "no_safe_band_evidence_section",
+            "current_scores": current_scores,
+            "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+        })
+        return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+    density_first = _safe_band_density_first_repair_should_run(current_scores=current_scores, current_goal=current_goal)
+    pack_attempted = False
+    if density_first and not _runtime_budget_exhausted(started_at, max_seconds):
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            pack_rounds,
+            global_best_candidate,
+            pack_accepted,
+        ) = _run_safe_band_evidence_pack_attempt(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=output_dir / "density_first_pack",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=progress_percent,
+            accepted_checkpoint_callback=accepted_checkpoint_callback,
+            started_at=started_at,
+            max_seconds=max_seconds,
+            author_proxy_context=author_proxy_context,
+        )
+        rounds.extend(pack_rounds)
+        pack_attempted = bool(pack_rounds)
+        if pack_accepted:
+            return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+        sections = _safe_band_evidence_repair_sections(
+            current_text,
+            current_report,
+            current_goal,
+            limit=_safe_band_evidence_repair_section_limit(),
+        )
+    if density_first and not _runtime_budget_exhausted(started_at, max_seconds):
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            density_rounds,
+            global_best_candidate,
+        ) = _run_safe_band_density_section_repair_loop(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=output_dir / "density_section_repair",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=progress_percent,
+            accepted_checkpoint_callback=accepted_checkpoint_callback,
+            started_at=started_at,
+            max_seconds=max_seconds,
+            author_proxy_context=author_proxy_context,
+        )
+        rounds.extend(density_rounds)
+        sections = _safe_band_evidence_repair_sections(
+            current_text,
+            current_report,
+            current_goal,
+            limit=_safe_band_evidence_repair_section_limit(),
+        )
+
+    if _safe_band_controlled_operation_enabled() and not _runtime_budget_exhausted(started_at, max_seconds):
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            operation_rounds,
+            global_best_candidate,
+        ) = _run_safe_band_controlled_operation_loop(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            output_dir=output_dir / "controlled_operation",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=progress_percent,
+            accepted_checkpoint_callback=accepted_checkpoint_callback,
+            started_at=started_at,
+            max_seconds=max_seconds,
+            author_proxy_context=author_proxy_context,
+        )
+        rounds.extend(operation_rounds)
+        sections = _safe_band_evidence_repair_sections(
+            current_text,
+            current_report,
+            current_goal,
+            limit=_safe_band_evidence_repair_section_limit(),
+        )
+
+    if _safe_band_sentence_replacement_enabled() and not _runtime_budget_exhausted(started_at, max_seconds):
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            replacement_rounds,
+            global_best_candidate,
+        ) = _run_safe_band_sentence_replacement_loop(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=output_dir / "sentence_replacement",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=progress_percent,
+            accepted_checkpoint_callback=accepted_checkpoint_callback,
+            started_at=started_at,
+            max_seconds=max_seconds,
+            author_proxy_context=author_proxy_context,
+        )
+        rounds.extend(replacement_rounds)
+        sections = _safe_band_evidence_repair_sections(
+            current_text,
+            current_report,
+            current_goal,
+            limit=_safe_band_evidence_repair_section_limit(),
+        )
+
+    if (
+        not density_first
+        and _safe_band_density_section_repair_should_run(current_scores=current_scores, current_goal=current_goal)
+        and not _runtime_budget_exhausted(started_at, max_seconds)
+    ):
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            density_rounds,
+            global_best_candidate,
+        ) = _run_safe_band_density_section_repair_loop(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=output_dir / "density_section_repair",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=progress_percent,
+            accepted_checkpoint_callback=accepted_checkpoint_callback,
+            started_at=started_at,
+            max_seconds=max_seconds,
+            author_proxy_context=author_proxy_context,
+        )
+        rounds.extend(density_rounds)
+        sections = _safe_band_evidence_repair_sections(
+            current_text,
+            current_report,
+            current_goal,
+            limit=_safe_band_evidence_repair_section_limit(),
+        )
+
+    if _candidate_strict_safe_band_achieved({"candidate_goal": current_goal, "scores": current_scores}):
+        rounds.append({
+            "round": 0,
+            "phase": "safe_band_evidence_pack",
+            "status": "skipped",
+            "reason": "strict_safe_band_already_achieved",
+            "current_scores": current_scores,
+            "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+        })
+        return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+    variant_count = _safe_band_evidence_repair_variant_count()
+    if not pack_attempted:
+        (
+            current_text,
+            current_report,
+            current_goal,
+            current_scores,
+            pack_rounds,
+            global_best_candidate,
+            pack_accepted,
+        ) = _run_safe_band_evidence_pack_attempt(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_report=current_report,
+            current_goal=current_goal,
+            current_scores=current_scores,
+            gateway=gateway,
+            output_dir=output_dir / "pack",
+            global_best_candidate=global_best_candidate,
+            progress_callback=progress_callback,
+            progress_percent=progress_percent,
+            accepted_checkpoint_callback=accepted_checkpoint_callback,
+            started_at=started_at,
+            max_seconds=max_seconds,
+            author_proxy_context=author_proxy_context,
+        )
+        rounds.extend(pack_rounds)
+        if pack_accepted:
+            return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+    for round_index, section in enumerate(sections, start=1):
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="safe_band_evidence_repair",
+                round_index=round_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
+        round_dir = output_dir / f"section_{round_index:02d}"
+        round_dir.mkdir(parents=True, exist_ok=True)
+        _emit_progress(progress_callback, progress_percent, f"V5 safe-band evidence repair paragraph {round_index}")
+        variants, llm_diagnostics, prompt, completion = generate_safe_band_evidence_repair_variants(
+            section=section,
+            current_scores=current_scores,
+            current_goal=current_goal,
+            gateway=gateway,
+            variant_count=variant_count,
+            author_proxy_context=author_proxy_context,
+        )
+        (round_dir / "safe_band_evidence_repair_prompt.json.txt").write_text(prompt)
+        (round_dir / "safe_band_evidence_repair_completion.json.txt").write_text(completion)
+        rows = [
+            _score_residual_variant(
+                original_text=original_text,
+                baseline_report=baseline_report,
+                baseline_scores=baseline_scores,
+                current_text=current_text,
+                current_scores=current_scores,
+                section=section,
+                variant=variant,
+                output_dir=round_dir,
+                label=f"safe_band_evidence_repair_s{round_index}_{variant.variant_id}",
+                author_proxy_context=author_proxy_context,
+                author_proxy_phase="safe_band_evidence_repair",
+            )
+            for variant in variants
+        ]
+        for row in rows:
+            row["safe_band_evidence_materiality"] = _safe_band_evidence_repair_materiality(
+                source_text=section.text,
+                candidate_text=str(row.get("text") or ""),
+                target_sentence=str((section.metadata or {}).get("target_sentence") or ""),
+            )
+            _attach_safe_band_quality_materiality(row, current_text=current_text)
+        selected = _best_safe_band_evidence_repair_candidate(rows, current_scores=current_scores)
+        accepted = selected if selected and _has_safe_band_evidence_repair_movement(selected, current_scores=current_scores) else None
+        round_payload = {
+            "round": round_index,
+            "phase": "safe_band_evidence_repair",
+            "status": "accepted" if accepted else "skipped",
+            "reason": "accepted_safe_band_evidence_repair_movement" if accepted else "no_safe_band_evidence_repair_movement",
+            "section": section.to_dict(),
+            "generator_diagnostics": llm_diagnostics,
+            "current_scores": current_scores,
+            "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+            "candidates": [_compact_residual_row(row) for row in rows],
+            "selected": _compact_residual_row(selected),
+            "accepted": _compact_residual_row(accepted),
+        }
+        rounds.append(round_payload)
+        (round_dir / "round_result.json").write_text(json.dumps(round_payload, ensure_ascii=False, indent=2))
+        global_best_candidate = _best_full_document_candidate([global_best_candidate, *rows])
+        if not accepted:
+            continue
+
+        current_text, current_report, current_goal, current_scores = _accepted_state(
+            accepted=accepted,
+            original_text=original_text,
+            baseline_report=baseline_report,
+        )
+        (output_dir / "after_safe_band_evidence_repair.txt").write_text(current_text)
+        if accepted_checkpoint_callback is not None:
+            accepted_checkpoint_callback({
+                "phase": "safe_band_evidence_repair",
+                "round": round_index,
+                "reason": "accepted_safe_band_evidence_repair_movement",
+                "accepted": accepted,
+                "rewritten_document": current_text,
+                "scores": current_scores,
+                "goal": current_goal,
+            })
+        break
+    return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+
+def _run_safe_band_controlled_operation_loop(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    current_scores: dict[str, Any],
+    output_dir: Path,
+    global_best_candidate: dict[str, Any] | None,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int = 81,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    started_at: float | None = None,
+    max_seconds: float | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rounds: list[dict[str, Any]] = []
+    round_limit = _safe_band_controlled_operation_round_limit()
+    for round_index in range(1, round_limit + 1):
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="safe_band_controlled_operation",
+                round_index=round_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
+        if _candidate_strict_safe_band_achieved({"candidate_goal": current_goal, "scores": current_scores}):
+            rounds.append({
+                "round": round_index,
+                "phase": "safe_band_controlled_operation",
+                "status": "skipped",
+                "reason": "strict_safe_band_already_achieved",
+                "current_scores": current_scores,
+                "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+            })
+            break
+
+        round_dir = output_dir / f"round_{round_index:02d}"
+        round_dir.mkdir(parents=True, exist_ok=True)
+        _emit_progress(progress_callback, progress_percent, f"V5 safe-band controlled operation {round_index}")
+        operation_targets = _safe_band_controlled_operation_targets(
+            current_text,
+            current_report,
+            current_goal,
+            current_scores=current_scores,
+        )
+        operation_variants = _safe_band_controlled_operation_variants(
+            current_text=current_text,
+            targets=operation_targets,
+        )
+        if not operation_variants:
+            payload = {
+                "round": round_index,
+                "phase": "safe_band_controlled_operation",
+                "status": "skipped",
+                "reason": "no_safe_band_controlled_operation_targets",
+                "targets": operation_targets,
+                "current_scores": current_scores,
+                "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+                "candidates": [],
+                "selected": None,
+                "accepted": None,
+            }
+            rounds.append(payload)
+            (round_dir / "round_result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+            break
+
+        operation_rows = [
+            _score_safe_band_controlled_operation_variant(
+                original_text=original_text,
+                baseline_report=baseline_report,
+                baseline_scores=baseline_scores,
+                current_text=current_text,
+                current_scores=current_scores,
+                variant=variant,
+                output_dir=round_dir,
+                label=f"safe_band_controlled_operation_r{round_index}_{variant.get('variant_id')}",
+                author_proxy_context=author_proxy_context,
+            )
+            for variant in operation_variants
+        ]
+        for row in operation_rows:
+            _attach_safe_band_quality_materiality(row, current_text=current_text)
+        selected = _best_safe_band_evidence_repair_candidate(operation_rows, current_scores=current_scores)
+        accepted = selected if selected and _has_safe_band_evidence_repair_movement(selected, current_scores=current_scores) else None
+        payload = {
+            "round": round_index,
+            "phase": "safe_band_controlled_operation",
+            "status": "accepted" if accepted else "skipped",
+            "reason": "accepted_safe_band_controlled_operation" if accepted else "no_safe_band_controlled_operation_movement",
+            "targets": operation_targets,
+            "current_scores": current_scores,
+            "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+            "candidates": [_compact_residual_row(row) for row in operation_rows],
+            "selected": _compact_residual_row(selected),
+            "accepted": _compact_residual_row(accepted),
+        }
+        rounds.append(payload)
+        (round_dir / "round_result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+        global_best_candidate = _best_full_document_candidate([global_best_candidate, *operation_rows])
+        if not accepted:
+            break
+
+        current_text, current_report, current_goal, current_scores = _accepted_state(
+            accepted=accepted,
+            original_text=original_text,
+            baseline_report=baseline_report,
+        )
+        (output_dir / f"after_round_{round_index:02d}.txt").write_text(current_text)
+        if accepted_checkpoint_callback is not None:
+            accepted_checkpoint_callback({
+                "phase": "safe_band_controlled_operation",
+                "round": round_index,
+                "reason": "accepted_safe_band_controlled_operation",
+                "accepted": accepted,
+                "rewritten_document": current_text,
+                "scores": current_scores,
+                "goal": current_goal,
+            })
+    return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+
+def _run_safe_band_sentence_replacement_loop(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    current_scores: dict[str, Any],
+    gateway: LLMGateway,
+    output_dir: Path,
+    global_best_candidate: dict[str, Any] | None,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int = 81,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    started_at: float | None = None,
+    max_seconds: float | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rounds: list[dict[str, Any]] = []
+    round_limit = _safe_band_sentence_replacement_round_limit()
+    for round_index in range(1, round_limit + 1):
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="safe_band_sentence_replacement",
+                round_index=round_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
+        if _candidate_strict_safe_band_achieved({"candidate_goal": current_goal, "scores": current_scores}):
+            rounds.append({
+                "round": round_index,
+                "phase": "safe_band_sentence_replacement",
+                "status": "skipped",
+                "reason": "strict_safe_band_already_achieved",
+                "current_scores": current_scores,
+                "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+            })
+            break
+
+        targets = _safe_band_controlled_operation_targets(
+            current_text,
+            current_report,
+            current_goal,
+            current_scores=current_scores,
+        )[:_safe_band_sentence_replacement_target_limit()]
+        if not targets:
+            payload = {
+                "round": round_index,
+                "phase": "safe_band_sentence_replacement",
+                "status": "skipped",
+                "reason": "no_safe_band_sentence_replacement_targets",
+                "targets": [],
+                "current_scores": current_scores,
+                "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+                "candidates": [],
+                "selected": None,
+                "accepted": None,
+            }
+            rounds.append(payload)
+            (output_dir / f"round_{round_index:02d}_result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+            break
+
+        round_dir = output_dir / f"round_{round_index:02d}"
+        round_dir.mkdir(parents=True, exist_ok=True)
+        _emit_progress(progress_callback, progress_percent, f"V5 safe-band sentence replacement {round_index}")
+        variants, llm_diagnostics, prompt, completion = generate_safe_band_sentence_replacement_variants(
+            current_text=current_text,
+            current_scores=current_scores,
+            current_goal=current_goal,
+            targets=targets,
+            gateway=gateway,
+            variant_count=_safe_band_sentence_replacement_variant_count(),
+            author_proxy_context=author_proxy_context,
+        )
+        (round_dir / "safe_band_sentence_replacement_prompt.json.txt").write_text(prompt)
+        (round_dir / "safe_band_sentence_replacement_completion.json.txt").write_text(completion)
+        rows = [
+            _score_final_topk_sentence_route_variant(
+                original_text=original_text,
+                baseline_report=baseline_report,
+                baseline_scores=baseline_scores,
+                current_text=current_text,
+                current_scores=current_scores,
+                targets=targets,
+                variant=variant,
+                output_dir=round_dir,
+                label=f"safe_band_sentence_replacement_r{round_index}_{variant.get('variant_id')}",
+                author_proxy_context=author_proxy_context,
+                author_proxy_phase="safe_band_sentence_replacement",
+                require_all_targets=False,
+            )
+            for variant in variants
+        ]
+        for row in rows:
+            _attach_safe_band_quality_materiality(row, current_text=current_text)
+        selected = _best_safe_band_evidence_repair_candidate(rows, current_scores=current_scores)
+        accepted = selected if selected and _has_safe_band_evidence_repair_movement(selected, current_scores=current_scores) else None
+        payload = {
+            "round": round_index,
+            "phase": "safe_band_sentence_replacement",
+            "status": "accepted" if accepted else "skipped",
+            "reason": "accepted_safe_band_sentence_replacement" if accepted else "no_safe_band_sentence_replacement_movement",
+            "targets": targets,
+            "generator_diagnostics": llm_diagnostics,
+            "current_scores": current_scores,
+            "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+            "candidates": [_compact_residual_row(row) for row in rows],
+            "selected": _compact_residual_row(selected),
+            "accepted": _compact_residual_row(accepted),
+        }
+        rounds.append(payload)
+        (round_dir / "round_result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+        global_best_candidate = _best_full_document_candidate([global_best_candidate, *rows])
+        if not accepted:
+            break
+
+        current_text, current_report, current_goal, current_scores = _accepted_state(
+            accepted=accepted,
+            original_text=original_text,
+            baseline_report=baseline_report,
+        )
+        (output_dir / f"after_round_{round_index:02d}.txt").write_text(current_text)
+        if accepted_checkpoint_callback is not None:
+            accepted_checkpoint_callback({
+                "phase": "safe_band_sentence_replacement",
+                "round": round_index,
+                "reason": "accepted_safe_band_sentence_replacement",
+                "accepted": accepted,
+                "rewritten_document": current_text,
+                "scores": current_scores,
+                "goal": current_goal,
+            })
+    return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+
+def _run_safe_band_density_section_repair_loop(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    current_scores: dict[str, Any],
+    gateway: LLMGateway,
+    output_dir: Path,
+    global_best_candidate: dict[str, Any] | None,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int = 81,
+    accepted_checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
+    started_at: float | None = None,
+    max_seconds: float | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rounds: list[dict[str, Any]] = []
+    round_limit = _safe_band_density_section_repair_round_limit()
+    spent_density_section_ranges: set[tuple[int, int]] = set()
+    for round_index in range(1, round_limit + 1):
+        if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+            rounds.append(_runtime_budget_stop_record(
+                phase="safe_band_density_section_repair",
+                round_index=round_index,
+                started_at=started_at,
+                max_seconds=max_seconds,
+                current_scores=current_scores,
+            ))
+            break
+        if not _safe_band_density_section_repair_should_run(current_scores=current_scores, current_goal=current_goal):
+            rounds.append({
+                "round": round_index,
+                "phase": "safe_band_density_section_repair",
+                "status": "skipped",
+                "reason": "density_section_repair_not_needed",
+                "current_scores": current_scores,
+                "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+            })
+            break
+
+        sections = _safe_band_density_section_repair_sections(
+            current_text,
+            current_report,
+            current_goal,
+            limit=_safe_band_density_section_repair_section_limit(),
+            exclude_ranges=spent_density_section_ranges,
+        )
+        if not sections:
+            payload = {
+                "round": round_index,
+                "phase": "safe_band_density_section_repair",
+                "status": "skipped",
+                "reason": "no_safe_band_density_section",
+                "sections": [],
+                "current_scores": current_scores,
+                "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+                "candidates": [],
+                "selected": None,
+                "accepted": None,
+            }
+            rounds.append(payload)
+            (output_dir / f"round_{round_index:02d}_result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+            break
+
+        round_dir = output_dir / f"round_{round_index:02d}"
+        round_dir.mkdir(parents=True, exist_ok=True)
+        all_rows: list[dict[str, Any]] = []
+        section_attempts: list[dict[str, Any]] = []
+        selected: dict[str, Any] | None = None
+        accepted: dict[str, Any] | None = None
+        sections_by_id: dict[str, SectionUnit] = {section.section_id: section for section in sections}
+        for section_index, section in enumerate(sections, start=1):
+            if started_at is not None and _runtime_budget_exhausted(started_at, max_seconds):
+                break
+            section_dir = round_dir / f"section_{section_index:02d}"
+            section_dir.mkdir(parents=True, exist_ok=True)
+            _emit_progress(progress_callback, progress_percent, f"V5 safe-band density section repair {round_index}.{section_index}")
+            rows: list[dict[str, Any]] = []
+            prompt = ""
+            completion = ""
+            deterministic_variants = _safe_band_density_section_repair_deterministic_variants(section)
+            llm_diagnostics: dict[str, Any] = {
+                "status": "not_requested",
+                "reason": "no_deterministic_density_repair_candidate",
+                "deterministic_variant_count": len(deterministic_variants),
+            }
+            if deterministic_variants:
+                rows.extend([
+                    _score_residual_variant(
+                        original_text=original_text,
+                        baseline_report=baseline_report,
+                        baseline_scores=baseline_scores,
+                        current_text=current_text,
+                        current_scores=current_scores,
+                        section=section,
+                        variant=variant,
+                        output_dir=section_dir,
+                        label=f"safe_band_density_section_repair_r{round_index}_s{section_index}_{variant.variant_id}",
+                        author_proxy_context=author_proxy_context,
+                        author_proxy_phase="safe_band_density_section_repair",
+                    )
+                    for variant in deterministic_variants
+                ])
+                for row in rows:
+                    materiality = _safe_band_density_section_repair_materiality(
+                        source_text=section.text,
+                        candidate_text=str(row.get("text") or ""),
+                        target_sentence=str((section.metadata or {}).get("target_sentence") or ""),
+                    )
+                    row["safe_band_evidence_materiality"] = materiality
+                    row["safe_band_density_section_materiality"] = materiality
+                    _attach_safe_band_quality_materiality(row, current_text=current_text)
+                deterministic_selected = _best_safe_band_density_section_candidate(rows, current_scores=current_scores)
+                if deterministic_selected and _has_density_safe_band_checkpoint_movement(deterministic_selected, current_scores=current_scores):
+                    llm_diagnostics = {
+                        "status": "skipped",
+                        "reason": "deterministic_density_repair_candidate_accepted",
+                        "deterministic_variant_count": len(deterministic_variants),
+                    }
+                else:
+                    llm_diagnostics = {
+                        "status": "requested",
+                        "reason": "deterministic_density_repair_candidate_not_accepted",
+                        "deterministic_variant_count": len(deterministic_variants),
+                    }
+            if llm_diagnostics.get("status") != "skipped":
+                variants, generated_diagnostics, prompt, completion = generate_safe_band_density_section_repair_variants(
+                    section=section,
+                    current_scores=current_scores,
+                    current_goal=current_goal,
+                    gateway=gateway,
+                    variant_count=_safe_band_density_section_repair_variant_count(),
+                    author_proxy_context=author_proxy_context,
+                )
+                llm_diagnostics = {
+                    **(generated_diagnostics if isinstance(generated_diagnostics, dict) else {}),
+                    **llm_diagnostics,
+                    "llm_variant_count": len(variants),
+                }
+                rows.extend([
+                    _score_residual_variant(
+                        original_text=original_text,
+                        baseline_report=baseline_report,
+                        baseline_scores=baseline_scores,
+                        current_text=current_text,
+                        current_scores=current_scores,
+                        section=section,
+                        variant=variant,
+                        output_dir=section_dir,
+                        label=f"safe_band_density_section_repair_r{round_index}_s{section_index}_{variant.variant_id}",
+                        author_proxy_context=author_proxy_context,
+                        author_proxy_phase="safe_band_density_section_repair",
+                    )
+                    for variant in variants
+                ])
+            (section_dir / "safe_band_density_section_repair_prompt.json.txt").write_text(prompt)
+            (section_dir / "safe_band_density_section_repair_completion.json.txt").write_text(completion)
+            for row in rows:
+                if isinstance(row.get("safe_band_density_section_materiality"), dict):
+                    continue
+                materiality = _safe_band_density_section_repair_materiality(
+                    source_text=section.text,
+                    candidate_text=str(row.get("text") or ""),
+                    target_sentence=str((section.metadata or {}).get("target_sentence") or ""),
+                )
+                row["safe_band_evidence_materiality"] = materiality
+                row["safe_band_density_section_materiality"] = materiality
+                _attach_safe_band_quality_materiality(row, current_text=current_text)
+            section_selected = _best_safe_band_density_section_candidate(rows, current_scores=current_scores)
+            section_accepted = (
+                section_selected
+                if section_selected and _has_density_safe_band_checkpoint_movement(section_selected, current_scores=current_scores)
+                else None
+            )
+            section_attempts.append({
+                "section_index": section_index,
+                "section": section.to_dict(),
+                "generator_diagnostics": llm_diagnostics,
+                "candidate_count": len(rows),
+                "selected": _compact_residual_row(section_selected),
+                "accepted": _compact_residual_row(section_accepted),
+            })
+            all_rows.extend(rows)
+        selected = _best_safe_band_density_section_candidate(all_rows, current_scores=current_scores)
+        accepted = selected if selected and _has_density_safe_band_checkpoint_movement(selected, current_scores=current_scores) else None
+        accepted_section = (
+            sections_by_id.get(str(accepted.get("section_id") or ""))
+            if isinstance(accepted, dict)
+            else None
+        )
+        payload = {
+            "round": round_index,
+            "phase": "safe_band_density_section_repair",
+            "status": "accepted" if accepted else "skipped",
+            "reason": "accepted_safe_band_density_section_repair" if accepted else "no_safe_band_density_section_movement",
+            "section": accepted_section.to_dict() if accepted_section else (sections[0].to_dict() if sections else None),
+            "sections": [section.to_dict() for section in sections],
+            "excluded_section_ranges": [
+                {"start_char": start, "end_char": end}
+                for start, end in sorted(spent_density_section_ranges)
+            ],
+            "section_attempts": section_attempts,
+            "candidate_section_count": len(sections),
+            "current_scores": current_scores,
+            "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+            "candidates": [_compact_residual_row(row) for row in all_rows],
+            "selected": _compact_residual_row(selected),
+            "accepted": _compact_residual_row(accepted),
+        }
+        rounds.append(payload)
+        (round_dir / "round_result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+        global_best_candidate = _best_full_document_candidate([global_best_candidate, *all_rows])
+        if not accepted:
+            break
+
+        if accepted_section is not None:
+            spent_density_section_ranges.add(_safe_band_section_range_signature(accepted_section))
+        current_text, current_report, current_goal, current_scores = _accepted_state(
+            accepted=accepted,
+            original_text=original_text,
+            baseline_report=baseline_report,
+        )
+        (output_dir / f"after_round_{round_index:02d}.txt").write_text(current_text)
+        if accepted_checkpoint_callback is not None:
+            accepted_checkpoint_callback({
+                "phase": "safe_band_density_section_repair",
+                "round": round_index,
+                "reason": "accepted_safe_band_density_section_repair",
+                "accepted": accepted,
+                "rewritten_document": current_text,
+                "scores": current_scores,
+                "goal": current_goal,
+            })
+    return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
+
+
 def _accepted_state(
     *,
     accepted: dict[str, Any],
@@ -5548,6 +7028,7 @@ def generate_final_topk_sentence_route_variants(
     *,
     current_text: str,
     current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None = None,
     targets: list[dict[str, Any]],
     gateway: LLMGateway,
     variant_count: int,
@@ -5556,6 +7037,7 @@ def generate_final_topk_sentence_route_variants(
     variants = max(1, min(5, int(variant_count or 1)))
     prompt = build_final_topk_sentence_route_prompt(
         current_scores=current_scores,
+        current_goal=current_goal,
         targets=targets,
         variant_count=variants,
         author_proxy_context=author_proxy_context,
@@ -5604,32 +7086,111 @@ def generate_final_topk_sentence_route_variants(
     }, prompt, raw
 
 
+def generate_safe_band_sentence_replacement_variants(
+    *,
+    current_text: str,
+    current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None = None,
+    targets: list[dict[str, Any]],
+    gateway: LLMGateway,
+    variant_count: int,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
+    variants = max(1, min(5, int(variant_count or 1)))
+    prompt = build_final_topk_sentence_route_prompt(
+        current_scores=current_scores,
+        current_goal=current_goal,
+        targets=targets,
+        variant_count=variants,
+        author_proxy_context=author_proxy_context,
+    )
+    structured = structured_json_request_options(
+        getattr(gateway, "model", None),
+        _final_topk_sentence_route_response_format(variants, len(targets)),
+    )
+    provider = _merge_provider_options(getattr(gateway, "provider", None), structured.get("provider"))
+    started = time.monotonic()
+    response = gateway.chat(
+        prompt,
+        system="Return only valid JSON with safe-band sentence replacement variants.",
+        response_format=structured.get("response_format") or {"type": "json_object"},
+        provider=provider,
+        temperature=_float_env("DRAFTPROOF_SAFE_BAND_SENTENCE_REPLACEMENT_TEMPERATURE", 0.25, minimum=0.0, maximum=1.0),
+        top_p=_float_env("DRAFTPROOF_SAFE_BAND_SENTENCE_REPLACEMENT_TOP_P", 0.82, minimum=0.1, maximum=1.0),
+        max_tokens=_int_env("DRAFTPROOF_SAFE_BAND_SENTENCE_REPLACEMENT_MAX_TOKENS", 6500, minimum=1600, maximum=10000),
+    )
+    elapsed = time.monotonic() - started
+    raw = response.raw_content or response.content
+    parsed, diagnostics = parse_json_object(raw, required_keys={"variants"})
+    if parsed is None:
+        return [], {
+            **diagnostics,
+            "model": response.model,
+            "provider": response.raw.get("provider"),
+            "usage": response.usage,
+            "finish_reason": response.finish_reason,
+            "native_finish_reason": response.native_finish_reason,
+            "structured_output_mode": structured.get("structured_output_mode"),
+            "elapsed_seconds": round(elapsed, 3),
+        }, prompt, raw
+    rows = _sanitize_final_topk_sentence_route_variants(parsed.get("variants"), targets=targets)
+    return rows, {
+        **diagnostics,
+        "status": "ok",
+        "valid_variant_count": len(rows),
+        "model": response.model,
+        "provider": response.raw.get("provider"),
+        "usage": response.usage,
+        "finish_reason": response.finish_reason,
+        "native_finish_reason": response.native_finish_reason,
+        "structured_output_mode": structured.get("structured_output_mode"),
+        "elapsed_seconds": round(elapsed, 3),
+    }, prompt, raw
+
+
 def build_final_topk_sentence_route_prompt(
     *,
     current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None = None,
     targets: list[dict[str, Any]],
     variant_count: int,
     author_proxy_context: dict[str, Any] | None = None,
 ) -> str:
     payload = {
         "task": "final_topk_sentence_route_replacement",
-        "objective": "Treat exact high top-k sentences by changing sentence route, not just words. Do not rewrite unrelated sentences.",
+        "objective": (
+            "Treat exact high top-k sentences by changing sentence route, not just words. "
+            "When a safe-band KPI contract is present, reduce the combined safe-band gap rather than only lowering top-k. "
+            "Do not rewrite unrelated sentences."
+        ),
         "current_scores": {
             key: current_scores.get(key)
             for key in (
                 "ai",
                 "topk",
                 "topk_calibrated_risk",
+                "qualifying_text_ai_density",
+                "ai_authorship",
                 "external",
                 "unsafe_cluster_count",
                 "risky_window_count",
             )
         },
+        "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
         "target_sentences": targets,
         "method": (
             "For each sentence, identify the sentence job, describe the current route, "
             "then write a same-meaning replacement with a different route."
         ),
+        "safe_band_replacement_method": [
+            "Treat kpi_contract.gaps as the acceptance target for this late-stage pass.",
+            "If qualifying_text_ai_density remains above target, avoid adding smooth explanatory filler or broad academic closure.",
+            "Use kpi_contract.secondary_density_drivers to identify why density remains high before writing replacements.",
+            "When generic_assertion_risk, unsupported_claim_risk, broad_claim_risk, or source_grounding_risk is high, replace broad claims with narrower source-owned observations, named teaching actions, or explicit limits.",
+            "Prefer shorter evidence-linked clauses, concrete source anchors, and practical action over abstract summary.",
+            "Do not repeat an idea already stated in the target sentence's before_context or after_context; merge or narrow instead.",
+            "Do not trade a small top-k gain for higher AI, higher authorship risk, or higher qualifying density.",
+        ],
         "operators": [
             "CLAUSE_ROUTE_CHANGE",
             "ABSTRACT_TO_ACTION",
@@ -5649,9 +7210,14 @@ def build_final_topk_sentence_route_prompt(
             "Avoid neat abstract list endings.",
             "Avoid not only/but also structure.",
             "The after text can be one or two sentences if that breaks the route better.",
+            "Use the kpi_contract targets as the primary late-stage success contract.",
+            "Prefer grounded specificity from the submitted content over surface-level humanizing.",
+            "Use target_sentences[].context to preserve paragraph logic and avoid isolated sentence polishing.",
+            "If kpi_contract.gaps.qualifying_text_ai_density is above zero, the variant should aim to lower qualifying density without increasing AI/authorship risk.",
+            "Reject self-repetition: do not restate the same source fact, classroom action, named framework, or student observation twice in nearby sentences.",
         ],
         "variant_plan": [
-            {"variant_id": f"v{index}", "goal": "different route candidates for the same target sentences"}
+            {"variant_id": f"v{index}", "goal": _safe_band_sentence_replacement_variant_goal(index)}
             for index in range(1, max(1, min(5, int(variant_count or 1))) + 1)
         ],
         "output_schema": {
@@ -5673,6 +7239,1118 @@ def build_final_topk_sentence_route_prompt(
     }
     _attach_author_proxy_context(payload, author_proxy_context)
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def generate_safe_band_density_section_repair_variants(
+    *,
+    section: SectionUnit,
+    current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None,
+    gateway: LLMGateway,
+    variant_count: int,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
+    variants = max(1, min(5, int(variant_count or 1)))
+    prompt = build_safe_band_density_section_repair_prompt(
+        section=section,
+        current_scores=current_scores,
+        current_goal=current_goal,
+        variant_count=variants,
+        author_proxy_context=author_proxy_context,
+    )
+    return _generate_loose_variants(
+        prompt=prompt,
+        gateway=gateway,
+        variant_count=variants,
+        max_tokens=_int_env(
+            "DRAFTPROOF_SAFE_BAND_DENSITY_SECTION_REPAIR_MAX_TOKENS",
+            5200,
+            minimum=1600,
+            maximum=10000,
+        ),
+    )
+
+
+def build_safe_band_density_section_repair_prompt(
+    *,
+    section: SectionUnit,
+    current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None,
+    variant_count: int,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> str:
+    variants = max(1, min(5, int(variant_count or 1)))
+    metadata = section.metadata if isinstance(section.metadata, dict) else {}
+    min_word_ratio = _safe_band_density_section_repair_min_word_ratio_for_text(section.text)
+    min_word_count = max(1, round(section.word_count * min_word_ratio))
+    max_word_count = max(min_word_count, round(section.word_count * _safe_band_density_section_repair_max_word_ratio()))
+    contextual_anchor_contract = _safe_band_density_contextual_anchor_contract(section.text)
+    payload = {
+        "task": "safe_band_density_section_repair",
+        "architecture_stage": "late_density_only_author_proxy_section_repair",
+        "objective": (
+            "Replace this selected paragraph or window as the author-proxy using submitted content only. "
+            "The purpose is to reduce the remaining qualifying_text_ai_density safe-band gap by improving grounded authorship, "
+            "not by surface paraphrase, word spinning, detector bypass, or runtime repetition."
+        ),
+        "single_product_judge": {
+            "judge": "DraftProof internal safe-band and authorship-integrity scoring",
+            "ignored_as_acceptance_judge": "external AI flag score",
+            "reason": "The section repair must improve the internal grounded-authorship blockers that remain after top-k and unsafe clusters are clear.",
+        },
+        "density_only_trigger": {
+            "topk_already_safe": _safe_band_kpi_contract(current_scores, current_goal).get("gaps", {}).get("topk_calibrated_risk") == 0,
+            "remaining_target": "qualifying_text_ai_density",
+            "ai_authorship_must_not_increase": True,
+            "do_not_optimize_for": "external_ai_flag_risk",
+        },
+        "section": {
+            "section_id": section.section_id,
+            "heading": section.heading,
+            "source_text": section.text,
+            "source_word_count": section.word_count,
+            "paragraph_count": section.paragraph_count,
+            "before_context": metadata.get("before_context"),
+            "after_context": metadata.get("after_context"),
+            "selection_reason": metadata.get("selection_reason"),
+            "target_sentence": metadata.get("target_sentence"),
+            "scanner_focus": metadata.get("scanner_focus"),
+            "source_voice_profile": _safe_band_density_source_voice_profile(section.text),
+            "contextual_anchor_contract": contextual_anchor_contract,
+        },
+        "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+        "method": [
+            "Diagnose why this section still reads as qualifying-density heavy: broad claim, unsupported certainty, smooth generic closure, source-grounding gap, or repeated idea.",
+            "Rebuild the section around author-owned evidence already present in source_text, before_context, after_context, citations, named anchors, or technical terms.",
+            "Where support is missing, narrow the claim or mark the gap for author review; do not fill it with invented evidence.",
+            "Keep the paragraph's argument job and author viewpoint, but change the route at section level rather than polishing individual sentences.",
+            "Prefer specific teaching action, observed constraint, source limit, or practical consequence over abstract summary.",
+        ],
+        "materiality_gate": {
+            "minimum_changed_source_sentences": _safe_band_density_section_repair_min_changed_sentences(section.text),
+            "minimum_changed_source_sentence_ratio": _safe_band_density_section_repair_min_changed_sentence_ratio(),
+            "minimum_word_ratio": min_word_ratio,
+            "maximum_word_ratio": _safe_band_density_section_repair_max_word_ratio(),
+            "minimum_word_count": min_word_count,
+            "maximum_word_count": max_word_count,
+            "contextual_anchor_contract": contextual_anchor_contract,
+            "reject_if": [
+                "the replacement only changes one target sentence while leaving the rest of the section route intact",
+                "the replacement repeats the same source fact, framework, or conclusion in nearby sentences",
+                "the replacement compresses coverage below minimum_word_ratio",
+                "the replacement is shorter than minimum_word_count or longer than maximum_word_count",
+                "the replacement drops source voice markers such as first-person framing or contractions that are present in source_text",
+                "the replacement raises ai_authorship or turns the author's voice into detached polished academic narration",
+                "the replacement adds new concrete references that are not already in submitted content",
+                "the replacement merely swaps words while retaining the same broad academic route",
+                "the replacement leaves low-context qualifying sentences abstract when submitted author/domain/source context is available",
+            ],
+        },
+        "rules": [
+            "Return replacement text for section.source_text only, not the whole document.",
+            "Preserve citations, named people, technical codes, quoted wording, and concrete source anchors.",
+            "Do not add fake citations, dates, statistics, institutions, named events, personal experiences, or classroom observations.",
+            "Do not make the prose more polished, generic, abstract, or template-like.",
+            f"Change at least {_safe_band_density_section_repair_min_changed_sentences(section.text)} source sentences; do not leave the opening, bridge, and closing route all intact.",
+            "Keep the author's first-person framing when it exists in the source; do not convert it into detached report language.",
+            "Follow section.source_voice_profile; preserve the submitted voice markers while improving clarity and grounding.",
+            "Do not use a paraphrase-only rewrite, word spinner style, deliberate errors, slang, or decorative humanizing noise.",
+            "Do not repeat the same source fact, classroom action, framework explanation, or teaching implication twice.",
+            f"Each replacement must stay between {min_word_count} and {max_word_count} words.",
+            (
+                "Use section.contextual_anchor_contract: add submitted author/domain/source context to at least "
+                f"{contextual_anchor_contract.get('additional_contextual_sentences_needed')} low-context qualifying sentence(s) where possible, "
+                "without inventing facts or adding bracketed placeholders."
+            ),
+            "A contextual anchor means a concrete action, technical/domain mechanic, source relation, practical constraint, or observed process already present in source_text or nearby context.",
+            "If a claim lacks support, narrow it and include an author_review_items entry instead of inventing support.",
+        ],
+        "writer_variant_plan": [
+            {
+                "variant_id": f"v{index}",
+                "goal": _safe_band_density_section_repair_variant_goal(index),
+            }
+            for index in range(1, variants + 1)
+        ],
+        "output_schema": {
+            "variants": [
+                _author_proxy_output_variant_template()
+                if _author_proxy_active(author_proxy_context)
+                else {"variant_id": f"v{index}", "text": "replacement paragraph/window only"}
+                for index in range(1, variants + 1)
+            ]
+        },
+    }
+    _attach_author_proxy_context(payload, author_proxy_context)
+    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def generate_safe_band_evidence_repair_variants(
+    *,
+    section: SectionUnit,
+    current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None,
+    gateway: LLMGateway,
+    variant_count: int,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
+    return _generate_loose_variants_from_builder(
+        prompt_builder=lambda count: build_safe_band_evidence_repair_prompt(
+            section=section,
+            current_scores=current_scores,
+            current_goal=current_goal,
+            variant_count=count,
+            author_proxy_context=author_proxy_context,
+        ),
+        gateway=gateway,
+        variant_count=variant_count,
+    )
+
+
+def generate_safe_band_author_proxy_revision_plan(
+    *,
+    sections: list[SectionUnit],
+    current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None,
+    gateway: LLMGateway,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any], str, str]:
+    prompt = build_safe_band_author_proxy_revision_plan_prompt(
+        sections=sections,
+        current_scores=current_scores,
+        current_goal=current_goal,
+        author_proxy_context=author_proxy_context,
+    )
+    structured = structured_json_request_options(
+        getattr(gateway, "model", None),
+        _safe_band_author_proxy_revision_plan_response_format(len(sections)),
+    )
+    provider = _merge_provider_options(getattr(gateway, "provider", None), structured.get("provider"))
+    started = time.monotonic()
+    response = gateway.chat(
+        prompt,
+        system="Return only valid JSON matching the requested evidence ledger and revision plan schema.",
+        response_format=structured.get("response_format") or {"type": "json_object"},
+        provider=provider,
+        temperature=_float_env("DRAFTPROOF_SAFE_BAND_AUTHOR_PROXY_PLAN_TEMPERATURE", 0.18, minimum=0.0, maximum=1.0),
+        top_p=_float_env("DRAFTPROOF_SAFE_BAND_AUTHOR_PROXY_PLAN_TOP_P", 0.82, minimum=0.1, maximum=1.0),
+        max_tokens=_int_env("DRAFTPROOF_SAFE_BAND_AUTHOR_PROXY_PLAN_MAX_TOKENS", 5200, minimum=1600, maximum=10000),
+    )
+    elapsed = time.monotonic() - started
+    raw = response.raw_content or response.content
+    parsed, diagnostics = parse_json_object(raw, required_keys={"evidence_ledger", "revision_plan"})
+    plan, parse_diagnostics = _sanitize_safe_band_author_proxy_revision_plan(parsed, sections=sections)
+    return plan, {
+        **diagnostics,
+        **parse_diagnostics,
+        "status": "ok" if plan is not None else "schema_failed",
+        "model": response.model,
+        "provider": response.raw.get("provider"),
+        "usage": response.usage,
+        "finish_reason": response.finish_reason,
+        "native_finish_reason": response.native_finish_reason,
+        "structured_output_mode": structured.get("structured_output_mode"),
+        "elapsed_seconds": round(elapsed, 3),
+    }, prompt, raw
+
+
+def build_safe_band_author_proxy_revision_plan_prompt(
+    *,
+    sections: list[SectionUnit],
+    current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> str:
+    section_rows = [_safe_band_pack_section_payload(section, index=index) for index, section in enumerate(sections, start=1)]
+    density_section_count = sum(1 for section in sections if _section_uses_density_safe_band_contract(section))
+    payload = {
+        "task": "safe_band_author_proxy_evidence_ledger_and_revision_plan",
+        "architecture_stage": "evidence_ledger_then_revision_plan_before_writer",
+        "objective": (
+            "Plan an author-owned revision pack before any rewriting. The plan must identify usable submitted evidence, "
+            "content gaps, and concrete section-level moves that will let the writer produce high-quality replacements "
+            "without paraphrase-only or bypass-style edits."
+        ),
+        "single_product_judge": {
+            "judge": "DraftProof internal safe-band and authorship-integrity scoring",
+            "ignored_as_acceptance_judge": "external AI flag score",
+            "reason": "The planner must improve grounded authorship and safe-band blockers, not optimize for another detector.",
+        },
+        "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+        "required_section_ids": [row["section_id"] for row in section_rows],
+        "reconstruction_mode": {
+            "mode": "density_blocker_author_proxy_pack" if density_section_count else "safe_band_author_proxy_pack",
+            "density_section_count": density_section_count,
+            "reason": (
+                "qualifying_text_ai_density remains the main blocker; coordinate enough section-level route changes to move the whole-document density score."
+                if density_section_count
+                else "Coordinate selected safe-band repairs into one author-owned revision pack."
+            ),
+        },
+        "sections": section_rows,
+        "planner_rules": [
+            "Use only submitted source_text, before_context, after_context, citations, and named anchors from the selected sections.",
+            "Do not invent classroom observations, student behavior, citations, dates, institutions, statistics, or personal experiences.",
+            "Prefer narrowing unsupported claims over filling them with invented evidence.",
+            "For each section, require enough concrete route change to pass materiality_gate.minimum_changed_source_sentences.",
+            "When materiality_gate.contract is density_section_repair, plan a section-level route rebuild that preserves coverage and voice while lowering generic density.",
+            "Use the exact section_id values from required_section_ids; do not invent generic IDs such as safe_band_evidence_repair_t001.",
+            "Make the writer's job explicit: which sentences to rebuild, which source evidence to retain, which claims to narrow, and what must be marked for author review.",
+        ],
+        "output_schema": {
+            "evidence_ledger": {
+                "sections": [
+                    *[
+                    {
+                        "section_id": row["section_id"],
+                        "author_owned_evidence": ["submitted fact, example, citation, classroom action, or named anchor"],
+                        "weak_or_generic_claims": ["claim that currently reads broad, generic, or under-evidenced"],
+                        "protected_anchors": ["citation, technical code, named person, quoted wording, or fact that must remain"],
+                        "author_review_gaps": ["missing author-owned detail to verify later"],
+                    }
+                    for row in section_rows
+                    ]
+                ]
+            },
+            "revision_plan": [
+                *[
+                {
+                    "section_id": row["section_id"],
+                    "section_job": "what this section must do in the argument",
+                    "required_moves": ["specific route and evidence moves the writer must perform"],
+                    "sentences_to_rebuild": ["target or surrounding source sentence to materially rebuild"],
+                    "claim_narrowing": ["unsupported claim to narrow, or empty"],
+                    "materiality_requirement": "change target route and at least minimum_changed_source_sentences",
+                    "author_review_items": ["review obligation, or empty"],
+                }
+                for row in section_rows
+                ]
+            ],
+        },
+    }
+    _attach_author_proxy_context(payload, author_proxy_context)
+    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def build_safe_band_evidence_repair_prompt(
+    *,
+    section: SectionUnit,
+    current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None,
+    variant_count: int,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> str:
+    variants = max(1, min(5, int(variant_count or 1)))
+    metadata = section.metadata if isinstance(section.metadata, dict) else {}
+    payload = {
+        "task": "safe_band_evidence_repair",
+        "objective": (
+            "Replace the selected paragraph/window with a higher-quality author-grounded revision "
+            "that reduces the remaining strict safe-band blockers without using paraphrase-only or bypass-style edits."
+        ),
+        "section": {
+            "section_id": section.section_id,
+            "heading": section.heading,
+            "source_text": section.text,
+            "source_word_count": section.word_count,
+            "paragraph_count": section.paragraph_count,
+            "before_context": metadata.get("before_context"),
+            "after_context": metadata.get("after_context"),
+            "selection_reason": metadata.get("selection_reason"),
+            "target_sentence": metadata.get("target_sentence"),
+            "scanner_focus": metadata.get("scanner_focus"),
+        },
+        "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+        "method": [
+            "Treat this as paragraph evidence repair, not sentence polishing.",
+            "Find the paragraph's actual job in the submitted draft, then rebuild the route around author-owned detail already present in source_text or nearby context.",
+            "Replace generic claims with narrower, concrete, evidence-linked wording when the draft supports it.",
+            "If the needed detail is missing, narrow the claim and mark the gap for author review instead of inventing support.",
+            "Keep citations, quotations, named people, technical codes, classroom events, and source anchors intact.",
+        ],
+        "materiality_gate": {
+            "minimum_changed_source_sentences": _safe_band_evidence_repair_min_changed_sentences(section.text),
+            "target_sentence_must_change_route": bool(metadata.get("target_sentence")),
+            "reject_if": [
+                "the only change is punctuation, connector replacement, or a synonym swap",
+                "the target sentence still follows the same subject -> generic verb -> list route",
+                "fewer than the minimum_changed_source_sentences are materially rebuilt",
+            ],
+            "required_move": (
+                "Rebuild the paragraph route by changing the target sentence and at least one surrounding sentence. "
+                "Keep source meaning, but change how the evidence is introduced, connected, and limited."
+            ),
+        },
+        "rules": [
+            "Return replacement text for section.source_text only, not the whole document.",
+            "Preserve factual meaning, paragraph role, citations, protected terms, and author viewpoint.",
+            "Do not add fake citations, dates, statistics, institutions, named events, personal experiences, or observations.",
+            "Do not compress the paragraph into a summary.",
+            "Do not make the paragraph more polished, generic, or template-like.",
+            "Do not introduce slang, deliberate errors, or decorative humanizing noise.",
+            "Keep the replacement near the source word count unless a slight expansion is needed to preserve evidence.",
+            "Do not return a near-copy of section.source_text; the replacement must pass materiality_gate.",
+        ],
+        "variant_plan": [
+            {
+                "variant_id": f"v{index}",
+                "goal": _safe_band_evidence_repair_variant_goal(index),
+            }
+            for index in range(1, variants + 1)
+        ],
+        "output_schema": {
+            "variants": [
+                {"variant_id": f"v{index}", "text": "replacement paragraph/window only"}
+                for index in range(1, variants + 1)
+            ]
+        },
+    }
+    _attach_author_proxy_context(payload, author_proxy_context)
+    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def generate_safe_band_evidence_pack_variants(
+    *,
+    sections: list[SectionUnit],
+    current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None,
+    gateway: LLMGateway,
+    variant_count: int,
+    revision_plan: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], str, str]:
+    variants = max(1, min(5, int(variant_count or 1)))
+    prompt = build_safe_band_evidence_pack_prompt(
+        sections=sections,
+        current_scores=current_scores,
+        current_goal=current_goal,
+        variant_count=variants,
+        revision_plan=revision_plan,
+        author_proxy_context=author_proxy_context,
+    )
+    structured = structured_json_request_options(
+        getattr(gateway, "model", None),
+        _safe_band_evidence_pack_response_format(
+            variants,
+            len(sections),
+            include_author_proxy_fields=_prompt_author_proxy_active(prompt),
+        ),
+    )
+    provider = _merge_provider_options(getattr(gateway, "provider", None), structured.get("provider"))
+    started = time.monotonic()
+    response = gateway.chat(
+        prompt,
+        system="Return only valid JSON with a variants array.",
+        response_format=structured.get("response_format") or {"type": "json_object"},
+        provider=provider,
+        temperature=_float_env("DRAFTPROOF_SAFE_BAND_EVIDENCE_PACK_TEMPERATURE", 0.42, minimum=0.0, maximum=1.0),
+        top_p=_float_env("DRAFTPROOF_SAFE_BAND_EVIDENCE_PACK_TOP_P", 0.9, minimum=0.1, maximum=1.0),
+        max_tokens=_int_env("DRAFTPROOF_SAFE_BAND_EVIDENCE_PACK_MAX_TOKENS", 8000, minimum=1600, maximum=12000),
+    )
+    elapsed = time.monotonic() - started
+    raw = response.raw_content or response.content
+    parsed, diagnostics = parse_json_object(raw, required_keys={"variants"})
+    if parsed is None:
+        return [], {
+            **diagnostics,
+            "model": response.model,
+            "provider": response.raw.get("provider"),
+            "usage": response.usage,
+            "finish_reason": response.finish_reason,
+            "native_finish_reason": response.native_finish_reason,
+            "structured_output_mode": structured.get("structured_output_mode"),
+            "elapsed_seconds": round(elapsed, 3),
+        }, prompt, raw
+    rows, parse_diagnostics = _sanitize_safe_band_evidence_pack_variants(parsed.get("variants"), sections=sections)
+    return rows, {
+        **diagnostics,
+        **parse_diagnostics,
+        "status": "ok" if rows else "schema_failed",
+        "model": response.model,
+        "provider": response.raw.get("provider"),
+        "usage": response.usage,
+        "finish_reason": response.finish_reason,
+        "native_finish_reason": response.native_finish_reason,
+        "structured_output_mode": structured.get("structured_output_mode"),
+        "elapsed_seconds": round(elapsed, 3),
+    }, prompt, raw
+
+
+def build_safe_band_evidence_pack_prompt(
+    *,
+    sections: list[SectionUnit],
+    current_scores: dict[str, Any],
+    current_goal: dict[str, Any] | None,
+    variant_count: int,
+    revision_plan: dict[str, Any] | None = None,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> str:
+    variants = max(1, min(5, int(variant_count or 1)))
+    section_rows = [_safe_band_pack_section_payload(section, index=index) for index, section in enumerate(sections, start=1)]
+    plan = revision_plan if isinstance(revision_plan, dict) else {}
+    density_section_count = sum(1 for section in sections if _section_uses_density_safe_band_contract(section))
+    density_hard_requirements = [
+        {
+            "section_id": row["section_id"],
+            "minimum_changed_source_sentences": row.get("materiality_gate", {}).get("minimum_changed_source_sentences"),
+            "minimum_word_count": row.get("materiality_gate", {}).get("minimum_word_count"),
+            "maximum_word_count": row.get("materiality_gate", {}).get("maximum_word_count"),
+        }
+        for row in section_rows
+        if row.get("materiality_gate", {}).get("contract") == "density_section_repair"
+    ]
+    payload = {
+        "task": "safe_band_evidence_multi_replacement_pack",
+        "architecture_stage": "author_proxy_writer_from_evidence_ledger_and_revision_plan",
+        "objective": (
+            "Produce coordinated replacements for all selected sections so DraftProof can score one whole-document candidate. "
+            "Do not optimize a single sentence; move the document-level safe-band signals through grounded author evidence."
+        ),
+        "single_product_judge": {
+            "judge": "DraftProof internal safe-band and authorship-integrity scoring",
+            "ignored_as_acceptance_judge": "external AI flag score",
+            "decision": "Candidates are accepted only by scanner movement, safe-band gap movement, materiality, and authorship integrity.",
+        },
+        "kpi_contract": _safe_band_kpi_contract(current_scores, current_goal),
+        "required_section_ids": [row["section_id"] for row in section_rows],
+        "reconstruction_mode": {
+            "mode": "density_blocker_author_proxy_pack" if density_section_count else "safe_band_author_proxy_pack",
+            "density_section_count": density_section_count,
+            "success_shape": (
+                "Move qualifying_text_ai_density at document level by rebuilding multiple grounded sections in one candidate."
+                if density_section_count
+                else "Move the remaining safe-band gap through coordinated grounded replacements."
+            ),
+        },
+        "sections": section_rows,
+        "density_pack_hard_rejection_contract": {
+            "applies": bool(density_hard_requirements),
+            "requirements": density_hard_requirements,
+            "rule": (
+                "For every listed density section, count the source sentences whose route you materially rebuild. "
+                "If the count is below minimum_changed_source_sentences, the whole pack is rejected before scanner scoring."
+            ),
+            "near_copy_definition": (
+                "A sentence does not count as changed when it keeps the same claim order with only synonym swaps, "
+                "connector changes, or a short inserted phrase."
+            ),
+            "word_band_rule": "Each replacement must also stay inside its section-specific minimum_word_count and maximum_word_count.",
+        },
+        "evidence_ledger": plan.get("evidence_ledger") if isinstance(plan.get("evidence_ledger"), dict) else {},
+        "revision_plan": plan.get("revision_plan") if isinstance(plan.get("revision_plan"), list) else [],
+        "pack_rules": [
+            "Return every section_id exactly once in each variant.",
+            "Use the exact section_id values from required_section_ids; do not invent generic IDs.",
+            "Each replacement must be only the replacement text for that section.",
+            "Follow revision_plan before writing; do not write directly from scanner pressure.",
+            "Coordinate the replacements so the document reads as one author-owned revision, not separate paraphrases.",
+            "Use submitted material, nearby context, citations, and source anchors only.",
+            "Narrow unsupported claims instead of adding new evidence.",
+            "Do not add fake citations, dates, statistics, institutions, named events, personal experiences, or classroom details.",
+            "Change the target sentence route and at least one surrounding sentence in every section.",
+            "For every section, materially rebuild at least the listed minimum_changed_source_sentences; one near-copy section rejects the whole pack.",
+            "For density_section_repair sections, use density_pack_hard_rejection_contract as the controlling contract even if revision_plan text is vague or inconsistent.",
+            "For density_section_repair sections, deliberately rebuild enough sentence routes to meet the numeric minimum; do not preserve most source sentences unchanged.",
+            "For density_section_repair sections, use materiality_gate.contextual_anchor_contract to turn low-context qualifying sentences into grounded author/domain/source-context sentences when the submitted text supports it.",
+            "For density_section_repair sections, preserve the section word-count band, voice markers, citations, and source anchors while changing the section route.",
+            "For density_section_repair sections, replacement word count must stay within materiality_gate.minimum_word_count and materiality_gate.maximum_word_count.",
+            "Do not solve density by compressing coverage, adding decorative noise, or making the prose more detached and polished.",
+            "Preserve section facts, citations, named people, technical codes, author stance, and paragraph role.",
+            "Keep author_proxy_provenance and author_review_items compact: include only the highest-risk items, maximum four of each per variant.",
+        ],
+        "author_proxy_writer_method": [
+            "Read each section's evidence ledger first.",
+            "Choose author-owned details, citations, classroom actions, and constraints already present in source_text or nearby context.",
+            "Turn broad claims into narrower claims when evidence is thin.",
+            "Rebuild the section route around concrete author evidence rather than synonym substitution.",
+            "Keep any provisional bridge visible in author_proxy_provenance or author_review_items.",
+        ],
+        "variant_plan": [
+            {
+                "variant_id": f"v{index}",
+                "goal": _safe_band_evidence_pack_variant_goal(index),
+            }
+            for index in range(1, variants + 1)
+        ],
+        "output_schema": {
+            "variants": [
+                {
+                    "variant_id": "v1",
+                    "replacements": [
+                        {"section_id": row["section_id"], "text": "replacement for this section only"}
+                        for row in section_rows
+                    ],
+                    "author_proxy_provenance": [],
+                    "author_review_items": [],
+                }
+            ]
+        },
+    }
+    _attach_author_proxy_context(payload, author_proxy_context)
+    payload["output_schema"] = {
+        "variants": [
+            {
+                "variant_id": "v1",
+                "replacements": [
+                    {"section_id": row["section_id"], "text": "replacement for this section only"}
+                    for row in section_rows
+                ],
+                "author_proxy_provenance": [_author_proxy_output_variant_template()["author_proxy_provenance"][0]],
+                "author_review_items": [_author_proxy_output_variant_template()["author_review_items"][0]],
+            }
+        ]
+    }
+    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _safe_band_pack_section_payload(section: SectionUnit, *, index: int) -> dict[str, Any]:
+    metadata = section.metadata if isinstance(section.metadata, dict) else {}
+    density_contract = _section_uses_density_safe_band_contract(section)
+    materiality_gate = {
+        "minimum_changed_source_sentences": (
+            _safe_band_density_section_repair_min_changed_sentences(section.text)
+            if density_contract
+            else _safe_band_evidence_repair_min_changed_sentences(section.text)
+        ),
+        "target_sentence_must_change_route": bool(metadata.get("target_sentence")),
+    }
+    if density_contract:
+        min_word_ratio = _safe_band_density_section_repair_min_word_ratio_for_text(section.text)
+        materiality_gate.update({
+            "contract": "density_section_repair",
+            "minimum_changed_source_sentence_ratio": _safe_band_density_section_repair_min_changed_sentence_ratio(),
+            "minimum_word_ratio": min_word_ratio,
+            "maximum_word_ratio": _safe_band_density_section_repair_max_word_ratio(),
+            "minimum_word_count": max(1, round(section.word_count * min_word_ratio)),
+            "maximum_word_count": max(1, round(section.word_count * _safe_band_density_section_repair_max_word_ratio())),
+            "source_voice_profile": _safe_band_density_source_voice_profile(section.text),
+            "contextual_anchor_contract": _safe_band_density_contextual_anchor_contract(section.text),
+        })
+    return {
+        "section_id": section.section_id,
+        "index": index,
+        "source_text": section.text,
+        "source_word_count": section.word_count,
+        "target_sentence": metadata.get("target_sentence"),
+        "selection_reason": metadata.get("selection_reason"),
+        "before_context": metadata.get("before_context"),
+        "after_context": metadata.get("after_context"),
+        "scanner_focus": metadata.get("scanner_focus"),
+        "materiality_gate": materiality_gate,
+    }
+
+
+def _section_uses_density_safe_band_contract(section: SectionUnit) -> bool:
+    metadata = section.metadata if isinstance(section.metadata, dict) else {}
+    section_id = str(getattr(section, "section_id", "") or "")
+    reason = str(metadata.get("selection_reason") or "")
+    unit_type = str(metadata.get("unit_type") or "")
+    return (
+        section_id.startswith("safe_band_density_section_")
+        or "density" in reason
+        or "density" in unit_type
+        or metadata.get("density_section_expanded") is True
+    )
+
+
+def _safe_band_density_contextual_anchor_contract(text: str) -> dict[str, Any]:
+    sentences = [sentence.strip() for sentence in _sentences(str(text or "")) if sentence.strip()]
+    qualifying = [
+        sentence
+        for sentence in sentences
+        if _safe_band_density_qualifying_sentence(sentence)
+    ]
+    contextual = [
+        sentence
+        for sentence in qualifying
+        if _sentence_has_concrete_or_context(sentence)
+    ]
+    density = len(contextual) / max(1, len(qualifying))
+    target = _safe_band_density_contextual_anchor_target()
+    needed = max(0, int((target * max(1, len(qualifying))) + 0.999) - len(contextual))
+    low_context = [
+        sentence
+        for sentence in qualifying
+        if not _sentence_has_concrete_or_context(sentence)
+    ]
+    return {
+        "schema_version": "safe_band_density_contextual_anchor_contract.v1",
+        "qualifying_sentence_count": len(qualifying),
+        "contextual_anchor_sentence_count": len(contextual),
+        "contextual_anchor_density": round(density, 3),
+        "target_contextual_anchor_density": target,
+        "additional_contextual_sentences_needed": needed,
+        "low_context_sentence_examples": low_context[:4],
+        "rule": (
+            "When possible, rebuild low-context qualifying sentences around submitted author actions, domain mechanics, "
+            "source/citation relation, practical constraints, or observed process details already present in the draft/context."
+        ),
+    }
+
+
+def _safe_band_density_qualifying_sentence(sentence: str) -> bool:
+    stripped = str(sentence or "").strip()
+    if len(stripped.split()) < 8:
+        return False
+    lower = stripped.lower()
+    if lower.startswith(("http", "www.")):
+        return False
+    if re.match(r"^\s*(references|bibliography|works cited)\b", lower):
+        return False
+    if stripped.startswith(("-", "*", "•")):
+        return False
+    if stripped.count('"') >= 2 or stripped.count("'") >= 2:
+        return False
+    return True
+
+
+def _safe_band_density_contextual_anchor_target() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_CONTEXTUAL_ANCHOR_TARGET",
+        0.45,
+        minimum=0.0,
+        maximum=1.0,
+    )
+
+
+def _score_safe_band_evidence_pack_variant(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_scores: dict[str, Any],
+    sections: list[SectionUnit],
+    variant: dict[str, Any],
+    output_dir: Path,
+    label: str,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    candidate_text, apply_status, materiality = _apply_safe_band_evidence_pack_variant(
+        current_text=current_text,
+        sections=sections,
+        variant=variant,
+    )
+    source_pack_text = "\n\n".join(section.text for section in sections)
+    replacement_pack_text = "\n\n".join(
+        str(item.get("text") or "")
+        for item in variant.get("replacements", [])
+        if isinstance(item, dict)
+    )
+    author_proxy_audit = _author_proxy_candidate_audit(
+        source_pack_text,
+        replacement_pack_text,
+        author_proxy_context,
+        phase="safe_band_evidence_pack",
+    )
+    author_proxy_quality = _author_proxy_quality_score(
+        source_text=source_pack_text,
+        candidate_text=replacement_pack_text,
+        context=author_proxy_context,
+        provenance=_author_proxy_item_list(variant.get("author_proxy_provenance")),
+        review_items=_author_proxy_item_list(variant.get("author_review_items")),
+        audit=author_proxy_audit,
+    )
+    if not apply_status.get("applied"):
+        return {
+            "section_id": "safe_band_evidence_pack",
+            "variant_id": variant.get("variant_id"),
+            "label": label,
+            "text": replacement_pack_text,
+            "word_count": word_count(replacement_pack_text),
+            "apply_status": apply_status,
+            "scores": current_scores,
+            "incremental": {},
+            "local_scores": {},
+            "local_goal": {},
+            "candidate_text": candidate_text,
+            "safe_band_evidence_materiality": materiality,
+            "safe_band_evidence_pack_materiality": materiality,
+            "author_proxy_audit": author_proxy_audit,
+            "author_proxy_quality": author_proxy_quality,
+            "author_proxy_provenance": _author_proxy_item_list(variant.get("author_proxy_provenance")),
+            "author_review_items": _author_proxy_item_list(variant.get("author_review_items")),
+        }
+    source_integrity = minimal_replacement_text_integrity(current_text)
+    candidate_integrity = minimal_replacement_text_integrity(candidate_text)
+    integrity_regression = _text_integrity_regression(source_integrity, candidate_integrity)
+    if not integrity_regression.get("passed"):
+        apply_status = {
+            **apply_status,
+            "applied": False,
+            "reason": "candidate_text_integrity_regressed_after_pack_apply",
+            "source_integrity": source_integrity,
+            "candidate_integrity": candidate_integrity,
+            "integrity_regression": integrity_regression,
+        }
+        return {
+            "section_id": "safe_band_evidence_pack",
+            "variant_id": variant.get("variant_id"),
+            "label": label,
+            "text": replacement_pack_text,
+            "word_count": word_count(replacement_pack_text),
+            "apply_status": apply_status,
+            "scores": current_scores,
+            "incremental": {},
+            "local_scores": {},
+            "local_goal": {},
+            "candidate_text": candidate_text,
+            "safe_band_evidence_materiality": materiality,
+            "safe_band_evidence_pack_materiality": materiality,
+            "author_proxy_audit": author_proxy_audit,
+            "author_proxy_quality": author_proxy_quality,
+            "author_proxy_provenance": _author_proxy_item_list(variant.get("author_proxy_provenance")),
+            "author_review_items": _author_proxy_item_list(variant.get("author_review_items")),
+        }
+    candidate_report = _scan_report(candidate_text)
+    candidate_goal = evaluate_rewrite_goal(
+        original_text=original_text,
+        candidate_text=candidate_text,
+        original_report=baseline_report,
+        candidate_report=candidate_report,
+    ).to_dict()
+    candidate_goal = _with_v5_density_gate(candidate_text, candidate_report, candidate_goal)
+    scores = _score_summary(original_text, candidate_report, candidate_goal)
+    _add_deltas(scores, baseline_scores)
+    safe_name = label.replace("/", "_")
+    (output_dir / f"{safe_name}.txt").write_text(candidate_text)
+    (output_dir / f"{safe_name}_pack.txt").write_text(replacement_pack_text)
+    (output_dir / f"{safe_name}_scan.json").write_text(json.dumps(candidate_report, ensure_ascii=False, indent=2))
+    return {
+        "section_id": "safe_band_evidence_pack",
+        "variant_id": variant.get("variant_id"),
+        "label": label,
+        "text": replacement_pack_text,
+        "word_count": word_count(replacement_pack_text),
+        "apply_status": apply_status,
+        "scores": scores,
+        "incremental": _incremental_deltas(scores, current_scores),
+        "local_scores": {},
+        "local_goal": {},
+        "candidate_text": candidate_text,
+        "candidate_report": candidate_report,
+        "candidate_goal": candidate_goal,
+        "safe_band_evidence_materiality": materiality,
+        "safe_band_evidence_pack_materiality": materiality,
+        "author_proxy_audit": author_proxy_audit,
+        "author_proxy_quality": author_proxy_quality,
+        "author_proxy_provenance": _author_proxy_item_list(variant.get("author_proxy_provenance")),
+        "author_review_items": _author_proxy_item_list(variant.get("author_review_items")),
+    }
+
+
+def _safe_band_controlled_operation_targets(
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    *,
+    current_scores: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    limit = _safe_band_controlled_operation_target_limit()
+    targets: list[dict[str, Any]] = []
+    seed_targets = (
+        _safe_band_density_controlled_operation_targets(
+            current_text,
+            current_report,
+            current_goal,
+            current_scores=current_scores or {},
+        )
+        if current_scores is not None and _safe_band_density_section_repair_should_run(current_scores=current_scores, current_goal=current_goal)
+        else []
+    )
+    seed_targets.extend(_final_topk_sentence_route_targets(current_text, current_report, current_goal))
+    seen: set[str] = set()
+    for target in seed_targets:
+        sentence = str(target.get("sentence") or "").strip()
+        key = sentence.casefold()
+        if not sentence or sentence not in current_text or key in seen:
+            continue
+        seen.add(key)
+        targets.append({
+            "target_id": str(target.get("target_id") or f"t{len(targets) + 1:03d}"),
+            "sentence": sentence,
+            "operation": "delete_exact_target_sentence",
+            "source": target.get("source"),
+            "predictability_risk": target.get("predictability_risk"),
+            "top10_ratio": target.get("top10_ratio"),
+            "top50_ratio": target.get("top50_ratio"),
+            "context": target.get("context"),
+        })
+        if len(targets) >= limit:
+            break
+    return targets
+
+
+def _safe_band_density_controlled_operation_targets(
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    *,
+    current_scores: dict[str, Any],
+) -> list[dict[str, Any]]:
+    contract = _safe_band_kpi_contract(current_scores, current_goal)
+    gaps = contract.get("gaps") if isinstance(contract.get("gaps"), dict) else {}
+    if _number(gaps.get("qualifying_text_ai_density")) <= 0 or _number(gaps.get("topk_calibrated_risk")) > 0:
+        return []
+    mitigation = current_report.get("ai_mitigation") if isinstance(current_report.get("ai_mitigation"), dict) else {}
+    segments = mitigation.get("target_segments") if isinstance(mitigation.get("target_segments"), list) else []
+    rows: list[tuple[tuple[float, ...], dict[str, Any]]] = []
+    for index, segment in enumerate(segments, start=1):
+        if not isinstance(segment, dict):
+            continue
+        sentence = str(segment.get("text") or "").strip()
+        if not sentence or sentence not in current_text:
+            continue
+        if not _safe_band_density_controlled_segment_is_auto_safe(segment):
+            continue
+        signal = segment.get("primary_signal") if isinstance(segment.get("primary_signal"), dict) else {}
+        word_total = word_count(sentence)
+        rows.append((
+            (
+                _number(signal.get("score")),
+                1.0 if str(segment.get("lever") or "") == "predictability_reduction" else 0.0,
+                min(float(word_total), 35.0),
+                -abs(22.0 - float(word_total)),
+            ),
+            {
+                "target_id": f"d{len(rows) + 1:03d}",
+                "sentence_id": segment.get("sentence_id") or segment.get("segment_id"),
+                "sentence": sentence,
+                "source": "ai_mitigation_density_target_segments",
+                "predictability_risk": signal.get("score"),
+                "context": _target_sentence_context(current_text, sentence),
+                "segment": segment,
+            },
+        ))
+    rows.sort(key=lambda item: item[0], reverse=True)
+    return [row for _score, row in rows[:_safe_band_controlled_operation_target_limit()]]
+
+
+def _safe_band_density_controlled_segment_is_auto_safe(segment: dict[str, Any]) -> bool:
+    user_input = str(segment.get("user_input_needed") or "").strip().casefold()
+    if user_input and not user_input.startswith("none"):
+        return False
+    bucket = str(segment.get("bucket") or "")
+    lever = str(segment.get("lever") or "")
+    signal = segment.get("primary_signal") if isinstance(segment.get("primary_signal"), dict) else {}
+    permission = str(signal.get("rewrite_permission") or "")
+    if permission and permission not in {"auto_apply", "auto_candidate", "suggestion_only"}:
+        return False
+    return bucket == "auto_candidate" or lever == "predictability_reduction"
+
+
+def _safe_band_controlled_operation_variants(
+    *,
+    current_text: str,
+    targets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    variants: list[dict[str, Any]] = []
+    for index, target in enumerate(targets, start=1):
+        sentence = str(target.get("sentence") or "").strip()
+        if not sentence or sentence not in current_text:
+            continue
+        variants.append({
+            "variant_id": f"delete_{target.get('target_id') or index}",
+            "operation": "delete_exact_target_sentence",
+            "target_id": target.get("target_id"),
+            "sentence": sentence,
+            "operation_reason": "controller_owned_safe_band_atomic_edit",
+        })
+        suffix = _strong_punctuation_suffix_candidate(sentence)
+        if suffix:
+            variants.append({
+                "variant_id": f"suffix_{target.get('target_id') or index}",
+                "operation": "keep_suffix_after_strong_punctuation",
+                "target_id": target.get("target_id"),
+                "sentence": sentence,
+                "replacement": suffix,
+                "operation_reason": "controller_owned_safe_band_atomic_edit",
+            })
+    return variants
+
+
+def _score_safe_band_controlled_operation_variant(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_scores: dict[str, Any],
+    variant: dict[str, Any],
+    output_dir: Path,
+    label: str,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    candidate_text, apply_status, materiality = _apply_safe_band_controlled_operation_variant(
+        current_text=current_text,
+        variant=variant,
+    )
+    author_proxy_audit = _author_proxy_candidate_audit(
+        current_text,
+        candidate_text,
+        author_proxy_context,
+        phase="safe_band_controlled_operation",
+    )
+    author_proxy_quality = _author_proxy_quality_score(
+        source_text=current_text,
+        candidate_text=candidate_text,
+        context=author_proxy_context,
+        audit=author_proxy_audit,
+    )
+    if not apply_status.get("applied"):
+        return {
+            "section_id": "safe_band_controlled_operation",
+            "variant_id": variant.get("variant_id"),
+            "label": label,
+            "text": candidate_text,
+            "word_count": word_count(candidate_text),
+            "apply_status": apply_status,
+            "scores": current_scores,
+            "incremental": {},
+            "candidate_text": candidate_text,
+            "safe_band_evidence_materiality": materiality,
+            "safe_band_controlled_operation_materiality": materiality,
+            "author_proxy_audit": author_proxy_audit,
+            "author_proxy_quality": author_proxy_quality,
+        }
+    candidate_report = _scan_report(candidate_text)
+    candidate_goal = evaluate_rewrite_goal(
+        original_text=original_text,
+        candidate_text=candidate_text,
+        original_report=baseline_report,
+        candidate_report=candidate_report,
+    ).to_dict()
+    candidate_goal = _with_v5_density_gate(candidate_text, candidate_report, candidate_goal)
+    scores = _score_summary(original_text, candidate_report, candidate_goal)
+    _add_deltas(scores, baseline_scores)
+    safe_name = label.replace("/", "_")
+    (output_dir / f"{safe_name}.txt").write_text(candidate_text)
+    (output_dir / f"{safe_name}_scan.json").write_text(json.dumps(candidate_report, ensure_ascii=False, indent=2))
+    return {
+        "section_id": "safe_band_controlled_operation",
+        "variant_id": variant.get("variant_id"),
+        "label": label,
+        "text": str(variant.get("sentence") or ""),
+        "word_count": word_count(candidate_text),
+        "apply_status": apply_status,
+        "scores": scores,
+        "incremental": _incremental_deltas(scores, current_scores),
+        "candidate_text": candidate_text,
+        "candidate_report": candidate_report,
+        "candidate_goal": candidate_goal,
+        "safe_band_evidence_materiality": materiality,
+        "safe_band_controlled_operation_materiality": materiality,
+        "author_proxy_audit": author_proxy_audit,
+        "author_proxy_quality": author_proxy_quality,
+    }
+
+
+def _apply_safe_band_controlled_operation_variant(
+    *,
+    current_text: str,
+    variant: dict[str, Any],
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    operation = str(variant.get("operation") or "").strip()
+    sentence = str(variant.get("sentence") or "").strip()
+    source = str(current_text or "")
+    supported_operations = {"delete_exact_target_sentence", "keep_suffix_after_strong_punctuation"}
+    if operation not in supported_operations or not sentence:
+        materiality = {"passed": False, "reason": "unsupported_or_empty_controlled_operation"}
+        return source, {"applied": False, "reason": "unsupported_or_empty_controlled_operation"}, materiality
+    if source.count(sentence) != 1:
+        materiality = {
+            "passed": False,
+            "reason": "target_sentence_not_unique",
+            "match_count": source.count(sentence),
+        }
+        return source, {"applied": False, "reason": "target_sentence_not_unique", "match_count": source.count(sentence)}, materiality
+    replacement = ""
+    if operation == "keep_suffix_after_strong_punctuation":
+        replacement = str(variant.get("replacement") or "").strip()
+        expected = _strong_punctuation_suffix_candidate(sentence)
+        min_suffix_words = _safe_band_controlled_operation_min_suffix_words()
+        if not replacement or replacement != expected or word_count(replacement) < min_suffix_words:
+            materiality = {
+                "passed": False,
+                "reason": "invalid_controlled_suffix_replacement",
+                "replacement_words": word_count(replacement),
+                "minimum_replacement_words": min_suffix_words,
+            }
+            return source, {"applied": False, "reason": "invalid_controlled_suffix_replacement"}, materiality
+    candidate = _replace_controlled_sentence(source, sentence, replacement)
+    source_words = word_count(source)
+    candidate_words = word_count(candidate)
+    word_ratio = candidate_words / max(1, source_words)
+    paragraph_count_preserved = _paragraph_count(candidate) == _paragraph_count(source)
+    min_ratio = _safe_band_controlled_operation_min_word_ratio()
+    applied = bool(candidate.strip()) and candidate != source and word_ratio >= min_ratio and paragraph_count_preserved
+    if not applied:
+        reason = "controlled_operation_materiality_failed"
+    elif operation == "keep_suffix_after_strong_punctuation":
+        reason = "controlled_strong_punctuation_suffix_kept"
+    else:
+        reason = "controlled_target_sentence_deleted"
+    materiality = {
+        "passed": applied,
+        "reason": reason,
+        "operation": operation,
+        "target_id": variant.get("target_id"),
+        "replacement": replacement,
+        "source_words": source_words,
+        "candidate_words": candidate_words,
+        "word_ratio": round(word_ratio, 4),
+        "minimum_word_ratio": min_ratio,
+        "paragraph_count_preserved": paragraph_count_preserved,
+    }
+    return candidate, {
+        "applied": applied,
+        "scope": "safe_band_controlled_operation",
+        "operation": operation,
+        "target_id": variant.get("target_id"),
+        "replacement": replacement,
+        "source_words": source_words,
+        "candidate_words": candidate_words,
+        "word_ratio": round(word_ratio, 4),
+        **({} if applied else {"reason": reason}),
+    }, materiality
+
+
+def _strong_punctuation_suffix_candidate(sentence: str) -> str | None:
+    source = str(sentence or "").strip()
+    if not source:
+        return None
+    delimiters = (" — ",)
+    for delimiter in delimiters:
+        if source.count(delimiter) != 1:
+            continue
+        _before, after = source.split(delimiter, 1)
+        suffix = after.strip()
+        if word_count(suffix) < _safe_band_controlled_operation_min_suffix_words():
+            continue
+        if suffix and suffix[-1] not in ".!?":
+            suffix += "."
+        return suffix[:1].upper() + suffix[1:] if suffix else None
+    return None
+
+
+def _replace_controlled_sentence(source: str, sentence: str, replacement: str) -> str:
+    offset = source.find(sentence)
+    if offset < 0:
+        return source
+    before = source[:offset]
+    after = source[offset + len(sentence):]
+    replacement = str(replacement or "").strip()
+    if before.endswith(" ") and after.startswith(" "):
+        after = after[1:]
+    if before.endswith("\n") and after.startswith(" "):
+        after = after.lstrip(" ")
+    middle = replacement
+    if middle and before and not before.endswith(("\n", " ")):
+        middle = " " + middle
+    if middle and after and not after.startswith(("\n", " ")):
+        middle = middle + " "
+    candidate = before + middle + after
+    return re.sub(r"[ \t]{2,}", " ", candidate).strip()
 
 
 def _score_final_topk_sentence_route_variant(
@@ -5846,6 +8524,7 @@ def _final_topk_sentence_route_targets(
             "target_id": f"t{len(rows) + 1:03d}",
             "sentence_id": row.get("sentence_id"),
             "sentence": sentence,
+            "context": _target_sentence_context(current_text, sentence),
             "source": "eligible_span_density_gate",
             "top10_ratio": row.get("top10_ratio"),
             "top50_ratio": row.get("top50_ratio"),
@@ -5883,6 +8562,7 @@ def _final_topk_sentence_route_targets(
         seen.add(sentence.casefold())
         rows.append({
             "target_id": f"t{len(rows) + 1:03d}",
+            "context": _target_sentence_context(current_text, sentence),
             **row,
         })
         if len(rows) >= limit:
@@ -5956,6 +8636,8 @@ def _has_final_topk_sentence_route_movement(row: dict[str, Any]) -> bool:
 def _final_topk_sentence_route_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     return (
+        1.0 if _candidate_strict_safe_band_achieved(row) else 0.0,
+        -_candidate_safe_band_gap(row),
         _number(incremental.get("topk_delta")) * 3.0 + _number(incremental.get("topk_calibrated_risk_delta")) * 1.5,
         _number(incremental.get("topk_delta")),
         _number(incremental.get("topk_calibrated_risk_delta")),
@@ -5963,6 +8645,2191 @@ def _final_topk_sentence_route_sort_key(row: dict[str, Any]) -> tuple[float, ...
         _number(incremental.get("external_delta")),
         _number(incremental.get("unsafe_cluster_count_delta")),
         _author_proxy_quality_sort_value(row),
+    )
+
+
+def _candidate_strict_safe_band_achieved(row: dict[str, Any]) -> bool:
+    goal = row.get("candidate_goal") if isinstance(row.get("candidate_goal"), dict) else {}
+    if goal.get("strict_ai_safe_band_achieved") is True:
+        return True
+    gate = goal.get("ai_footprint_gate") if isinstance(goal.get("ai_footprint_gate"), dict) else {}
+    return bool(gate.get("safe_band"))
+
+
+def _candidate_safe_band_gap(row: dict[str, Any]) -> float:
+    goal = row.get("candidate_goal") if isinstance(row.get("candidate_goal"), dict) else {}
+    gate = goal.get("ai_footprint_gate") if isinstance(goal.get("ai_footprint_gate"), dict) else {}
+    remaining = gate.get("remaining_ai_footprint_drivers") if isinstance(gate.get("remaining_ai_footprint_drivers"), list) else []
+    gap = 0.0
+    for item in remaining:
+        if not isinstance(item, dict):
+            continue
+        gap += max(0.0, _number(item.get("value")) - _number(item.get("safe_band")))
+    if gap > 0:
+        return round(gap, 3)
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    return round(
+        max(0.0, _number(scores.get("topk_calibrated_risk")) - 25.0)
+        + max(0.0, _number(scores.get("qualifying_text_ai_density")) - 35.0),
+        3,
+    )
+
+
+def _candidate_topk_calibrated_safe(row: dict[str, Any]) -> bool:
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    goal = row.get("candidate_goal") if isinstance(row.get("candidate_goal"), dict) else {}
+    gate = goal.get("ai_footprint_gate") if isinstance(goal.get("ai_footprint_gate"), dict) else {}
+    thresholds = gate.get("safe_band_thresholds") if isinstance(gate.get("safe_band_thresholds"), dict) else {}
+    threshold = _number(thresholds.get("topk_calibrated_risk") if thresholds.get("topk_calibrated_risk") is not None else 25.0)
+    return _number(scores.get("topk_calibrated_risk")) <= threshold
+
+
+def _safe_band_evidence_repair_section(
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+) -> SectionUnit | None:
+    sections = _safe_band_evidence_repair_sections(current_text, current_report, current_goal, limit=1)
+    return sections[0] if sections else None
+
+
+def _safe_band_evidence_repair_sections(
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    *,
+    limit: int,
+) -> list[SectionUnit]:
+    max_sections = max(1, int(limit or 1))
+    sections: list[SectionUnit] = []
+    seen: set[tuple[int, int]] = set()
+
+    def add(section: SectionUnit | None) -> None:
+        if section is None or len(sections) >= max_sections:
+            return
+        signature = (section.start_char, section.end_char)
+        if signature in seen:
+            return
+        seen.add(signature)
+        sections.append(section)
+
+    target_sections: list[SectionUnit] = []
+    targets = _final_topk_sentence_route_targets(current_text, current_report, current_goal)
+    for target in targets:
+        sentence = str(target.get("sentence") or "").strip()
+        section = _section_from_paragraph_containing_text(
+            current_text,
+            sentence,
+            section_id=f"safe_band_evidence_repair_{str(target.get('target_id') or 'target')}",
+            selection_reason="top_safe_band_sentence_target",
+            scanner_focus=target,
+        )
+        if section is not None:
+            target_sections.append(section)
+    if _safe_band_evidence_repair_composite_window_enabled():
+        add(_safe_band_evidence_composite_section(
+            current_text,
+            _first_unique_sections(target_sections, limit=max_sections),
+        ))
+        if len(sections) >= max_sections:
+            return sections
+    for section in target_sections:
+        add(section)
+        if len(sections) >= max_sections:
+            return sections
+
+    density = (
+        current_goal.get("eligible_span_density_gate")
+        if isinstance(current_goal.get("eligible_span_density_gate"), dict)
+        else _density_gate_for_report(current_text, current_report)
+    )
+    clusters = density.get("top_unsafe_clusters") if isinstance(density.get("top_unsafe_clusters"), list) else []
+    for ordinal, cluster in enumerate(clusters, start=1):
+        if not isinstance(cluster, dict):
+            continue
+        preview = str(cluster.get("preview") or "").strip()
+        for candidate in [preview, *_sentences(preview)]:
+            add(_section_from_paragraph_containing_text(
+                current_text,
+                candidate,
+                section_id=f"safe_band_evidence_repair_cluster_{ordinal:03d}",
+                selection_reason="top_unsafe_cluster_paragraph",
+                scanner_focus=cluster,
+            ))
+            if len(sections) >= max_sections:
+                return sections
+        fallback = _section_from_density_cluster(current_text, current_report, cluster, ordinal=ordinal)
+        if fallback is not None:
+            add(SectionUnit(
+                section_id=f"safe_band_evidence_repair_cluster_{ordinal:03d}",
+                heading="Safe-band evidence repair",
+                text=fallback.text,
+                start_char=fallback.start_char,
+                end_char=fallback.end_char,
+                paragraph_count=fallback.paragraph_count,
+                word_count=fallback.word_count,
+                metadata={
+                    **(fallback.metadata or {}),
+                    "selection_reason": "top_unsafe_cluster_window",
+                    "scanner_focus": cluster,
+                },
+            ))
+            if len(sections) >= max_sections:
+                return sections
+    return sections
+
+
+def _safe_band_evidence_pack_sections(
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    *,
+    limit: int,
+) -> list[SectionUnit]:
+    target_sections: list[SectionUnit] = []
+    seen: set[tuple[int, int]] = set()
+    max_sections = max(1, int(limit or 1))
+    max_section_words = _safe_band_evidence_pack_max_section_words()
+    max_source_words = _safe_band_evidence_pack_max_source_words()
+    source_words = 0
+
+    def add(section: SectionUnit | None) -> None:
+        nonlocal source_words
+        if section is None or len(target_sections) >= max_sections:
+            return
+        if section.word_count > max_section_words:
+            return
+        if target_sections and source_words + section.word_count > max_source_words:
+            return
+        signature = (section.start_char, section.end_char)
+        if signature in seen:
+            return
+        seen.add(signature)
+        target_sections.append(section)
+        source_words += section.word_count
+
+    gate = current_goal.get("ai_footprint_gate") if isinstance(current_goal.get("ai_footprint_gate"), dict) else {}
+    remaining = gate.get("remaining_ai_footprint_drivers") if isinstance(gate.get("remaining_ai_footprint_drivers"), list) else []
+    density_remaining = any(
+        isinstance(item, dict)
+        and str(item.get("driver") or "") == "qualifying_text_ai_density"
+        and _number(item.get("value")) > _number(item.get("safe_band"))
+        for item in remaining
+    )
+    if density_remaining:
+        for section in _safe_band_density_section_repair_sections(
+            current_text,
+            current_report,
+            current_goal,
+            limit=max_sections,
+        ):
+            add(section)
+            if len(target_sections) >= max_sections:
+                return target_sections
+
+    for target in _final_topk_sentence_route_targets(current_text, current_report, current_goal):
+        section = _section_from_paragraph_containing_text(
+            current_text,
+            str(target.get("sentence") or ""),
+            section_id=f"safe_band_evidence_repair_{str(target.get('target_id') or 'target')}",
+            selection_reason="top_safe_band_sentence_target",
+            scanner_focus=target,
+        )
+        if section is None:
+            continue
+        add(section)
+        if len(target_sections) >= max_sections:
+            break
+    return target_sections
+
+
+def _safe_band_density_section_repair_sections(
+    current_text: str,
+    current_report: dict[str, Any],
+    current_goal: dict[str, Any],
+    *,
+    limit: int,
+    exclude_ranges: set[tuple[int, int]] | None = None,
+) -> list[SectionUnit]:
+    max_sections = max(1, int(limit or 1))
+    sections: list[SectionUnit] = []
+    seen: set[tuple[int, int]] = set()
+    excluded = set(exclude_ranges or set())
+
+    def add(section: SectionUnit | None) -> None:
+        if section is None or len(sections) >= max_sections:
+            return
+        signature = _safe_band_section_range_signature(section)
+        if signature in seen:
+            return
+        if _safe_band_section_range_excluded(signature, excluded):
+            return
+        seen.add(signature)
+        sections.append(section)
+
+    mitigation = current_report.get("ai_mitigation") if isinstance(current_report.get("ai_mitigation"), dict) else {}
+    segments = mitigation.get("target_segments") if isinstance(mitigation.get("target_segments"), list) else []
+    ranked_segments: list[tuple[tuple[float, ...], int, dict[str, Any]]] = []
+    for index, segment in enumerate(segments, start=1):
+        if not isinstance(segment, dict):
+            continue
+        text = str(segment.get("text") or "").strip()
+        if not text or text not in current_text:
+            continue
+        ranked_segments.append((_safe_band_density_segment_sort_key(segment), index, segment))
+    ranked_segments.sort(key=lambda row: row[0], reverse=True)
+    for _score, index, segment in ranked_segments:
+        segment_id = str(segment.get("segment_id") or segment.get("sentence_id") or f"s{index:03d}")
+        add(_safe_band_density_expanded_section(
+            current_text,
+            _section_from_paragraph_containing_text(
+                current_text,
+                str(segment.get("text") or ""),
+                section_id=f"safe_band_density_section_{segment_id}",
+                selection_reason="ai_mitigation_density_target_segment",
+                scanner_focus={
+                    "source": "ai_mitigation.target_segments",
+                    "segment": segment,
+                    "density_drivers": _safe_band_kpi_contract({}, current_goal).get("secondary_density_drivers"),
+                },
+            ),
+        ))
+        if len(sections) >= max_sections:
+            return sections
+
+    for section in _safe_band_evidence_repair_sections(
+        current_text,
+        current_report,
+        current_goal,
+        limit=max_sections,
+    ):
+        add(_safe_band_density_expanded_section(
+            current_text,
+            SectionUnit(
+                section_id=f"safe_band_density_section_{section.section_id}",
+                heading="Safe-band density section repair",
+                text=section.text,
+                start_char=section.start_char,
+                end_char=section.end_char,
+                paragraph_count=section.paragraph_count,
+                word_count=section.word_count,
+                metadata={
+                    **(section.metadata or {}),
+                    "selection_reason": "fallback_safe_band_section_for_density",
+                },
+            ),
+        ))
+        if len(sections) >= max_sections:
+            break
+    return sections
+
+
+def _safe_band_density_section_repair_deterministic_variants(section: SectionUnit) -> list[RecompositionVariant]:
+    deduped = _safe_band_adjacent_duplicate_sentence_cleanup(section.text)
+    if not deduped or " ".join(deduped.split()) == " ".join(str(section.text or "").split()):
+        return []
+    return [
+        RecompositionVariant(
+            "deterministic_adjacent_duplicate_cleanup",
+            deduped,
+            word_count(deduped),
+            author_proxy_provenance=[
+                {
+                    "item_id": "deterministic-adjacent-duplicate-cleanup",
+                    "provenance": "duplicate_source_cleanup",
+                    "target_text": section.text,
+                    "generated_text": deduped,
+                    "user_input_needed": "",
+                    "author_task": "",
+                }
+            ],
+            author_review_items=[],
+        )
+    ]
+
+
+def _safe_band_adjacent_duplicate_sentence_cleanup(text: str) -> str:
+    sentences = [sentence.strip() for sentence in _sentences(str(text or "")) if sentence.strip()]
+    if len(sentences) < 2:
+        return str(text or "").strip()
+    kept: list[str] = []
+    previous_signature = ""
+    removed = 0
+    for sentence in sentences:
+        signature = _safe_band_duplicate_sentence_signature(sentence)
+        if signature and signature == previous_signature:
+            removed += 1
+            continue
+        kept.append(sentence)
+        previous_signature = signature
+    if removed <= 0:
+        return str(text or "").strip()
+    return " ".join(kept).strip()
+
+
+def _safe_band_duplicate_sentence_signature(sentence: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(sentence or "").lower()).strip()
+
+
+def _safe_band_density_duplicate_cleanup_materiality(source_text: str, candidate_text: str) -> dict[str, Any]:
+    expected = _safe_band_adjacent_duplicate_sentence_cleanup(source_text)
+    if not expected or " ".join(expected.split()) != " ".join(str(candidate_text or "").split()):
+        return {"passed": False, "reason": "not_adjacent_duplicate_cleanup"}
+    source_sentences = [sentence for sentence in _sentences(str(source_text or "")) if sentence.strip()]
+    expected_sentences = [sentence for sentence in _sentences(expected) if sentence.strip()]
+    removed_count = len(source_sentences) - len(expected_sentences)
+    return {
+        "passed": removed_count > 0,
+        "reason": "density_section_adjacent_duplicate_cleanup" if removed_count > 0 else "no_adjacent_duplicate_removed",
+        "removed_duplicate_sentence_count": max(0, removed_count),
+    }
+
+
+def _safe_band_section_range_signature(section: SectionUnit) -> tuple[int, int]:
+    return (int(section.start_char or 0), int(section.end_char or 0))
+
+
+def _safe_band_section_range_excluded(
+    signature: tuple[int, int],
+    excluded_ranges: set[tuple[int, int]],
+    *,
+    min_overlap_ratio: float = 0.5,
+) -> bool:
+    if not excluded_ranges:
+        return False
+    start, end = signature
+    if end <= start:
+        return False
+    width = end - start
+    for excluded_start, excluded_end in excluded_ranges:
+        overlap = min(end, excluded_end) - max(start, excluded_start)
+        if overlap <= 0:
+            continue
+        excluded_width = max(1, excluded_end - excluded_start)
+        if overlap / max(1, min(width, excluded_width)) >= min_overlap_ratio:
+            return True
+    return False
+
+
+def _safe_band_density_expanded_section(current_text: str, section: SectionUnit | None) -> SectionUnit | None:
+    if section is None:
+        return None
+    min_words = _safe_band_density_section_repair_min_section_words()
+    if section.word_count >= min_words:
+        return section
+    source = str(current_text or "")
+    if section.start_char < 0 or section.end_char <= section.start_char or section.end_char > len(source):
+        return section
+    delimiter = "\n\n" if "\n\n" in source else "\n"
+    max_words = _safe_band_density_section_repair_max_section_words()
+    end = section.end_char
+    best_end = end
+    while end < len(source):
+        while end < len(source) and source[end] in "\r\n":
+            end += 1
+        if end >= len(source):
+            break
+        next_boundary = source.find(delimiter, end)
+        candidate_end = len(source) if next_boundary < 0 else next_boundary
+        candidate_text = source[section.start_char:candidate_end]
+        candidate_words = word_count(candidate_text)
+        if candidate_words > max_words:
+            break
+        best_end = candidate_end
+        if candidate_words >= min_words:
+            break
+        if next_boundary < 0:
+            break
+        end = candidate_end + len(delimiter)
+    if best_end <= section.end_char:
+        return section
+    expanded_text = source[section.start_char:best_end]
+    return SectionUnit(
+        section_id=section.section_id,
+        heading=section.heading,
+        text=expanded_text,
+        start_char=section.start_char,
+        end_char=best_end,
+        paragraph_count=max(section.paragraph_count, expanded_text.count(delimiter) + 1),
+        word_count=word_count(expanded_text),
+        metadata={
+            **(section.metadata or {}),
+            "density_section_expanded": True,
+            "original_section_word_count": section.word_count,
+            "minimum_section_words": min_words,
+        },
+    )
+
+
+def _safe_band_density_segment_sort_key(segment: dict[str, Any]) -> tuple[float, ...]:
+    signal = segment.get("primary_signal") if isinstance(segment.get("primary_signal"), dict) else {}
+    score = _number(signal.get("score"))
+    user_input = str(segment.get("user_input_needed") or "").strip().casefold()
+    needs_author_gap = 0.0 if not user_input or user_input.startswith("none") else 1.0
+    lever = str(segment.get("lever") or "")
+    bucket = str(segment.get("bucket") or "")
+    signal_key = str(signal.get("key") or "")
+    structured_density_match = 1.0 if any(
+        value in {"reasoning_continuity", "structure_revision", "authorship_risk", "specificity", "domain_grounding"}
+        for value in (lever, bucket, signal_key)
+    ) else 0.0
+    return (
+        needs_author_gap,
+        structured_density_match,
+        score,
+        1.0 if str(signal.get("tier") or "").casefold() == "high" else 0.0,
+    )
+
+
+def _apply_safe_band_evidence_pack_variant(
+    *,
+    current_text: str,
+    sections: list[SectionUnit],
+    variant: dict[str, Any],
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    replacement_rows = variant.get("replacements") if isinstance(variant.get("replacements"), list) else []
+    replacement_by_id: dict[str, str] = {}
+    for row in replacement_rows:
+        if not isinstance(row, dict):
+            continue
+        section_id = str(row.get("section_id") or "").strip()
+        text = str(row.get("text") or "").strip()
+        if section_id and text and section_id not in replacement_by_id:
+            replacement_by_id[section_id] = text
+    partial_pack = variant.get("partial_pack") is True
+    required_ids = [
+        section.section_id
+        for section in sections
+        if not partial_pack or section.section_id in replacement_by_id
+    ]
+    missing = [section_id for section_id in required_ids if section_id not in replacement_by_id]
+    extra = sorted(set(replacement_by_id) - set(required_ids))
+    source = str(current_text or "")
+    materiality_rows: list[dict[str, Any]] = []
+    if missing or extra:
+        materiality = {
+            "passed": False,
+            "reason": "pack_replacement_section_mismatch",
+            "missing_section_ids": missing,
+            "extra_section_ids": extra,
+            "sections": materiality_rows,
+        }
+        return source, {
+            "applied": False,
+            "reason": "pack_replacement_section_mismatch",
+            "missing_section_ids": missing,
+            "extra_section_ids": extra,
+        }, materiality
+
+    candidate_text = source
+    applied: list[dict[str, Any]] = []
+    sections_to_apply = [section for section in sections if section.section_id in required_ids]
+    for section in sorted(sections_to_apply, key=lambda item: item.start_char, reverse=True):
+        replacement = replacement_by_id.get(section.section_id, "")
+        target_sentence = str((section.metadata or {}).get("target_sentence") or "")
+        if _section_uses_density_safe_band_contract(section):
+            materiality_row = _safe_band_density_section_repair_materiality(
+                source_text=section.text,
+                candidate_text=replacement,
+                target_sentence=target_sentence,
+            )
+            materiality_row["contract"] = "density_section_repair"
+        else:
+            materiality_row = _safe_band_evidence_repair_materiality(
+                source_text=section.text,
+                candidate_text=replacement,
+                target_sentence=target_sentence,
+            )
+            materiality_row["contract"] = "safe_band_evidence_repair"
+        if _candidate_contains_author_placeholder(replacement):
+            materiality_row = {
+                **materiality_row,
+                "passed": False,
+                "reason": "candidate_contains_author_placeholder",
+                "placeholder_audit": {
+                    "passed": False,
+                    "reason": "author_review_gap_written_into_candidate_text",
+                },
+            }
+        if _candidate_has_quote_integrity_issue(section.text, replacement):
+            materiality_row = {
+                **materiality_row,
+                "passed": False,
+                "reason": "candidate_quote_integrity_issue",
+                "quote_audit": {
+                    "passed": False,
+                    "reason": "candidate_introduced_unbalanced_double_quote",
+                },
+            }
+        materiality_row["section_id"] = section.section_id
+        materiality_rows.append(materiality_row)
+        if section.start_char < 0 or section.end_char <= section.start_char or section.end_char > len(candidate_text):
+            materiality = {
+                "passed": False,
+                "reason": "invalid_pack_section_offsets",
+                "sections": list(reversed(materiality_rows)),
+            }
+            return candidate_text, {"applied": False, "reason": "invalid_pack_section_offsets", "section_id": section.section_id}, materiality
+        if candidate_text[section.start_char:section.end_char] != section.text:
+            materiality = {
+                "passed": False,
+                "reason": "pack_section_slice_mismatch",
+                "sections": list(reversed(materiality_rows)),
+            }
+            return candidate_text, {"applied": False, "reason": "pack_section_slice_mismatch", "section_id": section.section_id}, materiality
+        candidate_text = candidate_text[:section.start_char] + replacement + candidate_text[section.end_char:]
+        applied.append({
+            "section_id": section.section_id,
+            "start_char": section.start_char,
+            "end_char": section.end_char,
+            "source_words": section.word_count,
+            "replacement_words": word_count(replacement),
+        })
+    materiality_rows = list(reversed(materiality_rows))
+    materiality = {
+        "passed": bool(materiality_rows) and all(row.get("passed") for row in materiality_rows),
+        "reason": (
+            "material_multi_section_pack"
+            if materiality_rows and all(row.get("passed") for row in materiality_rows)
+            else "one_or_more_pack_sections_near_copy"
+        ),
+        "section_count": len(sections_to_apply),
+        "requested_section_count": len(sections),
+        "partial_pack": partial_pack,
+        "sections": materiality_rows,
+    }
+    return candidate_text, {
+        "applied": materiality["passed"],
+        "scope": "safe_band_evidence_pack",
+        "section_count": len(sections),
+        "applied_sections": list(reversed(applied)),
+        "source_words": word_count(source),
+        "candidate_words": word_count(candidate_text),
+        **({} if materiality["passed"] else {"reason": materiality["reason"]}),
+    }, materiality
+
+
+def _candidate_contains_author_placeholder(text: str) -> bool:
+    candidate = str(text or "")
+    if not candidate.strip():
+        return False
+    return bool(re.search(
+        r"\[(?:needs_author|author|verify|insert|todo|tbd)[^\[\]]*\]|\b(?:TODO|TBD)\b|<[^<>]+>",
+        candidate,
+        re.IGNORECASE,
+    ))
+
+
+def _candidate_has_quote_integrity_issue(source_text: str, candidate_text: str) -> bool:
+    source_count = _normalized_double_quote_count(source_text)
+    candidate_count = _normalized_double_quote_count(candidate_text)
+    if candidate_count % 2 == 0:
+        return False
+    if source_count % 2 != 0:
+        return False
+    return True
+
+
+def _normalized_double_quote_count(text: str) -> int:
+    value = str(text or "").replace("“", '"').replace("”", '"')
+    return value.count('"')
+
+
+def _safe_band_evidence_pack_composite_variant(
+    *,
+    sections: list[SectionUnit],
+    variants: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not sections or not variants:
+        return None
+    replacements_by_variant: list[dict[str, str]] = []
+    variant_by_id: dict[str, dict[str, Any]] = {}
+    for index, variant in enumerate(variants, start=1):
+        if not isinstance(variant, dict):
+            continue
+        variant_id = str(variant.get("variant_id") or f"v{index}")
+        variant_by_id[variant_id] = variant
+        rows = variant.get("replacements") if isinstance(variant.get("replacements"), list) else []
+        replacement_by_id: dict[str, str] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            section_id = str(row.get("section_id") or "").strip()
+            text = str(row.get("text") or "").strip()
+            if section_id and text and section_id not in replacement_by_id:
+                replacement_by_id[section_id] = text
+        replacements_by_variant.append({"variant_id": variant_id, **replacement_by_id})
+
+    selected: list[dict[str, str]] = []
+    selected_variant_ids: list[str] = []
+    for section in sections:
+        target_sentence = str((section.metadata or {}).get("target_sentence") or "")
+        candidates: list[tuple[tuple[float, ...], str, str]] = []
+        for row in replacements_by_variant:
+            variant_id = str(row.get("variant_id") or "")
+            replacement = str(row.get(section.section_id) or "").strip()
+            if not replacement:
+                continue
+            materiality = _safe_band_evidence_repair_materiality(
+                source_text=section.text,
+                candidate_text=replacement,
+                target_sentence=target_sentence,
+            )
+            if not materiality.get("passed"):
+                continue
+            length_ratio = word_count(replacement) / max(1, section.word_count)
+            candidates.append((
+                (
+                    _number(materiality.get("changed_sentence_count")),
+                    1.0 if materiality.get("target_sentence_changed") else 0.0,
+                    -abs(1.0 - length_ratio),
+                ),
+                variant_id,
+                replacement,
+            ))
+        if not candidates:
+            return None
+        _key, variant_id, replacement = max(candidates, key=lambda item: item[0])
+        selected.append({"section_id": section.section_id, "text": replacement})
+        selected_variant_ids.append(variant_id)
+
+    provenance: list[dict[str, Any]] = []
+    review_items: list[dict[str, Any]] = []
+    for variant_id in selected_variant_ids:
+        variant = variant_by_id.get(variant_id) or {}
+        provenance.extend(_author_proxy_item_list(variant.get("author_proxy_provenance"), limit=4))
+        review_items.extend(_author_proxy_item_list(variant.get("author_review_items"), limit=4))
+    return {
+        "variant_id": "composite_material_pack",
+        "replacements": selected,
+        "source_variant_ids": selected_variant_ids,
+        "author_proxy_provenance": _dedupe_author_proxy_items(provenance, limit=4),
+        "author_review_items": _dedupe_author_proxy_items(review_items, limit=4),
+    }
+
+
+def _safe_band_evidence_pack_partial_material_variant(
+    *,
+    sections: list[SectionUnit],
+    variants: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not sections or not variants:
+        return None
+    variant_by_id: dict[str, dict[str, Any]] = {}
+    replacements_by_variant: list[dict[str, str]] = []
+    for index, variant in enumerate(variants, start=1):
+        if not isinstance(variant, dict):
+            continue
+        variant_id = str(variant.get("variant_id") or f"v{index}")
+        variant_by_id[variant_id] = variant
+        replacements: dict[str, str] = {"variant_id": variant_id}
+        for row in variant.get("replacements") if isinstance(variant.get("replacements"), list) else []:
+            if not isinstance(row, dict):
+                continue
+            section_id = str(row.get("section_id") or "").strip()
+            text = str(row.get("text") or "").strip()
+            if section_id and text and section_id not in replacements:
+                replacements[section_id] = text
+        replacements_by_variant.append(replacements)
+
+    selected: list[dict[str, str]] = []
+    selected_variant_ids: list[str] = []
+    density_selected = 0
+    for section in sections:
+        target_sentence = str((section.metadata or {}).get("target_sentence") or "")
+        candidates: list[tuple[tuple[float, ...], str, str]] = []
+        density_contract = _section_uses_density_safe_band_contract(section)
+        for row in replacements_by_variant:
+            variant_id = str(row.get("variant_id") or "")
+            replacement = str(row.get(section.section_id) or "").strip()
+            if not replacement:
+                continue
+            materiality = (
+                _safe_band_density_section_repair_materiality(
+                    source_text=section.text,
+                    candidate_text=replacement,
+                    target_sentence=target_sentence,
+                )
+                if density_contract
+                else _safe_band_evidence_repair_materiality(
+                    source_text=section.text,
+                    candidate_text=replacement,
+                    target_sentence=target_sentence,
+                )
+            )
+            if not materiality.get("passed"):
+                continue
+            length_ratio = word_count(replacement) / max(1, section.word_count)
+            candidates.append((
+                (
+                    1.0 if density_contract else 0.0,
+                    _number(materiality.get("changed_sentence_count")),
+                    1.0 if materiality.get("target_sentence_changed") else 0.0,
+                    -abs(1.0 - length_ratio),
+                ),
+                variant_id,
+                replacement,
+            ))
+        if not candidates:
+            continue
+        _key, variant_id, replacement = max(candidates, key=lambda item: item[0])
+        selected.append({"section_id": section.section_id, "text": replacement})
+        selected_variant_ids.append(variant_id)
+        if density_contract:
+            density_selected += 1
+
+    if len(selected) < _safe_band_evidence_pack_partial_min_sections() or density_selected <= 0:
+        return None
+
+    provenance: list[dict[str, Any]] = []
+    review_items: list[dict[str, Any]] = []
+    for variant_id in selected_variant_ids:
+        variant = variant_by_id.get(variant_id) or {}
+        provenance.extend(_author_proxy_item_list(variant.get("author_proxy_provenance"), limit=4))
+        review_items.extend(_author_proxy_item_list(variant.get("author_review_items"), limit=4))
+    return {
+        "variant_id": "partial_material_pack",
+        "partial_pack": True,
+        "replacements": selected,
+        "source_variant_ids": selected_variant_ids,
+        "author_proxy_provenance": _dedupe_author_proxy_items(provenance, limit=4),
+        "author_review_items": _dedupe_author_proxy_items(review_items, limit=4),
+    }
+
+
+def _score_safe_band_evidence_pack_section_probes(
+    *,
+    original_text: str,
+    baseline_report: dict[str, Any],
+    baseline_scores: dict[str, Any],
+    current_text: str,
+    current_scores: dict[str, Any],
+    sections: list[SectionUnit],
+    variants: list[dict[str, Any]],
+    output_dir: Path,
+    author_proxy_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    probe_variants = _safe_band_evidence_pack_section_probe_variants(
+        sections=sections,
+        variants=variants,
+    )
+    return [
+        _score_safe_band_evidence_pack_variant(
+            original_text=original_text,
+            baseline_report=baseline_report,
+            baseline_scores=baseline_scores,
+            current_text=current_text,
+            current_scores=current_scores,
+            sections=sections,
+            variant=variant,
+            output_dir=output_dir,
+            label=f"safe_band_evidence_pack_{variant.get('variant_id')}",
+            author_proxy_context=author_proxy_context,
+        )
+        for variant in probe_variants
+    ]
+
+
+def _safe_band_evidence_pack_section_probe_variants(
+    *,
+    sections: list[SectionUnit],
+    variants: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not sections or not variants:
+        return []
+    section_by_id = {section.section_id: section for section in sections}
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add_probe(section_id: str, replacement: str, variant: dict[str, Any], variant_id: str, *, suffix: str = "") -> None:
+        signature = (section_id, " ".join(replacement.split()))
+        if signature in seen:
+            return
+        seen.add(signature)
+        probe_id = f"section_probe_{_safe_token(section_id)}_{_safe_token(variant_id)}{suffix}"
+        rows.append({
+            "variant_id": probe_id,
+            "partial_pack": True,
+            "section_probe": {
+                "section_id": section_id,
+                "source_variant_id": variant_id,
+                **({"normalized": True} if suffix else {}),
+            },
+            "replacements": [{"section_id": section_id, "text": replacement}],
+            "source_variant_ids": [variant_id],
+            "author_proxy_provenance": _author_proxy_item_list(variant.get("author_proxy_provenance"), limit=4),
+            "author_review_items": _author_proxy_item_list(variant.get("author_review_items"), limit=4),
+        })
+
+    for variant_index, variant in enumerate(variants, start=1):
+        if not isinstance(variant, dict):
+            continue
+        variant_id = str(variant.get("variant_id") or f"v{variant_index}")
+        for row in variant.get("replacements") if isinstance(variant.get("replacements"), list) else []:
+            if not isinstance(row, dict):
+                continue
+            section_id = str(row.get("section_id") or "").strip()
+            replacement = str(row.get("text") or "").strip()
+            section = section_by_id.get(section_id)
+            if section is None or not replacement:
+                continue
+            add_probe(section_id, replacement, variant, variant_id)
+            normalized = _safe_band_density_length_normalized_replacement(section, replacement)
+            if normalized and " ".join(normalized.split()) != " ".join(replacement.split()):
+                add_probe(section_id, normalized, variant, variant_id, suffix="_length_normalized")
+    return rows
+
+
+def _safe_band_density_length_normalized_replacement(section: SectionUnit, replacement: str) -> str:
+    if not _section_uses_density_safe_band_contract(section):
+        return ""
+    target_sentence = str((section.metadata or {}).get("target_sentence") or "")
+    source_text = str(section.text or "")
+    candidate = str(replacement or "").strip()
+    if not source_text.strip() or not candidate:
+        return ""
+    materiality = _safe_band_density_section_repair_materiality(
+        source_text=source_text,
+        candidate_text=candidate,
+        target_sentence=target_sentence,
+    )
+    if materiality.get("passed"):
+        return ""
+    source_words = max(1, word_count(source_text))
+    min_words = max(1, round(source_words * _safe_band_density_section_repair_min_word_ratio_for_text(source_text)))
+    max_words = max(1, round(source_words * _safe_band_density_section_repair_max_word_ratio()))
+    if word_count(candidate) <= max_words:
+        return ""
+    sentences = [sentence.strip() for sentence in _sentences(candidate) if sentence.strip()]
+    if len(sentences) < 2:
+        return ""
+
+    current = sentences
+    visited = {" ".join(current)}
+    best_text = ""
+    best_key: tuple[float, ...] | None = None
+    while len(current) > 1:
+        options: list[tuple[tuple[float, ...], list[str], str, dict[str, Any]]] = []
+        for index in range(len(current)):
+            removed_sentence = current[index]
+            trial_sentences = [sentence for pos, sentence in enumerate(current) if pos != index]
+            trial_signature = " ".join(trial_sentences)
+            if trial_signature in visited:
+                continue
+            trial_text = " ".join(trial_sentences).strip()
+            trial_words = word_count(trial_text)
+            if trial_words < min_words:
+                continue
+            trial_materiality = _safe_band_density_section_repair_materiality(
+                source_text=source_text,
+                candidate_text=trial_text,
+                target_sentence=target_sentence,
+            )
+            over_budget = max(0, trial_words - max_words)
+            removed_source_overlap = _safe_band_token_overlap_ratio(removed_sentence, source_text)
+            key = (
+                1.0 if trial_materiality.get("passed") else 0.0,
+                1.0 if trial_words <= max_words else 0.0,
+                _number(trial_materiality.get("changed_sentence_count")),
+                1.0 if trial_materiality.get("target_sentence_changed") else 0.0,
+                1.0 if (trial_materiality.get("repetition_audit") or {}).get("passed") else 0.0,
+                1.0 if (trial_materiality.get("voice_audit") or {}).get("passed") else 0.0,
+                -removed_source_overlap,
+                -float(over_budget),
+                -abs(float(trial_words - source_words)),
+            )
+            options.append((key, trial_sentences, trial_text, trial_materiality))
+        if not options:
+            break
+        key, current, text, trial_materiality = max(options, key=lambda item: item[0])
+        visited.add(" ".join(current))
+        if best_key is None or key > best_key:
+            best_key = key
+            best_text = text
+        if trial_materiality.get("passed"):
+            return text
+    return best_text if best_key and best_key[0] > 0 else ""
+
+
+def _safe_band_evidence_pack_scored_section_composite_variant(
+    rows: list[dict[str, Any]],
+    *,
+    current_scores: dict[str, Any],
+) -> dict[str, Any] | None:
+    eligible = [
+        row
+        for row in rows
+        if _has_safe_band_evidence_repair_movement(row, current_scores=current_scores)
+        or _safe_band_evidence_pack_section_safe_for_composition(row)
+    ]
+    if not eligible:
+        return None
+
+    best_by_section: dict[str, dict[str, Any]] = {}
+    for row in eligible:
+        section_id = _safe_band_evidence_pack_row_single_section_id(row)
+        if not section_id:
+            continue
+        existing = best_by_section.get(section_id)
+        if existing is None or _safe_band_evidence_repair_sort_key(row, current_scores=current_scores) > _safe_band_evidence_repair_sort_key(existing, current_scores=current_scores):
+            best_by_section[section_id] = row
+    if not best_by_section:
+        return None
+
+    replacements: list[dict[str, str]] = []
+    source_variant_ids: list[str] = []
+    provenance: list[dict[str, Any]] = []
+    review_items: list[dict[str, Any]] = []
+    for section_id, row in best_by_section.items():
+        replacement = str(row.get("text") or "").strip()
+        if not replacement:
+            continue
+        replacements.append({"section_id": section_id, "text": replacement})
+        source_variant_ids.append(str(row.get("variant_id") or section_id))
+        provenance.extend(_author_proxy_item_list(row.get("author_proxy_provenance"), limit=4))
+        review_items.extend(_author_proxy_item_list(row.get("author_review_items"), limit=4))
+    if not replacements:
+        return None
+    return {
+        "variant_id": "scored_section_composite",
+        "partial_pack": True,
+        "replacements": replacements,
+        "source_variant_ids": source_variant_ids,
+        "author_proxy_provenance": _dedupe_author_proxy_items(provenance, limit=4),
+        "author_review_items": _dedupe_author_proxy_items(review_items, limit=4),
+    }
+
+
+def _safe_band_evidence_pack_section_safe_for_composition(row: dict[str, Any]) -> bool:
+    if not (row.get("apply_status") or {}).get("applied"):
+        return False
+    if not _author_proxy_candidate_auto_finalizable(row):
+        return False
+    materiality = row.get("safe_band_evidence_pack_materiality")
+    if not isinstance(materiality, dict) or not materiality.get("passed"):
+        return False
+    quality = row.get("safe_band_quality_materiality") if isinstance(row.get("safe_band_quality_materiality"), dict) else {}
+    if quality and not quality.get("passed"):
+        return False
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    if _number(incremental.get("unsafe_cluster_count_delta")) < 0:
+        return False
+    if _number(incremental.get("unsafe_word_ratio_delta")) < -_safe_band_evidence_repair_unsafe_word_ratio_regression_tolerance():
+        return False
+    if _number(incremental.get("risky_window_count_delta")) < 0:
+        return False
+    if (
+        _number(incremental.get("topk_calibrated_risk_delta")) < -_safe_band_density_checkpoint_topk_regression_tolerance()
+        and not _candidate_topk_calibrated_safe(row)
+    ):
+        return False
+    if _number(incremental.get("ai_delta")) < -_safe_band_density_checkpoint_ai_regression_tolerance():
+        return False
+    if not _density_checkpoint_authorship_bounds_ok(row, incremental=incremental):
+        return False
+    return (
+        _number(incremental.get("qualifying_text_ai_density_delta")) > 0
+        or _number(incremental.get("topk_calibrated_risk_delta")) > 0
+        or _number(incremental.get("ai_delta")) > 0
+    )
+
+
+def _safe_band_evidence_pack_row_single_section_id(row: dict[str, Any]) -> str:
+    probe = row.get("section_probe") if isinstance(row.get("section_probe"), dict) else {}
+    section_id = str(probe.get("section_id") or "").strip()
+    if section_id:
+        return section_id
+    apply_status = row.get("apply_status") if isinstance(row.get("apply_status"), dict) else {}
+    applied = apply_status.get("applied_sections") if isinstance(apply_status.get("applied_sections"), list) else []
+    if len(applied) == 1 and isinstance(applied[0], dict):
+        return str(applied[0].get("section_id") or "").strip()
+    return ""
+
+
+def _safe_token(value: Any) -> str:
+    token = re.sub(r"[^a-zA-Z0-9_]+", "_", str(value or "")).strip("_")
+    return token or "item"
+
+
+def _safe_band_token_overlap_ratio(text: str, reference: str) -> float:
+    tokens = set(_normalized_word_tokens(text))
+    if not tokens:
+        return 0.0
+    reference_tokens = set(_normalized_word_tokens(reference))
+    if not reference_tokens:
+        return 0.0
+    return len(tokens & reference_tokens) / max(1, len(tokens))
+
+
+def _dedupe_author_proxy_items(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = (
+            str(item.get("provenance") or ""),
+            str(item.get("target_text") or ""),
+            str(item.get("generated_text") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+        if len(deduped) >= max(1, int(limit or 1)):
+            break
+    return deduped
+
+
+def _sanitize_safe_band_evidence_pack_variants(
+    value: Any,
+    *,
+    sections: list[SectionUnit],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    section_ids = {section.section_id for section in sections}
+    rows: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for index, item in enumerate(value if isinstance(value, list) else [], start=1):
+        if not isinstance(item, dict):
+            rejected.append({"index": index, "reason": "variant_not_object"})
+            continue
+        variant_id = str(item.get("variant_id") or f"v{index}")[:80]
+        replacements: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for replacement in item.get("replacements") if isinstance(item.get("replacements"), list) else []:
+            if not isinstance(replacement, dict):
+                continue
+            section_id = str(replacement.get("section_id") or "").strip()
+            text = str(replacement.get("text") or "").strip()
+            if section_id not in section_ids or section_id in seen or not text:
+                continue
+            integrity = minimal_replacement_text_integrity(text)
+            if not integrity.get("passed"):
+                rejected.append({
+                    "index": index,
+                    "variant_id": variant_id,
+                    "section_id": section_id,
+                    "reason": "replacement_text_integrity_failed",
+                    "text_integrity": integrity,
+                })
+                continue
+            replacements.append({"section_id": section_id, "text": text})
+            seen.add(section_id)
+        if set(seen) != section_ids:
+            rejected.append({
+                "index": index,
+                "variant_id": variant_id,
+                "reason": "missing_required_replacements",
+                "missing_section_ids": sorted(section_ids - seen),
+            })
+            continue
+        rows.append({
+            "variant_id": variant_id,
+            "replacements": replacements,
+            "author_proxy_provenance": _author_proxy_item_list(item.get("author_proxy_provenance")),
+            "author_review_items": _author_proxy_item_list(item.get("author_review_items")),
+        })
+    return rows, {"valid_variant_count": len(rows), "rejected": rejected}
+
+
+def _sanitize_safe_band_author_proxy_revision_plan(
+    value: Any,
+    *,
+    sections: list[SectionUnit],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None, {"reason": "plan_not_object"}
+    section_ids = [section.section_id for section in sections]
+    section_id_set = set(section_ids)
+    ledger = value.get("evidence_ledger") if isinstance(value.get("evidence_ledger"), dict) else {}
+    ledger_sections_raw = ledger.get("sections") if isinstance(ledger.get("sections"), list) else []
+    ledger_sections: list[dict[str, Any]] = []
+    seen_ledger: set[str] = set()
+    rejected: list[dict[str, Any]] = []
+
+    def text_list(row: dict[str, Any], key: str, *, limit: int = 8, item_limit: int = 500) -> list[str]:
+        items: list[str] = []
+        for item in row.get(key) if isinstance(row.get(key), list) else []:
+            text = str(item or "").strip()
+            if text and text not in items:
+                items.append(text[:item_limit])
+            if len(items) >= limit:
+                break
+        return items
+
+    for index, row in enumerate(ledger_sections_raw, start=1):
+        if not isinstance(row, dict):
+            rejected.append({"index": index, "reason": "ledger_section_not_object"})
+            continue
+        section_id = str(row.get("section_id") or "").strip()
+        if section_id not in section_id_set or section_id in seen_ledger:
+            rejected.append({"index": index, "section_id": section_id, "reason": "ledger_section_id_invalid_or_duplicate"})
+            continue
+        seen_ledger.add(section_id)
+        ledger_sections.append({
+            "section_id": section_id,
+            "author_owned_evidence": text_list(row, "author_owned_evidence"),
+            "weak_or_generic_claims": text_list(row, "weak_or_generic_claims"),
+            "protected_anchors": text_list(row, "protected_anchors"),
+            "author_review_gaps": text_list(row, "author_review_gaps"),
+        })
+
+    plan_raw = value.get("revision_plan") if isinstance(value.get("revision_plan"), list) else []
+    plan_rows: list[dict[str, Any]] = []
+    seen_plan: set[str] = set()
+    for index, row in enumerate(plan_raw, start=1):
+        if not isinstance(row, dict):
+            rejected.append({"index": index, "reason": "revision_plan_row_not_object"})
+            continue
+        section_id = str(row.get("section_id") or "").strip()
+        if section_id not in section_id_set or section_id in seen_plan:
+            rejected.append({"index": index, "section_id": section_id, "reason": "plan_section_id_invalid_or_duplicate"})
+            continue
+        seen_plan.add(section_id)
+        plan_rows.append({
+            "section_id": section_id,
+            "section_job": str(row.get("section_job") or "")[:500],
+            "required_moves": text_list(row, "required_moves", limit=10),
+            "sentences_to_rebuild": text_list(row, "sentences_to_rebuild", limit=8),
+            "claim_narrowing": text_list(row, "claim_narrowing", limit=6),
+            "materiality_requirement": str(row.get("materiality_requirement") or "")[:500],
+            "author_review_items": text_list(row, "author_review_items", limit=8),
+        })
+
+    missing_ledger = [section_id for section_id in section_ids if section_id not in seen_ledger]
+    missing_plan = [section_id for section_id in section_ids if section_id not in seen_plan]
+    if missing_ledger or missing_plan:
+        return None, {
+            "reason": "plan_missing_required_sections",
+            "missing_ledger_section_ids": missing_ledger,
+            "missing_plan_section_ids": missing_plan,
+            "rejected": rejected,
+        }
+    return {
+        "schema_version": "safe_band_author_proxy_revision_plan.v1",
+        "evidence_ledger": {"sections": ledger_sections},
+        "revision_plan": plan_rows,
+    }, {
+        "valid_ledger_section_count": len(ledger_sections),
+        "valid_revision_plan_count": len(plan_rows),
+        "rejected": rejected,
+    }
+
+
+def _safe_band_author_proxy_revision_plan_response_format(section_count: int) -> dict[str, Any]:
+    text_array_schema = {
+        "type": "array",
+        "items": {"type": "string"},
+        "minItems": 0,
+        "maxItems": 10,
+    }
+    ledger_section_schema = {
+        "type": "object",
+        "properties": {
+            "section_id": {"type": "string"},
+            "author_owned_evidence": text_array_schema,
+            "weak_or_generic_claims": text_array_schema,
+            "protected_anchors": text_array_schema,
+            "author_review_gaps": text_array_schema,
+        },
+        "required": [
+            "section_id",
+            "author_owned_evidence",
+            "weak_or_generic_claims",
+            "protected_anchors",
+            "author_review_gaps",
+        ],
+        "additionalProperties": False,
+    }
+    plan_row_schema = {
+        "type": "object",
+        "properties": {
+            "section_id": {"type": "string"},
+            "section_job": {"type": "string"},
+            "required_moves": text_array_schema,
+            "sentences_to_rebuild": text_array_schema,
+            "claim_narrowing": text_array_schema,
+            "materiality_requirement": {"type": "string"},
+            "author_review_items": text_array_schema,
+        },
+        "required": [
+            "section_id",
+            "section_job",
+            "required_moves",
+            "sentences_to_rebuild",
+            "claim_narrowing",
+            "materiality_requirement",
+            "author_review_items",
+        ],
+        "additionalProperties": False,
+    }
+    count = max(1, int(section_count or 1))
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "safe_band_author_proxy_revision_plan",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "evidence_ledger": {
+                        "type": "object",
+                        "properties": {
+                            "sections": {
+                                "type": "array",
+                                "items": ledger_section_schema,
+                                "minItems": count,
+                                "maxItems": count,
+                            }
+                        },
+                        "required": ["sections"],
+                        "additionalProperties": False,
+                    },
+                    "revision_plan": {
+                        "type": "array",
+                        "items": plan_row_schema,
+                        "minItems": count,
+                        "maxItems": count,
+                    },
+                },
+                "required": ["evidence_ledger", "revision_plan"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _safe_band_evidence_pack_response_format(
+    variant_count: int,
+    section_count: int,
+    *,
+    include_author_proxy_fields: bool,
+) -> dict[str, Any]:
+    replacement_schema = {
+        "type": "object",
+        "properties": {
+            "section_id": {"type": "string"},
+            "text": {"type": "string"},
+        },
+        "required": ["section_id", "text"],
+        "additionalProperties": False,
+    }
+    variant_properties: dict[str, Any] = {
+        "variant_id": {"type": "string"},
+        "replacements": {
+            "type": "array",
+            "items": replacement_schema,
+            "minItems": max(1, int(section_count or 1)),
+            "maxItems": max(1, int(section_count or 1)),
+        },
+    }
+    required = ["variant_id", "replacements"]
+    if include_author_proxy_fields:
+        item_schema = {
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "string"},
+                "provenance": {"type": "string"},
+                "target_text": {"type": "string"},
+                "generated_text": {"type": "string"},
+                "user_input_needed": {"type": "string"},
+                "author_task": {"type": "string"},
+            },
+            "required": ["item_id", "provenance", "target_text", "generated_text", "user_input_needed", "author_task"],
+            "additionalProperties": False,
+        }
+        variant_properties["author_proxy_provenance"] = {"type": "array", "items": item_schema, "minItems": 0, "maxItems": 4}
+        variant_properties["author_review_items"] = {"type": "array", "items": item_schema, "minItems": 0, "maxItems": 4}
+        required.extend(["author_proxy_provenance", "author_review_items"])
+    variant_schema = {
+        "type": "object",
+        "properties": variant_properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+    count = max(1, min(5, int(variant_count or 1)))
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "safe_band_evidence_pack_variants",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "variants": {
+                        "type": "array",
+                        "items": variant_schema,
+                        "minItems": count,
+                        "maxItems": count,
+                    }
+                },
+                "required": ["variants"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _safe_band_evidence_composite_section(current_text: str, sections: list[SectionUnit]) -> SectionUnit | None:
+    unique = sorted(
+        {
+            (section.start_char, section.end_char): section
+            for section in sections
+            if isinstance(section, SectionUnit)
+        }.values(),
+        key=lambda section: section.start_char,
+    )
+    if len(unique) < 2:
+        return None
+    start = min(section.start_char for section in unique)
+    end = max(section.end_char for section in unique)
+    if start < 0 or end <= start or end > len(current_text):
+        return None
+    text = current_text[start:end]
+    if not text.strip():
+        return None
+    max_words = _safe_band_evidence_repair_composite_max_words()
+    if word_count(text) > max_words:
+        return None
+    delimiter = "\n\n" if "\n\n" in text else "\n"
+    scanner_focus = [
+        (section.metadata or {}).get("scanner_focus")
+        for section in unique
+        if isinstance((section.metadata or {}).get("scanner_focus"), dict)
+    ]
+    first = unique[0]
+    last = unique[-1]
+    return SectionUnit(
+        section_id=f"safe_band_evidence_repair_window_{first.section_id}_{last.section_id}",
+        heading="Safe-band evidence repair window",
+        text=text,
+        start_char=start,
+        end_char=end,
+        paragraph_count=max(1, text.count(delimiter) + 1),
+        word_count=word_count(text),
+        metadata={
+            "unit_type": "safe_band_evidence_repair_composite_window",
+            "selection_reason": "composite_top_safe_band_sections",
+            "paragraph_delimiter": "blank_line" if delimiter == "\n\n" else "single_newline",
+            "target_sentence": str((first.metadata or {}).get("target_sentence") or ""),
+            "target_sections": [section.to_dict() for section in unique],
+            "scanner_focus": {"sections": scanner_focus},
+            "before_context": current_text[max(0, start - 420):start],
+            "after_context": current_text[end:min(len(current_text), end + 420)],
+        },
+    )
+
+
+def _first_unique_sections(sections: list[SectionUnit], *, limit: int) -> list[SectionUnit]:
+    selected: list[SectionUnit] = []
+    seen: set[tuple[int, int]] = set()
+    for section in sections:
+        signature = (section.start_char, section.end_char)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        selected.append(section)
+        if len(selected) >= max(1, int(limit or 1)):
+            break
+    return selected
+
+
+def _section_from_paragraph_containing_text(
+    current_text: str,
+    needle: str,
+    *,
+    section_id: str,
+    selection_reason: str,
+    scanner_focus: dict[str, Any],
+) -> SectionUnit | None:
+    source = str(current_text or "")
+    target = str(needle or "").strip()
+    if not source or not target:
+        return None
+    offset = source.find(target)
+    if offset < 0:
+        return None
+    delimiter = "\n\n" if "\n\n" in source else "\n"
+    start = source.rfind(delimiter, 0, offset)
+    start = 0 if start < 0 else start + len(delimiter)
+    end = source.find(delimiter, offset + len(target))
+    end = len(source) if end < 0 else end
+    while start < end and source[start] in "\r\n":
+        start += 1
+    while end > start and source[end - 1] in "\r\n":
+        end -= 1
+    paragraph = source[start:end]
+    if not paragraph.strip():
+        return None
+    paragraph_index = source[:start].count("\n\n") + 1
+    return SectionUnit(
+        section_id=section_id,
+        heading="Safe-band evidence repair",
+        text=paragraph,
+        start_char=start,
+        end_char=end,
+        paragraph_count=max(1, paragraph.count("\n\n") + 1),
+        word_count=word_count(paragraph),
+        metadata={
+            "unit_type": "safe_band_evidence_repair_paragraph",
+            "paragraph_index": paragraph_index if delimiter == "\n\n" else source[:start].count("\n") + 1,
+            "paragraph_delimiter": "blank_line" if delimiter == "\n\n" else "single_newline",
+            "target_sentence": target,
+            "selection_reason": selection_reason,
+            "scanner_focus": scanner_focus,
+            "before_context": source[max(0, start - 420):start],
+            "after_context": source[end:min(len(source), end + 420)],
+        },
+    )
+
+
+def _safe_band_evidence_repair_should_run(*, current_scores: dict[str, Any], current_goal: dict[str, Any]) -> bool:
+    if not _safe_band_evidence_repair_enabled():
+        return False
+    if _candidate_strict_safe_band_achieved({"candidate_goal": current_goal, "scores": current_scores}):
+        return False
+    return _safe_band_gap_for_scores(current_scores, current_goal) > 0
+
+
+def _safe_band_density_section_repair_should_run(*, current_scores: dict[str, Any], current_goal: dict[str, Any]) -> bool:
+    if not _safe_band_density_section_repair_enabled():
+        return False
+    if _candidate_strict_safe_band_achieved({"candidate_goal": current_goal, "scores": current_scores}):
+        return False
+    contract = _safe_band_kpi_contract(current_scores, current_goal)
+    gaps = contract.get("gaps") if isinstance(contract.get("gaps"), dict) else {}
+    if _number(gaps.get("qualifying_text_ai_density")) <= 0:
+        return False
+    if _number(gaps.get("topk_calibrated_risk")) > _safe_band_density_section_repair_max_topk_gap():
+        return False
+    if _number(current_scores.get("unsafe_cluster_count")) > 0:
+        return False
+    if _number(current_scores.get("risky_window_count")) > 0:
+        return False
+    remaining = contract.get("remaining_ai_footprint_drivers") if isinstance(contract.get("remaining_ai_footprint_drivers"), list) else []
+    max_topk_gap = _safe_band_density_section_repair_max_topk_gap()
+    non_density_blockers = [
+        item
+        for item in remaining
+        if isinstance(item, dict)
+        and str(item.get("driver") or "") != "qualifying_text_ai_density"
+        and _number(item.get("value")) > _number(item.get("safe_band"))
+        and not (
+            str(item.get("driver") or "") == "topk_calibrated_risk"
+            and max(0.0, _number(item.get("value")) - _number(item.get("safe_band"))) <= max_topk_gap
+        )
+    ]
+    return not non_density_blockers
+
+
+def _safe_band_density_first_repair_should_run(*, current_scores: dict[str, Any], current_goal: dict[str, Any]) -> bool:
+    return _bool_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_FIRST_REPAIR",
+        True,
+    ) and _safe_band_density_section_repair_should_run(
+        current_scores=current_scores,
+        current_goal=current_goal,
+    )
+
+
+def _safe_band_density_section_repair_max_topk_gap() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_MAX_TOPK_GAP",
+        1.0,
+        minimum=0.0,
+        maximum=10.0,
+    )
+
+
+def _safe_band_gap_for_scores(current_scores: dict[str, Any], current_goal: dict[str, Any] | None = None) -> float:
+    contract = _safe_band_kpi_contract(current_scores, current_goal)
+    gaps = contract.get("gaps") if isinstance(contract.get("gaps"), dict) else {}
+    return round(sum(max(0.0, _number(value)) for value in gaps.values()), 3)
+
+
+def _best_safe_band_evidence_repair_candidate(
+    rows: list[dict[str, Any]],
+    *,
+    current_scores: dict[str, Any],
+) -> dict[str, Any] | None:
+    eligible = [
+        row
+        for row in rows
+        if (row.get("apply_status") or {}).get("applied")
+        and _author_proxy_candidate_auto_finalizable(row)
+    ]
+    if not eligible:
+        return None
+    accepted = [row for row in eligible if _has_safe_band_evidence_repair_movement(row, current_scores=current_scores)]
+    if accepted:
+        return max(accepted, key=lambda row: _safe_band_evidence_repair_sort_key(row, current_scores=current_scores))
+    return max(eligible, key=lambda row: _safe_band_evidence_repair_sort_key(row, current_scores=current_scores))
+
+
+def _best_safe_band_density_section_candidate(
+    rows: list[dict[str, Any]],
+    *,
+    current_scores: dict[str, Any],
+) -> dict[str, Any] | None:
+    eligible = [
+        row
+        for row in rows
+        if (row.get("apply_status") or {}).get("applied")
+        and _author_proxy_candidate_auto_finalizable(row)
+    ]
+    if not eligible:
+        return None
+    accepted = [row for row in eligible if _has_density_safe_band_checkpoint_movement(row, current_scores=current_scores)]
+    if accepted:
+        return max(accepted, key=lambda row: _safe_band_evidence_repair_sort_key(row, current_scores=current_scores))
+    return max(eligible, key=lambda row: _safe_band_evidence_repair_sort_key(row, current_scores=current_scores))
+
+
+def _has_safe_band_evidence_repair_movement(
+    row: dict[str, Any],
+    *,
+    current_scores: dict[str, Any],
+) -> bool:
+    if not (row.get("apply_status") or {}).get("applied"):
+        return False
+    if not _author_proxy_candidate_auto_finalizable(row):
+        return False
+    materiality = row.get("safe_band_evidence_materiality") if isinstance(row.get("safe_band_evidence_materiality"), dict) else {}
+    if materiality and not materiality.get("passed"):
+        return False
+    quality = row.get("safe_band_quality_materiality") if isinstance(row.get("safe_band_quality_materiality"), dict) else {}
+    if quality and not quality.get("passed"):
+        return False
+    if _has_density_safe_band_checkpoint_movement(row, current_scores=current_scores):
+        return True
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    if _number(incremental.get("ai_delta")) < _safe_band_evidence_repair_min_ai_delta():
+        return False
+    if _number(incremental.get("ai_authorship_delta")) < _safe_band_evidence_repair_min_authorship_delta():
+        return False
+    if _number(incremental.get("unsafe_cluster_count_delta")) < 0:
+        return False
+    if _number(incremental.get("unsafe_word_ratio_delta")) < -_safe_band_evidence_repair_unsafe_word_ratio_regression_tolerance():
+        return False
+    if _number(incremental.get("risky_window_count_delta")) < 0:
+        return False
+    if _candidate_strict_safe_band_achieved(row):
+        return True
+    current_gap = _safe_band_gap_for_scores(current_scores)
+    candidate_gap = _candidate_safe_band_gap(row)
+    if current_gap - candidate_gap >= _safe_band_evidence_repair_min_gap_delta():
+        return True
+    return False
+
+
+def _has_density_safe_band_checkpoint_movement(
+    row: dict[str, Any],
+    *,
+    current_scores: dict[str, Any],
+) -> bool:
+    materiality = row.get("safe_band_density_section_materiality")
+    if not isinstance(materiality, dict):
+        pack_materiality = row.get("safe_band_evidence_pack_materiality")
+        if isinstance(pack_materiality, dict) and any(
+            isinstance(section, dict) and section.get("contract") == "density_section_repair"
+            for section in pack_materiality.get("sections") or []
+        ):
+            materiality = pack_materiality
+    if not isinstance(materiality, dict) or not materiality.get("passed"):
+        return False
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    if not _density_checkpoint_authorship_bounds_ok(row, incremental=incremental):
+        return False
+    if _number(incremental.get("unsafe_cluster_count_delta")) < 0:
+        return False
+    if _number(incremental.get("unsafe_word_ratio_delta")) < -_safe_band_evidence_repair_unsafe_word_ratio_regression_tolerance():
+        return False
+    if _number(incremental.get("risky_window_count_delta")) < 0:
+        return False
+    if _number(incremental.get("ai_delta")) < -_safe_band_density_checkpoint_ai_regression_tolerance():
+        return False
+    density_delta = _number(incremental.get("qualifying_text_ai_density_delta"))
+    topk_delta = _number(incremental.get("topk_calibrated_risk_delta"))
+    if density_delta < _safe_band_density_checkpoint_min_density_delta():
+        return False
+    if (
+        topk_delta < -_safe_band_density_checkpoint_topk_regression_tolerance()
+        and not _candidate_topk_calibrated_safe(row)
+    ):
+        return False
+    current_gap = _safe_band_gap_for_scores(current_scores)
+    candidate_gap = _candidate_safe_band_gap(row)
+    return current_gap - candidate_gap >= _safe_band_evidence_repair_min_gap_delta()
+
+
+def _density_checkpoint_authorship_bounds_ok(row: dict[str, Any], *, incremental: dict[str, Any]) -> bool:
+    if _number(incremental.get("ai_authorship_delta")) >= _safe_band_evidence_repair_min_authorship_delta():
+        return True
+    if _number(incremental.get("ai_authorship_delta")) < -_safe_band_density_checkpoint_authorship_regression_tolerance():
+        return False
+    if _number(incremental.get("ai_delta")) < -_safe_band_density_checkpoint_ai_regression_tolerance():
+        return False
+    scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
+    goal = row.get("candidate_goal") if isinstance(row.get("candidate_goal"), dict) else {}
+    gate = goal.get("ai_footprint_gate") if isinstance(goal.get("ai_footprint_gate"), dict) else {}
+    thresholds = gate.get("safe_band_thresholds") if isinstance(gate.get("safe_band_thresholds"), dict) else {}
+    ai_authorship_limit = _number(thresholds.get("ai_authorship") if thresholds.get("ai_authorship") is not None else 35.0)
+    ai_limit = _safe_band_density_checkpoint_max_ai_score()
+    return _number(scores.get("ai_authorship")) <= ai_authorship_limit and _number(scores.get("ai")) <= ai_limit
+
+
+def _safe_band_evidence_repair_sort_key(
+    row: dict[str, Any],
+    *,
+    current_scores: dict[str, Any],
+) -> tuple[float, ...]:
+    incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+    current_gap = _safe_band_gap_for_scores(current_scores)
+    candidate_gap = _candidate_safe_band_gap(row)
+    return (
+        1.0 if _author_proxy_candidate_auto_finalizable(row) else 0.0,
+        1.0 if _candidate_strict_safe_band_achieved(row) else 0.0,
+        1.0 if (row.get("safe_band_evidence_materiality") or {}).get("passed") else 0.0,
+        1.0 if (row.get("safe_band_quality_materiality") or {}).get("passed") else 0.0,
+        current_gap - candidate_gap,
+        -candidate_gap,
+        _number(incremental.get("qualifying_text_ai_density_delta")),
+        _number(incremental.get("topk_calibrated_risk_delta")),
+        _number(incremental.get("ai_delta")),
+        _number(incremental.get("ai_authorship_delta")),
+        _number(incremental.get("unsafe_cluster_count_delta")),
+        _number(incremental.get("risky_window_count_delta")),
+        _author_proxy_quality_sort_value(row),
+    )
+
+
+def _safe_band_density_section_repair_materiality(
+    *,
+    source_text: str,
+    candidate_text: str,
+    target_sentence: str = "",
+) -> dict[str, Any]:
+    base = _safe_band_evidence_repair_materiality(
+        source_text=source_text,
+        candidate_text=candidate_text,
+        target_sentence=target_sentence,
+    )
+    density_required = _safe_band_density_section_repair_min_changed_sentences(source_text)
+    source_words = max(1, word_count(str(source_text or "")))
+    candidate_words = max(1, word_count(str(candidate_text or "")))
+    ratio = candidate_words / source_words
+    repetition = _safe_band_density_repetition_audit(source_text, candidate_text)
+    voice = _safe_band_density_voice_audit(source_text, candidate_text)
+    min_ratio = _safe_band_density_section_repair_min_word_ratio_for_text(source_text)
+    max_ratio = _safe_band_density_section_repair_max_word_ratio()
+    length_ok = min_ratio <= ratio <= max_ratio
+    density_change_ok = _number(base.get("changed_sentence_count")) >= density_required
+    duplicate_cleanup = _safe_band_density_duplicate_cleanup_materiality(source_text, candidate_text)
+    duplicate_cleanup_ok = bool(duplicate_cleanup.get("passed")) and repetition.get("passed") is True and voice.get("passed") is True
+    passed = (
+        bool(base.get("passed")) and density_change_ok and length_ok and repetition.get("passed") is True and voice.get("passed") is True
+    ) or duplicate_cleanup_ok
+    if not density_change_ok:
+        reason = "density_section_repair_too_few_changed_sentences"
+    elif not base.get("passed"):
+        reason = str(base.get("reason") or "near_copy_or_target_route_unchanged")
+    elif not length_ok:
+        reason = "density_section_repair_length_out_of_bounds"
+    elif repetition.get("passed") is not True:
+        reason = "density_section_repair_repetition_regression"
+    elif voice.get("passed") is not True:
+        reason = "density_section_repair_voice_shift"
+    elif duplicate_cleanup_ok:
+        reason = "density_section_adjacent_duplicate_cleanup"
+    else:
+        reason = "material_density_section_route_change"
+    if duplicate_cleanup_ok:
+        reason = "density_section_adjacent_duplicate_cleanup"
+    return {
+        **base,
+        "passed": passed,
+        "reason": reason,
+        "source_word_count": source_words,
+        "candidate_word_count": candidate_words,
+        "word_ratio": round(ratio, 4),
+        "density_required_changed_sentence_count": density_required,
+        "density_min_changed_sentence_ratio": _safe_band_density_section_repair_min_changed_sentence_ratio(),
+        "minimum_word_ratio": min_ratio,
+        "maximum_word_ratio": max_ratio,
+        "repetition_audit": repetition,
+        "voice_audit": voice,
+        "duplicate_cleanup_audit": duplicate_cleanup,
+    }
+
+
+def _attach_safe_band_quality_materiality(row: dict[str, Any], *, current_text: str) -> None:
+    if not isinstance(row, dict) or not (row.get("apply_status") or {}).get("applied"):
+        return
+    candidate_text = str(row.get("candidate_text") or "")
+    if not candidate_text:
+        candidate_text = str(row.get("text") or "")
+    if not candidate_text or candidate_text == str(current_text or ""):
+        return
+    row["safe_band_quality_materiality"] = _safe_band_document_quality_materiality(
+        source_text=current_text,
+        candidate_text=candidate_text,
+    )
+
+
+def _safe_band_document_quality_materiality(*, source_text: str, candidate_text: str) -> dict[str, Any]:
+    repetition = _safe_band_density_repetition_audit(source_text, candidate_text)
+    return {
+        "passed": repetition.get("passed") is True,
+        "reason": (
+            "document_quality_preserved"
+            if repetition.get("passed") is True
+            else "document_repetition_regression"
+        ),
+        "repetition_audit": repetition,
+    }
+
+
+def _safe_band_density_source_voice_profile(text: str) -> dict[str, Any]:
+    first_person_sentences = []
+    for sentence in _sentences(str(text or "")):
+        if _first_person_count(sentence) > 0:
+            first_person_sentences.append(sentence)
+        if len(first_person_sentences) >= 3:
+            break
+    contraction_count = _contraction_count(text)
+    first_person_count = _first_person_count(text)
+    return {
+        "first_person_count": first_person_count,
+        "contraction_count": contraction_count,
+        "first_person_source_sentences": first_person_sentences,
+        "voice_instruction": (
+            "Keep direct first-person reflective voice and contractions where they are part of the submitted source voice."
+            if first_person_count or contraction_count else
+            "Keep the existing source voice; do not make the section more detached or formally polished."
+        ),
+    }
+
+
+def _safe_band_density_voice_audit(source_text: str, candidate_text: str) -> dict[str, Any]:
+    source_first_person = _first_person_count(source_text)
+    candidate_first_person = _first_person_count(candidate_text)
+    source_contractions = _contraction_count(source_text)
+    candidate_contractions = _contraction_count(candidate_text)
+    first_person_preserved = source_first_person == 0 or candidate_first_person > 0
+    contractions_preserved = source_contractions == 0 or candidate_contractions > 0
+    passed = first_person_preserved and contractions_preserved
+    return {
+        "passed": passed,
+        "source_first_person_count": source_first_person,
+        "candidate_first_person_count": candidate_first_person,
+        "source_contraction_count": source_contractions,
+        "candidate_contraction_count": candidate_contractions,
+        "first_person_preserved": first_person_preserved,
+        "contractions_preserved": contractions_preserved,
+    }
+
+
+def _first_person_count(text: str) -> int:
+    markers = {"i", "me", "my", "mine", "we", "us", "our", "ours"}
+    return sum(1 for token in _normalized_word_tokens(text) if token in markers)
+
+
+def _contraction_count(text: str) -> int:
+    count = 0
+    for raw in str(text or "").split():
+        stripped = raw.strip(" \t\r\n.,:;!?()[]{}\"“”‘’")
+        if "'" not in stripped and "’" not in stripped:
+            continue
+        letters = [char for char in stripped if char.isalnum()]
+        if len(letters) >= 2:
+            count += 1
+    return count
+
+
+def _safe_band_density_repetition_audit(source_text: str, candidate_text: str) -> dict[str, Any]:
+    source_sentence_counts = _normalized_sentence_counts(source_text)
+    candidate_sentence_counts = _normalized_sentence_counts(candidate_text)
+    repeated_sentences = [
+        key
+        for key, count in candidate_sentence_counts.items()
+        if count > max(1, source_sentence_counts.get(key, 0)) and len(key.split()) >= 8
+    ]
+    source_ngrams = _normalized_ngram_counts(source_text, size=6)
+    candidate_ngrams = _normalized_ngram_counts(candidate_text, size=6)
+    repeated_ngrams = [
+        key
+        for key, count in candidate_ngrams.items()
+        if count > max(1, source_ngrams.get(key, 0))
+    ]
+    max_repeated_ngrams = _safe_band_density_section_repair_max_new_repeated_ngrams()
+    passed = not repeated_sentences and len(repeated_ngrams) <= max_repeated_ngrams
+    return {
+        "passed": passed,
+        "new_repeated_sentence_count": len(repeated_sentences),
+        "new_repeated_ngram_count": len(repeated_ngrams),
+        "max_new_repeated_ngrams": max_repeated_ngrams,
+        "repeated_sentence_examples": repeated_sentences[:3],
+        "repeated_ngram_examples": repeated_ngrams[:5],
+    }
+
+
+def _normalized_sentence_counts(text: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for sentence in _sentences(str(text or "")):
+        key = " ".join(_normalized_word_tokens(sentence))
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _normalized_ngram_counts(text: str, *, size: int) -> dict[str, int]:
+    tokens = _normalized_word_tokens(text)
+    width = max(2, int(size or 2))
+    counts: dict[str, int] = {}
+    if len(tokens) < width:
+        return counts
+    for index in range(0, len(tokens) - width + 1):
+        window = tokens[index:index + width]
+        if len(set(window)) < max(3, width - 2):
+            continue
+        key = " ".join(window)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _normalized_word_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    for raw in str(text or "").casefold().split():
+        cleaned = "".join(char for char in raw if char.isalnum())
+        if cleaned:
+            tokens.append(cleaned)
+    return tokens
+
+
+def _safe_band_evidence_repair_materiality(
+    *,
+    source_text: str,
+    candidate_text: str,
+    target_sentence: str,
+) -> dict[str, Any]:
+    source_sentences = [sentence.strip() for sentence in _sentences(source_text) if sentence.strip()]
+    candidate = str(candidate_text or "")
+    if not source_sentences or not candidate.strip():
+        return {
+            "passed": False,
+            "reason": "empty_source_or_candidate",
+            "changed_sentence_count": 0,
+            "required_changed_sentence_count": 1,
+        }
+    unchanged = [sentence for sentence in source_sentences if sentence in candidate]
+    changed_count = max(0, len(source_sentences) - len(unchanged))
+    required = _safe_band_evidence_repair_min_changed_sentences(source_text)
+    target = str(target_sentence or "").strip()
+    target_changed = not target or target not in candidate
+    passed = changed_count >= required and target_changed
+    reason = "material_paragraph_route_change" if passed else "near_copy_or_target_route_unchanged"
+    return {
+        "passed": passed,
+        "reason": reason,
+        "changed_sentence_count": changed_count,
+        "required_changed_sentence_count": required,
+        "source_sentence_count": len(source_sentences),
+        "unchanged_sentence_count": len(unchanged),
+        "target_sentence_changed": target_changed,
+    }
+
+
+def _safe_band_evidence_repair_min_changed_sentences(source_text: str) -> int:
+    source_count = len([sentence for sentence in _sentences(source_text) if sentence.strip()])
+    configured = _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_MIN_CHANGED_SENTENCES", 2, minimum=1, maximum=8)
+    return max(1, min(configured, source_count))
+
+
+def _safe_band_evidence_repair_variant_goal(index: int) -> str:
+    goals = [
+        "Rebuild the paragraph from the reflection practice: concrete classroom action -> student evidence -> narrow teaching implication.",
+        "Rebuild the paragraph around the Johnny contrast: group reflection limit -> support need -> what the teacher can and cannot infer.",
+        "Rebuild the paragraph as a process account: trust-building action -> reflection routine -> evidence gathered -> limitation.",
+        "Rebuild the paragraph by changing sentence order while preserving every concrete fact and keeping the claim narrower.",
+        "Rebuild the paragraph with shorter uneven sentence routes and less generic explanatory closure.",
+    ]
+    index = max(1, min(len(goals), int(index or 1)))
+    return goals[index - 1]
+
+
+def _safe_band_evidence_pack_variant_goal(index: int) -> str:
+    goals = [
+        "Coordinate all replacements around author evidence: concrete classroom action, observed student response, and narrow teaching implication.",
+        "Coordinate all replacements around content gaps: replace generic claims with source-owned specifics and mark unsupported bridges for author review.",
+        "Coordinate all replacements around sentence-route diversity: change starts, evidence placement, and paragraph endings without changing facts.",
+        "Coordinate all replacements around practical teaching process: action -> evidence -> limit -> next decision.",
+        "Coordinate all replacements around lower qualifying density: remove broad claims and spend words on already-submitted evidence.",
+    ]
+    index = max(1, min(len(goals), int(index or 1)))
+    return goals[index - 1]
+
+
+def _safe_band_evidence_repair_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", True)
+
+
+def _safe_band_evidence_pack_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_ENABLED", True)
+
+
+def _safe_band_author_proxy_plan_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_AUTHOR_PROXY_PLAN_ENABLED", True)
+
+
+def _safe_band_evidence_pack_composite_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_COMPOSITE_ENABLED", False)
+
+
+def _safe_band_controlled_operation_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_CONTROLLED_OPERATION_ENABLED", True)
+
+
+def _safe_band_controlled_operation_target_limit() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_CONTROLLED_OPERATION_TARGET_LIMIT", 5, minimum=1, maximum=12)
+
+
+def _safe_band_controlled_operation_round_limit() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_CONTROLLED_OPERATION_ROUNDS", 3, minimum=1, maximum=8)
+
+
+def _safe_band_controlled_operation_min_word_ratio() -> float:
+    return _float_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_CONTROLLED_OPERATION_MIN_WORD_RATIO", 0.95, minimum=0.5, maximum=1.0)
+
+
+def _safe_band_controlled_operation_min_suffix_words() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_CONTROLLED_OPERATION_MIN_SUFFIX_WORDS", 4, minimum=1, maximum=20)
+
+
+def _safe_band_sentence_replacement_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_SENTENCE_REPLACEMENT_ENABLED", True)
+
+
+def _safe_band_sentence_replacement_round_limit() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_SENTENCE_REPLACEMENT_ROUNDS", 3, minimum=1, maximum=5)
+
+
+def _safe_band_sentence_replacement_target_limit() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_SENTENCE_REPLACEMENT_TARGET_LIMIT", 3, minimum=1, maximum=6)
+
+
+def _safe_band_sentence_replacement_variant_count() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_SENTENCE_REPLACEMENT_VARIANTS", 5, minimum=1, maximum=5)
+
+
+def _safe_band_sentence_replacement_variant_goal(index: int) -> str:
+    goals = [
+        "Same meaning, lower safe-band gap: reduce top-k route and qualifying density together using concrete source wording.",
+        "Density-first replacement: remove broad explanatory closure, keep facts, and write a shorter practical-action sentence.",
+        "Authorship-preserving replacement: keep author viewpoint and source anchors while making the route less template-like.",
+        "Context-linked replacement: connect the sentence to its before/after context without adding new facts.",
+        "Plain-language replacement: use direct classroom/process wording and avoid polished academic phrasing.",
+    ]
+    index = max(1, min(len(goals), int(index or 1)))
+    return goals[index - 1]
+
+
+def _safe_band_density_section_repair_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_ENABLED", True)
+
+
+def _safe_band_density_section_repair_round_limit() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_ROUNDS", 2, minimum=1, maximum=4)
+
+
+def _safe_band_density_section_repair_section_limit() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_SECTION_LIMIT", 2, minimum=1, maximum=5)
+
+
+def _safe_band_density_section_repair_variant_count() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_VARIANTS", 3, minimum=1, maximum=5)
+
+
+def _safe_band_density_section_repair_min_section_words() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_MIN_SECTION_WORDS", 80, minimum=20, maximum=240)
+
+
+def _safe_band_density_section_repair_max_section_words() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_MAX_SECTION_WORDS", 260, minimum=80, maximum=900)
+
+
+def _safe_band_density_section_repair_min_word_ratio() -> float:
+    return _float_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_MIN_WORD_RATIO", 0.88, minimum=0.5, maximum=1.0)
+
+
+def _safe_band_density_section_repair_min_word_ratio_for_text(source_text: str) -> float:
+    base = _safe_band_density_section_repair_min_word_ratio()
+    if word_count(str(source_text or "")) < _safe_band_density_section_repair_long_section_word_threshold():
+        return base
+    return min(base, _safe_band_density_section_repair_long_section_min_word_ratio())
+
+
+def _safe_band_density_section_repair_long_section_word_threshold() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_LONG_SECTION_WORD_THRESHOLD",
+        220,
+        minimum=80,
+        maximum=900,
+    )
+
+
+def _safe_band_density_section_repair_long_section_min_word_ratio() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_LONG_SECTION_MIN_WORD_RATIO",
+        0.82,
+        minimum=0.5,
+        maximum=1.0,
+    )
+
+
+def _safe_band_density_section_repair_max_word_ratio() -> float:
+    return _float_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_MAX_WORD_RATIO", 1.12, minimum=1.0, maximum=1.8)
+
+
+def _safe_band_density_section_repair_max_new_repeated_ngrams() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_MAX_NEW_REPEATED_NGRAMS", 1, minimum=0, maximum=12)
+
+
+def _safe_band_density_section_repair_min_changed_sentence_ratio() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_MIN_CHANGED_SENTENCE_RATIO",
+        0.4,
+        minimum=0.0,
+        maximum=1.0,
+    )
+
+
+def _safe_band_density_section_repair_min_changed_sentences(source_text: str) -> int:
+    source_count = len([sentence for sentence in _sentences(source_text) if sentence.strip()])
+    if source_count <= 0:
+        return 1
+    base = _safe_band_evidence_repair_min_changed_sentences(source_text)
+    ratio_required = int((source_count * _safe_band_density_section_repair_min_changed_sentence_ratio()) + 0.999)
+    configured_cap = _int_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_MAX_CHANGED_SENTENCE_REQUIREMENT",
+        6,
+        minimum=1,
+        maximum=12,
+    )
+    return max(1, min(source_count, configured_cap, max(base, ratio_required)))
+
+
+def _safe_band_density_section_repair_variant_goal(index: int) -> str:
+    goals = [
+        "Density-only section rebuild: narrow broad claims and spend words on submitted evidence already in the section.",
+        "Grounding-first rebuild: keep citations and anchors, replace unsupported certainty with source-owned limits.",
+        "Author-proxy rebuild: preserve the author's viewpoint while removing smooth generic closure and repeated ideas.",
+        "Practical-action rebuild: move from abstract claim to teaching action, observed constraint, and limited implication.",
+        "Coverage-preserving rebuild: change the section route without compressing the author's evidence.",
+    ]
+    index = max(1, min(len(goals), int(index or 1)))
+    return goals[index - 1]
+
+
+def _safe_band_evidence_pack_variant_count() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_VARIANTS", 3, minimum=1, maximum=5)
+
+
+def _safe_band_evidence_pack_section_limit() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_SECTION_LIMIT", 4, minimum=2, maximum=6)
+
+
+def _safe_band_evidence_pack_max_section_words() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_MAX_SECTION_WORDS", 320, minimum=80, maximum=700)
+
+
+def _safe_band_evidence_pack_max_source_words() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_MAX_SOURCE_WORDS", 700, minimum=160, maximum=1200)
+
+
+def _safe_band_evidence_pack_partial_min_sections() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_PARTIAL_MIN_SECTIONS", 2, minimum=1, maximum=6)
+
+
+def _safe_band_evidence_repair_variant_count() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_VARIANTS", 3, minimum=1, maximum=5)
+
+
+def _safe_band_evidence_repair_section_limit() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_SECTION_LIMIT", 3, minimum=1, maximum=8)
+
+
+def _safe_band_evidence_repair_composite_window_enabled() -> bool:
+    return _bool_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_COMPOSITE_WINDOW", True)
+
+
+def _safe_band_evidence_repair_composite_max_words() -> int:
+    return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_COMPOSITE_MAX_WORDS", 800, minimum=120, maximum=1600)
+
+
+def _safe_band_evidence_repair_min_gap_delta() -> float:
+    return _float_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_MIN_GAP_DELTA", 0.1, minimum=0.0, maximum=20.0)
+
+
+def _safe_band_evidence_repair_min_ai_delta() -> float:
+    return _float_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_MIN_AI_DELTA", 0.0, minimum=-10.0, maximum=20.0)
+
+
+def _safe_band_evidence_repair_min_authorship_delta() -> float:
+    return _float_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_MIN_AUTHORSHIP_DELTA", 0.0, minimum=-10.0, maximum=20.0)
+
+
+def _safe_band_evidence_repair_unsafe_word_ratio_regression_tolerance() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_UNSAFE_WORD_RATIO_REGRESSION_TOLERANCE",
+        0.1,
+        minimum=0.0,
+        maximum=5.0,
+    )
+
+
+def _safe_band_density_checkpoint_min_density_delta() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_CHECKPOINT_MIN_DENSITY_DELTA",
+        0.5,
+        minimum=0.0,
+        maximum=10.0,
+    )
+
+
+def _safe_band_density_checkpoint_ai_regression_tolerance() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_CHECKPOINT_AI_REGRESSION_TOLERANCE",
+        1.0,
+        minimum=0.0,
+        maximum=5.0,
+    )
+
+
+def _safe_band_density_checkpoint_authorship_regression_tolerance() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_CHECKPOINT_AUTHORSHIP_REGRESSION_TOLERANCE",
+        1.0,
+        minimum=0.0,
+        maximum=5.0,
+    )
+
+
+def _safe_band_density_checkpoint_max_ai_score() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_CHECKPOINT_MAX_AI_SCORE",
+        35.0,
+        minimum=0.0,
+        maximum=100.0,
+    )
+
+
+def _safe_band_density_checkpoint_topk_regression_tolerance() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_CHECKPOINT_TOPK_REGRESSION_TOLERANCE",
+        0.25,
+        minimum=0.0,
+        maximum=10.0,
     )
 
 
@@ -6132,6 +10999,22 @@ def _ai_first_density_safe_candidate_beats_scores(row: dict[str, Any], current_s
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     if not _candidate_density_safe(row):
         return False
+    current_unsafe_clusters = _number(current_scores.get("unsafe_cluster_count"))
+    candidate_unsafe_clusters = _number(scores.get("unsafe_cluster_count"))
+    if candidate_unsafe_clusters > current_unsafe_clusters:
+        return False
+    current_risky_windows = _number(current_scores.get("risky_window_count"))
+    candidate_risky_windows = _number(scores.get("risky_window_count"))
+    if candidate_risky_windows > current_risky_windows:
+        return False
+    current_unsafe_ratio = _number(current_scores.get("unsafe_word_ratio"))
+    candidate_unsafe_ratio = _number(scores.get("unsafe_word_ratio"))
+    if candidate_unsafe_ratio - current_unsafe_ratio > _safe_band_evidence_repair_unsafe_word_ratio_regression_tolerance():
+        return False
+    current_calibrated = _number(current_scores.get("topk_calibrated_risk"))
+    candidate_calibrated = _number(scores.get("topk_calibrated_risk"))
+    if candidate_calibrated > current_calibrated + _safe_band_density_checkpoint_topk_regression_tolerance():
+        return False
     current_ai = _number(current_scores.get("ai"))
     candidate_ai = _number(scores.get("ai"))
     if current_ai <= 0 or candidate_ai <= 0:
@@ -6154,8 +11037,6 @@ def _ai_first_density_safe_candidate_beats_scores(row: dict[str, Any], current_s
     candidate_topk = _number(scores.get("topk"))
     if current_topk > 0 and candidate_topk > 0 and candidate_topk - current_topk > max_topk_regression:
         return False
-    if _number(scores.get("risky_window_count")) > 0:
-        return False
     return True
 
 
@@ -6166,7 +11047,7 @@ def _candidate_density_safe(row: dict[str, Any]) -> bool:
         return bool(density.get("safe"))
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     unsafe_clusters = _number(scores.get("unsafe_cluster_count"))
-    return unsafe_clusters > 0 and unsafe_clusters <= _float_env(
+    return unsafe_clusters <= _float_env(
         "DRAFTPROOF_REWRITE_V5_AI_FIRST_FALLBACK_MAX_UNSAFE_CLUSTERS",
         4.0,
         minimum=0.0,
@@ -6177,6 +11058,9 @@ def _candidate_density_safe(row: dict[str, Any]) -> bool:
 def _full_document_candidate_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     return (
+        1.0 if _author_proxy_candidate_auto_finalizable(row) else 0.0,
+        1.0 if _candidate_strict_safe_band_achieved(row) else 0.0,
+        -_candidate_safe_band_gap(row),
         _number(scores.get("ai_delta")),
         _number(scores.get("external_delta")),
         _number(scores.get("risky_window_count_delta")),
@@ -6192,6 +11076,8 @@ def _full_document_candidate_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
 
 def _has_full_document_fallback_movement(row: dict[str, Any]) -> bool:
     if not (row.get("apply_status") or {}).get("applied"):
+        return False
+    if not _author_proxy_candidate_auto_finalizable(row):
         return False
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     if _number(scores.get("ai_delta")) < 0:
@@ -6215,6 +11101,14 @@ def _has_full_document_fallback_movement(row: dict[str, Any]) -> bool:
             "unsafe_word_ratio_delta",
         )
     )
+
+
+def _author_proxy_candidate_auto_finalizable(row: dict[str, Any]) -> bool:
+    audit = row.get("author_proxy_audit") if isinstance(row.get("author_proxy_audit"), dict) else {}
+    if not audit or not audit.get("active"):
+        return True
+    safety_gate = audit.get("safety_gate") if isinstance(audit.get("safety_gate"), dict) else {}
+    return safety_gate.get("passed") is not False
 
 
 def _risky_window_cleanup_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
@@ -7823,6 +12717,11 @@ def _compact_residual_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "author_proxy_quality": row.get("author_proxy_quality"),
         "author_proxy_provenance": row.get("author_proxy_provenance"),
         "author_review_items": row.get("author_review_items"),
+        "safe_band_evidence_materiality": row.get("safe_band_evidence_materiality"),
+        "safe_band_density_section_materiality": row.get("safe_band_density_section_materiality"),
+        "safe_band_quality_materiality": row.get("safe_band_quality_materiality"),
+        "safe_band_evidence_pack_materiality": row.get("safe_band_evidence_pack_materiality"),
+        "safe_band_controlled_operation_materiality": row.get("safe_band_controlled_operation_materiality"),
         "selection_policy": row.get("selection_policy"),
         "direct_scanner_batch": row.get("direct_scanner_batch"),
         "text": row.get("text"),
