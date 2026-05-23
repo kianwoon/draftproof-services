@@ -235,6 +235,53 @@ def _author_proxy_requires_review(context: dict[str, Any] | None, *, final_text:
     return bool(context.get("review_required") or context.get("review_cards"))
 
 
+def _author_review_cards_from_candidate(
+    context: dict[str, Any] | None,
+    candidate: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    if isinstance(context, dict):
+        cards.extend(card for card in context.get("review_cards") or [] if isinstance(card, dict))
+    if isinstance(candidate, dict):
+        for item in candidate.get("author_review_items") or []:
+            if not isinstance(item, dict):
+                continue
+            cards.append({
+                "card_id": item.get("item_id") or f"candidate-{len(cards) + 1:02d}",
+                "kind": "candidate_author_review",
+                "provenance": item.get("provenance") or "needs_author_confirmation",
+                "target_text": item.get("target_text") or item.get("generated_text"),
+                "where": item.get("item_id"),
+                "instruction": item.get("generated_text") or item.get("target_text"),
+                "user_input_needed": item.get("user_input_needed"),
+                "author_task": item.get("author_task") or "Verify this generated detail against your own evidence before submission.",
+            })
+        audit = candidate.get("author_proxy_audit") if isinstance(candidate.get("author_proxy_audit"), dict) else {}
+        novel = audit.get("novel_candidate_references") if isinstance(audit.get("novel_candidate_references"), dict) else {}
+        for value in list(novel.get("numbers") or []) + list(novel.get("named_references") or []):
+            cards.append({
+                "card_id": f"novel-reference-{len(cards) + 1:02d}",
+                "kind": "candidate_novel_reference",
+                "provenance": "needs_author_confirmation",
+                "target_text": str(value),
+                "where": "rewritten candidate",
+                "instruction": "Candidate introduced a concrete reference not present in the submitted source text.",
+                "user_input_needed": "Confirm this detail is real and author-owned, or remove it.",
+                "author_task": "Verify, replace, or remove this concrete reference before submission.",
+            })
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for card in cards:
+        key = (str(card.get("kind") or ""), str(card.get("target_text") or card.get("user_input_needed") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(card)
+        if len(deduped) >= 12:
+            break
+    return deduped
+
+
 def _accepted_author_proxy_review_required(
     accepted_rows: list[dict[str, Any]],
     *,
@@ -242,6 +289,13 @@ def _accepted_author_proxy_review_required(
     final_text: str,
     original_text: str,
 ) -> bool:
+    if _author_proxy_requires_review(context, final_text=final_text, original_text=original_text):
+        for row in accepted_rows:
+            if not isinstance(row, dict):
+                continue
+            audit = row.get("author_proxy_audit")
+            if not isinstance(audit, dict) or not audit.get("active"):
+                return True
     saw_author_proxy_audit = False
     for row in accepted_rows:
         if not isinstance(row, dict):
@@ -405,6 +459,10 @@ def run_rewrite_pipeline_v5(
         checkpoint_scores = checkpoint.get("scores") if isinstance(checkpoint.get("scores"), dict) else {}
         baseline_scores = checkpoint.get("baseline_scores") if isinstance(checkpoint.get("baseline_scores"), dict) else {}
         checkpoint_accepted = checkpoint.get("accepted") if isinstance(checkpoint.get("accepted"), dict) else {}
+        checkpoint_author_review_cards = _author_review_cards_from_candidate(
+            author_proxy_context,
+            checkpoint_accepted,
+        )
         checkpoint_author_review_required = _accepted_author_proxy_review_required(
             [checkpoint_accepted],
             context=author_proxy_context,
@@ -431,7 +489,7 @@ def run_rewrite_pipeline_v5(
             ),
             "best_candidate_author_review_required": checkpoint_author_review_required,
             "author_proxy_context": author_proxy_context,
-            "author_review_cards": author_proxy_context.get("review_cards") if checkpoint_author_review_required else [],
+            "author_review_cards": checkpoint_author_review_cards if checkpoint_author_review_required else [],
             "checkpoint": _compact_v5_checkpoint(checkpoint),
             "v5_scores": {
                 "original": baseline_scores,
@@ -546,6 +604,10 @@ def run_rewrite_pipeline_v5(
     global_best_fallback = payload.get("global_best_fallback") if isinstance(payload.get("global_best_fallback"), dict) else {}
     if global_best_fallback.get("applied") and isinstance(global_best_fallback.get("selected"), dict):
         accepted.append(global_best_fallback["selected"])
+    selected_author_review_cards = _author_review_cards_from_candidate(
+        author_proxy_context,
+        accepted[-1] if accepted else None,
+    )
     no_text_change = final_text.strip() == original_text.strip()
     author_proxy_review_required = _accepted_author_proxy_review_required(
         accepted,
@@ -600,7 +662,7 @@ def run_rewrite_pipeline_v5(
         "best_candidate_author_review_required": public_status == AUTHOR_PROXY_REVIEW_STATUS,
         "author_proxy_context": author_proxy_context,
         "author_review_cards": (
-            author_proxy_context.get("review_cards")
+            selected_author_review_cards
             if isinstance(author_proxy_context, dict) and author_proxy_context.get("active")
             else []
         ),

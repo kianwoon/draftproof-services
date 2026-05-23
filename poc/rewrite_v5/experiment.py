@@ -949,7 +949,37 @@ def _parse_variants(raw: str, *, source_words: int) -> tuple[list[RecompositionV
     return variants, {**diagnostics, "status": "ok" if variants else "schema_failed", "variant_count": len(variants), "rejected": rejected}
 
 
-def _variants_response_format(variant_count: int) -> dict[str, Any]:
+def _variants_response_format(variant_count: int, *, include_author_proxy_fields: bool = False) -> dict[str, Any]:
+    variant_properties: dict[str, Any] = {
+        "variant_id": {"type": "string"},
+        "text": {"type": "string"},
+    }
+    required_variant_keys = ["variant_id", "text"]
+    if include_author_proxy_fields:
+        review_item_schema = {
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "string"},
+                "provenance": {"type": "string"},
+                "target_text": {"type": "string"},
+                "generated_text": {"type": "string"},
+                "user_input_needed": {"type": "string"},
+                "author_task": {"type": "string"},
+            },
+            "required": ["item_id", "provenance", "target_text", "generated_text", "user_input_needed", "author_task"],
+            "additionalProperties": False,
+        }
+        variant_properties["author_proxy_provenance"] = {
+            "type": "array",
+            "items": review_item_schema,
+            "maxItems": 8,
+        }
+        variant_properties["author_review_items"] = {
+            "type": "array",
+            "items": review_item_schema,
+            "maxItems": 8,
+        }
+        required_variant_keys.extend(["author_proxy_provenance", "author_review_items"])
     return {
         "type": "json_schema",
         "json_schema": {
@@ -964,11 +994,8 @@ def _variants_response_format(variant_count: int) -> dict[str, Any]:
                         "maxItems": variant_count,
                         "items": {
                             "type": "object",
-                            "properties": {
-                                "variant_id": {"type": "string"},
-                                "text": {"type": "string"},
-                            },
-                            "required": ["variant_id", "text"],
+                            "properties": variant_properties,
+                            "required": required_variant_keys,
                             "additionalProperties": False,
                         },
                     }

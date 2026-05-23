@@ -274,6 +274,37 @@ def _document_section(title: str, text: str) -> List[str]:
     ]
 
 
+def _author_review_card_section(summary: dict) -> List[str]:
+    cards = summary.get("author_review_cards") if isinstance(summary.get("author_review_cards"), list) else []
+    if not cards:
+        return []
+    lines = [
+        "## Author Review Cards",
+        "",
+        "These candidate-specific items should be verified, replaced, or removed by the author before submission.",
+        "",
+    ]
+    for index, card in enumerate(cards[:12], start=1):
+        if not isinstance(card, dict):
+            continue
+        title = str(card.get("instruction") or card.get("target_text") or card.get("kind") or f"Review item {index}").strip()
+        lines.append(f"### {index}. {title[:120]}")
+        target = str(card.get("target_text") or "").strip()
+        needed = str(card.get("user_input_needed") or "").strip()
+        task = str(card.get("author_task") or "").strip()
+        provenance = str(card.get("provenance") or "").replace("_", " ").strip()
+        if provenance:
+            lines.append(f"- Provenance: {provenance}")
+        if target:
+            lines.append(f"- Candidate detail: {target}")
+        if needed:
+            lines.append(f"- Author input needed: {needed}")
+        if task:
+            lines.append(f"- Author task: {task}")
+        lines.append("")
+    return lines
+
+
 def _signal_label(name: str) -> str:
     return str(name or "").replace("_", " ").title()
 
@@ -791,6 +822,7 @@ def render_rewrite_report(
     lines.append("")
     lines.extend(_document_section("Submitted Content", original_text))
     lines.extend(_document_section("Rewritten Content", final_text))
+    lines.extend(_author_review_card_section(summary))
 
     # ── User-facing action list ─────────────────────────────────────
     next_actions = _top_user_actions(mitigation)

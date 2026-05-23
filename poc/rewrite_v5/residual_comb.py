@@ -1643,6 +1643,65 @@ def _author_proxy_review_items(context: dict[str, Any] | None) -> list[dict[str,
     return items
 
 
+def _author_proxy_item_list(value: Any, *, limit: int = 8) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for index, item in enumerate(value if isinstance(value, list) else [], start=1):
+        if not isinstance(item, dict):
+            continue
+        compact = {
+            "item_id": str(item.get("item_id") or item.get("card_id") or f"author-item-{index:02d}")[:80],
+            "provenance": str(item.get("provenance") or "needs_author_confirmation")[:80],
+            "target_text": str(item.get("target_text") or "")[:500],
+            "generated_text": str(item.get("generated_text") or item.get("text") or "")[:500],
+            "user_input_needed": str(item.get("user_input_needed") or "")[:300],
+            "author_task": str(item.get("author_task") or "")[:300],
+        }
+        if compact["target_text"] or compact["generated_text"] or compact["user_input_needed"]:
+            items.append(compact)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _author_proxy_output_variant_template() -> dict[str, Any]:
+    return {
+        "variant_id": "v1",
+        "text": "...",
+        "author_proxy_provenance": [
+            {
+                "item_id": "p001",
+                "provenance": "source_preserved | inferred_from_draft | needs_author_confirmation | must_replace",
+                "target_text": "source phrase or gap being resolved",
+                "generated_text": "candidate wording tied to that source/gap",
+                "user_input_needed": "empty when no author input is needed",
+                "author_task": "verify, replace, or remove when author input is needed",
+            }
+        ],
+        "author_review_items": [
+            {
+                "item_id": "r001",
+                "provenance": "needs_author_confirmation",
+                "target_text": "exact claim or detail in the candidate",
+                "generated_text": "candidate wording needing author confirmation",
+                "user_input_needed": "specific author-owned detail needed",
+                "author_task": "what the author should check before submission",
+            }
+        ],
+    }
+
+
+def _prompt_author_proxy_active(prompt: str) -> bool:
+    prefix = "Return valid JSON only.\n"
+    if not str(prompt or "").startswith(prefix):
+        return False
+    try:
+        payload = json.loads(str(prompt)[len(prefix):])
+    except json.JSONDecodeError:
+        return False
+    context = payload.get("author_proxy_context") if isinstance(payload, dict) else {}
+    return isinstance(context, dict) and bool(context.get("review_required") or context.get("mode"))
+
+
 _REFERENCE_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9'_-]*|\d+(?:[.,]\d+)?%?")
 
 
@@ -1735,6 +1794,92 @@ def _author_proxy_candidate_audit(
     }
 
 
+def _content_token_set(text: str) -> set[str]:
+    return {
+        token.casefold()
+        for token in _reference_tokens(text)
+        if len(token) > 2 and not token.isdigit()
+    }
+
+
+def _bounded_ratio(numerator: float, denominator: float) -> float:
+    if denominator <= 0:
+        return 0.0
+    return max(0.0, min(1.0, numerator / denominator))
+
+
+def _author_proxy_quality_score(
+    *,
+    source_text: str,
+    candidate_text: str,
+    context: dict[str, Any] | None,
+    provenance: list[dict[str, Any]] | None = None,
+    review_items: list[dict[str, Any]] | None = None,
+    audit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not _author_proxy_active(context):
+        return {}
+    source_tokens = _content_token_set(source_text)
+    candidate_tokens = _content_token_set(candidate_text)
+    shared = source_tokens & candidate_tokens
+    source_words = max(1, word_count(source_text))
+    candidate_words = max(1, word_count(candidate_text))
+    length_ratio = min(source_words, candidate_words) / max(source_words, candidate_words)
+    support_ratio = _bounded_ratio(len(shared), len(candidate_tokens) or 1)
+    coverage_ratio = _bounded_ratio(len(shared), len(source_tokens) or 1)
+    sentence_count = max(1, len(_sentences(candidate_text)))
+    avg_sentence_words = candidate_words / sentence_count
+    ideal_sentence_words = _float_env(
+        "DRAFTPROOF_AUTHOR_PROXY_IDEAL_SENTENCE_WORDS",
+        22.0,
+        minimum=8.0,
+        maximum=40.0,
+    )
+    sentence_shape_window = max(8.0, ideal_sentence_words * 1.25)
+    sentence_shape_score = 1.0 - min(abs(avg_sentence_words - ideal_sentence_words) / sentence_shape_window, 1.0)
+    placeholder_penalty = 0.25 if re.search(r"\[[^\[\]]+\]|\bTBD\b|<[^>]+>", candidate_text, re.IGNORECASE) else 0.0
+    audit_data = audit if isinstance(audit, dict) else {}
+    safety_gate = audit_data.get("safety_gate") if isinstance(audit_data.get("safety_gate"), dict) else {}
+    novel = audit_data.get("novel_candidate_references") if isinstance(audit_data.get("novel_candidate_references"), dict) else {}
+    novel_count = len(novel.get("numbers") or []) + len(novel.get("named_references") or [])
+    novel_reference_penalty = min(0.18, novel_count * 0.04)
+    provenance_count = len(provenance or [])
+    review_count = len(review_items or [])
+    provenance_score = 1.0 if provenance_count else 0.45
+    review_specificity = min(1.0, review_count / max(1, len(_author_proxy_review_items(context))))
+    safety_score = 1.0 if safety_gate.get("passed", True) else 0.75
+    score = (
+        support_ratio * 0.28
+        + coverage_ratio * 0.18
+        + length_ratio * 0.16
+        + sentence_shape_score * 0.12
+        + provenance_score * 0.14
+        + review_specificity * 0.06
+        + safety_score * 0.06
+        - placeholder_penalty
+        - novel_reference_penalty
+    )
+    return {
+        "schema_version": "author_proxy_quality.v1",
+        "active": True,
+        "score": round(max(0.0, min(1.0, score)), 4),
+        "basis": "submitted_content_only",
+        "source_support_ratio": round(support_ratio, 4),
+        "source_coverage_ratio": round(coverage_ratio, 4),
+        "length_ratio": round(length_ratio, 4),
+        "sentence_shape_score": round(max(0.0, sentence_shape_score), 4),
+        "provenance_item_count": provenance_count,
+        "review_item_count": review_count,
+        "novel_reference_count": novel_count,
+        "placeholder_penalty": round(placeholder_penalty, 4),
+    }
+
+
+def _author_proxy_quality_sort_value(row: dict[str, Any]) -> float:
+    quality = row.get("author_proxy_quality") if isinstance(row.get("author_proxy_quality"), dict) else {}
+    return _number(quality.get("score")) if quality.get("active") else 0.0
+
+
 def _should_skip_core_after_direct_accept(
     *,
     direct_scanner_accepted_count: int,
@@ -1787,9 +1932,17 @@ def _attach_author_proxy_context(payload: dict[str, Any], context: dict[str, Any
             "The strongest variant should be useful for the author to revise further, even before author confirmation.",
         ],
     }
+    output_schema = payload.get("output_schema") if isinstance(payload.get("output_schema"), dict) else {}
+    schema_variants = output_schema.get("variants") if isinstance(output_schema.get("variants"), list) else []
+    first_variant_schema = schema_variants[0] if schema_variants and isinstance(schema_variants[0], dict) else {}
+    uses_text_variant_schema = "text" in first_variant_schema
     payload["author_proxy_candidate_audit_contract"] = {
         "applied_by": "DraftProof controller after each candidate is scored.",
-        "model_output_schema": "Return the normal variants array only; do not add audit fields to the JSON response.",
+        "model_output_schema": (
+            "For each variant, return variant_id, text, author_proxy_provenance, and author_review_items."
+            if uses_text_variant_schema
+            else "Return the task's variants schema exactly; DraftProof will derive candidate review evidence after applying repairs."
+        ),
         "review_required": bool(context.get("review_required")),
         "audit_fields": [
             "required_inputs",
@@ -1806,6 +1959,9 @@ def _attach_author_proxy_context(payload: dict[str, Any], context: dict[str, Any
         "must_replace": "Material that should be replaced with a real author/source detail before submission.",
         "acceptance_note": "Unverified proxy material prevents the candidate from being labelled as final AI mitigation.",
     }
+    if uses_text_variant_schema:
+        output_schema["variants"] = [_author_proxy_output_variant_template()]
+        payload["output_schema"] = output_schema
 
 
 def build_residual_cluster_prompt(
@@ -3409,6 +3565,8 @@ def _generate_parallel_loose_variants(
             variant_id=f"v{index}",
             text=variant.text,
             word_count=variant.word_count,
+            author_proxy_provenance=variant.author_proxy_provenance,
+            author_review_items=variant.author_review_items,
         ))
 
     prompt_log = json.dumps({
@@ -3470,7 +3628,11 @@ def _parallel_lane_prompt(prompt: str, *, lane_index: int, lane_count: int) -> s
         payload["writer_variant_plan"] = [assigned_variant]
     output_schema = payload.get("output_schema") if isinstance(payload.get("output_schema"), dict) else {}
     if isinstance(output_schema, dict):
-        output_schema["variants"] = [{"variant_id": "v1", "text": "..."}]
+        output_schema["variants"] = [
+            _author_proxy_output_variant_template()
+            if _author_proxy_active(payload.get("author_proxy_context"))
+            else {"variant_id": "v1", "text": "..."}
+        ]
         payload["output_schema"] = output_schema
     payload["parallel_generation_lane"] = {
         "lane": lane_index,
@@ -3574,7 +3736,11 @@ def _generate_loose_variants(
     max_tokens: int | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     variants = max(1, min(5, int(variant_count or 1)))
-    structured = structured_json_request_options(getattr(gateway, "model", None), _variants_response_format(variants))
+    include_author_proxy_fields = _prompt_author_proxy_active(prompt)
+    structured = structured_json_request_options(
+        getattr(gateway, "model", None),
+        _variants_response_format(variants, include_author_proxy_fields=include_author_proxy_fields),
+    )
     provider = _merge_provider_options(getattr(gateway, "provider", None), structured.get("provider"))
     started = time.monotonic()
     response = gateway.chat(
@@ -3597,6 +3763,7 @@ def _generate_loose_variants(
         "finish_reason": response.finish_reason,
         "native_finish_reason": response.native_finish_reason,
         "structured_output_mode": structured.get("structured_output_mode"),
+        "author_proxy_variant_schema": include_author_proxy_fields,
         "elapsed_seconds": round(elapsed, 3),
     }, prompt, raw
 
@@ -4237,7 +4404,8 @@ def _parse_loose_variants(raw: str) -> tuple[list[RecompositionVariant], dict[st
         if not isinstance(row, dict):
             rejected.append({"index": index, "reason": "variant_not_object"})
             continue
-        if set(row.keys()) != {"variant_id", "text"}:
+        allowed_keys = {"variant_id", "text", "author_proxy_provenance", "author_review_items"}
+        if not set(row.keys()).issubset(allowed_keys):
             rejected.append({"index": index, "reason": "variant_keys_mismatch", "keys": sorted(row.keys())})
             continue
         variant_id = str(row.get("variant_id") or "").strip()
@@ -4249,7 +4417,13 @@ def _parse_loose_variants(raw: str) -> tuple[list[RecompositionVariant], dict[st
         if not integrity.get("passed"):
             rejected.append({"index": index, "variant_id": variant_id, "reason": "text_integrity_failed", "text_integrity": integrity})
             continue
-        variants.append(RecompositionVariant(variant_id=variant_id, text=text, word_count=word_count(text)))
+        variants.append(RecompositionVariant(
+            variant_id=variant_id,
+            text=text,
+            word_count=word_count(text),
+            author_proxy_provenance=_author_proxy_item_list(row.get("author_proxy_provenance")),
+            author_review_items=_author_proxy_item_list(row.get("author_review_items")),
+        ))
     return variants, {**diagnostics, "status": "ok" if variants else "schema_failed", "variant_count": len(variants), "rejected": rejected}
 
 
@@ -4273,6 +4447,14 @@ def _score_residual_variant(
         author_proxy_context,
         phase=author_proxy_phase or label,
     )
+    author_proxy_quality = _author_proxy_quality_score(
+        source_text=section.text,
+        candidate_text=variant.text,
+        context=author_proxy_context,
+        provenance=variant.author_proxy_provenance,
+        review_items=variant.author_review_items,
+        audit=author_proxy_audit,
+    )
     boundary_integrity = _section_apply_boundary_integrity(current_text, section)
     if not boundary_integrity.get("passed"):
         return {
@@ -4291,6 +4473,9 @@ def _score_residual_variant(
             "local_scores": {},
             "local_goal": {},
             "author_proxy_audit": author_proxy_audit,
+            "author_proxy_quality": author_proxy_quality,
+            "author_proxy_provenance": variant.author_proxy_provenance,
+            "author_review_items": variant.author_review_items,
         }
     candidate_text, apply_status = apply_section_variant(current_text, section, variant.text)
     if not apply_status.get("applied"):
@@ -4306,6 +4491,9 @@ def _score_residual_variant(
             "local_scores": {},
             "local_goal": {},
             "author_proxy_audit": author_proxy_audit,
+            "author_proxy_quality": author_proxy_quality,
+            "author_proxy_provenance": variant.author_proxy_provenance,
+            "author_review_items": variant.author_review_items,
         }
     source_integrity = minimal_replacement_text_integrity(current_text)
     candidate_integrity = minimal_replacement_text_integrity(candidate_text)
@@ -4330,6 +4518,9 @@ def _score_residual_variant(
             "local_scores": {},
             "local_goal": {},
             "author_proxy_audit": author_proxy_audit,
+            "author_proxy_quality": author_proxy_quality,
+            "author_proxy_provenance": variant.author_proxy_provenance,
+            "author_review_items": variant.author_review_items,
         }
     candidate_report = _scan_report(candidate_text)
     candidate_goal = evaluate_rewrite_goal(
@@ -4379,6 +4570,9 @@ def _score_residual_variant(
         "candidate_report": candidate_report,
         "candidate_goal": candidate_goal,
         "author_proxy_audit": author_proxy_audit,
+        "author_proxy_quality": author_proxy_quality,
+        "author_proxy_provenance": variant.author_proxy_provenance,
+        "author_review_items": variant.author_review_items,
     }
 
 
@@ -4401,6 +4595,14 @@ def _score_full_document_variant(
         candidate_text,
         author_proxy_context,
         phase=author_proxy_phase or label,
+    )
+    author_proxy_quality = _author_proxy_quality_score(
+        source_text=current_text,
+        candidate_text=candidate_text,
+        context=author_proxy_context,
+        provenance=variant.author_proxy_provenance,
+        review_items=variant.author_review_items,
+        audit=author_proxy_audit,
     )
     source_words = max(1, word_count(current_text))
     candidate_words = max(1, word_count(candidate_text))
@@ -4448,6 +4650,9 @@ def _score_full_document_variant(
             "local_scores": {},
             "local_goal": {},
             "author_proxy_audit": author_proxy_audit,
+            "author_proxy_quality": author_proxy_quality,
+            "author_proxy_provenance": variant.author_proxy_provenance,
+            "author_review_items": variant.author_review_items,
         }
 
     candidate_report = _scan_report(candidate_text)
@@ -4478,6 +4683,9 @@ def _score_full_document_variant(
         "candidate_report": candidate_report,
         "candidate_goal": candidate_goal,
         "author_proxy_audit": author_proxy_audit,
+        "author_proxy_quality": author_proxy_quality,
+        "author_proxy_provenance": variant.author_proxy_provenance,
+        "author_review_items": variant.author_review_items,
     }
 
 
@@ -5463,6 +5671,12 @@ def _score_final_topk_sentence_route_variant(
             author_proxy_context,
             phase=author_proxy_phase or label,
         )
+        author_proxy_quality = _author_proxy_quality_score(
+            source_text=current_text,
+            candidate_text=candidate_text,
+            context=author_proxy_context,
+            audit=author_proxy_audit,
+        )
         return {
             "section_id": "final_topk_sentence_route",
             "variant_id": variant.get("variant_id"),
@@ -5475,12 +5689,19 @@ def _score_final_topk_sentence_route_variant(
             "candidate_text": candidate_text,
             "applied_repairs": applied,
             "author_proxy_audit": author_proxy_audit,
+            "author_proxy_quality": author_proxy_quality,
         }
     author_proxy_audit = _author_proxy_candidate_audit(
         current_text,
         candidate_text,
         author_proxy_context,
         phase=author_proxy_phase or label,
+    )
+    author_proxy_quality = _author_proxy_quality_score(
+        source_text=current_text,
+        candidate_text=candidate_text,
+        context=author_proxy_context,
+        audit=author_proxy_audit,
     )
     candidate_report = _scan_report(candidate_text)
     candidate_goal = evaluate_rewrite_goal(
@@ -5509,6 +5730,7 @@ def _score_final_topk_sentence_route_variant(
         "candidate_goal": candidate_goal,
         "applied_repairs": applied,
         "author_proxy_audit": author_proxy_audit,
+        "author_proxy_quality": author_proxy_quality,
     }
 
 
@@ -5643,6 +5865,7 @@ def _has_final_topk_sentence_route_movement(row: dict[str, Any]) -> bool:
 def _final_topk_sentence_route_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     return (
+        _author_proxy_quality_sort_value(row),
         _number(incremental.get("topk_delta")) * 3.0 + _number(incremental.get("topk_calibrated_risk_delta")) * 1.5,
         _number(incremental.get("topk_delta")),
         _number(incremental.get("topk_calibrated_risk_delta")),
@@ -5811,6 +6034,7 @@ def _would_discard_structural_progress(candidate_scores: dict[str, Any], current
 def _full_document_candidate_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     return (
+        _author_proxy_quality_sort_value(row),
         _number(scores.get("ai_delta")),
         _number(scores.get("external_ai_flag_risk_delta")),
         _number(scores.get("external_delta")),
@@ -5858,6 +6082,7 @@ def _risky_window_cleanup_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     return (
+        _author_proxy_quality_sort_value(row),
         _number(incremental.get("risky_window_count_delta")),
         _number(incremental.get("rank_delta")),
         _number(incremental.get("unsafe_cluster_count_delta")),
@@ -5872,6 +6097,7 @@ def _unsafe_cluster_cleanup_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     return (
+        _author_proxy_quality_sort_value(row),
         _number(incremental.get("unsafe_cluster_count_delta")),
         _number(incremental.get("rank_delta")),
         _number(incremental.get("external_delta")),
@@ -5886,6 +6112,7 @@ def _borderline_verdict_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     boundary_crossed = 1.0 if _borderline_verdict_candidate_crosses_boundary(row) else 0.0
     return (
+        _author_proxy_quality_sort_value(row),
         boundary_crossed,
         _borderline_verdict_boundary_margin(scores),
         _number(incremental.get("ai_delta")),
@@ -5933,6 +6160,7 @@ def _balanced_ai_topk_sort_value(row: dict[str, Any]) -> tuple[float, ...]:
         + (rank_delta * 0.05)
     )
     return (
+        _author_proxy_quality_sort_value(row),
         weighted,
         ai_delta,
         topk_delta,
@@ -6342,6 +6570,7 @@ def _residual_candidate_sort_key(row: dict[str, Any]) -> tuple[float, ...]:
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
     return (
+        _author_proxy_quality_sort_value(row),
         1.0 if _local_cluster_cleared(local) else 0.0,
         _number(local.get("unsafe_cluster_count_delta")),
         _number(local.get("topk_calibrated_risk_delta")),
@@ -7447,6 +7676,9 @@ def _compact_residual_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "local_scores": row.get("local_scores"),
         "apply_status": row.get("apply_status"),
         "author_proxy_audit": row.get("author_proxy_audit"),
+        "author_proxy_quality": row.get("author_proxy_quality"),
+        "author_proxy_provenance": row.get("author_proxy_provenance"),
+        "author_review_items": row.get("author_review_items"),
         "selection_policy": row.get("selection_policy"),
         "direct_scanner_batch": row.get("direct_scanner_batch"),
         "text": row.get("text"),

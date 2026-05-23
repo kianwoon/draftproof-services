@@ -11,6 +11,7 @@ from rewrite_v5.experiment import (
     _is_safe_candidate,
     _section_from_cluster,
     _stack_summary,
+    _variants_response_format,
     build_fact_map,
     build_recomposer_prompt,
     build_section_units,
@@ -348,11 +349,89 @@ def test_v5_residual_cluster_prompt_attaches_author_proxy_context():
     assert payload["author_proxy_quality_contract"]["target"] == "highest_quality_grounded_candidate"
     assert "submitted source_text" in payload["author_proxy_quality_contract"]["basis"]
     assert any("No variant contains placeholders" in row for row in payload["author_proxy_quality_contract"]["self_check_before_return"])
+    assert payload["output_schema"]["variants"][0]["author_proxy_provenance"]
+    assert payload["output_schema"]["variants"][0]["author_review_items"]
     assert "Do not invent personal experiences" in " ".join(payload["author_proxy_rules"])
     assert "highest-quality polished candidate" in " ".join(payload["author_proxy_rules"])
     assert payload["author_proxy_candidate_audit_contract"]["applied_by"].startswith("DraftProof controller")
+    assert "author_proxy_provenance" in payload["author_proxy_candidate_audit_contract"]["model_output_schema"]
     assert payload["provenance_contract"]["needs_author_confirmation"]
     assert "acceptance_note" in payload["provenance_contract"]
+
+
+def test_v5_author_proxy_variant_parser_keeps_candidate_review_items():
+    raw = json.dumps({
+        "variants": [{
+            "variant_id": "v1",
+            "text": "The placement showed how timing affected the client consultation.",
+            "author_proxy_provenance": [{
+                "item_id": "p001",
+                "provenance": "inferred_from_draft",
+                "target_text": "timing affected consultation",
+                "generated_text": "timing affected the client consultation",
+                "user_input_needed": "",
+                "author_task": "",
+            }],
+            "author_review_items": [{
+                "item_id": "r001",
+                "provenance": "needs_author_confirmation",
+                "target_text": "client consultation",
+                "generated_text": "client consultation",
+                "user_input_needed": "Confirm the actual consultation detail.",
+                "author_task": "Verify the consultation detail.",
+            }],
+        }]
+    })
+
+    variants, diagnostics = v5_residual_comb._parse_loose_variants(raw)
+
+    assert diagnostics["status"] == "ok"
+    assert variants[0].author_proxy_provenance[0]["provenance"] == "inferred_from_draft"
+    assert variants[0].author_review_items[0]["item_id"] == "r001"
+
+
+def test_v5_author_proxy_structured_output_requires_candidate_review_fields():
+    schema = _variants_response_format(2, include_author_proxy_fields=True)
+    variant_schema = schema["json_schema"]["schema"]["properties"]["variants"]["items"]
+
+    assert "author_proxy_provenance" in variant_schema["required"]
+    assert "author_review_items" in variant_schema["required"]
+    assert variant_schema["properties"]["author_proxy_provenance"]["type"] == "array"
+    assert variant_schema["properties"]["author_review_items"]["type"] == "array"
+
+
+def test_v5_author_proxy_quality_prioritizes_grounded_candidate():
+    context = {"active": True, "review_required": True, "review_cards": [{"card_id": "target-01"}]}
+    grounded = {
+        "apply_status": {"applied": True},
+        "local_scores": {"unsafe_cluster_count_delta": 0},
+        "incremental": {"ai_delta": 1.0},
+        "author_proxy_quality": {
+            "active": True,
+            "score": 0.92,
+        },
+    }
+    thin_scanner_win = {
+        "apply_status": {"applied": True},
+        "local_scores": {"unsafe_cluster_count_delta": 0},
+        "incremental": {"ai_delta": 4.0},
+        "author_proxy_quality": {
+            "active": True,
+            "score": 0.41,
+        },
+    }
+
+    quality = v5_residual_comb._author_proxy_quality_score(
+        source_text="The placement helped me understand the client consultation process.",
+        candidate_text="The placement helped me understand how timing affected the client consultation process.",
+        context=context,
+        provenance=[{"item_id": "p001"}],
+        review_items=[{"item_id": "r001"}],
+        audit={"active": True, "safety_gate": {"passed": True}},
+    )
+
+    assert quality["score"] > 0.5
+    assert v5_residual_comb._residual_candidate_sort_key(grounded) > v5_residual_comb._residual_candidate_sort_key(thin_scanner_win)
 
 
 def test_v5_author_proxy_context_is_attached_to_all_accept_capable_prompts():
@@ -485,7 +564,7 @@ def test_v5_production_author_proxy_review_status_uses_candidate_audit():
         final_text="Changed text.",
         original_text="Original text.",
     )
-    assert not v5_production._accepted_author_proxy_review_required(
+    assert v5_production._accepted_author_proxy_review_required(
         [{"author_proxy_audit": {"active": False}}],
         context=context,
         final_text="Changed text.",
@@ -525,6 +604,24 @@ def test_v5_rewrite_report_author_proxy_status_overrides_external_stamp():
     assert "AUTHOR REVIEW" in html
     assert "Author review required" in html
     assert "External review required" not in html
+
+
+def test_v5_rewrite_report_includes_author_review_cards():
+    section = rewrite_report._author_review_card_section({
+        "author_review_cards": [{
+            "kind": "candidate_author_review",
+            "provenance": "needs_author_confirmation",
+            "target_text": "client consultation",
+            "instruction": "Candidate added a consultation detail.",
+            "user_input_needed": "Confirm the actual consultation detail.",
+            "author_task": "Verify the detail before submission.",
+        }]
+    })
+
+    text = "\n".join(section)
+    assert "Author Review Cards" in text
+    assert "client consultation" in text
+    assert "Confirm the actual consultation detail" in text
 
 
 def test_v5_residual_retune_prompt_focuses_on_remaining_sentence_without_scores():
@@ -3441,7 +3538,23 @@ def test_v5_production_author_proxy_candidate_requires_author_review(tmp_path, m
             "baseline_scores": {"ai": 46.0},
             "scores": {"ai": 36.0},
             "goal": {"goal_met": False},
-            "accepted": {"section_id": "density_cluster_001", "variant_id": "v1"},
+            "accepted": {
+                "section_id": "density_cluster_001",
+                "variant_id": "v1",
+                "author_review_items": [{
+                    "item_id": "candidate-01",
+                    "provenance": "needs_author_confirmation",
+                    "target_text": "narrower classroom observation",
+                    "generated_text": "Candidate narrowed the claim into a classroom observation.",
+                    "user_input_needed": "Confirm the observed classroom detail.",
+                    "author_task": "Replace this with your own exact observation if needed.",
+                }],
+                "author_proxy_audit": {
+                    "active": True,
+                    "review_required": True,
+                    "safety_gate": {"requires_author_review": True},
+                },
+            },
             "rewritten_document": "This rewritten candidate adds a narrower classroom observation.",
         })
         return {
@@ -3458,6 +3571,19 @@ def test_v5_production_author_proxy_candidate_requires_author_review(tmp_path, m
                     "text": "This rewritten candidate adds a narrower classroom observation.",
                     "word_count": 8,
                     "scores": {"ai_delta": 10.0},
+                    "author_review_items": [{
+                        "item_id": "candidate-01",
+                        "provenance": "needs_author_confirmation",
+                        "target_text": "narrower classroom observation",
+                        "generated_text": "Candidate narrowed the claim into a classroom observation.",
+                        "user_input_needed": "Confirm the observed classroom detail.",
+                        "author_task": "Replace this with your own exact observation if needed.",
+                    }],
+                    "author_proxy_audit": {
+                        "active": True,
+                        "review_required": True,
+                        "safety_gate": {"requires_author_review": True},
+                    },
                 },
                 "candidates": [{"variant_id": "v1"}],
             }],
@@ -3513,8 +3639,17 @@ def test_v5_production_author_proxy_candidate_requires_author_review(tmp_path, m
     assert summary["best_candidate_author_review_required"] is True
     assert summary["best_candidate_external_review_required"] is False
     assert summary["author_review_cards"][0]["card_id"] == "target-01"
+    assert any(
+        card.get("kind") == "candidate_author_review"
+        and card.get("target_text") == "narrower classroom observation"
+        for card in summary["author_review_cards"]
+    )
     assert emitted_checkpoints[0]["status"] == "rewrite_candidate_generated_needs_author_review"
     assert emitted_checkpoints[0]["summary"]["best_candidate_author_review_required"] is True
+    assert any(
+        card.get("kind") == "candidate_author_review"
+        for card in emitted_checkpoints[0]["summary"]["author_review_cards"]
+    )
 
 
 def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_path, monkeypatch):
