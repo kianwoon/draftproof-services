@@ -10971,16 +10971,14 @@ def _run_safe_band_evidence_repair_pass(
         round_dir = output_dir / f"section_{round_index:02d}"
         round_dir.mkdir(parents=True, exist_ok=True)
         _emit_progress(progress_callback, progress_percent, f"V5 safe-band evidence repair paragraph {round_index}")
-        variants, llm_diagnostics, prompt, completion = generate_safe_band_evidence_repair_variants(
-            section=section,
-            current_scores=current_scores,
-            current_goal=current_goal,
-            gateway=gateway,
-            variant_count=variant_count,
-            author_proxy_context=author_proxy_context,
-        )
-        (round_dir / "safe_band_evidence_repair_prompt.json.txt").write_text(prompt)
-        (round_dir / "safe_band_evidence_repair_completion.json.txt").write_text(completion)
+        prompt = ""
+        completion = ""
+        deterministic_variants = _safe_band_evidence_repair_deterministic_variants(section)
+        llm_diagnostics: dict[str, Any] = {
+            "status": "not_requested",
+            "reason": "no_deterministic_safe_band_evidence_candidate",
+            "deterministic_variant_count": len(deterministic_variants),
+        }
         rows = [
             _score_residual_variant(
                 original_text=original_text,
@@ -10995,7 +10993,7 @@ def _run_safe_band_evidence_repair_pass(
                 author_proxy_context=author_proxy_context,
                 author_proxy_phase="safe_band_evidence_repair",
             )
-            for variant in variants
+            for variant in deterministic_variants
         ]
         for row in rows:
             row["safe_band_evidence_materiality"] = _safe_band_evidence_repair_materiality(
@@ -11004,6 +11002,60 @@ def _run_safe_band_evidence_repair_pass(
                 target_sentence=str((section.metadata or {}).get("target_sentence") or ""),
             )
             _attach_safe_band_quality_materiality(row, current_text=current_text)
+        deterministic_selected = _best_safe_band_evidence_repair_candidate(rows, current_scores=current_scores)
+        if deterministic_selected and _has_safe_band_evidence_repair_movement(deterministic_selected, current_scores=current_scores):
+            llm_diagnostics = {
+                "status": "skipped",
+                "reason": "deterministic_safe_band_evidence_candidate_accepted",
+                "deterministic_variant_count": len(deterministic_variants),
+            }
+        elif deterministic_variants:
+            llm_diagnostics = {
+                "status": "requested",
+                "reason": "deterministic_safe_band_evidence_candidate_not_accepted",
+                "deterministic_variant_count": len(deterministic_variants),
+            }
+        if llm_diagnostics.get("status") != "skipped":
+            variants, generated_diagnostics, prompt, completion = generate_safe_band_evidence_repair_variants(
+                section=section,
+                current_scores=current_scores,
+                current_goal=current_goal,
+                gateway=gateway,
+                variant_count=variant_count,
+                author_proxy_context=author_proxy_context,
+            )
+            llm_diagnostics = {
+                **llm_diagnostics,
+                **(generated_diagnostics if isinstance(generated_diagnostics, dict) else {}),
+                "llm_variant_count": len(variants),
+            }
+            rows.extend([
+                _score_residual_variant(
+                    original_text=original_text,
+                    baseline_report=baseline_report,
+                    baseline_scores=baseline_scores,
+                    current_text=current_text,
+                    current_scores=current_scores,
+                    section=section,
+                    variant=variant,
+                    output_dir=round_dir,
+                    label=f"safe_band_evidence_repair_s{round_index}_{variant.variant_id}",
+                    author_proxy_context=author_proxy_context,
+                    author_proxy_phase="safe_band_evidence_repair",
+                )
+                for variant in variants
+            ])
+            for row in rows:
+                if isinstance(row.get("safe_band_evidence_materiality"), dict):
+                    continue
+                row["safe_band_evidence_materiality"] = _safe_band_evidence_repair_materiality(
+                    source_text=section.text,
+                    candidate_text=str(row.get("text") or ""),
+                    target_sentence=str((section.metadata or {}).get("target_sentence") or ""),
+                )
+                _attach_safe_band_quality_materiality(row, current_text=current_text)
+        (round_dir / "safe_band_evidence_repair_prompt.json.txt").write_text(prompt)
+        (round_dir / "safe_band_evidence_repair_completion.json.txt").write_text(completion)
         selected = _best_safe_band_evidence_repair_candidate(rows, current_scores=current_scores)
         accepted = selected if selected and _has_safe_band_evidence_repair_movement(selected, current_scores=current_scores) else None
         round_payload = {
@@ -11477,13 +11529,19 @@ def _run_safe_band_density_section_repair_loop(
                         "reason": "deterministic_density_repair_candidate_accepted",
                         "deterministic_variant_count": len(deterministic_variants),
                     }
+                elif _safe_band_density_section_deterministic_composite_enabled():
+                    llm_diagnostics = {
+                        "status": "deferred",
+                        "reason": "deterministic_density_repair_candidate_pending_composite_check",
+                        "deterministic_variant_count": len(deterministic_variants),
+                    }
                 else:
                     llm_diagnostics = {
                         "status": "requested",
                         "reason": "deterministic_density_repair_candidate_not_accepted",
                         "deterministic_variant_count": len(deterministic_variants),
                     }
-            if llm_diagnostics.get("status") != "skipped":
+            if llm_diagnostics.get("status") not in {"skipped", "deferred"}:
                 prompt = build_safe_band_density_section_repair_prompt(
                     section=section,
                     current_scores=current_scores,
@@ -11550,6 +11608,27 @@ def _run_safe_band_density_section_repair_loop(
                 "accepted": _compact_residual_row(section_accepted),
             })
             all_rows.extend(rows)
+        composite_variant = _safe_band_density_section_deterministic_composite_variant(
+            rows=all_rows,
+            sections=sections,
+            current_scores=current_scores,
+        )
+        if composite_variant is not None:
+            composite_row = _score_safe_band_evidence_pack_variant(
+                original_text=original_text,
+                baseline_report=baseline_report,
+                baseline_scores=baseline_scores,
+                current_text=current_text,
+                current_scores=current_scores,
+                sections=sections,
+                variant=composite_variant,
+                output_dir=round_dir,
+                label=f"safe_band_density_section_repair_r{round_index}_deterministic_composite",
+                author_proxy_context=author_proxy_context,
+            )
+            composite_row["safe_band_density_section_composite"] = True
+            _attach_safe_band_quality_materiality(composite_row, current_text=current_text)
+            all_rows.append(composite_row)
         selected = _best_safe_band_density_section_candidate(all_rows, current_scores=current_scores)
         accepted = selected if selected and _has_density_safe_band_checkpoint_movement(selected, current_scores=current_scores) else None
         accepted_section = (
@@ -13705,11 +13784,10 @@ def _density_section_with_repair_control(section: SectionUnit, *, failure_count:
 
 
 def _safe_band_density_section_repair_deterministic_variants(section: SectionUnit) -> list[RecompositionVariant]:
+    variants: list[RecompositionVariant] = []
     deduped = _safe_band_adjacent_duplicate_sentence_cleanup(section.text)
-    if not deduped or " ".join(deduped.split()) == " ".join(str(section.text or "").split()):
-        return []
-    return [
-        RecompositionVariant(
+    if deduped and " ".join(deduped.split()) != " ".join(str(section.text or "").split()):
+        variants.append(RecompositionVariant(
             "deterministic_adjacent_duplicate_cleanup",
             deduped,
             word_count(deduped),
@@ -13724,8 +13802,295 @@ def _safe_band_density_section_repair_deterministic_variants(section: SectionUni
                 }
             ],
             author_review_items=[],
+        ))
+    unpacked = _safe_band_density_sentence_boundary_unpack(
+        section.text,
+        target_sentence=str((section.metadata or {}).get("target_sentence") or ""),
+    )
+    if unpacked and " ".join(unpacked.split()) != " ".join(str(section.text or "").split()):
+        variants.append(RecompositionVariant(
+            "deterministic_sentence_boundary_unpack",
+            unpacked,
+            word_count(unpacked),
+            author_proxy_provenance=[
+                {
+                    "item_id": "deterministic-sentence-boundary-unpack",
+                    "provenance": "source_preserving_sentence_boundary_repair",
+                    "target_text": section.text,
+                    "generated_text": unpacked,
+                    "user_input_needed": "",
+                    "author_task": "",
+                }
+            ],
+            author_review_items=[],
+        ))
+    return variants
+
+
+def _safe_band_evidence_repair_deterministic_variants(section: SectionUnit) -> list[RecompositionVariant]:
+    variants: list[RecompositionVariant] = []
+    target_sentence = str((section.metadata or {}).get("target_sentence") or "")
+    boundary = _safe_band_density_sentence_boundary_unpack(section.text, target_sentence=target_sentence)
+    if boundary and " ".join(boundary.split()) != " ".join(str(section.text or "").split()):
+        variants.append(RecompositionVariant(
+            "deterministic_evidence_sentence_boundary_unpack",
+            boundary,
+            word_count(boundary),
+            author_proxy_provenance=[
+                {
+                    "item_id": "deterministic-evidence-sentence-boundary-unpack",
+                    "provenance": "scanner_target_sentence_boundary_repair",
+                    "target_text": section.text,
+                    "generated_text": boundary,
+                    "user_input_needed": "",
+                    "author_task": "",
+                }
+            ],
+            author_review_items=[],
+        ))
+    for index, seed in enumerate(_source_derived_route_seed_texts(section), start=1):
+        if not seed or " ".join(seed.split()) == " ".join(str(section.text or "").split()):
+            continue
+        if any(" ".join(seed.split()) == " ".join(existing.text.split()) for existing in variants):
+            continue
+        variants.append(RecompositionVariant(
+            f"deterministic_evidence_source_seed_{index}",
+            seed,
+            word_count(seed),
+            author_proxy_provenance=[
+                {
+                    "item_id": f"deterministic-evidence-source-seed-{index}",
+                    "provenance": "source_derived_route_seed",
+                    "target_text": section.text,
+                    "generated_text": seed,
+                    "user_input_needed": "",
+                    "author_task": "",
+                }
+            ],
+            author_review_items=[],
+        ))
+        if len(variants) >= _safe_band_evidence_repair_deterministic_variant_limit():
+            break
+    return variants
+
+
+def _safe_band_density_sentence_boundary_unpack(text: str, *, target_sentence: str = "") -> str:
+    source = str(text or "").strip()
+    sentences = [sentence.strip() for sentence in _sentences(source) if sentence.strip()]
+    if len(sentences) < 2:
+        return ""
+    required = _safe_band_density_section_repair_min_changed_sentences(source)
+    target = str(target_sentence or "").strip()
+    changed = 0
+    rebuilt_units: list[dict[str, Any]] = []
+    for sentence in sentences:
+        is_target = bool(target and sentence == target)
+        if changed < required or is_target:
+            unpacked = _safe_band_unpack_sentence_once(sentence)
+            if unpacked and len(unpacked) >= 2:
+                rebuilt_units.append({"text": " ".join(unpacked).strip(), "changed": True, "target": is_target})
+                changed += 1
+                continue
+        rebuilt_units.append({"text": sentence, "changed": False, "target": is_target})
+    if target and target in " ".join(str(unit.get("text") or "") for unit in rebuilt_units):
+        rebuilt_units, changed = _safe_band_force_target_sentence_changed(rebuilt_units, changed=changed)
+    if changed < required:
+        rebuilt_units, changed = _safe_band_merge_unpacked_sentence_units(
+            rebuilt_units,
+            required=required,
+            changed=changed,
         )
-    ]
+    if changed <= 0:
+        return ""
+    return " ".join(str(unit.get("text") or "").strip() for unit in rebuilt_units if str(unit.get("text") or "").strip()).strip()
+
+
+def _safe_band_force_target_sentence_changed(
+    units: list[dict[str, Any]],
+    *,
+    changed: int,
+) -> tuple[list[dict[str, Any]], int]:
+    target_index = next(
+        (index for index, unit in enumerate(units) if unit.get("target") is True and unit.get("changed") is False),
+        -1,
+    )
+    if target_index < 0:
+        return units, changed
+    if target_index + 1 < len(units):
+        merged = _safe_band_merge_sentence_pair(
+            str(units[target_index].get("text") or ""),
+            str(units[target_index + 1].get("text") or ""),
+        )
+        if merged:
+            next_changed = bool(units[target_index + 1].get("changed"))
+            return (
+                [
+                    *units[:target_index],
+                    {"text": merged, "changed": True, "target": True},
+                    *units[target_index + 2:],
+                ],
+                changed + (1 if next_changed else 2),
+            )
+    if target_index > 0:
+        merged = _safe_band_merge_sentence_pair(
+            str(units[target_index - 1].get("text") or ""),
+            str(units[target_index].get("text") or ""),
+        )
+        if merged:
+            previous_changed = bool(units[target_index - 1].get("changed"))
+            return (
+                [
+                    *units[:target_index - 1],
+                    {"text": merged, "changed": True, "target": True},
+                    *units[target_index + 1:],
+                ],
+                changed + (1 if previous_changed else 2),
+            )
+    return units, changed
+
+
+def _safe_band_merge_unpacked_sentence_units(
+    units: list[dict[str, Any]],
+    *,
+    required: int,
+    changed: int,
+) -> tuple[list[dict[str, Any]], int]:
+    if changed >= required or len(units) < 2:
+        return units, changed
+    merged: list[dict[str, Any]] = []
+    index = 0
+    while index < len(units):
+        current = units[index]
+        if (
+            changed < required
+            and index + 1 < len(units)
+            and current.get("changed") is False
+            and units[index + 1].get("changed") is False
+        ):
+            merged_text = _safe_band_merge_sentence_pair(
+                str(current.get("text") or ""),
+                str(units[index + 1].get("text") or ""),
+            )
+            if merged_text:
+                merged.append({"text": merged_text, "changed": True})
+                changed += 2
+                index += 2
+                continue
+        merged.append(current)
+        index += 1
+    return merged, changed
+
+
+def _safe_band_merge_sentence_pair(first: str, second: str) -> str:
+    left = str(first or "").strip()
+    right = str(second or "").strip()
+    if not _safe_band_sentence_fragment_viable(left) or not _safe_band_sentence_fragment_viable(right):
+        return ""
+    left = left[:-1].strip() if left[-1] in ".!?" else left
+    right = _safe_band_lower_sentence_start(right)
+    if not left or not right:
+        return ""
+    return f"{left}; {right}"
+
+
+def _safe_band_lower_sentence_start(fragment: str) -> str:
+    value = str(fragment or "").strip()
+    if not value:
+        return ""
+    for index, char in enumerate(value):
+        if not char.isalpha():
+            continue
+        if char.isupper() and index + 1 < len(value) and value[index + 1].islower():
+            return f"{value[:index]}{char.lower()}{value[index + 1:]}"
+        return f"{value[:index]}then {value[index:]}"
+    return value
+
+
+def _safe_band_unpack_sentence_once(sentence: str) -> list[str]:
+    value = str(sentence or "").strip()
+    if word_count(value) < _safe_band_density_sentence_unpack_min_words():
+        return []
+    protected_spans = _safe_band_protected_split_spans(value)
+    boundaries = _safe_band_sentence_unpack_boundaries(value)
+    for start, end in boundaries:
+        if _safe_band_boundary_in_protected_span(start, protected_spans):
+            continue
+        left = value[:start].strip()
+        right = value[end:].strip()
+        left = _safe_band_finish_sentence_fragment(left)
+        right = _safe_band_capitalize_sentence_start(_safe_band_finish_sentence_fragment(right))
+        if _safe_band_sentence_fragment_viable(left) and _safe_band_sentence_fragment_viable(right):
+            return [left, right]
+    return []
+
+
+def _safe_band_sentence_unpack_boundaries(sentence: str) -> list[tuple[int, int]]:
+    value = str(sentence or "")
+    boundaries: list[tuple[int, int]] = []
+    for match in re.finditer(r"\s*[;:]\s+", value):
+        boundaries.append((match.start(), match.end()))
+    for match in re.finditer(r"\s+[–—]\s+", value):
+        boundaries.append((match.start(), match.end()))
+    for match in re.finditer(r",\s+(?=(?:and|but|while|so)\b)", value, flags=re.IGNORECASE):
+        boundaries.append((match.start(), match.end()))
+    return sorted(boundaries, key=lambda item: item[0])
+
+
+def _safe_band_protected_split_spans(text: str) -> list[tuple[int, int]]:
+    value = str(text or "")
+    spans: list[tuple[int, int]] = []
+    for pattern in (
+        r"\([^)]*\d{4}[^)]*\)",
+        r"\"[^\"]*\"",
+        r"'[^']*'",
+    ):
+        spans.extend((match.start(), match.end()) for match in re.finditer(pattern, value))
+    return spans
+
+
+def _safe_band_boundary_in_protected_span(index: int, spans: list[tuple[int, int]]) -> bool:
+    return any(start <= index <= end for start, end in spans)
+
+
+def _safe_band_finish_sentence_fragment(fragment: str) -> str:
+    value = str(fragment or "").strip()
+    if not value:
+        return ""
+    return value if value[-1] in ".!?" else f"{value}."
+
+
+def _safe_band_capitalize_sentence_start(fragment: str) -> str:
+    value = str(fragment or "").strip()
+    if not value:
+        return ""
+    for index, char in enumerate(value):
+        if char.isalpha():
+            return f"{value[:index]}{char.upper()}{value[index + 1:]}"
+    return value
+
+
+def _safe_band_sentence_fragment_viable(fragment: str) -> bool:
+    if word_count(fragment) < _safe_band_density_sentence_unpack_min_fragment_words():
+        return False
+    return bool(re.search(r"[A-Za-z]", str(fragment or "")))
+
+
+def _safe_band_density_sentence_unpack_min_words() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SENTENCE_UNPACK_MIN_WORDS",
+        18,
+        minimum=8,
+        maximum=60,
+    )
+
+
+def _safe_band_density_sentence_unpack_min_fragment_words() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SENTENCE_UNPACK_MIN_FRAGMENT_WORDS",
+        5,
+        minimum=3,
+        maximum=20,
+    )
 
 
 def _safe_band_adjacent_duplicate_sentence_cleanup(text: str) -> str:
@@ -13762,6 +14127,68 @@ def _safe_band_density_duplicate_cleanup_materiality(source_text: str, candidate
         "passed": removed_count > 0,
         "reason": "density_section_adjacent_duplicate_cleanup" if removed_count > 0 else "no_adjacent_duplicate_removed",
         "removed_duplicate_sentence_count": max(0, removed_count),
+    }
+
+
+def _safe_band_density_section_deterministic_composite_variant(
+    *,
+    rows: list[dict[str, Any]],
+    sections: list[SectionUnit],
+    current_scores: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not _safe_band_density_section_deterministic_composite_enabled():
+        return None
+    if len(sections) < 2 or not rows:
+        return None
+    best_by_section: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not (row.get("apply_status") or {}).get("applied"):
+            continue
+        variant_id = str(row.get("variant_id") or "")
+        if not variant_id.startswith("deterministic_"):
+            continue
+        materiality = row.get("safe_band_density_section_materiality")
+        if not isinstance(materiality, dict) or materiality.get("passed") is not True:
+            continue
+        if not _author_proxy_candidate_auto_finalizable(row):
+            continue
+        incremental = row.get("incremental") if isinstance(row.get("incremental"), dict) else {}
+        if _number(incremental.get("unsafe_cluster_count_delta")) < 0:
+            continue
+        if _number(incremental.get("unsafe_word_ratio_delta")) < -_safe_band_evidence_repair_unsafe_word_ratio_regression_tolerance():
+            continue
+        if _number(incremental.get("risky_window_count_delta")) < 0:
+            continue
+        section_id = str(row.get("section_id") or "")
+        if not section_id:
+            continue
+        existing = best_by_section.get(section_id)
+        if existing is None or _safe_band_evidence_repair_sort_key(row, current_scores=current_scores) > _safe_band_evidence_repair_sort_key(existing, current_scores=current_scores):
+            best_by_section[section_id] = row
+    replacements: list[dict[str, str]] = []
+    source_variant_ids: list[str] = []
+    provenance: list[dict[str, Any]] = []
+    review_items: list[dict[str, Any]] = []
+    for section in sections:
+        row = best_by_section.get(section.section_id)
+        if row is None:
+            continue
+        replacement = str(row.get("text") or "").strip()
+        if not replacement:
+            continue
+        replacements.append({"section_id": section.section_id, "text": replacement})
+        source_variant_ids.append(str(row.get("variant_id") or section.section_id))
+        provenance.extend(_author_proxy_item_list(row.get("author_proxy_provenance"), limit=4))
+        review_items.extend(_author_proxy_item_list(row.get("author_review_items"), limit=4))
+    if len(replacements) < _safe_band_density_section_deterministic_composite_min_sections():
+        return None
+    return {
+        "variant_id": "deterministic_density_section_composite",
+        "partial_pack": True,
+        "replacements": replacements,
+        "source_variant_ids": source_variant_ids,
+        "author_proxy_provenance": _dedupe_author_proxy_items(provenance, limit=4),
+        "author_review_items": _dedupe_author_proxy_items(review_items, limit=4),
     }
 
 
@@ -15626,6 +16053,22 @@ def _safe_band_density_section_repair_max_new_repeated_ngrams() -> int:
     return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_MAX_NEW_REPEATED_NGRAMS", 1, minimum=0, maximum=12)
 
 
+def _safe_band_density_section_deterministic_composite_enabled() -> bool:
+    return _bool_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_DETERMINISTIC_COMPOSITE",
+        True,
+    )
+
+
+def _safe_band_density_section_deterministic_composite_min_sections() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_DETERMINISTIC_COMPOSITE_MIN_SECTIONS",
+        2,
+        minimum=2,
+        maximum=6,
+    )
+
+
 def _safe_band_density_section_repair_min_changed_sentence_ratio() -> float:
     return _float_env(
         "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_REPAIR_MIN_CHANGED_SENTENCE_RATIO",
@@ -15684,6 +16127,15 @@ def _safe_band_evidence_pack_partial_min_sections() -> int:
 
 def _safe_band_evidence_repair_variant_count() -> int:
     return _int_env("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_VARIANTS", 3, minimum=1, maximum=5)
+
+
+def _safe_band_evidence_repair_deterministic_variant_limit() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_DETERMINISTIC_VARIANTS",
+        4,
+        minimum=1,
+        maximum=8,
+    )
 
 
 def _safe_band_evidence_repair_section_limit() -> int:

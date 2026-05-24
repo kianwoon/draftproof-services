@@ -3736,11 +3736,44 @@ def test_v5_safe_band_density_section_repair_adds_deterministic_duplicate_cleanu
     )
 
     variants = v5_residual_comb._safe_band_density_section_repair_deterministic_variants(section)
+    duplicate = [variant for variant in variants if variant.variant_id == "deterministic_adjacent_duplicate_cleanup"]
 
-    assert len(variants) == 1
-    assert variants[0].variant_id == "deterministic_adjacent_duplicate_cleanup"
-    assert variants[0].text.count("inclusive learning design") == 1
-    assert variants[0].author_proxy_provenance[0]["provenance"] == "duplicate_source_cleanup"
+    assert len(duplicate) == 1
+    assert duplicate[0].text.count("inclusive learning design") == 1
+    assert duplicate[0].author_proxy_provenance[0]["provenance"] == "duplicate_source_cleanup"
+
+
+def test_v5_safe_band_density_section_repair_adds_sentence_boundary_unpack_variant():
+    source = (
+        "The opening claim sets a broad frame for the whole section, and it keeps the paragraph moving in a polished path that sounds settled before the evidence arrives. "
+        "The next sentence holds a citation frame for the source material: it lists several task elements as one clean explanation without slowing down at the practical detail. "
+        "The final sentence closes the issue smoothly for the reader, but it leaves little source-level friction for the author to return to."
+    )
+    section = SectionUnit(
+        "safe_band_density_section_s001",
+        "Density",
+        source,
+        0,
+        len(source),
+        1,
+        v5_residual_comb.word_count(source),
+        {},
+    )
+
+    variants = v5_residual_comb._safe_band_density_section_repair_deterministic_variants(section)
+    unpacked = [variant for variant in variants if variant.variant_id == "deterministic_sentence_boundary_unpack"]
+
+    assert len(unpacked) == 1
+    materiality = v5_residual_comb._safe_band_density_section_repair_materiality(
+        source_text=source,
+        candidate_text=unpacked[0].text,
+        target_sentence="The next sentence holds a citation frame for the source material: it lists several task elements as one clean explanation without slowing down at the practical detail.",
+    )
+    assert materiality["passed"]
+    assert materiality["reason"] == "material_density_section_route_change"
+    assert materiality["target_sentence_changed"] is True
+    assert materiality["source_coverage_audit"]["source_coverage_ratio"] == 1.0
+    assert unpacked[0].author_proxy_provenance[0]["provenance"] == "source_preserving_sentence_boundary_repair"
 
 
 def test_v5_safe_band_density_materiality_rejects_source_voice_shift(monkeypatch):
@@ -3862,6 +3895,434 @@ def test_v5_safe_band_density_section_loop_accepts_density_gap_movement(monkeypa
     assert rounds[0]["phase"] == "safe_band_density_section_repair"
     assert rounds[0]["status"] == "accepted"
     assert accepted_checkpoints[0]["phase"] == "safe_band_density_section_repair"
+
+
+def test_v5_safe_band_density_section_loop_can_accept_deterministic_unpack_without_llm(monkeypatch, tmp_path):
+    source = (
+        "The opening claim sets a broad frame for the whole section, and it keeps the paragraph moving in a polished path that sounds settled before the evidence arrives. "
+        "The next sentence holds a citation frame for the source material: it lists several task elements as one clean explanation without slowing down at the practical detail. "
+        "The final sentence closes the issue smoothly for the reader, but it leaves little source-level friction for the author to return to."
+    )
+    section = SectionUnit(
+        section_id="safe_band_density_section_s001",
+        heading="Safe-band density section repair",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=v5_residual_comb.word_count(source),
+        metadata={"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+    current_scores = {
+        "ai": 31.24,
+        "topk_calibrated_risk": 22.296,
+        "qualifying_text_ai_density": 38.41,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        }
+    }
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_round_limit", lambda: 1)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_sections", lambda *_args, **_kwargs: [section])
+
+    def fail_if_called(**_kwargs):
+        raise AssertionError("LLM generation should be skipped after deterministic density movement")
+
+    monkeypatch.setattr(v5_residual_comb, "generate_safe_band_density_section_repair_variants", fail_if_called)
+
+    def fake_score(**kwargs):
+        variant = kwargs["variant"]
+        assert variant.variant_id == "deterministic_sentence_boundary_unpack"
+        return {
+            "section_id": "safe_band_density_section_s001",
+            "variant_id": variant.variant_id,
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 31.0,
+                "topk_calibrated_risk": 22.0,
+                "qualifying_text_ai_density": 34.8,
+                "unsafe_cluster_count": 0,
+                "risky_window_count": 0,
+            },
+            "incremental": {
+                "ai_delta": 0.24,
+                "ai_authorship_delta": 0.0,
+                "topk_calibrated_risk_delta": 0.296,
+                "qualifying_text_ai_density_delta": 3.61,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "text": variant.text,
+            "candidate_text": variant.text,
+            "candidate_report": {},
+            "candidate_goal": {
+                "strict_ai_safe_band_achieved": True,
+                "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []},
+            },
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score)
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_density_section_repair_loop(
+        original_text="original",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text=source,
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+    )
+
+    assert text != source
+    assert text == rounds[0]["accepted"]["text"]
+    assert scores["qualifying_text_ai_density"] == 34.8
+    assert rounds[0]["status"] == "accepted"
+    assert rounds[0]["section_attempts"][0]["generator_diagnostics"]["status"] == "skipped"
+    assert rounds[0]["section_attempts"][0]["generator_diagnostics"]["reason"] == "deterministic_density_repair_candidate_accepted"
+
+
+def test_v5_safe_band_density_section_loop_scores_deterministic_composite_before_llm(monkeypatch, tmp_path):
+    first_text = (
+        "The first paragraph opens with a broad claim for the section, and it keeps the evidence moving in one polished route before the reader sees the limit. "
+        "The next sentence lists practical details: it makes the whole issue sound resolved before the author has returned to the source."
+    )
+    second_text = (
+        "The second paragraph uses another smooth claim for the same issue, and it makes the paragraph feel complete before the example is tested. "
+        "The closing sentence turns the point into a neat implication: it leaves little friction in the submitted source."
+    )
+    first = SectionUnit("safe_band_density_section_s001", "Density", first_text, 0, len(first_text), 1, v5_residual_comb.word_count(first_text), {})
+    second = SectionUnit("safe_band_density_section_s002", "Density", second_text, len(first_text) + 2, len(first_text) + 2 + len(second_text), 1, v5_residual_comb.word_count(second_text), {})
+    current_text = f"{first_text}\n\n{second_text}"
+    current_scores = {
+        "ai": 31.24,
+        "topk_calibrated_risk": 22.296,
+        "qualifying_text_ai_density": 38.41,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        }
+    }
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_round_limit", lambda: 1)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_sections", lambda *_args, **_kwargs: [first, second])
+
+    def fail_if_called(**_kwargs):
+        raise AssertionError("LLM generation should be deferred until deterministic composite is scored")
+
+    monkeypatch.setattr(v5_residual_comb, "generate_safe_band_density_section_repair_variants", fail_if_called)
+
+    def fake_score_residual(**kwargs):
+        section = kwargs["section"]
+        variant = kwargs["variant"]
+        return {
+            "section_id": section.section_id,
+            "variant_id": variant.variant_id,
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 31.2,
+                "topk_calibrated_risk": 22.2,
+                "qualifying_text_ai_density": 38.2,
+                "unsafe_cluster_count": 0,
+                "risky_window_count": 0,
+            },
+            "incremental": {
+                "ai_delta": 0.04,
+                "ai_authorship_delta": 0.0,
+                "topk_calibrated_risk_delta": 0.096,
+                "qualifying_text_ai_density_delta": 0.21,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "text": variant.text,
+            "candidate_text": current_text,
+            "candidate_report": {},
+            "candidate_goal": current_goal,
+            "author_proxy_audit": {"auto_finalizable": True},
+            "author_proxy_quality": {"passed": True},
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score_residual)
+
+    def fake_score_pack(**kwargs):
+        variant = kwargs["variant"]
+        assert variant["variant_id"] == "deterministic_density_section_composite"
+        return {
+            "section_id": "safe_band_evidence_pack",
+            "variant_id": variant["variant_id"],
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 30.0,
+                "topk_calibrated_risk": 21.0,
+                "qualifying_text_ai_density": 34.7,
+                "unsafe_cluster_count": 0,
+                "risky_window_count": 0,
+            },
+            "incremental": {
+                "ai_delta": 1.24,
+                "ai_authorship_delta": 0.0,
+                "topk_calibrated_risk_delta": 1.296,
+                "qualifying_text_ai_density_delta": 3.71,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "text": "\n\n".join(row["text"] for row in variant["replacements"]),
+            "candidate_text": "accepted deterministic composite text",
+            "candidate_report": {},
+            "candidate_goal": {"strict_ai_safe_band_achieved": True, "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []}},
+            "safe_band_evidence_pack_materiality": {
+                "passed": True,
+                "sections": [{"contract": "density_section_repair", "passed": True}],
+            },
+            "author_proxy_audit": {"auto_finalizable": True},
+            "author_proxy_quality": {"passed": True},
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_safe_band_evidence_pack_variant", fake_score_pack)
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_density_section_repair_loop(
+        original_text="original",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text=current_text,
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+    )
+
+    assert text == "accepted deterministic composite text"
+    assert scores["qualifying_text_ai_density"] == 34.7
+    assert rounds[0]["status"] == "accepted"
+    assert rounds[0]["accepted"]["variant_id"] == "deterministic_density_section_composite"
+    assert {attempt["generator_diagnostics"]["status"] for attempt in rounds[0]["section_attempts"]} == {"deferred"}
+
+
+def test_v5_safe_band_evidence_repair_accepts_deterministic_before_writer(monkeypatch, tmp_path):
+    source = (
+        "The paragraph opens with a broad claim for the section, and it keeps the evidence moving in one polished route before the reader sees the limit. "
+        "The target sentence lists practical details: it makes the issue sound resolved before the author has returned to the source. "
+        "The closing sentence turns the point into a neat implication: it leaves little friction in the submitted source."
+    )
+    section = SectionUnit(
+        "safe_band_evidence_repair_t001",
+        "Safe-band evidence repair",
+        source,
+        0,
+        len(source),
+        1,
+        v5_residual_comb.word_count(source),
+        {"target_sentence": "The target sentence lists practical details: it makes the issue sound resolved before the author has returned to the source."},
+    )
+    current_scores = {
+        "ai": 31.24,
+        "topk_calibrated_risk": 22.296,
+        "qualifying_text_ai_density": 38.41,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        }
+    }
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_repair_sections", lambda *_args, **_kwargs: [section])
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_first_repair_should_run", lambda **_kwargs: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_pack_enabled", lambda: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_controlled_operation_enabled", lambda: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_sentence_replacement_enabled", lambda: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_should_run", lambda **_kwargs: False)
+
+    def fail_if_called(**_kwargs):
+        raise AssertionError("writer should be skipped after deterministic evidence movement")
+
+    monkeypatch.setattr(v5_residual_comb, "generate_safe_band_evidence_repair_variants", fail_if_called)
+
+    def fake_score(**kwargs):
+        variant = kwargs["variant"]
+        accepted = variant.variant_id == "deterministic_evidence_sentence_boundary_unpack"
+        return {
+            "section_id": section.section_id,
+            "variant_id": variant.variant_id,
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 30.0 if accepted else 31.2,
+                "topk_calibrated_risk": 21.0 if accepted else 22.2,
+                "qualifying_text_ai_density": 34.8 if accepted else 38.3,
+                "unsafe_cluster_count": 0,
+                "risky_window_count": 0,
+            },
+            "incremental": {
+                "ai_delta": 1.24 if accepted else 0.04,
+                "ai_authorship_delta": 0.0,
+                "topk_calibrated_risk_delta": 1.296 if accepted else 0.096,
+                "qualifying_text_ai_density_delta": 3.61 if accepted else 0.11,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "text": variant.text,
+            "candidate_text": variant.text,
+            "candidate_report": {},
+            "candidate_goal": (
+                {"strict_ai_safe_band_achieved": True, "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []}}
+                if accepted
+                else current_goal
+            ),
+            "author_proxy_audit": {"auto_finalizable": True},
+            "author_proxy_quality": {"passed": True},
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score)
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_evidence_repair_pass(
+        original_text="original",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text=source,
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+    )
+
+    assert text != source
+    assert scores["qualifying_text_ai_density"] == 34.8
+    assert rounds[0]["status"] == "accepted"
+    assert rounds[0]["accepted"]["variant_id"] == "deterministic_evidence_sentence_boundary_unpack"
+    assert rounds[0]["generator_diagnostics"]["status"] == "skipped"
+
+
+def test_v5_safe_band_evidence_repair_falls_back_to_writer_after_weak_deterministic(monkeypatch, tmp_path):
+    source = (
+        "The paragraph opens with a broad claim for the section, and it keeps the evidence moving in one polished route before the reader sees the limit. "
+        "The target sentence lists practical details: it makes the issue sound resolved before the author has returned to the source. "
+        "The closing sentence turns the point into a neat implication: it leaves little friction in the submitted source."
+    )
+    section = SectionUnit(
+        "safe_band_evidence_repair_t001",
+        "Safe-band evidence repair",
+        source,
+        0,
+        len(source),
+        1,
+        v5_residual_comb.word_count(source),
+        {"target_sentence": "The target sentence lists practical details: it makes the issue sound resolved before the author has returned to the source."},
+    )
+    current_scores = {
+        "ai": 31.24,
+        "topk_calibrated_risk": 22.296,
+        "qualifying_text_ai_density": 38.41,
+        "unsafe_cluster_count": 0,
+        "risky_window_count": 0,
+    }
+    current_goal = {
+        "ai_footprint_gate": {
+            "safe_band_thresholds": {"topk_calibrated_risk": 25.0, "qualifying_text_ai_density": 35.0},
+            "remaining_ai_footprint_drivers": [
+                {"driver": "qualifying_text_ai_density", "value": 38.41, "safe_band": 35.0},
+            ],
+        }
+    }
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_repair_sections", lambda *_args, **_kwargs: [section])
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_first_repair_should_run", lambda **_kwargs: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_evidence_pack_enabled", lambda: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_controlled_operation_enabled", lambda: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_sentence_replacement_enabled", lambda: False)
+    monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_should_run", lambda **_kwargs: False)
+
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "generate_safe_band_evidence_repair_variants",
+        lambda **_kwargs: (
+            [RecompositionVariant("v1", "Writer candidate changes the target. It keeps source terms and lowers the density path.", 13)],
+            {"status": "ok"},
+            "prompt",
+            "completion",
+        ),
+    )
+    calls = {"count": 0}
+
+    def fake_score(**kwargs):
+        variant = kwargs["variant"]
+        calls["count"] += 1
+        accepted = variant.variant_id == "v1"
+        return {
+            "section_id": section.section_id,
+            "variant_id": variant.variant_id,
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 30.0 if accepted else 31.2,
+                "topk_calibrated_risk": 21.0 if accepted else 22.2,
+                "qualifying_text_ai_density": 34.8 if accepted else 38.3,
+                "unsafe_cluster_count": 0,
+                "risky_window_count": 0,
+            },
+            "incremental": {
+                "ai_delta": 1.24 if accepted else 0.04,
+                "ai_authorship_delta": 0.0,
+                "topk_calibrated_risk_delta": 1.296 if accepted else 0.096,
+                "qualifying_text_ai_density_delta": 3.61 if accepted else 0.11,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 0.0,
+                "risky_window_count_delta": 0.0,
+            },
+            "text": variant.text,
+            "candidate_text": variant.text,
+            "candidate_report": {},
+            "candidate_goal": (
+                {"strict_ai_safe_band_achieved": True, "ai_footprint_gate": {"safe_band": True, "remaining_ai_footprint_drivers": []}}
+                if accepted
+                else current_goal
+            ),
+            "author_proxy_audit": {"auto_finalizable": True},
+            "author_proxy_quality": {"passed": True},
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score)
+
+    text, _report, _goal, scores, rounds, _best = v5_residual_comb._run_safe_band_evidence_repair_pass(
+        original_text="original",
+        baseline_report={},
+        baseline_scores=current_scores,
+        current_text=source,
+        current_report={},
+        current_goal=current_goal,
+        current_scores=current_scores,
+        gateway=object(),
+        output_dir=tmp_path,
+        global_best_candidate=None,
+    )
+
+    assert text.startswith("Writer candidate")
+    assert scores["qualifying_text_ai_density"] == 34.8
+    assert rounds[0]["accepted"]["variant_id"] == "v1"
+    assert rounds[0]["generator_diagnostics"]["status"] == "ok"
+    assert rounds[0]["generator_diagnostics"]["reason"] == "deterministic_safe_band_evidence_candidate_not_accepted"
+    assert calls["count"] > 1
 
 
 def test_v5_safe_band_density_section_loop_excludes_accepted_section_next_round(monkeypatch, tmp_path):
