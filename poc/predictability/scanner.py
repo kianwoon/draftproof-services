@@ -67,6 +67,8 @@ class SentenceResult:
     start_char: int = 0
     end_char: int = 0
     paragraph_id: str = ""
+    source_paragraph_id: str = ""
+    virtual_paragraph_id: str = ""
 
 
 class PredictabilityScanner:
@@ -158,43 +160,23 @@ class PredictabilityScanner:
 
         Uses abbreviation-aware splitting from detect.utils.
         """
-        from poc.detect.utils import split_sentences as _split
-        # Build paragraph map first
-        paragraphs = [p for p in text.strip().split("\n\n") if p.strip()]
-        para_starts = []
-        pos = 0
-        for p in paragraphs:
-            idx = text.find(p.strip(), pos)
-            if idx < 0:
-                idx = pos
-            para_starts.append(idx)
-            pos = idx + len(p)
+        from poc.detect.document_structure import structured_sentence_segments
 
-        sentences = _split(text)
+        sentence_rows = structured_sentence_segments(text)
         result = []
-        cursor = 0
-        for s in sentences:
-            s = s.strip()
+        for row in sentence_rows:
+            s = str(row.get("sentence") or "").strip()
             if not s:
                 continue
-            # Find actual position in original text
-            start = text.find(s[:40], cursor)
-            if start < 0:
-                start = cursor
-            end = start + len(s)
-            cursor = end
-            # Determine paragraph_id
-            para_id = "p001"
-            for pi, ps in enumerate(para_starts):
-                if start >= ps:
-                    para_id = f"p{pi+1:03d}"
             # Attach offsets as attributes on the string
             s_with_meta = s  # type: ignore
             s_with_meta = type("Str", (str,), {
                 "__value__": s,
-                "start_char": start,
-                "end_char": end,
-                "paragraph_id": para_id,
+                "start_char": int(row.get("start_char") or 0),
+                "end_char": int(row.get("end_char") or 0),
+                "paragraph_id": row.get("paragraph_id") or "p001",
+                "source_paragraph_id": row.get("source_paragraph_id") or row.get("paragraph_id") or "src_p001",
+                "virtual_paragraph_id": row.get("virtual_paragraph_id") or row.get("paragraph_id") or "p001",
             })(s)
             result.append(s_with_meta)
         return result
@@ -411,6 +393,8 @@ class PredictabilityScanner:
         start_char: int = 0,
         end_char: int = 0,
         paragraph_id: str = "p001",
+        source_paragraph_id: str = "src_p001",
+        virtual_paragraph_id: str = "p001",
     ) -> SentenceResult:
         return replace(
             result,
@@ -419,6 +403,8 @@ class PredictabilityScanner:
             start_char=start_char,
             end_char=end_char,
             paragraph_id=paragraph_id,
+            source_paragraph_id=source_paragraph_id,
+            virtual_paragraph_id=virtual_paragraph_id,
         )
 
     @classmethod
@@ -531,6 +517,8 @@ class PredictabilityScanner:
                 sr.start_char = getattr(s, "start_char", 0)
                 sr.end_char = getattr(s, "end_char", 0)
                 sr.paragraph_id = getattr(s, "paragraph_id", "p001")
+                sr.source_paragraph_id = getattr(s, "source_paragraph_id", "src_p001")
+                sr.virtual_paragraph_id = getattr(s, "virtual_paragraph_id", sr.paragraph_id or "p001")
                 results.append(sr)
             completed = len(results)
             batch_seconds = time.monotonic() - batch_t0

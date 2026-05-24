@@ -947,7 +947,12 @@ def _parse_variants(raw: str, *, source_words: int) -> tuple[list[RecompositionV
     return variants, {**diagnostics, "status": "ok" if variants else "schema_failed", "variant_count": len(variants), "rejected": rejected}
 
 
-def _variants_response_format(variant_count: int, *, include_author_proxy_fields: bool = False) -> dict[str, Any]:
+def _variants_response_format(
+    variant_count: int,
+    *,
+    include_author_proxy_fields: bool = False,
+    include_unit_patch_fields: bool = False,
+) -> dict[str, Any]:
     variant_properties: dict[str, Any] = {
         "variant_id": {"type": "string"},
         "text": {"type": "string"},
@@ -978,6 +983,41 @@ def _variants_response_format(variant_count: int, *, include_author_proxy_fields
             "maxItems": 8,
         }
         required_variant_keys.extend(["author_proxy_provenance", "author_review_items"])
+    if include_unit_patch_fields:
+        route_precommit_schema = {
+            "type": "object",
+            "properties": {
+                "unit_id": {"type": "string"},
+                "route_change": {"type": "string"},
+            },
+            "required": ["unit_id", "route_change"],
+            "additionalProperties": False,
+        }
+        unit_replacement_schema = {
+            "type": "object",
+            "properties": {
+                "unit_id": {"type": "string"},
+                "replacement": {"type": "string"},
+            },
+            "required": ["unit_id", "replacement"],
+            "additionalProperties": False,
+        }
+        variant_properties["route_precommit"] = {
+            "type": "array",
+            "items": route_precommit_schema,
+            "maxItems": 16,
+        }
+        variant_properties["unit_replacements"] = {
+            "type": "array",
+            "items": unit_replacement_schema,
+            "maxItems": 16,
+        }
+        variant_properties["unchanged_units"] = {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 32,
+        }
+        required_variant_keys.extend(["route_precommit", "unit_replacements", "unchanged_units"])
     return {
         "type": "json_schema",
         "json_schema": {

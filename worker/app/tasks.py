@@ -590,6 +590,7 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         "converged",
         "convergence_reason",
         "candidate_generation_status",
+        "paragraph_obligation_hard_stop",
         "candidate_ledger",
         "candidate_trace",
         "candidate_loop_trace",
@@ -663,6 +664,9 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
             for key in (
                 "public_status",
                 "rewrite_goal_status",
+                "candidate_generation_status",
+                "paragraph_obligation_hard_stop",
+                "no_text_change_reason",
                 "candidate_ledger",
                 "v4_scores",
                 "detect_scores",
@@ -935,6 +939,8 @@ def _historical_rewrite_seed_texts(rewrite_json: dict | None, original_text: str
     if not isinstance(rewrite_json, dict):
         return []
     summary = rewrite_json.get("summary") if isinstance(rewrite_json.get("summary"), dict) else {}
+    if _rewrite_has_paragraph_obligation_hard_stop(summary):
+        return []
     candidates: list[str] = []
     _append_historical_seed_candidates(candidates, rewrite_json.get("candidate_ledger"), original_text)
     _append_historical_seed_candidates(candidates, summary.get("candidate_ledger"), original_text)
@@ -956,6 +962,21 @@ def _historical_rewrite_seed_texts(rewrite_json: dict | None, original_text: str
         selected.get("text"),
     ])
     return _dedupe_historical_seed_texts(candidates, original_text, limit=limit)
+
+
+def _rewrite_has_paragraph_obligation_hard_stop(summary: dict) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    hard_stop = summary.get("paragraph_obligation_hard_stop")
+    if isinstance(hard_stop, dict) and hard_stop.get("active"):
+        return True
+    if str(summary.get("no_text_change_reason") or "") == "v5_unresolved_paragraph_findings":
+        return True
+    generation_status = summary.get("candidate_generation_status")
+    return (
+        isinstance(generation_status, dict)
+        and str(generation_status.get("reason") or "") == "unresolved_paragraph_findings"
+    )
 
 
 def _target_contexts(plan_items, findings_by_id: dict) -> list:
@@ -1260,6 +1281,7 @@ def _build_rewrite_debug_log(
             "required_ai_drop": summary.get("required_ai_drop"),
             "target_ai_score": summary.get("target_ai_score"),
             "candidate_generation_status": summary.get("candidate_generation_status"),
+            "paragraph_obligation_hard_stop": summary.get("paragraph_obligation_hard_stop"),
             "content_router_trace": summary.get("content_router_trace"),
             "scan_contract": summary.get("scan_contract"),
             "v3_route": summary.get("v3_route"),

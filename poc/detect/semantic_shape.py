@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import List
 
 from .base import BaseDetector, DetectResult, Finding
+from .document_structure import structured_paragraph_texts
 
 _PRELOADED_EMBEDDER = None
 _PRELOADED_MODEL_NAME = ""
@@ -68,7 +69,7 @@ class SemanticShapeDetector(BaseDetector):
 
     def detect(self, content: str, **kwargs) -> DetectResult:
         sentences = self._split_sentences(content)
-        paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", content or "") if p.strip()]
+        paragraphs = structured_paragraph_texts(content)
         confidence, confidence_reason = self._assess_confidence(content, **kwargs)
 
         if len(sentences) < 6:

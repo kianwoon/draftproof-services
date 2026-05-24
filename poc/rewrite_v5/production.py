@@ -633,7 +633,17 @@ def run_rewrite_pipeline_v5(
     )
 
     raise_if_canceled()
-    final_text = str(payload.get("rewritten_document") or original_text)
+    paragraph_hard_stop = (
+        payload.get("paragraph_obligation_hard_stop")
+        if isinstance(payload.get("paragraph_obligation_hard_stop"), dict)
+        and payload["paragraph_obligation_hard_stop"].get("active")
+        else {}
+    )
+    final_text = (
+        original_text
+        if paragraph_hard_stop
+        else str(payload.get("rewritten_document") or original_text)
+    )
     original_report = detect_json
     final_report = _scan_report(final_text) if final_text.strip() != original_text.strip() else original_report
     raise_if_canceled()
@@ -702,6 +712,8 @@ def run_rewrite_pipeline_v5(
     seed_recovery = payload.get("seed_recovery") if isinstance(payload.get("seed_recovery"), dict) else {}
     if seed_recovery.get("applied") and isinstance(seed_recovery.get("selected"), dict):
         accepted.append(seed_recovery["selected"])
+    if paragraph_hard_stop:
+        accepted = []
     selected_author_review_cards = _author_review_cards_from_candidate(
         author_proxy_context,
         accepted[-1] if accepted else None,
@@ -714,7 +726,10 @@ def run_rewrite_pipeline_v5(
         original_text=original_text,
     )
     strict_safe_band_achieved = _strict_safe_band_achieved(final_goal)
-    if no_text_change:
+    if paragraph_hard_stop:
+        strict_safe_band_achieved = False
+        public_status = RewriteGoalStatus.MITIGATION_FAILED_NO_SAFE_CANDIDATE.value
+    elif no_text_change:
         public_status = RewriteGoalStatus.ORIGINAL_PRESERVED.value
     elif strict_safe_band_achieved and author_proxy_review_required and accepted:
         public_status = AUTHOR_PROXY_REVIEW_STATUS
@@ -733,7 +748,11 @@ def run_rewrite_pipeline_v5(
 
     elapsed = time.time() - started
     original_scores = payload.get("baseline_scores") if isinstance(payload.get("baseline_scores"), dict) else {}
-    final_scores = payload.get("final_scores") if isinstance(payload.get("final_scores"), dict) else {}
+    final_scores = (
+        original_scores
+        if paragraph_hard_stop
+        else payload.get("final_scores") if isinstance(payload.get("final_scores"), dict) else {}
+    )
     deltas = _score_deltas(original_scores, final_scores)
     detect_scores = _detect_scores(original_report, final_report, original_scores, final_scores)
     original_scan_compact = _compact_scan_for_rewrite_report(original_report)
@@ -783,7 +802,11 @@ def run_rewrite_pipeline_v5(
             **final_goal,
             "status": public_status if public_status != "no_safe_rewrite_applied" else final_goal.get("status"),
             "goal_met": bool(final_goal.get("goal_met")),
-            "reason": final_goal.get("reason") or public_status,
+            "reason": (
+                "unresolved_paragraph_findings"
+                if paragraph_hard_stop
+                else final_goal.get("reason") or public_status
+            ),
         },
         "strict_goal_status": final_goal.get("status"),
         "reference_ai": original_scores.get("ai"),
@@ -813,8 +836,10 @@ def run_rewrite_pipeline_v5(
         "candidate_generation_status": {
             "generated_count": _generated_candidate_count(all_rounds),
             "accepted_count": len(accepted),
-            "reason": pipeline_version,
+            "reason": "unresolved_paragraph_findings" if paragraph_hard_stop else pipeline_version,
+            "blocked_findings": paragraph_hard_stop.get("blocked_findings") if paragraph_hard_stop else [],
         },
+        "paragraph_obligation_hard_stop": paragraph_hard_stop or {"active": False},
         "candidate_ledger": candidate_ledger,
         "candidate_trace": _compact_v5_candidate_trace(accepted),
         "candidate_loop_trace": _compact_v5_rounds(all_rounds),
@@ -831,7 +856,11 @@ def run_rewrite_pipeline_v5(
         "detect_scan_rewritten": final_scan_compact,
         "final_text": final_text,
         "no_text_change": no_text_change,
-        "no_text_change_reason": "v5_no_safe_candidate" if no_text_change else "",
+        "no_text_change_reason": (
+            "v5_unresolved_paragraph_findings"
+            if paragraph_hard_stop
+            else "v5_no_safe_candidate" if no_text_change else ""
+        ),
     }
     sentence_comparison = _sentence_comparison(original_text, final_text)
     result_obj = SimpleNamespace(
@@ -1003,6 +1032,9 @@ def _candidate_ledger_from_v5_payload(
     final_scores: dict[str, Any],
     final_goal: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    paragraph_hard_stop = payload.get("paragraph_obligation_hard_stop")
+    if isinstance(paragraph_hard_stop, dict) and paragraph_hard_stop.get("active"):
+        return []
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -1078,7 +1110,6 @@ def _compact_v5_candidate_trace(rows: list[Any]) -> list[dict[str, Any]]:
             "word_count": row.get("word_count"),
             "ai_delta": scores.get("ai_delta") or incremental.get("ai_delta"),
             "topk_delta": scores.get("topk_delta") or incremental.get("topk_delta"),
-            "external_delta": scores.get("external_delta") or incremental.get("external_delta"),
             "rank_delta": scores.get("rank_delta") or incremental.get("rank_delta"),
             "unsafe_cluster_count_delta": scores.get("unsafe_cluster_count_delta") or incremental.get("unsafe_cluster_count_delta"),
             "local_unsafe_cluster_count": local.get("unsafe_cluster_count"),
@@ -1168,6 +1199,8 @@ def _compact_v5_rounds(rounds: list[Any]) -> list[dict[str, Any]]:
 
 
 def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    paragraph_hard_stop = payload.get("paragraph_obligation_hard_stop")
+    hard_stop_active = isinstance(paragraph_hard_stop, dict) and paragraph_hard_stop.get("active")
     rounds = payload.get("rounds") if isinstance(payload.get("rounds"), list) else []
     direct_scanner_leapfrog_rounds = (
         payload.get("direct_scanner_leapfrog_rounds")
@@ -1219,7 +1252,7 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "baseline_scores": payload.get("baseline_scores"),
         "final_scores": payload.get("final_scores"),
         "eligible_span_density_gate": payload.get("eligible_span_density_gate"),
-        "candidate_ledger": payload.get("candidate_ledger") if isinstance(payload.get("candidate_ledger"), list) else [],
+        "candidate_ledger": [] if hard_stop_active else payload.get("candidate_ledger") if isinstance(payload.get("candidate_ledger"), list) else [],
         "runtime_budget": payload.get("runtime_budget") if isinstance(payload.get("runtime_budget"), dict) else None,
         "phase_order": payload.get("phase_order") if isinstance(payload.get("phase_order"), dict) else None,
         "accepted_checkpoints": payload.get("accepted_checkpoints") if isinstance(payload.get("accepted_checkpoints"), list) else [],
@@ -1236,4 +1269,5 @@ def _compact_v5_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "seed_candidate_rows": _compact_v5_rounds(payload.get("seed_candidate_rows") if isinstance(payload.get("seed_candidate_rows"), list) else []),
         "seed_recovery": payload.get("seed_recovery") if isinstance(payload.get("seed_recovery"), dict) else None,
         "global_best_fallback": payload.get("global_best_fallback"),
+        "paragraph_obligation_hard_stop": payload.get("paragraph_obligation_hard_stop") if isinstance(payload.get("paragraph_obligation_hard_stop"), dict) else None,
     }

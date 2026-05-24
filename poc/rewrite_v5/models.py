@@ -63,6 +63,7 @@ class RecompositionVariant:
     word_count: int
     author_proxy_provenance: list[dict[str, Any]] = field(default_factory=list)
     author_review_items: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,4 +72,5 @@ class RecompositionVariant:
             "word_count": self.word_count,
             "author_proxy_provenance": self.author_proxy_provenance,
             "author_review_items": self.author_review_items,
+            "metadata": self.metadata,
         }

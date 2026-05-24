@@ -12,6 +12,7 @@ import json
 import logging
 import threading
 import unicodedata
+import copy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Optional
@@ -103,7 +104,8 @@ class LLMResponse:
         raw = message.get("content")
         if raw is None:
             return ""
-        return raw if isinstance(raw, str) else str(raw)
+        text = raw if isinstance(raw, str) else str(raw)
+        return LLMGateway._strip_reasoning_text(text)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +138,7 @@ _MODEL_CAPABILITIES = {
         "frequency_penalty": True,
         "repetition_penalty": False,
         "structured_outputs": True,
+        "json_object_response_format": True,
     },
     "openai/gpt-4o-mini": {
         "top_k": False,
@@ -143,6 +146,7 @@ _MODEL_CAPABILITIES = {
         "frequency_penalty": True,
         "repetition_penalty": False,
         "structured_outputs": True,
+        "json_object_response_format": True,
     },
     "openai/gpt-5-mini": {
         "top_k": False,
@@ -150,6 +154,7 @@ _MODEL_CAPABILITIES = {
         "frequency_penalty": True,
         "repetition_penalty": False,
         "structured_outputs": True,
+        "json_object_response_format": True,
     },
     "openai/gpt-5.4-nano": {
         "top_k": False,
@@ -157,6 +162,7 @@ _MODEL_CAPABILITIES = {
         "frequency_penalty": True,
         "repetition_penalty": False,
         "structured_outputs": True,
+        "json_object_response_format": True,
     },
     "deepseek/deepseek-chat": {
         "top_k": True,
@@ -164,6 +170,7 @@ _MODEL_CAPABILITIES = {
         "frequency_penalty": True,
         "repetition_penalty": True,
         "structured_outputs": True,
+        "json_object_response_format": True,
     },
     "deepseek/deepseek-v4-flash": {
         "top_k": False,
@@ -171,6 +178,7 @@ _MODEL_CAPABILITIES = {
         "frequency_penalty": False,
         "repetition_penalty": False,
         "structured_outputs": True,
+        "json_object_response_format": True,
     },
     "deepseek/deepseek-v4-flash-20260423": {
         "top_k": False,
@@ -178,6 +186,35 @@ _MODEL_CAPABILITIES = {
         "frequency_penalty": False,
         "repetition_penalty": False,
         "structured_outputs": True,
+        "json_object_response_format": True,
+    },
+    "qwen/qwen3-30b-a3b-instruct-2507": {
+        "top_k": True,
+        "presence_penalty": True,
+        "frequency_penalty": True,
+        "repetition_penalty": True,
+        "structured_outputs": False,
+        "json_object_response_format": True,
+    },
+    "qwen/qwen3-coder-next": {
+        "top_k": True,
+        "presence_penalty": True,
+        "frequency_penalty": True,
+        "repetition_penalty": True,
+        "structured_outputs": False,
+        "json_object_response_format": True,
+    },
+    "qwen/qwen3-next-80b-a3b-thinking": {
+        "top_k": False,
+        "presence_penalty": False,
+        "frequency_penalty": False,
+        "repetition_penalty": False,
+        "top_p": False,
+        "temperature": False,
+        "structured_outputs": False,
+        "json_object_response_format": False,
+        "reasoning": True,
+        "reasoning_token_control": "max_tokens",
     },
 }
 
@@ -193,6 +230,7 @@ def _model_capabilities(model: str) -> dict:
             "frequency_penalty": True,
             "repetition_penalty": False,
             "structured_outputs": True,
+            "json_object_response_format": True,
         }
     repetition_supported = any(
         provider in normalized
@@ -200,10 +238,15 @@ def _model_capabilities(model: str) -> dict:
     )
     return {
         "top_k": True,
+        "top_p": True,
+        "temperature": True,
         "presence_penalty": True,
         "frequency_penalty": True,
         "repetition_penalty": repetition_supported,
         "structured_outputs": normalized.startswith(("deepseek/", "qwen/", "mistral/", "meta-llama/", "anthropic/")),
+        "json_object_response_format": True,
+        "reasoning": "thinking" in normalized,
+        "reasoning_token_control": "max_tokens" if "qwen" in normalized and "thinking" in normalized else None,
     }
 
 
@@ -218,6 +261,10 @@ def model_supports_repetition_penalty(model: str | None) -> bool:
 
 def model_supports_structured_outputs(model: str | None) -> bool:
     return bool(_model_capabilities(str(model or "")).get("structured_outputs"))
+
+
+def model_supports_json_object_response_format(model: str | None) -> bool:
+    return bool(_model_capabilities(str(model or "")).get("json_object_response_format", True))
 
 
 def _first_env(*names: str) -> str | None:
@@ -541,7 +588,9 @@ class LLMGateway:
             "seed": effective_seed,
         }
         caps = _model_capabilities(self.model)
-        if effective_top_p is not None:
+        if caps.get("temperature", True) is False:
+            payload.pop("temperature", None)
+        if effective_top_p is not None and caps.get("top_p", True):
             payload["top_p"] = effective_top_p
         if effective_top_k is not None and caps.get("top_k", True):
             payload["top_k"] = effective_top_k
@@ -559,6 +608,27 @@ class LLMGateway:
             payload["provider"] = effective_provider
         if self.extra_body is not None:
             payload.update(self.extra_body)
+        if caps.get("reasoning"):
+            current_reasoning = payload.get("reasoning") if isinstance(payload.get("reasoning"), dict) else {}
+            exclude_reasoning = _bool_env_default("DRAFTPROOF_OPENROUTER_EXCLUDE_REASONING", True)
+            reasoning_max_tokens = _int_env(
+                "DRAFTPROOF_OPENROUTER_REASONING_MAX_TOKENS",
+                1200,
+                minimum=0,
+                maximum=8000,
+            )
+            payload["reasoning"] = {
+                **current_reasoning,
+                "enabled": current_reasoning.get("enabled", True),
+                "exclude": current_reasoning.get("exclude", exclude_reasoning),
+            }
+            if reasoning_max_tokens > 0 and "max_tokens" not in payload["reasoning"]:
+                if caps.get("reasoning_token_control") == "max_tokens":
+                    payload["reasoning"].pop("effort", None)
+                    payload["reasoning"]["max_tokens"] = reasoning_max_tokens
+                elif "effort" not in payload["reasoning"]:
+                    payload["reasoning"]["max_tokens"] = reasoning_max_tokens
+            payload["include_reasoning"] = False
         effective_sampling = {
             key: payload[key]
             for key in ("temperature", "top_p", "top_k", "presence_penalty", "frequency_penalty", "repetition_penalty", "seed")
@@ -593,6 +663,7 @@ class LLMGateway:
                 data = resp.json()
                 self._raise_if_canceled()
 
+                data = self._strip_reasoning_from_response(data)
                 content = self._extract_content(data)
                 usage = data.get("usage", {})
                 model_used = data.get("model", self.model)
@@ -693,8 +764,45 @@ class LLMGateway:
                 return ""
             if not isinstance(raw, str):
                 raw = str(raw)
+            raw = LLMGateway._strip_reasoning_text(raw)
             normalized = LLMGateway._normalize_quotes(raw)
             return LLMGateway._fix_mojibake(normalized)
         except (KeyError, IndexError, TypeError):
             logger.warning("Unexpected response structure: %s", json.dumps(data)[:500])
             return ""
+
+    @staticmethod
+    def _strip_reasoning_text(text: str) -> str:
+        """Keep only the final assistant completion when a provider leaks thinking tags."""
+        raw = str(text or "")
+        if not raw:
+            return ""
+        stripped = raw.strip()
+        lower = stripped.lower()
+        if lower.startswith("<think>") and "</think>" in lower:
+            end = lower.rfind("</think>")
+            return stripped[end + len("</think>"):].strip()
+        return raw
+
+    @staticmethod
+    def _strip_reasoning_from_response(data: dict[str, Any]) -> dict[str, Any]:
+        """Remove reasoning payloads before downstream parsing, logging, or diagnostics."""
+        if not isinstance(data, dict):
+            return data
+        cleaned = copy.deepcopy(data)
+        choices = cleaned.get("choices")
+        if not isinstance(choices, list):
+            return cleaned
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            for container_key in ("message", "delta"):
+                message = choice.get(container_key)
+                if not isinstance(message, dict):
+                    continue
+                for key in ("reasoning", "reasoning_details", "reasoning_content"):
+                    message.pop(key, None)
+                content = message.get("content")
+                if isinstance(content, str):
+                    message["content"] = LLMGateway._strip_reasoning_text(content)
+        return cleaned

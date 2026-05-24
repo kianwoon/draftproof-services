@@ -183,6 +183,46 @@ def test_historical_rewrite_seed_texts_prefers_ranked_candidate_ledger():
     assert seeds == [best, delivered, second]
 
 
+def test_historical_rewrite_seed_texts_ignores_paragraph_hard_stop_candidates():
+    original = " ".join(["original"] * 220)
+    failed_candidate = " ".join(["failed"] * 220)
+
+    seeds = _historical_rewrite_seed_texts(
+        {
+            "final_text": original,
+            "summary": {
+                "paragraph_obligation_hard_stop": {
+                    "active": True,
+                    "blocked_findings": ["unsafe_density"],
+                },
+                "candidate_generation_status": {
+                    "reason": "unresolved_paragraph_findings",
+                },
+                "candidate_ledger": [{
+                    "rank": 1,
+                    "source": "failed_paragraph_candidate",
+                    "section_id": "full_document",
+                    "text": failed_candidate,
+                }],
+                "rewrite_layers": {
+                    "v5_residual_cluster_comb": {
+                        "global_best_fallback": {
+                            "selected": {
+                                "section_id": "full_document",
+                                "text": failed_candidate,
+                            }
+                        }
+                    }
+                },
+            },
+        },
+        original,
+        limit=3,
+    )
+
+    assert seeds == []
+
+
 def test_rewrite_billing_releases_original_preserved_text():
     decision = _rewrite_billing_decision(
         {"status": "rewritten"},
@@ -260,6 +300,38 @@ def test_bounded_rewrite_json_preserves_author_proxy_kpi_status():
     assert summary["candidate_ledger"][0]["text"] == ledger_text
     assert summary["candidate_ledger"][0]["scores"]["topk_calibrated_risk"] == 24.8
     assert "rewrite_layers" not in summary
+
+
+def test_bounded_rewrite_json_preserves_paragraph_hard_stop():
+    payload = {
+        "status": "mitigation_failed_no_safe_candidate",
+        "elapsed": 1.0,
+        "original_text": "source",
+        "final_text": "source",
+        "summary": {
+            "outcome": "mitigation_failed_no_safe_candidate",
+            "public_status": "mitigation_failed_no_safe_candidate",
+            "candidate_generation_status": {
+                "reason": "unresolved_paragraph_findings",
+                "blocked_findings": ["unsafe_density"],
+            },
+            "paragraph_obligation_hard_stop": {
+                "active": True,
+                "blocked_findings": ["unsafe_density"],
+                "evidence_ledger": [{"finding_tag": "unsafe_density"}],
+            },
+            "candidate_loop_trace": [{"candidate_report": {"blob": "x" * 2000}} for _ in range(300)],
+        },
+        "sentence_comparison": [{"original": "a" * 2000, "rewritten": "b" * 2000} for _ in range(300)],
+    }
+
+    bounded = _bounded_rewrite_json_payload(payload, max_bytes=5000)
+    summary = bounded["summary"]
+
+    assert bounded["rewrite_json_truncated"] is True
+    assert summary["paragraph_obligation_hard_stop"]["active"] is True
+    assert summary["paragraph_obligation_hard_stop"]["blocked_findings"] == ["unsafe_density"]
+    assert summary["candidate_generation_status"]["reason"] == "unresolved_paragraph_findings"
 
 
 def test_bounded_debug_log_preserves_author_proxy_kpi_status():

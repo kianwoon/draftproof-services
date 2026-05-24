@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from llm.gateway import model_supports_structured_outputs
+from llm.gateway import model_supports_json_object_response_format, model_supports_structured_outputs
 
 from .strategy import clean_candidate_output
 
@@ -17,6 +17,12 @@ def structured_json_request_options(model: str | None, response_format: dict[str
             "response_format": response_format,
             "provider": {"require_parameters": True},
             "structured_output_mode": "required_schema",
+        }
+    if model_supports_json_object_response_format(model):
+        return {
+            "response_format": {"type": "json_object"},
+            "provider": None,
+            "structured_output_mode": "json_object",
         }
     return {
         "response_format": None,

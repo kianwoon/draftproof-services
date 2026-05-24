@@ -19,6 +19,7 @@ from enum import Enum
 
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
 from detect.authorship_windows import build_ai_footprint_profile, build_authorship_window_profile
+from detect.document_structure import structured_sentence_segments
 from detect.repair_units import build_repair_units_v2
 from detect.rewrite_targets import build_problem_inventory, build_rewrite_target_profile
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
@@ -2599,59 +2600,23 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         }
 
     def _fallback_sentence_segments(text: str) -> list:
-        if not text:
-            return []
-        segments = []
-        sentence_no = 0
-        paragraph_no = 0
-        paragraph_pattern = _re.compile(r"\S(?:.*\S)?", _re.DOTALL)
-        search_from = 0
-        for raw_para in _re.split(r"\n\s*\n+", text):
-            paragraph = raw_para.strip()
-            if not paragraph:
-                search_from += len(raw_para)
-                continue
-            match = paragraph_pattern.search(raw_para)
-            paragraph_start = text.find(paragraph, search_from)
-            if paragraph_start < 0:
-                paragraph_start = search_from + (match.start() if match else 0)
-            paragraph_no += 1
-            local_cursor = 0
-            sentence_matches = list(_re.finditer(r"[^.!?\n]+(?:[.!?]+|$)", paragraph))
-            if not sentence_matches:
-                sentence_matches = [{"text": paragraph, "start": 0}]
-            for m in sentence_matches:
-                sentence = (m["text"] if isinstance(m, dict) else m.group(0)).strip()
-                if not sentence:
-                    continue
-                offset = paragraph.find(sentence, local_cursor)
-                if offset < 0:
-                    offset = m["start"] if isinstance(m, dict) else m.start()
-                start_char = paragraph_start + offset
-                end_char = start_char + len(sentence)
-                sentence_no += 1
-                segments.append({
-                    "sentence_id": f"s{sentence_no:03d}",
-                    "paragraph_id": f"p{paragraph_no:03d}",
-                    "sentence_index": sentence_no - 1,
-                    "start_char": start_char,
-                    "end_char": end_char,
-                    "sentence": sentence,
-                })
-                local_cursor = offset + len(sentence)
-            search_from = paragraph_start + len(paragraph)
-        return segments
+        return structured_sentence_segments(text or "")
 
     def _source_segments() -> list:
+        structured_segments = _fallback_sentence_segments(report.original_text or "")
         if pred_sentences:
-            return [
-                {
-                    "sentence_id": s.get("sentence_id", f"s{i + 1:03d}"),
-                    "paragraph_id": s.get("paragraph_id") or "p001",
+            rows = []
+            for i, s in enumerate(pred_sentences):
+                fallback = structured_segments[i] if i < len(structured_segments) else {}
+                rows.append({
+                    "sentence_id": s.get("sentence_id", fallback.get("sentence_id") or f"s{i + 1:03d}"),
+                    "paragraph_id": s.get("paragraph_id") or fallback.get("paragraph_id") or "p001",
+                    "source_paragraph_id": s.get("source_paragraph_id") or fallback.get("source_paragraph_id") or "",
+                    "virtual_paragraph_id": s.get("virtual_paragraph_id") or fallback.get("virtual_paragraph_id") or s.get("paragraph_id") or fallback.get("paragraph_id") or "p001",
                     "sentence_index": i,
-                    "start_char": s.get("start_char", 0),
-                    "end_char": s.get("end_char", 0),
-                    "sentence": s.get("sentence", ""),
+                    "start_char": s.get("start_char") if s.get("start_char") is not None else fallback.get("start_char", 0),
+                    "end_char": s.get("end_char") if s.get("end_char") is not None else fallback.get("end_char", 0),
+                    "sentence": s.get("sentence") or fallback.get("sentence", ""),
                     "predictability": {
                         "score": s.get("risk"),
                         "risk_label": s.get("risk_label"),
@@ -2661,10 +2626,9 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                         "top_predicted_tokens": s.get("top_predicted_tokens", []),
                         "predictable_token_spans": s.get("predictable_token_spans", []),
                     },
-                }
-                for i, s in enumerate(pred_sentences)
-            ]
-        return _fallback_sentence_segments(report.original_text or "")
+                })
+            return rows
+        return structured_segments
 
     def _signal_descriptor(f: Finding) -> Dict[str, str]:
         title = (f.title or "").lower()
@@ -4391,16 +4355,20 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             },
         }
         # Full sentence map keyed by sentence_id for rewrite module
-        result["sentence_map"] = {
-            s.get("sentence_id", f"s{i+1:03d}"): {
-                "paragraph_id": s.get("paragraph_id", ""),
-                "start_char": s.get("start_char", 0),
-                "end_char": s.get("end_char", 0),
-                "text": s["sentence"],
+        structured_segments = structured_sentence_segments(report.original_text or "")
+        sentence_map = {}
+        for i, s in enumerate(report.predictability.sentences):
+            fallback = structured_segments[i] if i < len(structured_segments) else {}
+            sentence_id = s.get("sentence_id") or fallback.get("sentence_id") or f"s{i+1:03d}"
+            sentence_map[sentence_id] = {
+                "paragraph_id": s.get("paragraph_id") or fallback.get("paragraph_id") or "",
+                "source_paragraph_id": s.get("source_paragraph_id") or fallback.get("source_paragraph_id") or "",
+                "virtual_paragraph_id": s.get("virtual_paragraph_id") or fallback.get("virtual_paragraph_id") or s.get("paragraph_id") or fallback.get("paragraph_id") or "",
+                "start_char": s.get("start_char") if s.get("start_char") is not None else fallback.get("start_char", 0),
+                "end_char": s.get("end_char") if s.get("end_char") is not None else fallback.get("end_char", 0),
+                "text": s.get("sentence") or fallback.get("sentence", ""),
             }
-            for i, s in enumerate(report.predictability.sentences)
-            if s.get("sentence_id")
-        }
+        result["sentence_map"] = sentence_map
 
     if report.similarity:
         result["similarity"] = {

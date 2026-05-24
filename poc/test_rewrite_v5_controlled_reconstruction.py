@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -67,6 +68,7 @@ from rewrite_v5.residual_comb import (
     _has_incremental_movement,
     _has_core_round_acceptance_movement,
     _residual_candidate_sort_key,
+    _best_residual_retune_anchor,
     _adaptive_initial_variant_count,
     _adaptive_retune_variant_count,
     _adaptive_writer_feedback,
@@ -81,8 +83,68 @@ from rewrite_v5.residual_comb import (
     _score_full_document_variant,
     _should_generate_adaptive_remainder,
     _should_retune_residual_candidate,
+    _author_proxy_revision_compiler_failed_checks,
+    _section_from_core_cluster_unit,
 )
 from rewrite_v5.models import RecompositionVariant, SectionUnit
+
+
+def test_v5_safe_band_route_goals_stay_content_agnostic():
+    goals = []
+    for helper_name in (
+        "_safe_band_evidence_repair_variant_goal",
+        "_safe_band_evidence_pack_variant_goal",
+        "_safe_band_sentence_replacement_variant_goal",
+        "_safe_band_density_section_repair_variant_goal",
+    ):
+        helper = getattr(v5_residual_comb, helper_name)
+        goals.extend(helper(index) for index in range(1, 6))
+
+    joined = " ".join(goals).casefold()
+    forbidden_domain_terms = (
+        "johnny",
+        "classroom",
+        "student",
+        "teacher",
+        "teaching",
+        "salon",
+        "hair",
+        "scissors",
+        "octagon",
+        "dodecagon",
+    )
+    assert not any(term in joined for term in forbidden_domain_terms)
+
+
+def test_v5_runtime_stage_guard_blocks_optional_stage_when_budget_is_low(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_STAGE_MIN_REMAINING_SECONDS", "30")
+    started_at = time.monotonic() - 80
+
+    assert not v5_residual_comb._runtime_budget_has_stage_time(started_at, 100)
+    assert v5_residual_comb._runtime_budget_has_stage_time(started_at, 120)
+
+
+def test_v5_optional_late_stage_routes_default_off(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_ENABLED", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_POST_CORE_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", raising=False)
+
+    assert not v5_residual_comb._safe_band_evidence_pack_enabled()
+    assert not v5_residual_comb._safe_band_post_core_evidence_repair_enabled()
+    assert not v5_residual_comb._final_topk_sentence_route_enabled()
+
+
+def test_v5_local_cluster_directional_movement_ignores_rank_proxy_regression():
+    local_scores = {
+        "unsafe_cluster_count_delta": 0.0,
+        "unsafe_word_ratio_delta": 1.5,
+        "topk_delta": 4.2,
+        "topk_calibrated_risk_delta": 11.7,
+        "ai_delta": 1.7,
+        "rank_delta": -1.2,
+    }
+
+    assert v5_residual_comb._local_cluster_directionally_improved(local_scores)
 
 
 def _sample_route_plan() -> dict:
@@ -138,6 +200,53 @@ def _sample_route_plan() -> dict:
                 "preserve_as": "visible outcome",
             }
         ],
+        "paragraph_run_plan": {
+            "scope": "sentence_window",
+            "paragraph_job": "Rebuild the selected sentence window around the service moment.",
+            "hotspot_job": "Make the service result follow visible evidence.",
+            "surrounding_sentence_jobs": [],
+            "insufficient_scope": "Only swapping one result word.",
+        },
+        "sentence_finding_map": [
+            {
+                "sentence_id": "s001",
+                "source_preview": "The service changed the student's confidence.",
+                "scanner_finding": "Broad result sentence carries the predictable route.",
+                "paragraph_role": "Introduces the service result before evidence.",
+                "interacts_with": ["s002"],
+                "required_shift": "Move from broad result opener to event-supported result.",
+                "operator_stack": ["CLAUSE_ROUTE_CHANGE"],
+                "insufficient_sentence_fix": "Only replacing changed with improved keeps the same route.",
+            }
+        ],
+        "paragraph_failure_model": {
+            "shared_pattern": "The route states broad result before visible evidence.",
+            "cross_sentence_interaction": "The service sentence and thank-you card sentence need to trade jobs.",
+            "why_sentence_only_fails": "Editing only the result sentence would still leave evidence as an afterthought.",
+            "paragraph_level_repair": "Make visible evidence carry the result through the sentence window.",
+        },
+        "consolidated_paragraph_strategy": {
+            "primary_move": "Put event evidence before interpretation.",
+            "paragraph_route": "service moment -> thank-you card evidence -> confidence result",
+            "hotspot_route": "Make the service result follow the visible thank-you card.",
+            "surrounding_route": "Use the thank-you card sentence as evidence rather than a separate polish sentence.",
+            "sequencing": ["Open with service moment.", "Show thank-you card evidence.", "Name the confidence result."],
+            "preserve_logic": "Keep service, confidence, and thank-you card while changing the route.",
+        },
+        "writer_execution_guide": {
+            "whole_paragraph_instruction": "Write the sentence window as evidence before result.",
+            "sentence_coordination": "Make the thank-you card sentence support the service sentence.",
+            "texture_instruction": "Use plain source-level wording.",
+            "required_candidate_shape": "Event evidence leads into visible result.",
+            "prohibited_shortcut": "Do not keep the broad result opener and swap one word.",
+        },
+        "scanner_success_targets": {
+            "local_cluster_target": "The broad result opener no longer controls the local cluster.",
+            "unsafe_word_ratio_target": "Concrete event wording carries more of the sentence window.",
+            "topk_route_target": "The service sentence no longer follows the service changed to confidence path.",
+            "compiler_target": "The rewrite stays grounded in service, confidence, and thank-you card.",
+            "acceptance_focus": "topk_density",
+        },
         "sentence_plan": ["Open with the service.", "End with the thank-you card outcome."],
         "avoid_phrases": ["The service changed"],
         "length_target": "same_length",
@@ -782,6 +891,1089 @@ def test_v5_safe_band_evidence_repair_section_uses_whole_target_paragraph():
     assert text[section.start_char:section.end_char] == section.text
 
 
+def test_v5_core_cluster_section_expands_contiguous_sentence_window_to_paragraph():
+    opening = "The first paragraph is not the repair target."
+    paragraph = (
+        "My teaching now includes actions that build emotional safety. "
+        "Students talk during this time, and their comments expose what they learned. "
+        "From this sharing, I learn from them too."
+    )
+    closing = "The last paragraph is separate."
+    text = f"{opening}\n\n{paragraph}\n\n{closing}"
+    cluster_text = (
+        "Students talk during this time, and their comments expose what they learned. "
+        "From this sharing, I learn from them too."
+    )
+    start = text.index(cluster_text)
+    unit = SimpleNamespace(
+        cluster_id="cluster_001",
+        text=cluster_text,
+        start_char=start,
+        end_char=start + len(cluster_text),
+        risk_score=91.0,
+        sentence_count=2,
+        metadata={"gate_cluster": {"start_sentence": 2, "end_sentence": 3}},
+    )
+
+    section = _section_from_core_cluster_unit(text, unit)
+
+    assert section.section_id == "route_001"
+    assert section.text == paragraph
+    assert section.start_char == text.index(paragraph)
+    assert section.end_char == text.index(paragraph) + len(paragraph)
+    assert section.metadata["unit_type"] == "route_paragraph_run"
+    assert section.metadata["selection_reason"] == "contiguous_cluster_expanded_to_paragraph_run"
+    assert section.metadata["cluster_window"]["start_char"] == start
+    assert section.metadata["paragraph_index"] == 2
+
+
+def test_v5_core_cluster_section_expands_named_case_chain_to_adjacent_paragraphs():
+    opening = "Students share what they learned. I listen to them before the next lesson."
+    case_intro = "Then there is Maya."
+    case_background = (
+        "Maya has anxiety and learning difficulties. "
+        "In standard activities, she rarely speaks to classmates."
+    )
+    case_role = (
+        "I gave her a defined group role. "
+        "With that responsibility, something changed."
+    )
+    case_event = (
+        "Later, during a community event, Maya was patient and attentive. "
+        "She received a thank-you card afterwards."
+    )
+    closing = "That experience changed how I think about inclusion."
+    text = "\n".join([opening, case_intro, case_background, case_role, case_event, closing])
+    start = text.index(case_event)
+    unit = SimpleNamespace(
+        cluster_id="cluster_002",
+        text=case_event,
+        start_char=start,
+        end_char=start + len(case_event),
+        risk_score=91.0,
+        sentence_count=2,
+        metadata={"gate_cluster": {"start_sentence": 9, "end_sentence": 10}},
+    )
+
+    section = _section_from_core_cluster_unit(text, unit)
+
+    assert section.text.startswith(case_intro)
+    assert case_background in section.text
+    assert case_role in section.text
+    assert section.text.endswith(case_event)
+    assert opening not in section.text
+    assert closing not in section.text
+    assert section.metadata["unit_type"] == "route_paragraph_run"
+    assert section.metadata["selection_reason"] == "named_case_chain_expanded_to_paragraph_run"
+    assert section.metadata["cluster_window"]["start_char"] == start
+
+
+def test_v5_case_chain_pronoun_detection_includes_neutral_and_plural_forms():
+    assert v5_residual_comb._has_case_chain_pronoun("They adjusted the process after review.")
+    assert v5_residual_comb._has_case_chain_pronoun("It kept the same constraint visible.")
+
+
+def test_v5_density_cluster_section_expands_named_case_chain_to_adjacent_paragraphs():
+    opening = "Students share what they learned. I listen to them before the next lesson."
+    case_intro = "Then there is Maya."
+    case_background = (
+        "Maya has anxiety and learning difficulties. "
+        "In standard activities, she rarely speaks to classmates."
+    )
+    case_role = (
+        "I gave her a defined group role. "
+        "With that responsibility, something changed."
+    )
+    case_event = (
+        "Later, during a community event, Maya was patient and attentive. "
+        "She received a thank-you card afterwards."
+    )
+    closing = "That experience changed how I think about inclusion."
+    text = "\n".join([opening, case_intro, case_background, case_role, case_event, closing])
+    start = text.index(case_event)
+    cluster = {
+        "start_char": start,
+        "end_char": start + len(case_event),
+        "preview": case_event,
+        "word_count": len(case_event.split()),
+        "sentence_count": 2,
+    }
+
+    section = v5_residual_comb._section_from_density_cluster(text, {}, cluster, ordinal=1)
+
+    assert section is not None
+    assert section.text.startswith(case_intro)
+    assert case_background in section.text
+    assert case_role in section.text
+    assert section.text.endswith(case_event)
+    assert opening not in section.text
+    assert section.metadata["unit_type"] == "route_paragraph_run"
+    assert section.metadata["selection_reason"] == "named_case_chain_expanded_to_paragraph_run"
+    assert section.metadata["source_metadata"]["density_cluster"] == cluster
+
+
+def test_v5_density_cluster_case_chain_anchors_when_cluster_crosses_next_paragraph():
+    opening = "Students share what they learned. I listen to them before the next lesson."
+    case_intro = "Then there is Maya."
+    case_background = (
+        "Maya has anxiety and learning difficulties. "
+        "In standard activities, she rarely speaks to classmates."
+    )
+    case_role = (
+        "I gave her a defined group role. "
+        "With that responsibility, something changed."
+    )
+    case_event = (
+        "Later, during a community event, Maya was patient and attentive. "
+        "She received a thank-you card afterwards."
+    )
+    followup = "That experience changed how I think about inclusion."
+    closing = "The final reflection is separate."
+    text = "\n".join([opening, case_intro, case_background, case_role, case_event, followup, closing])
+    cluster_text = f"{case_event}\n{followup}"
+    start = text.index(case_event)
+    cluster = {
+        "start_char": start,
+        "end_char": start + len(cluster_text),
+        "preview": cluster_text,
+        "word_count": len(cluster_text.split()),
+        "sentence_count": 3,
+    }
+
+    section = v5_residual_comb._section_from_density_cluster(text, {}, cluster, ordinal=1)
+
+    assert section is not None
+    assert section.text.startswith(case_intro)
+    assert case_background in section.text
+    assert case_role in section.text
+    assert case_event in section.text
+    assert followup in section.text
+    assert opening not in section.text
+    assert closing not in section.text
+    assert section.metadata["selection_reason"] == "named_case_chain_expanded_to_paragraph_run"
+
+
+def test_v5_density_cluster_cross_paragraph_span_is_paragraph_run_without_case_chain():
+    opening = "The setup paragraph is separate."
+    method_paragraph = (
+        "The method starts with a practical explanation. "
+        "The final sentence links the method to student practice."
+    )
+    evidence_paragraph = (
+        "The next paragraph adds evidence from observation. "
+        "It explains what changed after students tried again."
+    )
+    closing = "The closing paragraph is separate."
+    text = "\n".join([opening, method_paragraph, evidence_paragraph, closing])
+    cluster_text = f"{method_paragraph}\n{evidence_paragraph}"
+    start = text.index(method_paragraph)
+    cluster = {
+        "start_char": start,
+        "end_char": start + len(cluster_text),
+        "preview": cluster_text,
+        "word_count": len(cluster_text.split()),
+        "sentence_count": 2,
+    }
+
+    section = v5_residual_comb._section_from_density_cluster(text, {}, cluster, ordinal=1)
+
+    assert section is not None
+    assert section.text == cluster_text
+    assert section.paragraph_count == 2
+    assert section.metadata["unit_type"] == "route_paragraph_run"
+    assert section.metadata["selection_reason"] == "scanner_span_crosses_paragraph_boundary"
+    assert section.metadata["source_metadata"]["density_cluster"] == cluster
+
+
+def test_v5_density_cluster_marks_cross_paragraph_span_when_full_run_exceeds_limit(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_CORE_PARAGRAPH_RUN_MAX_WORDS", "60")
+    opening = "The setup paragraph is separate."
+    first = (
+        "This paragraph contains a long explanation before the scanner span starts. "
+        "The selected ending links a method to student practice."
+    )
+    second = (
+        "The next paragraph adds evidence from observation. "
+        "It explains what changed after students tried again."
+    )
+    third = (
+        "That evidence then connects to a later teaching decision. "
+        "The rest of this paragraph is deliberately long so the full containing run is above the configured limit."
+    )
+    closing = "The closing paragraph is separate."
+    text = "\n".join([opening, first, second, third, closing])
+    cluster_text = (
+        "The selected ending links a method to student practice.\n"
+        f"{second}\n"
+        "That evidence then connects to a later teaching decision."
+    )
+    start = text.index("The selected ending")
+    cluster = {
+        "start_char": start,
+        "end_char": start + len(cluster_text),
+        "preview": cluster_text,
+        "word_count": len(cluster_text.split()),
+        "sentence_count": 4,
+    }
+
+    section = v5_residual_comb._section_from_density_cluster(text, {}, cluster, ordinal=1)
+
+    assert section is not None
+    assert section.text == cluster_text
+    assert section.word_count <= 60
+    assert section.paragraph_count == 3
+    assert section.metadata["unit_type"] == "route_paragraph_run"
+    assert section.metadata["selection_reason"] == "scanner_span_crosses_paragraph_boundary"
+
+
+def test_v5_route_planner_prompt_marks_paragraph_run_scope():
+    paragraph = (
+        "My teaching now includes actions that build emotional safety. "
+        "Students talk during this time, and their comments expose what they learned. "
+        "From this sharing, I learn from them too."
+    )
+    section = SectionUnit(
+        section_id="route_001",
+        heading="",
+        text=paragraph,
+        start_char=10,
+        end_char=10 + len(paragraph),
+        paragraph_count=1,
+        word_count=len(paragraph.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "contiguous_cluster_expanded_to_paragraph_run",
+            "cluster_window": {
+                "start_char": 55,
+                "end_char": 130,
+                "word_count": 18,
+                "sentence_count": 2,
+            },
+        },
+    )
+
+    prompt = build_residual_cluster_route_plan_prompt(
+        section=section,
+        local_goal={},
+        author_proxy_context={"schema_version": "author_proxy_context.v1", "active": True},
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["cluster"]["repair_scope"]["scope"] == "paragraph_run"
+    assert payload["cluster"]["repair_scope"]["cluster_window"]["word_count"] == 18
+    assert "hotspot" in payload["cluster"]["repair_scope"]["scope_warning"]
+    assert any("paragraph_run" in rule for rule in payload["planning_rules"])
+    assert "paragraph_run_plan" in payload["output_schema"]["route_plan"]
+
+
+def test_v5_compact_route_planner_prompt_keeps_output_contract_small():
+    paragraph = (
+        "My teaching now includes actions that build emotional safety. "
+        "Students talk during this time, and their comments expose what they learned. "
+        "From this sharing, I learn from them too."
+    )
+    section = SectionUnit(
+        section_id="route_001",
+        heading="",
+        text=paragraph,
+        start_char=10,
+        end_char=10 + len(paragraph),
+        paragraph_count=1,
+        word_count=len(paragraph.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "contiguous_cluster_expanded_to_paragraph_run",
+            "cluster_window": {"start_char": 55, "end_char": 130, "word_count": 18, "sentence_count": 2},
+        },
+    )
+
+    full_prompt = build_residual_cluster_route_plan_prompt(section=section, local_goal={})
+    compact_prompt = v5_residual_comb.build_compact_residual_cluster_route_plan_prompt(section=section, local_goal={})
+    payload = json.loads(compact_prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert len(compact_prompt) < len(full_prompt) * 0.7
+    assert "route_plan_decision" in payload["output_schema"]
+    assert "paragraph_failure_model" not in json.dumps(payload["output_schema"])
+    assert payload["cluster"]["repair_scope"]["scope"] == "paragraph_run"
+
+
+def test_v5_compact_route_plan_parser_enriches_full_paragraph_contract():
+    paragraph = (
+        "My teaching now includes actions that build emotional safety. "
+        "Students talk during this time, and their comments expose what they learned. "
+        "From this sharing, I learn from them too."
+    )
+    section = SectionUnit(
+        section_id="route_001",
+        heading="",
+        text=paragraph,
+        start_char=0,
+        end_char=len(paragraph),
+        paragraph_count=1,
+        word_count=len(paragraph.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "contiguous_cluster_expanded_to_paragraph_run",
+            "cluster_window": {"start_char": 55, "end_char": 130, "word_count": 18, "sentence_count": 2},
+        },
+    )
+    raw = json.dumps({
+        "route_plan_decision": {
+            "content_profile": "reflective_practice_academic",
+            "primary_metric": "topk_density",
+            "cluster_role": "reasoning_or_analysis",
+            "dominant_failure_pattern": "claim_chain",
+            "route_strategy": "event_first_rebuild",
+            "profile_reason": "The paragraph links teaching action, student evidence, and teacher reflection.",
+            "failed_route": "The paragraph smooths the student evidence into a predictable reflective chain.",
+            "replacement_route": "Make the teaching action set up student evidence before the teacher reflection closes it.",
+            "primary_operator": "CLAUSE_ROUTE_CHANGE",
+            "controlled_expansion_required": False,
+            "controlled_expansion_move": "none",
+            "controlled_expansion_instruction": "",
+            "length_target": "same_length",
+            "target_unit_actions": [
+                {
+                    "unit_id": "u002",
+                    "problem_role": "This sentence carries the evidence but reads like a general report step.",
+                    "required_action": "Make the student comments function as evidence for the teaching action.",
+                    "operator_stack": ["CLAUSE_ROUTE_CHANGE", "SENTENCE_WEIGHT_VARIATION"],
+                    "insufficient_edit": "Changing only wording would leave the same reflective route.",
+                }
+            ],
+            "paragraph_strategy": {
+                "shared_pattern": "The affected sentences smooth action into reflection too quickly.",
+                "paragraph_route": "Teaching action to student evidence to teacher learning.",
+                "hotspot_route": "Student comments should prove what the teaching action surfaced.",
+                "why_sentence_only_fails": "Editing the student sentence alone would not change how the paragraph opens and closes around it.",
+                "writer_instruction": "Rebuild the paragraph as one action-evidence-reflection route.",
+            },
+        }
+    })
+
+    plan, diagnostics = v5_residual_comb._parse_compact_route_plan(
+        raw,
+        section=section,
+        local_goal={},
+        repair_scope=v5_residual_comb._section_repair_scope_contract(section),
+    )
+
+    assert diagnostics["status"] == "ok"
+    assert diagnostics["route_plan_source"] == "llm_compact_enriched"
+    assert v5_residual_comb._route_plan_valid(plan)
+    assert plan["paragraph_run_plan"]["scope"] == "paragraph_run"
+    assert plan["paragraph_failure_model"]["why_sentence_only_fails"].startswith("Editing the student sentence")
+    assert any(row["required_shift"].startswith("Make the student comments") for row in plan["sentence_finding_map"])
+    assert plan["writer_execution_guide"]["whole_paragraph_instruction"].startswith("Rebuild the paragraph")
+
+
+def test_v5_paragraph_finding_digest_consolidates_mixed_sentence_findings():
+    paragraph = (
+        "The source starts with a clear local claim. "
+        "However, this important process has become a central part of the wider problem. "
+        "This shows the same important pattern across the paragraph. "
+        "The source closes with a narrow result."
+    )
+    section = SectionUnit(
+        section_id="digest_001",
+        heading="",
+        text=paragraph,
+        start_char=0,
+        end_char=len(paragraph),
+        paragraph_count=1,
+        word_count=len(paragraph.split()),
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    local_goal = {
+        "eligible_span_density_gate": {
+            "top_sentence_targets": [
+                {
+                    "sentence_id": "s002",
+                    "sentence_index": 1,
+                    "preview": "However, this important process has become a central part of the wider problem.",
+                    "word_count": 12,
+                    "generic_hits": 2,
+                    "transition_risk": True,
+                    "top10_ratio": 0.7,
+                    "top50_ratio": 0.95,
+                    "predictability_risk": 0.62,
+                    "risk_score": 6.2,
+                    "unsafe": True,
+                },
+                {
+                    "sentence_id": "s003",
+                    "sentence_index": 2,
+                    "preview": "This shows the same important pattern across the paragraph.",
+                    "word_count": 9,
+                    "generic_hits": 1,
+                    "transition_risk": False,
+                    "top10_ratio": 0.66,
+                    "top50_ratio": 0.91,
+                    "predictability_risk": 0.58,
+                    "risk_score": 5.4,
+                    "unsafe": True,
+                },
+            ]
+        }
+    }
+
+    affected = v5_residual_comb._affected_content_map(section=section, local_goal=local_goal)
+    digest = v5_residual_comb._paragraph_finding_digest(affected)
+
+    assert digest["active"] is True
+    assert digest["target_unit_count"] == 2
+    assert digest["mixed_findings"] is True
+    assert digest["repair_priority"] == "coordinate_unsafe_density_and_topk_route"
+    assert digest["contiguous_target_runs"][0]["unit_ids"] == ["u002", "u003"]
+    assert "generic_assertion" in digest["dominant_findings"]
+    assert "transition_scaffold" in affected[1]["finding_tags"]
+
+
+def test_v5_compact_route_plan_parser_attaches_paragraph_finding_digest():
+    paragraph = (
+        "The source starts with a concrete classroom action. "
+        "However, this important process has become a central part of the wider problem. "
+        "This shows the same important pattern across the paragraph."
+    )
+    section = SectionUnit(
+        section_id="digest_parse_001",
+        heading="",
+        text=paragraph,
+        start_char=0,
+        end_char=len(paragraph),
+        paragraph_count=1,
+        word_count=len(paragraph.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "contiguous_cluster_expanded_to_paragraph_run",
+            "cluster_window": {"start_char": 49, "end_char": len(paragraph), "word_count": 21, "sentence_count": 2},
+        },
+    )
+    local_goal = {
+        "eligible_span_density_gate": {
+            "top_sentence_targets": [
+                {
+                    "sentence_id": "s002",
+                    "preview": "However, this important process has become a central part of the wider problem.",
+                    "word_count": 12,
+                    "generic_hits": 2,
+                    "transition_risk": True,
+                    "top10_ratio": 0.7,
+                    "top50_ratio": 0.95,
+                    "predictability_risk": 0.62,
+                    "risk_score": 6.2,
+                    "unsafe": True,
+                }
+            ]
+        }
+    }
+    raw = json.dumps({
+        "route_plan_decision": {
+            "content_profile": "mixed_or_unknown",
+            "primary_metric": "mixed",
+            "cluster_role": "reasoning_or_analysis",
+            "dominant_failure_pattern": "claim_chain",
+            "route_strategy": "claim_reason_evidence",
+            "profile_reason": "The paragraph needs a clearer route from action to explanation.",
+            "failed_route": "The target sentence uses broad transition and generic importance wording.",
+            "replacement_route": "Make the target sentence carry source-specific explanation before closing.",
+            "primary_operator": "CLAUSE_ROUTE_CHANGE",
+            "controlled_expansion_required": False,
+            "controlled_expansion_move": "none",
+            "controlled_expansion_instruction": "",
+            "length_target": "same_length",
+            "target_unit_actions": [
+                {
+                    "unit_id": "u002",
+                    "problem_role": "This unit carries the generic transition.",
+                    "required_action": "Replace the transition role with source-specific explanation.",
+                    "operator_stack": ["GENERIC_TRANSITION_REMOVAL", "CLAUSE_ROUTE_CHANGE"],
+                    "insufficient_edit": "Changing the transition word would keep the same paragraph route.",
+                }
+            ],
+            "paragraph_strategy": {
+                "shared_pattern": "The target relies on transition and generic importance wording.",
+                "paragraph_route": "Concrete action to source-specific explanation.",
+                "hotspot_route": "The target should explain the source action directly.",
+                "why_sentence_only_fails": "The surrounding route must stop setting up generic closure.",
+                "writer_instruction": "Write the paragraph as a concrete action followed by source explanation.",
+            },
+        }
+    })
+
+    plan, diagnostics = v5_residual_comb._parse_compact_route_plan(
+        raw,
+        section=section,
+        local_goal=local_goal,
+        repair_scope=v5_residual_comb._section_repair_scope_contract(section),
+    )
+    card = v5_residual_comb._writer_execution_card(section=section, route_plan=plan)
+
+    assert diagnostics["status"] == "ok"
+    assert plan["paragraph_finding_digest"]["active"] is True
+    assert plan["paragraph_finding_digest"]["target_unit_count"] == 1
+    assert "transition_scaffold" in plan["paragraph_finding_digest"]["dominant_findings"]
+    assert card["paragraph_finding_digest"]["repair_priority"] == "coordinate_unsafe_density_and_topk_route"
+
+
+def test_v5_route_plan_response_schema_requires_paragraph_run_plan():
+    schema = v5_residual_comb._route_plan_response_format()["json_schema"]["schema"]
+    route_schema = schema["properties"]["route_plan"]
+
+    assert route_schema["additionalProperties"] is False
+    assert "paragraph_run_plan" in route_schema["properties"]
+    assert "paragraph_run_plan" in route_schema["required"]
+    paragraph_schema = route_schema["properties"]["paragraph_run_plan"]
+    assert paragraph_schema["additionalProperties"] is False
+    assert set(paragraph_schema["required"]) == {
+        "scope",
+        "paragraph_job",
+        "hotspot_job",
+        "surrounding_sentence_jobs",
+        "insufficient_scope",
+    }
+    for field in {
+        "sentence_finding_map",
+        "paragraph_failure_model",
+        "consolidated_paragraph_strategy",
+        "writer_execution_guide",
+        "scanner_success_targets",
+    }:
+        assert field in route_schema["properties"]
+        assert field in route_schema["required"]
+    assert route_schema["properties"]["sentence_finding_map"]["items"]["additionalProperties"] is False
+    assert route_schema["properties"]["paragraph_failure_model"]["additionalProperties"] is False
+    assert route_schema["properties"]["consolidated_paragraph_strategy"]["additionalProperties"] is False
+    assert route_schema["properties"]["writer_execution_guide"]["additionalProperties"] is False
+    assert route_schema["properties"]["scanner_success_targets"]["additionalProperties"] is False
+
+
+def test_v5_controlled_expansion_strips_planner_sample_prose():
+    expansion = v5_residual_comb._sanitize_controlled_expansion({
+        "required": True,
+        "move": "explanatory_bridge",
+        "instruction": "Add one bridge between the questions, such as: This naturally leads to structure.",
+        "why_needed": "The route needs a bridge.",
+    })
+
+    assert expansion["required"] is True
+    assert expansion["instruction"] == "Add one bridge between the questions"
+    assert "naturally leads" not in expansion["instruction"].casefold()
+
+    parenthesized = v5_residual_comb._sanitize_controlled_expansion({
+        "required": True,
+        "move": "concrete_framing",
+        "instruction": "Anchor the question in a source detail (e.g., a comb angle).",
+        "why_needed": "The route needs source support.",
+    })
+    assert parenthesized["instruction"] == "Anchor the question in a source detail"
+
+
+def test_v5_paragraph_candidate_judge_rejects_unsafe_regression():
+    source = (
+        "I pause the video and ask why the hairdresser chose that section. "
+        "Students connect the screen example to what they do with their hands."
+    )
+    section = SectionUnit(
+        section_id="paragraph_judge_001",
+        heading="",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "test",
+            "cluster_window": {"start_char": 0, "end_char": len(source), "word_count": len(source.split()), "sentence_count": 2},
+        },
+    )
+
+    judge = v5_residual_comb._paragraph_candidate_judge(
+        section=section,
+        source_text=source,
+        candidate_text=source,
+        local_scores={
+            "unsafe_cluster_count_delta": -1,
+            "unsafe_word_ratio_delta": 2,
+            "topk_delta": 1,
+        },
+        incremental={
+            "unsafe_cluster_count_delta": 0,
+            "unsafe_word_ratio_delta": 1,
+        },
+    )
+
+    assert judge["active"] is True
+    assert judge["passed"] is False
+    assert "local_unsafe_cluster_not_worse" in judge["failed_checks"]
+
+
+def test_v5_paragraph_candidate_judge_rejects_document_unsafe_regression():
+    source = (
+        "During the case activity, the student had a defined role. "
+        "That role changed what the class could see about his capability."
+    )
+    section = SectionUnit(
+        section_id="paragraph_judge_document_unsafe_001",
+        heading="",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "test",
+            "cluster_window": {"start_char": 0, "end_char": len(source), "word_count": len(source.split()), "sentence_count": 2},
+        },
+    )
+
+    judge = v5_residual_comb._paragraph_candidate_judge(
+        section=section,
+        source_text=source,
+        candidate_text=source,
+        local_scores={
+            "unsafe_cluster_count_delta": 1,
+            "unsafe_word_ratio_delta": 12,
+            "topk_delta": 4,
+            "ai_delta": 3,
+        },
+        incremental={
+            "ai_delta": 0.5,
+            "ai_authorship_delta": 0,
+            "topk_calibrated_risk_delta": 2,
+            "qualifying_text_ai_density_delta": 1,
+            "unsafe_cluster_count_delta": -2,
+            "unsafe_word_ratio_delta": -14.084,
+        },
+    )
+
+    assert judge["active"] is True
+    assert judge["passed"] is False
+    assert "document_unsafe_cluster_not_worse" in judge["failed_checks"]
+    assert "document_unsafe_word_ratio_not_worse" in judge["failed_checks"]
+
+
+def test_v5_paragraph_candidate_judge_allows_bounded_document_word_ratio_tradeoff():
+    source = (
+        "The case started with a defined role. "
+        "The student then showed patience during the event. "
+        "The result was visible through a thank-you card."
+    )
+    section = SectionUnit(
+        section_id="paragraph_judge_document_tradeoff_001",
+        heading="",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "test",
+            "cluster_window": {"start_char": 0, "end_char": len(source), "word_count": len(source.split()), "sentence_count": 3},
+        },
+    )
+
+    judge = v5_residual_comb._paragraph_candidate_judge(
+        section=section,
+        source_text=source,
+        candidate_text=source,
+        local_scores={
+            "unsafe_cluster_count": 0,
+            "unsafe_word_ratio": 0,
+            "unsafe_cluster_count_delta": 2,
+            "unsafe_word_ratio_delta": 34,
+            "topk_delta": 5,
+            "ai_delta": 1,
+        },
+        incremental={
+            "ai_delta": 0.49,
+            "ai_authorship_delta": 0,
+            "topk_calibrated_risk_delta": 2.292,
+            "qualifying_text_ai_density_delta": 0.59,
+            "unsafe_cluster_count_delta": 0,
+            "unsafe_word_ratio_delta": -12.993,
+        },
+    )
+
+    word_check = next(check for check in judge["checks"] if check["name"] == "document_unsafe_word_ratio_not_worse")
+
+    assert judge["active"] is True
+    assert "document_unsafe_word_ratio_not_worse" not in judge["failed_checks"]
+    assert word_check["bounded_tradeoff_allowed"] is True
+
+
+def test_v5_paragraph_candidate_judge_allows_concise_paragraph_run_when_supported():
+    source = (
+        "The first source sentence names the teaching method and its classroom purpose. "
+        "The second source sentence keeps the explanation tied to student practice. "
+        "The third source sentence preserves the reflection about feedback and confidence. "
+        "The final source sentence keeps the paragraph role connected to the surrounding essay."
+    )
+    candidate = (
+        "The teaching method names its classroom purpose. "
+        "The explanation stays tied to student practice. "
+        "Feedback and confidence remain part of the reflection. "
+        "The paragraph still connects to the surrounding essay."
+    )
+    section = SectionUnit(
+        section_id="paragraph_judge_compression_001",
+        heading="",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "test",
+            "cluster_window": {
+                "start_char": 0,
+                "end_char": len(source),
+                "word_count": len(source.split()),
+                "sentence_count": 4,
+            },
+        },
+    )
+
+    judge = v5_residual_comb._paragraph_candidate_judge(
+        section=section,
+        source_text=source,
+        candidate_text=candidate,
+        local_scores={
+            "unsafe_cluster_count_delta": 1,
+            "unsafe_word_ratio_delta": 10,
+            "topk_delta": 4,
+            "ai_delta": 2,
+        },
+        incremental={
+            "ai_delta": 1,
+            "ai_authorship_delta": 0,
+            "topk_calibrated_risk_delta": 2,
+            "qualifying_text_ai_density_delta": 1,
+            "unsafe_cluster_count_delta": 0,
+            "unsafe_word_ratio_delta": 1,
+        },
+    )
+    check_names = [check["name"] for check in judge["checks"]]
+
+    assert judge["active"] is True
+    assert judge["passed"] is True
+    assert "paragraph_candidate_word_ratio_minimum" not in check_names
+    assert judge["candidate_word_ratio"] < 0.88
+
+
+def test_v5_paragraph_candidate_judge_rejects_document_ai_regression():
+    source = (
+        "This connects to the cited theory. "
+        "When the student freezes, the theory becomes visible in class."
+    )
+    section = SectionUnit(
+        section_id="paragraph_judge_document_001",
+        heading="",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "test",
+            "cluster_window": {"start_char": 0, "end_char": len(source), "word_count": len(source.split()), "sentence_count": 2},
+        },
+    )
+
+    judge = v5_residual_comb._paragraph_candidate_judge(
+        section=section,
+        source_text=source,
+        candidate_text=source,
+        local_scores={
+            "unsafe_cluster_count_delta": 1,
+            "unsafe_word_ratio_delta": 12,
+            "topk_delta": 4,
+            "ai_delta": 3,
+        },
+        incremental={
+            "ai_delta": -0.18,
+            "ai_authorship_delta": -1,
+            "topk_calibrated_risk_delta": 2,
+            "qualifying_text_ai_density_delta": -1.75,
+            "unsafe_cluster_count_delta": 0,
+            "unsafe_word_ratio_delta": 4,
+        },
+    )
+
+    assert judge["active"] is True
+    assert judge["passed"] is False
+    assert "document_ai_not_worse" in judge["failed_checks"]
+    assert "document_ai_authorship_not_worse" in judge["failed_checks"]
+    assert "document_qualifying_density_not_worse" in judge["failed_checks"]
+
+
+def test_v5_paragraph_candidate_judge_credits_nearby_context_for_referential_paragraphs():
+    source = (
+        "Billett's work on practical learning also shaped how I think about this. "
+        "Watching isn't enough. "
+        "Students need demonstrations, guidance, scaffolding — and then they need to try, get it wrong, get feedback, and try again."
+    )
+    before_context = (
+        "I use a clock face to explain projection angles. "
+        "Instead of saying vertical distribution, I say project the hair toward 12 o'clock."
+    )
+    candidate = (
+        "Billett's work on practical learning helped me see the problem of teaching projection angles differently. "
+        "Watching a demonstration of a 90-degree projection isn't enough. "
+        "After the demonstration, students need guided practice with scaffolding that keeps the angle visible. "
+        "When they get it wrong, feedback helps them try again."
+    )
+    section = SectionUnit(
+        section_id="paragraph_judge_context_001",
+        heading="",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "before_context": before_context,
+            "selection_reason": "test",
+            "cluster_window": {"start_char": 0, "end_char": len(source), "word_count": len(source.split()), "sentence_count": 3},
+        },
+    )
+
+    judge = v5_residual_comb._paragraph_candidate_judge(
+        section=section,
+        source_text=source,
+        candidate_text=candidate,
+        local_scores={
+            "unsafe_cluster_count_delta": 0,
+            "unsafe_word_ratio_delta": 10,
+            "topk_delta": 2,
+        },
+        incremental={
+            "unsafe_cluster_count_delta": 0,
+            "unsafe_word_ratio_delta": 1,
+        },
+    )
+    card = v5_residual_comb._writer_execution_card(section=section, route_plan=_sample_route_plan())
+
+    assert "source_support_ratio_minimum" not in judge["failed_checks"]
+    assert "unsupported_terms_within_limit" not in judge["failed_checks"]
+    assert "projection" in card["source_grounding_card"]["allowed_content_terms"]
+
+
+def test_v5_source_derived_seed_splits_then_sequence_without_new_terms():
+    source = (
+        "Billett's work on practical learning also shaped how I think about this. "
+        "Watching isn't enough. "
+        "Students need demonstrations, guidance, scaffolding — and then they need to try, get it wrong, get feedback, and try again. "
+        "This is how practical skills are actually built."
+    )
+    section = SectionUnit(
+        section_id="seed_sequence_001",
+        heading="",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+
+    variants = v5_residual_comb.generate_residual_cluster_seed_variants(section=section)
+    texts = [variant.text for variant in variants]
+
+    assert any(
+        "think about this: watching isn't enough" in text
+        and "scaffolding first. Then they need to try" in text
+        for text in texts
+    )
+
+
+def test_v5_source_derived_seed_preserves_full_paragraph_coverage():
+    source = (
+        "The paragraph starts with a method the writer already uses. "
+        "It explains the method with a familiar classroom object. "
+        "Instead of using the formal phrase, the writer gives a plain version. "
+        "A second source point shows why the plain version helps. "
+        "The writer adds a limit: the formal phrase still has to be learned. "
+        "This is how the bridge stays connected to the later standard. "
+        "The next part names practice; students try, get feedback, and try again. "
+        "The final part explains the risk — and then it keeps the warning tied to practice."
+    )
+    section = SectionUnit(
+        section_id="seed_full_coverage_001",
+        heading="",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+
+    variants = v5_residual_comb.generate_residual_cluster_seed_variants(section=section)
+    first = variants[0].text
+
+    assert variants[0].variant_id == "route_seed_1"
+    assert variants[0].word_count / section.word_count >= 0.92
+    assert "The formal phrase still has to be learned." in first
+    assert "The final part explains the risk. Then it keeps the warning tied to practice." in first
+    assert any("The bridge stays connected to the later standard." in variant.text for variant in variants)
+
+
+def test_v5_adaptive_feedback_reports_paragraph_candidate_judge_failure():
+    judge = {
+        "schema_version": "paragraph_candidate_judge.v1",
+        "active": True,
+        "passed": False,
+        "failed_checks": ["document_unsafe_word_ratio_not_worse"],
+    }
+    feedback = v5_residual_comb._adaptive_writer_feedback([
+        {
+            "section_id": "paragraph_judge_001",
+            "variant_id": "v1",
+            "apply_status": {
+                "applied": False,
+                "reason": "paragraph_candidate_judge_failed",
+            },
+            "paragraph_candidate_judge": judge,
+            "incremental": {"unsafe_word_ratio_delta": -2},
+            "local_scores": {"topk_delta": 2},
+        }
+    ])
+
+    assert feedback["reason"] == "paragraph_candidate_judge_failed"
+    assert feedback["paragraph_candidate_judge_failed_count"] == 1
+    assert feedback["paragraph_candidate_judge_failed_checks"] == ["document_unsafe_word_ratio_not_worse"]
+    assert "whole paragraph" in feedback["required_correction"]
+
+
+def test_v5_writer_execution_card_carries_paragraph_run_plan():
+    paragraph = (
+        "My teaching now includes actions that build emotional safety. "
+        "Students talk during this time, and their comments expose what they learned. "
+        "From this sharing, I learn from them too."
+    )
+    section = SectionUnit(
+        section_id="route_001",
+        heading="",
+        text=paragraph,
+        start_char=0,
+        end_char=len(paragraph),
+        paragraph_count=1,
+        word_count=len(paragraph.split()),
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "contiguous_cluster_expanded_to_paragraph_run",
+            "cluster_window": {"start_char": 55, "end_char": 130, "word_count": 18, "sentence_count": 2},
+        },
+    )
+    route_plan = {
+        **_sample_route_plan(),
+        "source_block_plan": [{"block_id": "b01", "rewrite_job": "Rebuild paragraph route.", "must_preserve": []}],
+        "target_sentence_jobs": [{"sentence_id": "s001", "source_preview": "Students talk during this time", "rewrite_job": "Make this sentence concrete."}],
+        "affected_unit_actions": [{
+            "unit_id": "u001",
+            "affected_text": "Students talk during this time",
+            "required_action": "Rebuild the hotspot with surrounding context.",
+            "operator_stack": ["CLAUSE_ROUTE_CHANGE"],
+            "insufficient_edit": "Sentence-only synonym replacement.",
+        }],
+        "must_change": ["Change paragraph route."],
+        "must_preserve": [{"source_quote": "Students talk during this time", "preserve_as": "student discussion"}],
+        "sentence_plan": ["Open with teaching action.", "Place student talk as evidence.", "Close with what teacher learns."],
+        "paragraph_run_plan": {
+            "scope": "paragraph_run",
+            "paragraph_job": "Teaching action to student evidence to teacher reflection.",
+            "hotspot_job": "Make student comments do evidence work.",
+            "surrounding_sentence_jobs": ["Set up emotional safety.", "Close with teacher learning."],
+            "insufficient_scope": "Only rewriting the student sentence.",
+        },
+    }
+
+    card = v5_residual_comb._writer_execution_card(section=section, route_plan=route_plan)
+
+    assert card["repair_scope"]["scope"] == "paragraph_run"
+    assert card["paragraph_run_plan"]["scope"] == "paragraph_run"
+    assert card["paragraph_run_plan"]["hotspot_job"] == "Make student comments do evidence work."
+    assert card["repair_scope"]["cluster_window"]["sentence_count"] == 2
+    assert card["sentence_finding_map"]
+    assert card["paragraph_failure_model"]["why_sentence_only_fails"]
+    assert card["consolidated_paragraph_strategy"]["paragraph_route"]
+    assert card["writer_execution_guide"]["whole_paragraph_instruction"]
+    assert card["scanner_success_targets"]["topk_route_target"]
+    lane_ids = {lane["lane"] for lane in card["metric_response_lanes"]}
+    assert {
+        "topk_and_ai_route",
+        "unsafe_cluster_and_word_ratio",
+        "compiler_contextual_density",
+        "source_grounding",
+    }.issubset(lane_ids)
+    assert "Students" in card["source_grounding_card"]["allowed_content_terms"]
+    assert card["source_grounding_card"]["source_phrase_anchors"]
+
+
+def test_v5_route_plan_parser_enforces_paragraph_run_scope_contract():
+    source_text = (
+        "The service changed the student's confidence. "
+        "The thank-you card made the result visible. "
+        "The teacher used that response to adjust the next activity."
+    )
+    repair_scope = {
+        "scope": "paragraph_run",
+        "section_sentence_count": 3,
+        "cluster_window": {"sentence_count": 1},
+    }
+    sentence_window_plan = _sample_route_plan()
+
+    parsed, diagnostics = _parse_route_plan(
+        json.dumps({"route_plan": sentence_window_plan}),
+        source_text=source_text,
+        repair_scope=repair_scope,
+    )
+
+    assert parsed is None
+    assert diagnostics["reason"] == "paragraph_run_plan_scope_mismatch"
+
+    paragraph_plan = {
+        **sentence_window_plan,
+        "paragraph_run_plan": {
+            **sentence_window_plan["paragraph_run_plan"],
+            "scope": "paragraph_run",
+            "paragraph_job": "Move from the service moment to visible student response and teaching adjustment.",
+            "hotspot_job": "Make the service result depend on the visible response.",
+            "surrounding_sentence_jobs": [],
+            "insufficient_scope": "Only rewriting the flagged service sentence.",
+        },
+    }
+    missing_jobs, missing_jobs_diagnostics = _parse_route_plan(
+        json.dumps({"route_plan": paragraph_plan}),
+        source_text=source_text,
+        repair_scope=repair_scope,
+    )
+
+    assert missing_jobs is None
+    assert missing_jobs_diagnostics["reason"] == "paragraph_run_plan_missing_surrounding_jobs"
+
+    paragraph_plan["paragraph_run_plan"]["surrounding_sentence_jobs"] = [
+        "Use the thank-you card sentence as visible evidence.",
+        "Use the final sentence as the teaching adjustment.",
+    ]
+    valid, valid_diagnostics = _parse_route_plan(
+        json.dumps({"route_plan": paragraph_plan}),
+        source_text=source_text,
+        repair_scope=repair_scope,
+    )
+
+    assert valid_diagnostics["status"] == "ok"
+    assert valid["paragraph_run_plan"]["scope"] == "paragraph_run"
+    assert valid["paragraph_run_plan"]["surrounding_sentence_jobs"]
+
+
 def test_v5_safe_band_evidence_repair_section_handles_single_newline_paragraphs():
     text = (
         "Title line\n"
@@ -1229,6 +2421,31 @@ def test_v5_author_proxy_revision_compiler_audit_catches_polished_wrapper_risk()
     assert audit["passed"] is False
     assert "citation_rhythm_not_expanded" in audit["failed_checks"]
     assert "closure_not_polished_wrapper" in audit["failed_checks"]
+
+
+def test_v5_author_proxy_revision_compiler_counts_source_specific_closure_as_context():
+    source = (
+        "I introduced the Octagon and Dodecagon Method in class. "
+        "It uses a clock face to explain projection angles. "
+        "Instead of saying vertical distribution, I say project the hair toward 12 o'clock. "
+        "Once they understand the concept, we work toward using the proper language."
+    )
+    candidate = (
+        "I introduced the Octagon and Dodecagon Method in class. "
+        "It uses a clock face to explain projection angles. "
+        "Instead of saying vertical distribution, I say project the hair toward 12 o'clock. "
+        "Once they understand the concept, we work toward using the proper language. "
+        "My job is to move them from 12 o'clock back to the proper language."
+    )
+
+    audit = v5_residual_comb._author_proxy_revision_compiler_audit(
+        source_text=source,
+        candidate_text=candidate,
+    )
+
+    assert audit["candidate_profile"]["closing_sentence_has_context"] is True
+    assert "closure_keeps_context_or_short_limit" not in audit["failed_checks"]
+    assert "contextual_density_not_worse" not in audit["failed_checks"]
 
 
 def test_v5_safe_band_pack_rejects_candidate_that_only_wraps_anchors():
@@ -3793,6 +5010,12 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
         "must_change",
         "must_preserve",
         "controlled_expansion",
+        "paragraph_run_plan",
+        "sentence_finding_map",
+        "paragraph_failure_model",
+        "consolidated_paragraph_strategy",
+        "writer_execution_guide",
+        "scanner_success_targets",
         "sentence_plan",
         "avoid_phrases",
         "length_target",
@@ -3801,6 +5024,11 @@ def test_v5_residual_route_plan_prompt_builds_custom_planner_task():
     lowered = prompt.casefold()
     assert "ai detector" not in lowered
     assert "bypass" not in lowered
+    assert "sentence_finding_map" in payload["output_schema"]["route_plan"]
+    assert "paragraph_failure_model" in payload["output_schema"]["route_plan"]
+    assert "consolidated_paragraph_strategy" in payload["output_schema"]["route_plan"]
+    assert "writer_execution_guide" in payload["output_schema"]["route_plan"]
+    assert "scanner_success_targets" in payload["output_schema"]["route_plan"]
 
 
 def test_v5_residual_route_plan_parser_requires_source_supported_steps():
@@ -3867,6 +5095,57 @@ def test_v5_residual_route_plan_parser_requires_source_supported_steps():
                     "preserve_as": "visible outcome",
                 },
             ],
+            "paragraph_run_plan": {
+                "scope": "sentence_window",
+                "paragraph_job": "Rebuild the selected sentence window around the service moment.",
+                "hotspot_job": "Make the service result follow visible evidence.",
+                "surrounding_sentence_jobs": [],
+                "insufficient_scope": "Only swapping one result word.",
+            },
+            "sentence_finding_map": [
+                {
+                    "sentence_id": "s001",
+                    "source_preview": "The service changed the student's confidence.",
+                    "scanner_finding": "Broad result before visible event.",
+                    "paragraph_role": "States interpretation before evidence.",
+                    "interacts_with": ["s002"],
+                    "required_shift": "Move result after the thank-you card evidence.",
+                    "operator_stack": ["CLAUSE_ROUTE_CHANGE"],
+                    "insufficient_sentence_fix": "Changing only one noun keeps the same sentence route.",
+                }
+            ],
+            "paragraph_failure_model": {
+                "shared_pattern": "Broad interpretation appears before event evidence.",
+                "cross_sentence_interaction": "The thank-you card sentence needs to support the service result.",
+                "why_sentence_only_fails": "A sentence-only edit would leave the evidence sentence disconnected.",
+                "paragraph_level_repair": "Coordinate the service and thank-you card sentences as evidence before result.",
+            },
+            "consolidated_paragraph_strategy": {
+                "primary_move": "Move visible evidence before interpretation.",
+                "paragraph_route": "service moment -> thank-you card evidence -> confidence result",
+                "hotspot_route": "Make the confidence result depend on the thank-you card.",
+                "surrounding_route": "Use the second sentence as evidence for the first.",
+                "sequencing": [
+                    "Open with the service moment.",
+                    "Show the thank-you card.",
+                    "Name the confidence result.",
+                ],
+                "preserve_logic": "Keep service, confidence, and thank-you card while changing sequence.",
+            },
+            "writer_execution_guide": {
+                "whole_paragraph_instruction": "Rewrite the window as visible evidence before broad result.",
+                "sentence_coordination": "Make the two sentences depend on each other instead of standing separately.",
+                "texture_instruction": "Use plain source-level wording.",
+                "required_candidate_shape": "Event evidence leads into visible result.",
+                "prohibited_shortcut": "Do not keep the old broad opener and change one word.",
+            },
+            "scanner_success_targets": {
+                "local_cluster_target": "The broad opener no longer controls the local route.",
+                "unsafe_word_ratio_target": "Concrete event wording replaces broad result language.",
+                "topk_route_target": "The service changed to confidence path is disrupted.",
+                "compiler_target": "The revision stays grounded in service and thank-you card evidence.",
+                "acceptance_focus": "topk_density",
+            },
             "sentence_plan": [
                 "Open with the service moment.",
                 "Use the thank-you card to make the result visible.",
@@ -4168,6 +5447,8 @@ def test_v5_residual_prompt_uses_executable_brief_without_fallback_noise():
     assert payload["writer_execution_card"]["unit_actions"][0]["required_action"]
     assert payload["writer_variant_plan"][0]["variant_id"] == "v1"
     assert payload["writer_variant_plan"][0]["main_operator"] == "CLAUSE_ROUTE_CHANGE"
+    assert payload["writer_variant_plan"][0]["metric_lane"] == "topk_and_ai_route"
+    assert payload["writer_variant_plan"][0]["metric_lane_goal"]
     assert payload["coverage_guidance"]["requirements"]
     assert "fallback_route_blueprint" not in payload
     assert "custom_route_plan" not in payload
@@ -4211,6 +5492,1667 @@ def test_v5_residual_prompt_can_carry_score_feedback_for_adaptive_retry():
     assert payload["score_feedback"] == feedback
     assert any("did not move top-k" in rule for rule in payload["adaptive_retry_rules"])
     assert not any("outside examples" in rule for rule in payload["adaptive_retry_rules"])
+
+
+def test_v5_paragraph_judge_retry_rules_balance_topk_and_contextual_density():
+    feedback = {
+        "reason": "paragraph_candidate_judge_failed",
+        "paragraph_candidate_judge_failed_checks": [
+            "local_topk_or_ai_moves",
+            "revision_compiler_passed",
+        ],
+        "revision_compiler_failed_checks": ["contextual_density_not_worse"],
+    }
+
+    rules = v5_residual_comb._adaptive_retry_rules(feedback)
+    joined = " ".join(rules).casefold()
+
+    assert "top-k/ai" in joined
+    assert "source-near short sentence" in joined
+    assert "contextual density" in joined
+    assert "smooth method summary" in joined
+
+
+def test_v5_paragraph_compiler_feedback_prioritizes_compiler_variant_lanes():
+    section = SectionUnit(
+        section_id="density_cluster_001",
+        heading="Density cluster",
+        text=(
+            "I introduced the Octagon and Dodecagon Method in class. "
+            "It uses a clock face to explain projection angles. "
+            "Students then work toward using the proper language."
+        ),
+        start_char=0,
+        end_char=158,
+        paragraph_count=1,
+        word_count=25,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    feedback = {
+        "reason": "paragraph_candidate_judge_failed",
+        "paragraph_candidate_judge_failed_checks": ["revision_compiler_passed"],
+        "revision_compiler_failed_checks": [
+            "contextual_density_not_worse",
+            "closure_keeps_context_or_short_limit",
+        ],
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=2,
+        route_plan={**_sample_route_plan(), "primary_metric": "topk_density"},
+        adaptive_feedback=feedback,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    plans = payload["writer_variant_plan"]
+
+    assert plans[0]["route_shape"] == "contextual_density_restore"
+    assert plans[0]["metric_lane"] == "compiler_contextual_density"
+    assert "contextual density" in plans[0]["metric_lane_goal"]
+    assert plans[1]["route_shape"] == "source_specific_closure"
+    assert plans[1]["metric_lane"] == "compiler_contextual_density"
+    assert "final sentence" in plans[1]["execution_rule"]
+    assert payload["revision_compiler_retry_constraints"]["contextual_density"]["forbidden_move"]
+    assert payload["revision_compiler_retry_constraints"]["paragraph_closure"]["max_ungrounded_closing_words"] == 13
+
+
+def test_v5_paragraph_source_support_feedback_prioritizes_source_grounding_lane():
+    section = SectionUnit(
+        section_id="density_cluster_001",
+        heading="Density cluster",
+        text=(
+            "Billett's work on practical learning shaped how I think about this. "
+            "Watching isn't enough. "
+            "Students need demonstrations, guidance, scaffolding, feedback, and another try."
+        ),
+        start_char=0,
+        end_char=158,
+        paragraph_count=1,
+        word_count=22,
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "before_context": "I use a clock face to explain projection angles.",
+        },
+    )
+    feedback = {
+        "reason": "paragraph_candidate_judge_failed",
+        "paragraph_candidate_judge_failed_checks": [
+            "source_support_ratio_minimum",
+            "unsupported_terms_within_limit",
+        ],
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=2,
+        route_plan={**_sample_route_plan(), "primary_metric": "topk_density"},
+        adaptive_feedback=feedback,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    first_plan = payload["writer_variant_plan"][0]
+
+    assert first_plan["route_shape"] == "source_grounded_route_repair"
+    assert first_plan["metric_lane"] == "source_grounding"
+    assert "remove unsupported" in first_plan["execution_rule"]
+    assert "source_grounding_card" in first_plan["metric_lane_goal"] or "source anchors" in first_plan["metric_lane_goal"]
+    assert first_plan["controlled_expansion_move"] == "none"
+    assert first_plan["controlled_expansion_instruction"] == ""
+    assert any("controlled_expansion_move is none" in rule for rule in payload["method"])
+
+
+def test_v5_paragraph_document_unsafe_feedback_prioritizes_document_safe_lane():
+    section = SectionUnit(
+        section_id="density_cluster_001",
+        heading="Density cluster",
+        text=(
+            "The case started with a defined role. "
+            "The student then showed patience during the event. "
+            "The result was visible through a thank-you card."
+        ),
+        start_char=0,
+        end_char=136,
+        paragraph_count=1,
+        word_count=24,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    feedback = {
+        "reason": "paragraph_candidate_judge_failed",
+        "paragraph_candidate_judge_failed_checks": [
+            "document_unsafe_cluster_not_worse",
+            "document_unsafe_word_ratio_not_worse",
+        ],
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=2,
+        route_plan={**_sample_route_plan(), "primary_metric": "topk_density"},
+        adaptive_feedback=feedback,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    plans = payload["writer_variant_plan"]
+    joined_rules = " ".join(payload["adaptive_retry_rules"]).casefold()
+
+    assert plans[0]["route_shape"] == "document_unsafe_preserve_route"
+    assert plans[0]["metric_lane"] == "unsafe_cluster_and_word_ratio"
+    assert "full-document unsafe" in plans[0]["metric_lane_goal"]
+    assert plans[0]["controlled_expansion_move"] == "none"
+    assert plans[1]["route_shape"] == "source_sentence_rhythm_preserve"
+    assert "source sentence rhythm" in joined_rules
+    assert any("controlled_expansion_move is none" in rule for rule in payload["method"])
+
+
+def test_v5_cross_paragraph_span_prioritizes_source_bridge_lane():
+    section = SectionUnit(
+        section_id="density_cluster_cross_001",
+        heading="Density cluster",
+        text=(
+            "The first paragraph ends by linking the method to practice.\n"
+            "The next paragraph adds observation evidence from class."
+        ),
+        start_char=0,
+        end_char=112,
+        paragraph_count=2,
+        word_count=17,
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "selection_reason": "scanner_span_crosses_paragraph_boundary",
+            "cluster_window": {"start_char": 0, "end_char": 112, "word_count": 17, "sentence_count": 2},
+        },
+    )
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=2,
+        route_plan={**_sample_route_plan(), "primary_metric": "topk_density"},
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    plans = payload["writer_variant_plan"]
+    method = " ".join(payload["method"]).casefold()
+
+    assert plans[0]["route_shape"] == "cross_paragraph_source_bridge"
+    assert plans[0]["metric_lane"] == "source_grounding"
+    assert plans[0]["controlled_expansion_move"] == "none"
+    assert plans[1]["route_shape"] == "cross_paragraph_sentence_boundary_shift"
+    assert "paragraph break as protected source structure" in method
+    assert "mechanism, friction, gap, or cycle" in method
+
+
+def test_v5_paragraph_digest_prioritizes_mixed_finding_writer_lanes():
+    section = SectionUnit(
+        section_id="density_digest_001",
+        heading="Density cluster",
+        text=(
+            "The source starts with a clear local claim. "
+            "However, this important process has become a central part of the wider problem. "
+            "This shows the same important pattern across the paragraph."
+        ),
+        start_char=0,
+        end_char=173,
+        paragraph_count=1,
+        word_count=28,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "target_unit_count": 2,
+            "surrounding_unit_count": 1,
+            "mixed_findings": True,
+            "dominant_findings": [
+                "unsafe_density",
+                "predictable_next_word_path",
+                "generic_assertion",
+                "transition_scaffold",
+            ],
+            "finding_counts": {
+                "unsafe_density": 2,
+                "predictable_next_word_path": 2,
+                "generic_assertion": 2,
+                "transition_scaffold": 1,
+            },
+            "highest_target_severity": 6.2,
+            "contiguous_target_runs": [
+                {"unit_ids": ["u002", "u003"], "finding_tags": ["unsafe_density", "predictable_next_word_path"], "run_length": 2, "max_severity": 6.2}
+            ],
+            "repair_priority": "coordinate_unsafe_density_and_topk_route",
+            "planner_rule": "Consolidate continuous target units into one paragraph strategy.",
+            "writer_rule": "Repair the dominant paragraph-level priority.",
+        },
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=4,
+        route_plan=route_plan,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    plans = payload["writer_variant_plan"]
+
+    assert plans[0]["route_shape"] == "digest_unsafe_topk_coordination"
+    assert plans[0]["metric_lane"] == "topk_and_ai_route"
+    assert plans[0]["paragraph_repair_priority"] == "coordinate_unsafe_density_and_topk_route"
+    assert "predictable_next_word_path" in plans[0]["finding_tags"]
+    assert plans[0]["controlled_expansion_move"] == "none"
+    assert plans[1]["route_shape"] == "digest_density_preserving_reweight"
+    assert plans[1]["controlled_expansion_move"] == "none"
+    assert plans[2]["route_shape"] == "digest_transition_scaffold_removal"
+    assert plans[2]["controlled_expansion_move"] == "none"
+    assert plans[3]["route_shape"] == "digest_generic_assertion_grounding"
+    assert payload["writer_execution_card"]["paragraph_finding_digest"]["target_unit_count"] == 2
+
+
+def test_v5_adaptive_failure_lanes_override_paragraph_digest_lanes():
+    section = SectionUnit(
+        section_id="density_digest_override_001",
+        heading="Density cluster",
+        text=(
+            "The source starts with a clear local claim. "
+            "This important process has become a central part of the wider problem."
+        ),
+        start_char=0,
+        end_char=122,
+        paragraph_count=1,
+        word_count=20,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    feedback = {
+        "reason": "paragraph_candidate_judge_failed",
+        "paragraph_candidate_judge_failed_checks": [
+            "source_support_ratio_minimum",
+            "unsupported_terms_within_limit",
+        ],
+    }
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["unsafe_density", "predictable_next_word_path"],
+            "repair_priority": "coordinate_unsafe_density_and_topk_route",
+            "contiguous_target_runs": [
+                {"unit_ids": ["u002"], "finding_tags": ["unsafe_density"], "run_length": 1, "max_severity": 5.1}
+            ],
+        },
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=2,
+        route_plan=route_plan,
+        adaptive_feedback=feedback,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    plans = payload["writer_variant_plan"]
+
+    assert plans[0]["route_shape"] == "source_grounded_route_repair"
+    assert plans[0]["metric_lane"] == "source_grounding"
+    assert plans[1]["route_shape"] == "digest_unsafe_topk_coordination"
+
+
+def test_v5_scanner_finding_tags_include_grounding_and_transformation_drivers():
+    tags = v5_residual_comb._scanner_finding_tags({
+        "component": "unsupported_claim_risk",
+        "title": "Weak source grounding and citation weakness",
+        "unsupported_claim_risk": 64,
+        "source_grounding_risk": 58,
+        "citation_weakness_risk": 45,
+        "broad_claim_risk": 51,
+        "human_anchor_score": 18,
+        "paraphrase_transformation_risk": 49,
+        "semantic_uniformity_risk": 42,
+        "discourse_regularity_risk": 37,
+    })
+
+    assert "unsupported_claim" in tags
+    assert "weak_source_grounding" in tags
+    assert "citation_weakness" in tags
+    assert "broad_claim" in tags
+    assert "human_anchor_gap" in tags
+    assert "paraphrase_transformation" in tags
+    assert "semantic_uniformity" in tags
+    assert "discourse_regularity" in tags
+
+
+def test_v5_scanner_finding_tags_include_ai_generation_likelihood_driver():
+    tags = v5_residual_comb._scanner_finding_tags({
+        "title": "moderate_ai_generation_likelihood",
+        "category": "ai_generation",
+        "description": "Some AI-like patterns were detected.",
+        "ai_generation_risk": 0.62,
+    })
+
+    assert "ai_generation_likelihood" in tags
+
+
+def test_v5_unknown_scanner_findings_stay_distinct_paragraph_obligations():
+    assert v5_residual_comb._scanner_finding_tag("coherence_gap") == "scanner_signal_coherence_gap"
+    assert v5_residual_comb._scanner_finding_tags({
+        "title": "coherence_gap",
+        "category": "paragraph_flow",
+        "description": "A future scanner can emit a new generic finding family.",
+        "score": 0.72,
+    }) == ["scanner_signal_coherence_gap"]
+
+    affected_units = [
+        {
+            "unit_id": "u001",
+            "source_text": "The first sentence has one future scanner finding.",
+            "is_scanner_target": True,
+            "finding_tags": ["coherence_gap"],
+            "target_severity": 6.8,
+        },
+        {
+            "unit_id": "u002",
+            "source_text": "The next sentence has a separate future scanner finding.",
+            "is_scanner_target": True,
+            "finding_tags": ["evidence_sequence"],
+            "target_severity": 5.9,
+        },
+    ]
+
+    digest = v5_residual_comb._paragraph_finding_digest(affected_units)
+    shapes = v5_residual_comb._paragraph_digest_priority_shapes({"paragraph_finding_digest": digest})
+    obligation_tags = [row["finding_tag"] for row in digest["finding_response_plan"]]
+
+    assert digest["dominant_findings"] == [
+        "scanner_signal_coherence_gap",
+        "scanner_signal_evidence_sequence",
+    ]
+    assert obligation_tags == digest["dominant_findings"]
+    assert digest["contiguous_target_runs"][0]["finding_tags"] == digest["dominant_findings"]
+    assert digest["repair_priority"] == "resolve_unclassified_scanner_signal_as_paragraph_route"
+    assert shapes[0]["route_shape"] == "digest_unclassified_scanner_signal_route"
+    assert set(shapes[0]["finding_tags"]) == set(digest["dominant_findings"])
+
+
+def test_v5_unknown_scanner_findings_reach_writer_variant_plan():
+    section = SectionUnit(
+        section_id="unknown_signal_digest_001",
+        heading="Density cluster",
+        text=(
+            "The paragraph has a scanner issue that the current taxonomy has not named. "
+            "The writer still needs a whole-paragraph route rather than a generic paraphrase."
+        ),
+        start_char=0,
+        end_char=155,
+        paragraph_count=1,
+        word_count=23,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    digest = v5_residual_comb._paragraph_finding_digest([
+        {
+            "unit_id": "u001",
+            "source_text": "The paragraph has a scanner issue that the current taxonomy has not named.",
+            "is_scanner_target": True,
+            "finding_tags": ["coherence_gap"],
+            "target_severity": 6.8,
+        }
+    ])
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=1,
+        route_plan={**_sample_route_plan(), "paragraph_finding_digest": digest},
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["writer_variant_plan"][0]["route_shape"] == "digest_unclassified_scanner_signal_route"
+    assert payload["writer_variant_plan"][0]["finding_tags"] == ["scanner_signal_coherence_gap"]
+    assert payload["writer_execution_card"]["paragraph_finding_digest"]["dominant_findings"] == [
+        "scanner_signal_coherence_gap"
+    ]
+
+
+def test_v5_scanner_derived_plan_preserves_all_flagged_sentences_in_paragraph():
+    sentences = [
+        f"Source sentence {index} carries finding {index} for the same paragraph route."
+        for index in range(1, 11)
+    ]
+    text = " ".join(sentences)
+    section = SectionUnit(
+        section_id="many_flagged_sentences_001",
+        heading="",
+        text=text,
+        start_char=0,
+        end_char=len(text),
+        paragraph_count=1,
+        word_count=len(text.split()),
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    local_goal = {
+        "scanner_finding_profile": {
+            "schema_version": "scanner_finding_profile.v1",
+            "active": True,
+            "document_driver_tags": ["weak_source_grounding"],
+            "sentence_signal_targets": [
+                {
+                    "sentence_id": f"s{index:03d}",
+                    "sentence_index": index - 1,
+                    "preview": sentence,
+                    "risk_score": 4.4 + (index / 10),
+                    "finding_tags": ["coherence_gap" if index % 2 else "predictable_next_word_path"],
+                }
+                for index, sentence in enumerate(sentences, start=1)
+            ],
+        }
+    }
+
+    plan = v5_residual_comb._scanner_derived_route_plan(section=section, local_goal=local_goal)
+    card = v5_residual_comb._writer_execution_card(section=section, route_plan=plan)
+    digest = plan["paragraph_finding_digest"]
+
+    assert len(plan["target_sentence_jobs"]) == 10
+    assert len(plan["affected_unit_actions"]) == 10
+    assert len(plan["sentence_finding_map"]) == 10
+    assert len(card["unit_actions"]) == 10
+    assert len(digest["contiguous_target_runs"][0]["unit_ids"]) == 10
+    assert "scanner_signal_coherence_gap" in digest["dominant_findings"]
+    assert plan["target_sentence_jobs"][-1]["sentence_id"] == "u010"
+
+
+def test_v5_compact_planner_expansion_preserves_all_flagged_sentences_in_paragraph():
+    sentences = [
+        f"Planner sentence {index} carries target {index} in one paragraph."
+        for index in range(1, 11)
+    ]
+    text = " ".join(sentences)
+    section = SectionUnit(
+        section_id="compact_many_flagged_sentences_001",
+        heading="",
+        text=text,
+        start_char=0,
+        end_char=len(text),
+        paragraph_count=1,
+        word_count=len(text.split()),
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    local_goal = {
+        "scanner_finding_profile": {
+            "schema_version": "scanner_finding_profile.v1",
+            "active": True,
+            "sentence_signal_targets": [
+                {
+                    "sentence_id": f"s{index:03d}",
+                    "sentence_index": index - 1,
+                    "preview": sentence,
+                    "risk_score": 4.1,
+                    "finding_tags": ["predictable_next_word_path"],
+                }
+                for index, sentence in enumerate(sentences, start=1)
+            ],
+        }
+    }
+    decision = {
+        "primary_operator": "CLAUSE_ROUTE_CHANGE",
+        "replacement_route": "Use one coordinated paragraph route for every target sentence.",
+        "target_unit_actions": [
+            {
+                "unit_id": f"u{index:03d}",
+                "problem_role": f"Target sentence {index} keeps the old route.",
+                "required_action": f"Move sentence {index} into the coordinated paragraph route.",
+                "insufficient_edit": "A local synonym swap keeps the old route.",
+            }
+            for index in range(1, 11)
+        ],
+    }
+
+    plan = v5_residual_comb._expand_compact_route_plan_decision(
+        decision,
+        section=section,
+        local_goal=local_goal,
+    )
+
+    assert len(plan["target_sentence_jobs"]) == 10
+    assert len(plan["affected_unit_actions"]) == 10
+    assert len(plan["sentence_finding_map"]) == 10
+    assert plan["affected_unit_actions"][-1]["unit_id"] == "u010"
+
+
+def test_v5_ai_generation_likelihood_enters_paragraph_writer_lane():
+    section = SectionUnit(
+        section_id="ai_generation_digest_001",
+        heading="Density cluster",
+        text=(
+            "The paragraph has a smooth generated shape. "
+            "The support needs to stay tied to the submitted material."
+        ),
+        start_char=0,
+        end_char=105,
+        paragraph_count=1,
+        word_count=17,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["ai_generation_likelihood"],
+            "repair_priority": "reduce_ai_generation_likelihood_with_source_grounded_route",
+            "finding_response_plan": [
+                {
+                    "finding_tag": "ai_generation_likelihood",
+                    "writer_obligation": "Reduce AI-likelihood texture with source-grounded movement.",
+                }
+            ],
+            "contiguous_target_runs": [
+                {
+                    "unit_ids": ["u001"],
+                    "finding_tags": ["ai_generation_likelihood"],
+                    "run_length": 1,
+                    "max_severity": 6.1,
+                }
+            ],
+        },
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=1,
+        route_plan=route_plan,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    plan = payload["writer_variant_plan"][0]
+
+    assert plan["route_shape"] == "digest_ai_generation_likelihood_reduction"
+    assert plan["metric_lane"] == "topk_and_ai_route"
+    assert plan["controlled_expansion_move"] == "source_grounded_route"
+
+
+def test_v5_paragraph_digest_prioritizes_grounding_writer_lanes():
+    section = SectionUnit(
+        section_id="grounding_digest_001",
+        heading="Density cluster",
+        text=(
+            "The draft makes a large claim about the result. "
+            "The next sentence needs clearer support from the submitted source."
+        ),
+        start_char=0,
+        end_char=119,
+        paragraph_count=1,
+        word_count=20,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "target_unit_count": 2,
+            "surrounding_unit_count": 0,
+            "mixed_findings": True,
+            "dominant_findings": [
+                "unsupported_claim",
+                "weak_source_grounding",
+                "citation_weakness",
+                "broad_claim",
+                "human_anchor_gap",
+            ],
+            "finding_counts": {
+                "unsupported_claim": 1,
+                "weak_source_grounding": 1,
+                "citation_weakness": 1,
+                "broad_claim": 1,
+                "human_anchor_gap": 1,
+            },
+            "highest_target_severity": 8.3,
+            "contiguous_target_runs": [
+                {"unit_ids": ["u001", "u002"], "finding_tags": ["unsupported_claim", "weak_source_grounding"], "run_length": 2, "max_severity": 8.3}
+            ],
+            "repair_priority": "coordinate_grounding_support_and_scanner_route",
+            "planner_rule": "Consolidate continuous target units into one paragraph strategy.",
+            "writer_rule": "Repair source support before style movement.",
+        },
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=4,
+        route_plan=route_plan,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    plans = payload["writer_variant_plan"]
+
+    assert plans[0]["route_shape"] == "digest_source_grounding_rebuild"
+    assert plans[0]["metric_lane"] == "source_grounding"
+    assert plans[0]["controlled_expansion_move"] == "none"
+    assert plans[1]["route_shape"] == "digest_citation_support_alignment"
+    assert plans[1]["controlled_expansion_move"] == "none"
+    assert plans[2]["route_shape"] == "digest_broad_claim_scope_limit"
+    assert plans[2]["controlled_expansion_move"] == "scope_limit"
+    assert plans[3]["route_shape"] == "digest_author_anchor_restore"
+
+
+def test_v5_paragraph_digest_prioritizes_transformation_variance_lanes():
+    section = SectionUnit(
+        section_id="transformation_digest_001",
+        heading="Density cluster",
+        text=(
+            "The paragraph reads like a smooth paraphrase. "
+            "Every sentence moves with the same balanced explanatory rhythm."
+        ),
+        start_char=0,
+        end_char=111,
+        paragraph_count=1,
+        word_count=17,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": [
+                "paraphrase_transformation",
+                "semantic_uniformity",
+                "discourse_regularity",
+            ],
+            "repair_priority": "reduce_paraphrase_transformation_pattern",
+            "contiguous_target_runs": [
+                {"unit_ids": ["u001", "u002"], "finding_tags": ["paraphrase_transformation"], "run_length": 2, "max_severity": 5.9}
+            ],
+        },
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal={},
+        variant_count=2,
+        route_plan=route_plan,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    plans = payload["writer_variant_plan"]
+
+    assert plans[0]["route_shape"] == "digest_paraphrase_transformation_revoice"
+    assert plans[0]["metric_lane"] == "topk_and_ai_route"
+    assert plans[0]["controlled_expansion_move"] == "none"
+    assert plans[1]["route_shape"] == "digest_discourse_variance_rebuild"
+
+
+def test_v5_scanner_finding_tags_scale_fractional_report_scores():
+    tags = v5_residual_comb._scanner_finding_tags({
+        "component": "transformation_features",
+        "unsafe": False,
+        "human_anchor_score": 0.62,
+        "semantic_uniformity_risk": 0.41,
+        "discourse_regularity_risk": 0.38,
+        "paraphrase_transformation_risk": 0.36,
+        "citation_weakness_risk": 0.52,
+    })
+
+    assert "semantic_uniformity" in tags
+    assert "discourse_regularity" in tags
+    assert "paraphrase_transformation" in tags
+    assert "citation_weakness" in tags
+    assert "human_anchor_gap" not in tags
+    assert "unsafe_density" not in tags
+
+
+def test_v5_report_scanner_finding_profile_extracts_generic_document_and_sentence_drivers():
+    report = {
+        "ai_risk_badge": {
+            "writing_components": {
+                "unsupported_claim_risk": 68,
+                "source_grounding_risk": 57,
+                "broad_claim_risk": 49,
+                "paragraph_progression_risk": 44,
+            },
+            "transformation_classification": {
+                "features": {
+                    "human_anchor_score": 0.72,
+                    "semantic_uniformity_risk": 0.46,
+                    "discourse_regularity_risk": 0.39,
+                    "paraphrase_transformation_risk": 0.34,
+                }
+            },
+        },
+        "highlight_segments": [
+            {
+                "type": "sentence",
+                "sentence_id": "s001",
+                "sentence_index": 0,
+                "text": "The first paragraph makes a general claim before it explains its evidence.",
+                "signals": [
+                    {
+                        "key": "authorship_risk",
+                        "title": "semantic_drift",
+                        "score": 82,
+                        "recommendation": "Bridge the reasoning step with evidence already present.",
+                    },
+                    {
+                        "key": "rewrite_smoothness",
+                        "title": "generic_phrase",
+                        "score": 51,
+                    },
+                ],
+                "predictability": {"score": 0.48, "top10_ratio": 0.66, "top50_ratio": 0.71},
+            }
+        ],
+        "findings": {
+            "high": [
+                {
+                    "finding_id": "f001",
+                    "category": "semantic_shape",
+                    "signal_category": "authorship_risk",
+                    "title": "style_shift",
+                    "scanner": "semantic_shape",
+                    "score": 0.81,
+                    "sentence_id": "s002",
+                    "sentence_index": 1,
+                    "evidence": "The second sentence changes voice suddenly.",
+                    "recommendation": "Keep the paragraph voice consistent.",
+                }
+            ],
+            "medium": [
+                {
+                    "finding_id": "f002",
+                    "category": "predictability",
+                    "title": "medium_predictability",
+                    "scanner": "predictability",
+                    "score": 0.54,
+                    "sentence_id": "s003",
+                    "sentence_index": 2,
+                    "evidence": "The third sentence uses a predictable route.",
+                    "recommendation": "Change the route.",
+                }
+            ],
+        },
+        "repair_units_v2": {
+            "schema_version": "repair_units.v2",
+            "repair_units": [
+                {
+                    "unit_id": "ru001",
+                    "unit_type": "density_cluster",
+                    "source_text": "The cluster keeps a repeated explanatory path across adjacent sentences.",
+                    "start_sentence": 0,
+                    "sentence_ids": ["s001", "s002"],
+                    "word_count": 10,
+                    "dominant_drivers": [
+                        {"key": "top10_ratio", "score": 0.72},
+                        {"key": "top50_ratio", "score": 0.88},
+                        {"key": "predictability_score", "score": 0.61},
+                    ],
+                    "recommended_scope": "cluster_route_replacement",
+                }
+            ],
+        },
+        "problem_inventory": {
+            "problem_groups": [
+                {
+                    "group_id": "pg001",
+                    "scope_level": "paragraph",
+                    "problem_shape": "broad_assisted_footprint",
+                    "anchor_pressure": 0.9,
+                    "semantic_edit_cost": 0.8,
+                    "allowed_operations": ["paragraph_preserving_broad_reconstruction"],
+                }
+            ]
+        },
+    }
+
+    profile = v5_residual_comb._scanner_finding_profile_for_report(report)
+
+    assert profile["active"] is True
+    assert "unsupported_claim" in profile["document_driver_tags"]
+    assert "weak_source_grounding" in profile["document_driver_tags"]
+    assert "broad_claim" in profile["document_driver_tags"]
+    assert "semantic_drift" in profile["document_driver_tags"]
+    assert "semantic_uniformity" in profile["document_driver_tags"]
+    assert "paraphrase_transformation" in profile["document_driver_tags"]
+    assert "style_shift" in profile["sentence_driver_tags"]
+    assert "unsafe_density" in profile["sentence_driver_tags"]
+    assert profile["sentence_signal_targets"][0]["finding_tags"] == [
+        "semantic_drift",
+        "paraphrase_transformation",
+        "generic_assertion",
+        "predictable_next_word_path",
+    ]
+    assert any(
+        "style_shift" in row["finding_tags"]
+        for row in profile["sentence_signal_targets"]
+    )
+    assert any(
+        "unsafe_density" in row["finding_tags"]
+        and "predictable_next_word_path" in row["finding_tags"]
+        for row in profile["sentence_signal_targets"]
+    )
+
+
+def test_v5_section_local_goal_carries_report_drivers_into_core_round_scope():
+    section = SectionUnit(
+        section_id="section_profile_scope_001",
+        heading="",
+        text=(
+            "The target paragraph makes a general claim before it explains its evidence. "
+            "The next sentence keeps the same smooth route."
+        ),
+        start_char=0,
+        end_char=122,
+        paragraph_count=1,
+        word_count=20,
+        metadata={
+            "unit_type": "route_paragraph_run",
+            "target_sentence_metrics": [
+                {
+                    "sentence_id": "s001",
+                    "preview": "The target paragraph makes a general claim before it explains its evidence.",
+                    "risk_score": 4.4,
+                    "unsafe": True,
+                    "finding_tags": ["unsafe_density"],
+                }
+            ],
+        },
+    )
+    current_goal = {
+        "scanner_finding_profile": {
+            "schema_version": "scanner_finding_profile.v1",
+            "active": True,
+            "document_driver_tags": ["weak_source_grounding", "semantic_drift"],
+            "sentence_signal_targets": [
+                {
+                    "sentence_id": "s001",
+                    "preview": "The target paragraph makes a general claim before it explains its evidence.",
+                    "finding_tags": ["semantic_drift"],
+                    "unsafe": False,
+                    "risk_score": 3.2,
+                },
+                {
+                    "sentence_id": "s999",
+                    "preview": "This unrelated paragraph should not enter the section-local target set.",
+                    "finding_tags": ["style_shift"],
+                    "unsafe": False,
+                    "risk_score": 3.1,
+                },
+            ],
+        }
+    }
+
+    local_goal = v5_residual_comb._section_local_goal(section=section, current_goal=current_goal)
+    affected = v5_residual_comb._affected_content_map(section=section, local_goal=local_goal)
+    digest = v5_residual_comb._paragraph_finding_digest(affected)
+
+    assert local_goal["scanner_finding_profile"]["source"] == "scan_report_section_scoped"
+    assert len(local_goal["scanner_finding_profile"]["sentence_signal_targets"]) == 1
+    assert digest["document_driver_tags"] == ["weak_source_grounding", "semantic_drift"]
+    assert "weak_source_grounding" in digest["dominant_findings"]
+    assert "semantic_drift" in digest["dominant_findings"]
+
+
+def test_v5_scanner_finding_profile_keeps_late_sentence_targets_for_section_scope():
+    report = {"highlight_segments": []}
+    for index in range(1, 26):
+        report["highlight_segments"].append({
+            "type": "sentence",
+            "sentence_id": f"s{index:03d}",
+            "sentence_index": index - 1,
+            "text": f"Background sentence {index} keeps ordinary context before the selected paragraph.",
+            "signals": [{"title": "medium_predictability", "score": 0.42}],
+        })
+    report["highlight_segments"].append({
+        "type": "sentence",
+        "sentence_id": "s026",
+        "sentence_index": 25,
+        "text": "The selected paragraph has a late sentence that needs semantic continuity.",
+        "signals": [{"title": "semantic_drift", "score": 0.78}],
+    })
+    profile = v5_residual_comb._scanner_finding_profile_for_report(report)
+    section = SectionUnit(
+        section_id="late_target_scope_001",
+        heading="",
+        text="The selected paragraph has a late sentence that needs semantic continuity.",
+        start_char=0,
+        end_char=72,
+        paragraph_count=1,
+        word_count=10,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    local_goal = v5_residual_comb._section_local_goal(
+        section=section,
+        current_goal={"scanner_finding_profile": profile},
+    )
+
+    assert len(profile["sentence_signal_targets"]) == 26
+    assert local_goal["scanner_finding_profile"]["sentence_signal_targets"][0]["sentence_id"] == "s026"
+
+
+def test_v5_scanner_finding_profile_ignores_signal_less_highlight_segments():
+    sentence_texts = [
+        "The opening sentence has a scanner finding.",
+        "The second sentence is nearby context only.",
+        "The third sentence has a predictability finding.",
+        "The fourth sentence is also nearby context only.",
+        "The fifth sentence has another predictability finding.",
+    ]
+    report = {
+        "highlight_segments": [
+            {
+                "type": "sentence",
+                "sentence_id": "s001",
+                "sentence_index": 0,
+                "text": sentence_texts[0],
+                "signals": [{"title": "semantic_drift", "score": 0.64}],
+                "primary_signal": {"title": "semantic_drift", "score": 0.64},
+            },
+            {
+                "type": "sentence",
+                "sentence_id": "s002",
+                "sentence_index": 1,
+                "text": sentence_texts[1],
+                "signals": [],
+                "primary_signal": None,
+                "predictability": {"score": 0.12, "top10_ratio": 0.2, "top50_ratio": 0.4},
+            },
+            {
+                "type": "sentence",
+                "sentence_id": "s003",
+                "sentence_index": 2,
+                "text": sentence_texts[2],
+                "signals": [{"title": "review_predictability", "score": 0.4}],
+            },
+            {
+                "type": "sentence",
+                "sentence_id": "s004",
+                "sentence_index": 3,
+                "text": sentence_texts[3],
+                "signals": [],
+                "primary_signal": None,
+            },
+            {
+                "type": "sentence",
+                "sentence_id": "s005",
+                "sentence_index": 4,
+                "text": sentence_texts[4],
+                "signals": [{"title": "review_predictability", "score": 0.36}],
+            },
+        ],
+    }
+    profile = v5_residual_comb._scanner_finding_profile_for_report(report)
+    section = SectionUnit(
+        section_id="paragraph_scope_001",
+        heading="",
+        text=" ".join(sentence_texts),
+        start_char=0,
+        end_char=sum(len(text) for text in sentence_texts),
+        paragraph_count=1,
+        word_count=34,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    local_goal = v5_residual_comb._section_local_goal(
+        section=section,
+        current_goal={"scanner_finding_profile": profile},
+    )
+    affected = v5_residual_comb._affected_content_map(section=section, local_goal=local_goal)
+    plan = v5_residual_comb._scanner_derived_route_plan(section=section, local_goal=local_goal)
+    card = v5_residual_comb._writer_execution_card(section=section, route_plan=plan)
+
+    assert [row["sentence_id"] for row in profile["sentence_signal_targets"]] == ["s001", "s003", "s005"]
+    assert [row["unit_id"] for row in affected if row["is_scanner_target"]] == ["u001", "u003", "u005"]
+    assert affected[1]["scanner_target_ids"] == []
+    assert affected[1]["finding_tags"] == []
+    assert affected[1]["paragraph_interaction_hint"].startswith("surrounding context")
+    assert [row["unit_id"] for row in card["writer_operation_playbook"]] == ["u001", "u003", "u005"]
+    assert card["writer_operation_playbook"][0]["context_units"] == ["u002"]
+    assert card["writer_operation_playbook"][1]["context_units"] == ["u002", "u004"]
+    assert "scanner label" not in card["writer_operation_playbook"][1]["required_move"].casefold()
+    assert "source term pressure" in card["writer_operation_playbook"][1]["required_move"]
+    assert card["writer_operation_playbook"][1]["forbidden_shortcut"]
+    assert "writer_operation_playbook" in card["writer_execution_guide"]["sentence_coordination"]
+    contract = card["writer_execution_contract"]
+    assert contract["source_beat_count"] == 5
+    assert [row["unit_id"] for row in contract["source_beat_contract"]] == ["u001", "u002", "u003", "u004", "u005"]
+    assert [row["unit_id"] for row in contract["target_execution_order"]] == ["u001", "u003", "u005"]
+    assert contract["source_beat_contract"][1]["is_scanner_target"] is False
+    assert "source beat" in contract["candidate_shape_contract"]["source_beat_coverage_rule"]
+    assert "concise wording is allowed" in contract["candidate_shape_contract"]["source_beat_coverage_rule"]
+
+
+def test_v5_paragraph_candidate_judge_rejects_same_route_completion_against_playbook():
+    sentence_texts = [
+        "In my field report, I tracked what LAB204 calibration practice demands from trainees who enter the workshop with different starting points.",
+        "The task is not hard because the worksheet looks complicated; it is hard because the workbench forces a beginner to hold too many physical decisions at once.",
+        "I watched a trainee freeze mid-step while trying to keep the gauge level and the clamp pressure steady, because her fingers had not learned where to sit on the dial yet.",
+        "That moment showed me the real hurdle is not the worksheet design; it is the collision between tool control and the sequence the task lists as one combined outcome.",
+        "Miller and Clark (1991) describe working memory being overloaded when element interactivity is high, and LAB204 bundles gauge reading, clamp pressure, hand position, timing, safety checks, and recording into a single practical demonstration.",
+    ]
+    report = {
+        "highlight_segments": [
+            {
+                "type": "sentence",
+                "sentence_id": "s001",
+                "sentence_index": 0,
+                "text": sentence_texts[0],
+                "signals": [{"title": "semantic_drift", "score": 0.64}],
+            },
+            {
+                "type": "sentence",
+                "sentence_id": "s003",
+                "sentence_index": 2,
+                "text": sentence_texts[2],
+                "signals": [{"title": "review_predictability", "score": 0.4}],
+            },
+            {
+                "type": "sentence",
+                "sentence_id": "s005",
+                "sentence_index": 4,
+                "text": sentence_texts[4],
+                "signals": [{"title": "ai_generation_likelihood", "score": 0.5}],
+            },
+        ],
+    }
+    profile = v5_residual_comb._scanner_finding_profile_for_report(report)
+    source = " ".join(sentence_texts)
+    section = SectionUnit(
+        section_id="route_audit_001",
+        heading="",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    local_goal = v5_residual_comb._section_local_goal(
+        section=section,
+        current_goal={"scanner_finding_profile": profile},
+    )
+    route_plan = v5_residual_comb._scanner_derived_route_plan(section=section, local_goal=local_goal)
+    candidate = (
+        "In my field report, I tracked LAB204 calibration practice to see what it demands from trainees entering the workshop with different starting points. "
+        "The task's difficulty lies not in the worksheet complexity, but in the workbench forcing a beginner to hold too many physical decisions at once. "
+        "I watched a trainee's fingers fail to find their place on the dial, and that physical tool-control failure stalled her sequence as she tried to keep the gauge level and the clamp pressure steady mid-step. "
+        "That moment revealed the real hurdle: a collision between tool control and the sequence the task lists as one combined outcome. "
+        "Miller and Clark (1991) describe working memory overload when element interactivity is high, which is exactly what LAB204 does by bundling gauge reading, clamp pressure, hand position, timing, safety checks, and recording into a single practical demonstration."
+    )
+
+    judge = v5_residual_comb._paragraph_candidate_judge(
+        section=section,
+        source_text=source,
+        candidate_text=candidate,
+        local_scores={"unsafe_cluster_count_delta": 0, "unsafe_word_ratio_delta": 0, "topk_delta": 2.0, "topk_calibrated_risk_delta": 2.0, "ai_delta": 2.0},
+        incremental={"unsafe_cluster_count_delta": 0, "unsafe_word_ratio_delta": 0, "ai_delta": 0.5, "ai_authorship_delta": 0, "topk_calibrated_risk_delta": 0.5, "qualifying_text_ai_density_delta": 0.2},
+        route_plan=route_plan,
+    )
+
+    assert judge["passed"] is False
+    assert "writer_route_execution_passed" in judge["failed_checks"]
+    audit = judge["route_execution_audit"]
+    assert audit["passed"] is False
+    assert "u001" in audit["failed_units"]
+    assert "u003" in audit["failed_units"]
+    assert "u005" in audit["failed_units"]
+    failed = {
+        check
+        for row in audit["unit_results"]
+        for check in row["failed_checks"]
+    }
+    assert "target_unit_route_changed" in failed
+    assert "source_level_observation_not_diagnostic_label" in failed
+    assert "citation_not_clean_list_wrapper" in failed
+
+
+def test_v5_paragraph_candidate_judge_accepts_executed_route_against_playbook():
+    sentence_texts = [
+        "In my field report, I tracked what LAB204 calibration practice demands from trainees who enter the workshop with different starting points.",
+        "The task is not hard because the worksheet looks complicated; it is hard because the workbench forces a beginner to hold too many physical decisions at once.",
+        "I watched a trainee freeze mid-step while trying to keep the gauge level and the clamp pressure steady, because her fingers had not learned where to sit on the dial yet.",
+        "That moment showed me the real hurdle is not the worksheet design; it is the collision between tool control and the sequence the task lists as one combined outcome.",
+        "Miller and Clark (1991) describe working memory being overloaded when element interactivity is high, and LAB204 bundles gauge reading, clamp pressure, hand position, timing, safety checks, and recording into a single practical demonstration.",
+    ]
+    report = {
+        "highlight_segments": [
+            {"type": "sentence", "sentence_id": "s001", "sentence_index": 0, "text": sentence_texts[0], "signals": [{"title": "semantic_drift", "score": 0.64}]},
+            {"type": "sentence", "sentence_id": "s003", "sentence_index": 2, "text": sentence_texts[2], "signals": [{"title": "review_predictability", "score": 0.4}]},
+            {"type": "sentence", "sentence_id": "s005", "sentence_index": 4, "text": sentence_texts[4], "signals": [{"title": "ai_generation_likelihood", "score": 0.5}]},
+        ],
+    }
+    profile = v5_residual_comb._scanner_finding_profile_for_report(report)
+    source = " ".join(sentence_texts)
+    section = SectionUnit(
+        section_id="route_audit_002",
+        heading="",
+        text=source,
+        start_char=0,
+        end_char=len(source),
+        paragraph_count=1,
+        word_count=len(source.split()),
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    local_goal = v5_residual_comb._section_local_goal(
+        section=section,
+        current_goal={"scanner_finding_profile": profile},
+    )
+    route_plan = v5_residual_comb._scanner_derived_route_plan(section=section, local_goal=local_goal)
+    candidate = (
+        "In my field report, I tracked LAB204 calibration practice through the practical load it places on trainees entering the workshop with different starting points. "
+        "The task is not hard because the worksheet looks complicated; it is hard because the workbench forces a beginner to hold too many physical decisions at once. "
+        "I watched one trainee freeze mid-step. Her fingers had not found a steady place on the dial yet, and while she tried to keep the gauge level and the clamp pressure steady, the sequence stalled. "
+        "That moment showed me the real hurdle is not the worksheet design; it is the collision between tool control and the sequence the task lists as one combined outcome. "
+        "Miller and Clark's (1991) point about working memory overload fits this moment because the trainee is not handling one element at a time. "
+        "LAB204 brings gauge reading, clamp pressure, hand position, timing, safety checks, and recording into the same practical demonstration."
+    )
+
+    judge = v5_residual_comb._paragraph_candidate_judge(
+        section=section,
+        source_text=source,
+        candidate_text=candidate,
+        local_scores={"unsafe_cluster_count_delta": 0, "unsafe_word_ratio_delta": 0, "topk_delta": 2.0, "topk_calibrated_risk_delta": 2.0, "ai_delta": 2.0},
+        incremental={"unsafe_cluster_count_delta": 0, "unsafe_word_ratio_delta": 0, "ai_delta": 0.5, "ai_authorship_delta": 0, "topk_calibrated_risk_delta": 0.5, "qualifying_text_ai_density_delta": 0.2},
+        route_plan=route_plan,
+    )
+
+    assert judge["passed"] is True
+    route_check = next(check for check in judge["checks"] if check["name"] == "writer_route_execution_passed")
+    assert route_check["passed"] is True
+
+
+def test_v5_document_driver_tags_enter_paragraph_digest_and_writer_lanes():
+    section = SectionUnit(
+        section_id="generic_document_driver_001",
+        heading="General section",
+        text=(
+            "The first paragraph makes a general claim before it explains its evidence. "
+            "The next sentence keeps the same smooth route instead of showing how the support works."
+        ),
+        start_char=0,
+        end_char=153,
+        paragraph_count=1,
+        word_count=25,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    local_goal = {
+        "scanner_finding_profile": {
+            "schema_version": "scanner_finding_profile.v1",
+            "active": True,
+            "document_driver_tags": [
+                "weak_source_grounding",
+                "semantic_drift",
+                "style_shift",
+            ],
+            "sentence_signal_targets": [
+                {
+                    "sentence_id": "s001",
+                    "sentence_index": 0,
+                    "preview": "The first paragraph makes a general claim before it explains its evidence.",
+                    "unsafe": False,
+                    "risk_score": 3.8,
+                    "finding_tags": ["semantic_drift"],
+                }
+            ],
+        }
+    }
+
+    prompt = build_residual_cluster_prompt(
+        section=section,
+        local_goal=local_goal,
+        variant_count=4,
+        route_plan={
+            **_sample_route_plan(),
+            "paragraph_finding_digest": v5_residual_comb._paragraph_finding_digest(
+                v5_residual_comb._affected_content_map(section=section, local_goal=local_goal)
+            ),
+        },
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+    digest = payload["writer_execution_card"]["paragraph_finding_digest"]
+    plans = payload["writer_variant_plan"]
+
+    assert digest["document_driver_tags"] == [
+        "weak_source_grounding",
+        "semantic_drift",
+        "style_shift",
+    ]
+    assert "weak_source_grounding" in digest["dominant_findings"]
+    assert plans[0]["route_shape"] == "digest_source_grounding_rebuild"
+    assert any(plan["route_shape"] == "digest_semantic_continuity_bridge" for plan in plans)
+
+
+def test_v5_paragraph_digest_preserves_all_finding_families_as_writer_obligations():
+    all_tags = [
+        "unsafe_density",
+        "predictable_next_word_path",
+        "generic_assertion",
+        "transition_scaffold",
+        "long_sentence_weight",
+        "unsupported_claim",
+        "weak_source_grounding",
+        "citation_weakness",
+        "broad_claim",
+        "human_anchor_gap",
+        "paraphrase_transformation",
+        "semantic_uniformity",
+        "discourse_regularity",
+        "semantic_drift",
+        "style_shift",
+        "ai_generation_likelihood",
+    ]
+    affected_units = [
+        {
+            "unit_id": "u001",
+            "source_text": "The paragraph has many scanner finding families in one repair unit.",
+            "is_scanner_target": True,
+            "finding_tags": all_tags[:6],
+            "document_driver_tags": all_tags[6:],
+            "target_severity": 7.2,
+        }
+    ]
+
+    digest = v5_residual_comb._paragraph_finding_digest(affected_units)
+    shapes = v5_residual_comb._paragraph_digest_priority_shapes({"paragraph_finding_digest": digest})
+    obligation_tags = [row["finding_tag"] for row in digest["finding_response_plan"]]
+    acceptance_tags = [row["finding_tag"] for row in digest["finding_acceptance_plan"]]
+
+    assert set(digest["dominant_findings"]) == set(all_tags)
+    assert set(obligation_tags) == set(all_tags)
+    assert set(acceptance_tags) == set(all_tags)
+    assert all(row["acceptance_evidence"] for row in digest["finding_acceptance_plan"])
+    assert digest["target_unit_findings"][0]["unit_id"] == "u001"
+    assert set(digest["target_unit_findings"][0]["finding_tags"]) == set(all_tags[:6])
+    assert digest["contiguous_target_runs"][0]["finding_tags"] == all_tags[:6]
+    assert "digest_style_shift_normalization" in [shape["route_shape"] for shape in shapes]
+    assert "digest_ai_generation_likelihood_reduction" in [shape["route_shape"] for shape in shapes]
+    assert "digest_sentence_weight_rebalance" in [shape["route_shape"] for shape in shapes]
+
+
+def test_v5_paragraph_digest_acceptance_plan_covers_custom_future_finding():
+    digest = v5_residual_comb._paragraph_finding_digest([
+        {
+            "unit_id": "u001",
+            "source_text": "The paragraph has a future scanner finding.",
+            "is_scanner_target": True,
+            "finding_tags": ["coherence_gap"],
+            "target_severity": 6.2,
+        }
+    ])
+
+    plan = digest["finding_acceptance_plan"]
+
+    assert digest["dominant_findings"] == ["scanner_signal_coherence_gap"]
+    assert plan == [
+        {
+            "finding_tag": "scanner_signal_coherence_gap",
+            "acceptance_evidence": [
+                "target_unit_route_changed",
+                "target_unit_source_coverage",
+                "scanner_movement",
+                "paragraph_candidate_judge_passed",
+                "revision_compiler_passed",
+            ],
+            "failure_gap": "scanner_signal_coherence_gap",
+        }
+    ]
+
+
+def test_v5_scanner_finding_profile_keeps_more_than_legacy_target_cap():
+    report = {"highlight_segments": []}
+    for index in range(1, 106):
+        report["highlight_segments"].append({
+            "type": "sentence",
+            "sentence_id": f"s{index:03d}",
+            "sentence_index": index - 1,
+            "text": f"Sentence {index} carries a generic scanner signal in the submitted essay.",
+            "signals": [{"title": "medium_predictability", "score": 0.48}],
+        })
+
+    profile = v5_residual_comb._scanner_finding_profile_for_report(report)
+
+    assert profile["sentence_signal_target_count"] == 105
+    assert len(profile["sentence_signal_targets"]) == 105
+    assert profile["sentence_signal_targets"][-1]["sentence_id"] == "s105"
+
+
+def test_v5_section_local_goal_does_not_drop_late_paragraph_targets(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PARAGRAPH_FINDING_RUN_LIMIT", "12")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PARAGRAPH_TARGET_UNIT_FINDING_LIMIT", "80")
+    sentences = [
+        f"Paragraph sentence {index} carries its own scanner finding."
+        for index in range(1, 15)
+    ]
+    section_text = " ".join(sentences)
+    profile = {
+        "schema_version": "scanner_finding_profile.v1",
+        "active": True,
+        "document_driver_tags": ["weak_source_grounding"],
+        "sentence_signal_targets": [
+            {
+                "sentence_id": f"s{index:03d}",
+                "sentence_index": index - 1,
+                "preview": sentence,
+                "finding_tags": ["semantic_drift" if index % 2 else "style_shift"],
+                "unsafe": False,
+                "risk_score": 3.0,
+            }
+            for index, sentence in enumerate(sentences, start=1)
+        ],
+    }
+    section = SectionUnit(
+        section_id="long_paragraph_scope_001",
+        heading="",
+        text=section_text,
+        start_char=0,
+        end_char=len(section_text),
+        paragraph_count=1,
+        word_count=len(section_text.split()),
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+
+    local_goal = v5_residual_comb._section_local_goal(
+        section=section,
+        current_goal={"scanner_finding_profile": profile},
+    )
+    affected = v5_residual_comb._affected_content_map(section=section, local_goal=local_goal)
+    digest = v5_residual_comb._paragraph_finding_digest(affected)
+
+    assert local_goal["scanner_finding_profile"]["sentence_signal_target_count"] == 14
+    assert len(local_goal["scanner_finding_profile"]["sentence_signal_targets"]) == 14
+    assert len(affected) == 14
+    assert affected[-1]["scanner_target_ids"] == ["s014"]
+    assert {"semantic_drift", "style_shift", "weak_source_grounding"}.issubset(set(digest["dominant_findings"]))
+    assert len(digest["target_unit_findings"]) == 14
+    assert digest["target_unit_findings"][-1]["unit_id"] == "u014"
+    assert digest["target_unit_findings"][-1]["scanner_target_ids"] == ["s014"]
+    assert len(digest["contiguous_target_runs"][0]["unit_ids"]) == 14
+
+
+def test_v5_paragraph_target_unit_obligations_extend_beyond_legacy_target_cap(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PARAGRAPH_FINDING_RUN_LIMIT", "12")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_PARAGRAPH_TARGET_UNIT_FINDING_LIMIT", "80")
+    anchors = [
+        "alpha",
+        "bravo",
+        "charlie",
+        "delta",
+        "echo",
+        "foxtrot",
+        "golf",
+        "hotel",
+        "india",
+        "juliet",
+        "kilo",
+        "lima",
+        "mango",
+        "nectar",
+    ]
+    sentences = [
+        f"Paragraph sentence {index} carries {anchor} scanner evidence for a late target."
+        for index, anchor in enumerate(anchors, start=1)
+    ]
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": v5_residual_comb._paragraph_finding_digest([
+            {
+                "unit_id": f"u{index:03d}",
+                "source_text": sentence,
+                "is_scanner_target": True,
+                "finding_tags": ["ai_generation_likelihood"],
+                "scanner_target_ids": [f"s{index:03d}"],
+                "target_severity": 5.0,
+            }
+            for index, sentence in enumerate(sentences, start=1)
+        ]),
+    }
+    row = {
+        "text": " ".join(sentences[:12]),
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 2.0, "topk_delta": 2.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "topk_delta": 2.0,
+            "topk_calibrated_risk_delta": 2.0,
+            "ai_delta": 2.0,
+        },
+        "incremental": {"ai_delta": 2.0, "topk_delta": 2.0},
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+        },
+        "author_proxy_quality": {
+            "active": True,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+            },
+        },
+    }
+
+    ledger = v5_residual_comb._paragraph_obligation_evidence_ledger(row, route_plan)
+    undercovered_units = ledger[0]["target_unit_materiality"]["undercovered_units"]
+
+    assert len(route_plan["paragraph_finding_digest"]["target_unit_findings"]) == 14
+    assert len(route_plan["paragraph_finding_digest"]["contiguous_target_runs"][0]["unit_ids"]) == 14
+    assert "mango" in route_plan["paragraph_finding_digest"]["target_unit_findings"][12]["distinctive_terms"]
+    assert "nectar" in route_plan["paragraph_finding_digest"]["target_unit_findings"][13]["distinctive_terms"]
+    assert [unit["unit_id"] for unit in undercovered_units] == ["u013", "u014"]
+    assert "ai_generation_likelihood" in v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan)
+
+
+def test_v5_route_plan_enrichment_restores_omitted_scanner_target_execution_rows():
+    sentences = [
+        "The first sentence carries a predictable scanner route.",
+        "The second sentence keeps a broad scanner route.",
+        "The third sentence has a late scanner route.",
+    ]
+    section_text = " ".join(sentences)
+    section = SectionUnit(
+        section_id="enrich_scanner_targets_001",
+        heading="",
+        text=section_text,
+        start_char=0,
+        end_char=len(section_text),
+        paragraph_count=1,
+        word_count=len(section_text.split()),
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    local_goal = {
+        "scanner_finding_profile": {
+            "schema_version": "scanner_finding_profile.v1",
+            "active": True,
+            "document_driver_tags": [],
+            "sentence_signal_targets": [
+                {
+                    "sentence_id": f"s{index:03d}",
+                    "sentence_index": index - 1,
+                    "preview": sentence,
+                    "finding_tags": ["ai_generation_likelihood"],
+                    "risk_score": 5.0,
+                }
+                for index, sentence in enumerate(sentences, start=1)
+            ],
+        }
+    }
+    plan = v5_residual_comb._scanner_derived_route_plan(section=section, local_goal=local_goal)
+    assert plan is not None
+    shrunken = {
+        **plan,
+        "target_sentence_jobs": plan["target_sentence_jobs"][:1],
+        "affected_unit_actions": plan["affected_unit_actions"][:1],
+        "sentence_finding_map": plan["sentence_finding_map"][:1],
+        "paragraph_finding_digest": {"active": False, "reason": "planner_omitted_digest"},
+    }
+
+    enriched = v5_residual_comb._enrich_route_plan_with_paragraph_findings(
+        shrunken,
+        section=section,
+        local_goal=local_goal,
+    )
+
+    assert [row["unit_id"] for row in enriched["affected_unit_actions"]] == ["u001", "u002", "u003"]
+    assert [row["sentence_id"] for row in enriched["target_sentence_jobs"]] == ["u001", "u002", "u003"]
+    assert [row["sentence_id"] for row in enriched["sentence_finding_map"]] == ["u001", "u002", "u003"]
+    assert len(enriched["paragraph_finding_digest"]["target_unit_findings"]) == 3
+
+
+def test_v5_route_plan_sanitizer_keeps_all_paragraph_sentence_actions():
+    source_sentences = [
+        f"Source sentence {index} carries a different paragraph job."
+        for index in range(1, 12)
+    ]
+    source = " ".join(source_sentences)
+    plan = {
+        **_sample_route_plan(),
+        "target_sentence_jobs": [
+            {
+                "sentence_id": f"s{index:03d}",
+                "source_preview": sentence,
+                "current_weakness": "The sentence is treated as an isolated edit.",
+                "rewrite_job": "Coordinate this sentence with the paragraph route.",
+                "avoid_copying": [],
+            }
+            for index, sentence in enumerate(source_sentences, start=1)
+        ],
+        "affected_unit_actions": [
+            {
+                "unit_id": f"u{index:03d}",
+                "affected_text": sentence,
+                "problem_role": "The unit keeps one piece of the paragraph pattern.",
+                "required_action": "Assign a source-supported job inside the paragraph route.",
+                "operator_stack": ["CLAUSE_ROUTE_CHANGE"],
+                "must_preserve": [sentence.split(" carries ")[0]],
+                "insufficient_edit": "Only changing this sentence without coordinating the paragraph.",
+            }
+            for index, sentence in enumerate(source_sentences, start=1)
+        ],
+        "sentence_finding_map": [
+            {
+                "sentence_id": f"s{index:03d}",
+                "source_preview": sentence,
+                "scanner_finding": "The sentence has a local finding.",
+                "paragraph_role": "The sentence performs one paragraph job.",
+                "interacts_with": [],
+                "required_shift": "Coordinate with adjacent sentence jobs.",
+                "operator_stack": ["CLAUSE_ROUTE_CHANGE"],
+                "insufficient_sentence_fix": "A single-sentence synonym swap.",
+            }
+            for index, sentence in enumerate(source_sentences, start=1)
+        ],
+    }
+
+    sanitized = v5_residual_comb._sanitize_route_plan(plan, source_text=source)
+
+    assert len(sanitized["target_sentence_jobs"]) == 11
+    assert len(sanitized["affected_unit_actions"]) == 11
+    assert len(sanitized["sentence_finding_map"]) == 11
+    assert sanitized["affected_unit_actions"][-1]["unit_id"] == "u011"
+
+
+def test_v5_paragraph_judge_feedback_prioritizes_topk_ai_retune_lane():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": [
+                "predictable_next_word_path",
+                "unsafe_density",
+                "weak_source_grounding",
+            ],
+            "document_driver_tags": [],
+            "finding_response_plan": [
+                {
+                    "finding_tag": "predictable_next_word_path",
+                    "writer_obligation": "Break the expected next-word route.",
+                },
+                {
+                    "finding_tag": "unsafe_density",
+                    "writer_obligation": "Avoid concentrating risky wording.",
+                },
+            ],
+            "repair_priority": "coordinate_grounding_support_and_scanner_route",
+        },
+    }
+    feedback = {
+        "reason": "paragraph_candidate_judge_failed",
+        "paragraph_candidate_judge_failed_checks": [
+            "local_topk_or_ai_moves",
+            "local_unsafe_word_ratio_not_worse",
+            "document_unsafe_word_ratio_not_worse",
+        ],
+    }
+
+    plans = v5_residual_comb._writer_variant_plan(
+        variant_count=2,
+        route_plan=route_plan,
+        adaptive_feedback=feedback,
+    )
+
+    assert plans[0]["route_shape"] == "judge_failed_topk_ai_route_rebuild"
+    assert plans[0]["metric_lane"] == "topk_and_ai_route"
+    assert "did not move local top-k/AI" in plans[0]["metric_lane_goal"]
+    assert plans[1]["route_shape"] == "judge_failed_topk_unsafe_coordination"
+
+
+def test_v5_retune_prompt_treats_failed_candidate_as_anti_example():
+    section = SectionUnit(
+        section_id="retune_source_rebuild_001",
+        heading="",
+        text=(
+            "The source paragraph starts with one uneven sentence. "
+            "It then keeps a short bridge. "
+            "The final source sentence names the practical limit."
+        ),
+        start_char=0,
+        end_char=132,
+        paragraph_count=1,
+        word_count=22,
+        metadata={"unit_type": "route_paragraph_run"},
+    )
+    feedback = {
+        "reason": "paragraph_candidate_judge_failed",
+        "paragraph_candidate_judge_failed_checks": [
+            "local_topk_or_ai_moves",
+            "local_unsafe_word_ratio_not_worse",
+            "document_ai_not_worse",
+        ],
+        "selected": {
+            "scores": {"ai_delta": -0.8, "topk_delta": -1.2, "unsafe_word_ratio_delta": -3.4},
+            "local_scores": {"ai_delta": -1.1, "topk_delta": -2.2, "unsafe_word_ratio_delta": -4.4},
+        },
+        "revision_compiler_audit": {"passed": True, "failed_checks": []},
+    }
+
+    prompt = v5_residual_comb.build_residual_cluster_retune_prompt(
+        section=section,
+        current_best_text=(
+            "The failed candidate starts with a smoother explanatory opener. "
+            "It then adds a balanced bridge. "
+            "It closes with a polished sentence."
+        ),
+        local_goal={},
+        variant_count=1,
+        route_plan={**_sample_route_plan(), "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["predictable_next_word_path", "unsafe_density"],
+            "document_driver_tags": [],
+            "finding_response_plan": [],
+            "repair_priority": "coordinate_unsafe_density_and_topk_route",
+        }},
+        adaptive_feedback=feedback,
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["cluster"]["current_best_text_role"] == "rejected_candidate_anti_example"
+    assert payload["retune_source_policy"]["failed_candidate_role"] == "anti_example_only"
+    assert payload["retune_source_policy"]["source_of_truth"] == "cluster.original_source_text"
+    assert payload["candidate_failure_card"]["active"] is True
+    assert payload["candidate_failure_card"]["failed_candidate_role"] == "anti_example_not_template"
+    assert "opener sequence" in payload["candidate_failure_card"]["must_not_copy_from_failed_candidate"]
+    assert any("original source" in item for item in payload["candidate_failure_card"]["required_rebuild"])
+    assert any("anti_example_only" in item for item in payload["method"])
 
 
 def test_v5_broad_report_writer_requires_controlled_expansion_without_old_guards():
@@ -4292,6 +7234,918 @@ def test_v5_adaptive_writer_feedback_triggers_topk_route_retry(monkeypatch):
     assert feedback["reason"] == "topk_route_not_moved"
     assert _should_generate_adaptive_remainder(feedback, remaining_count=3, best_candidate=weak_row)
     assert not _should_retune_residual_candidate(weak_row, route_plan=route_plan, adaptive_feedback=feedback)
+
+
+def test_v5_scanner_moving_unsafe_cluster_regression_triggers_retune(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_ADAPTIVE_WRITER", raising=False)
+    route_plan = {**_sample_route_plan(), "primary_metric": "topk_density"}
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai_delta": 3.52,
+            "topk_delta": 4.21,
+            "rank_delta": 2.0,
+            "unsafe_word_ratio_delta": 8.343,
+            "unsafe_cluster_count_delta": 0.0,
+        },
+        "local_scores": {
+            "unsafe_cluster_count": 2,
+            "unsafe_cluster_count_delta": -1.0,
+            "unsafe_word_ratio_delta": 13.636,
+            "topk_calibrated_risk_delta": 22.833,
+        },
+        "incremental": {
+            "ai_delta": 0.66,
+            "topk_delta": 1.12,
+            "external_delta": 0.4,
+            "rank_delta": 0.8,
+            "unsafe_cluster_count_delta": -1.0,
+        },
+    }
+
+    feedback = _adaptive_writer_feedback([row], route_plan=route_plan, selected=row)
+
+    assert feedback["reason"] == "unsafe_cluster_regressed"
+    assert not _has_incremental_movement(row)
+    assert _should_retune_residual_candidate(row, route_plan=route_plan, adaptive_feedback=feedback)
+
+
+def test_v5_adaptive_feedback_refreshes_after_retune_moves_paragraph_finding():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["unsafe_density", "ai_generation_likelihood"],
+            "finding_response_plan": [
+                {"finding_tag": "unsafe_density", "writer_obligation": "Move unsafe density."},
+                {"finding_tag": "ai_generation_likelihood", "writer_obligation": "Move AI likelihood."},
+            ],
+        },
+    }
+    seed_row = {
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 1.0, "topk_delta": 1.0, "unsafe_cluster_count_delta": 0.0},
+        "local_scores": {
+            "unsafe_cluster_count": 2,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 4.0,
+            "topk_delta": 1.0,
+            "topk_calibrated_risk_delta": 2.0,
+        },
+        "incremental": {
+            "ai_delta": 1.0,
+            "topk_delta": 1.0,
+            "external_delta": 0.5,
+            "rank_delta": 0.5,
+            "unsafe_cluster_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 1.0,
+        },
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+        },
+        "author_proxy_quality": {
+            "active": True,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+            },
+        },
+    }
+    retune_row = {
+        **seed_row,
+        "scores": {"ai_delta": 0.2, "topk_delta": 0.2, "unsafe_cluster_count_delta": 1.0},
+        "local_scores": {
+            **seed_row["local_scores"],
+            "unsafe_cluster_count": 1,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+        "incremental": {
+            **seed_row["incremental"],
+            "unsafe_cluster_count_delta": 1.0,
+        },
+    }
+
+    pre_retune = v5_residual_comb._adaptive_writer_feedback([seed_row], route_plan=route_plan, selected=seed_row)
+    final = v5_residual_comb._adaptive_writer_feedback([seed_row, retune_row], route_plan=route_plan, selected=retune_row)
+
+    assert v5_residual_comb._candidate_unmoved_paragraph_findings(seed_row, route_plan) == ["unsafe_density"]
+    assert v5_residual_comb._candidate_unmoved_paragraph_findings(retune_row, route_plan) == []
+    assert pre_retune["reason"] == "paragraph_findings_not_moved"
+    assert final["reason"] == "candidate_promising"
+
+
+def test_v5_candidate_obligation_gaps_cover_grounding_semantic_and_style_findings():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": [
+                "unsupported_claim",
+                "weak_source_grounding",
+                "citation_weakness",
+                "broad_claim",
+                "human_anchor_gap",
+                "semantic_drift",
+                "semantic_uniformity",
+                "discourse_regularity",
+                "paraphrase_transformation",
+                "style_shift",
+            ],
+            "finding_response_plan": [],
+        },
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 1.0, "topk_delta": 1.0, "unsafe_cluster_count_delta": 1.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "unsafe_word_ratio_delta": 3.0,
+            "topk_delta": 1.0,
+            "topk_calibrated_risk_delta": 1.0,
+        },
+        "incremental": {
+            "ai_delta": 1.0,
+            "topk_delta": 1.0,
+            "external_delta": 1.0,
+            "rank_delta": 1.0,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": False,
+            "failed_checks": [
+                "source_support_ratio_minimum",
+                "unsupported_terms_within_limit",
+                "revision_compiler_passed",
+            ],
+        },
+        "author_proxy_quality": {
+            "active": True,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": False,
+                "failed_checks": [
+                    "contextual_density_not_worse",
+                    "sentence_shape_has_variation",
+                    "citation_rhythm_not_expanded",
+                ],
+            },
+        },
+    }
+
+    gaps = v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan)
+
+    assert "unsupported_claim" in gaps
+    assert "weak_source_grounding" in gaps
+    assert "citation_weakness" in gaps
+    assert "broad_claim" in gaps
+    assert "human_anchor_gap" in gaps
+    assert "semantic_drift" in gaps
+    assert "semantic_uniformity" in gaps
+    assert "discourse_regularity" in gaps
+    assert "paraphrase_transformation" in gaps
+    assert "style_shift" in gaps
+    assert "unsafe_density" not in gaps
+    assert "predictable_next_word_path" not in gaps
+
+
+def test_v5_candidate_obligation_gaps_cover_generic_length_scanner_and_custom_findings():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": [
+                "generic_assertion",
+                "transition_scaffold",
+                "long_sentence_weight",
+                "scanner_target",
+                "scanner_signal_coherence_gap",
+            ],
+            "finding_response_plan": [],
+        },
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 0.0, "topk_delta": 0.0, "unsafe_cluster_count_delta": 0.0},
+        "local_scores": {
+            "unsafe_cluster_count": 2,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+            "topk_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+        },
+        "incremental": {
+            "ai_delta": 0.0,
+            "topk_delta": 0.0,
+            "external_delta": 0.0,
+            "rank_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+        },
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": False,
+            "failed_checks": ["revision_compiler_passed"],
+        },
+        "author_proxy_quality": {
+            "active": True,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": False,
+                "failed_checks": [
+                    "contextual_density_not_worse",
+                    "closure_keeps_context_or_short_limit",
+                    "sentence_shape_has_variation",
+                ],
+            },
+        },
+    }
+
+    gaps = v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan)
+
+    assert "generic_assertion" in gaps
+    assert "transition_scaffold" in gaps
+    assert "long_sentence_weight" in gaps
+    assert "scanner_target" in gaps
+    assert "scanner_signal_coherence_gap" in gaps
+    assert "unsafe_density" not in gaps
+
+
+def test_v5_candidate_obligation_gaps_allow_generic_and_custom_after_evidence_passes():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": [
+                "generic_assertion",
+                "transition_scaffold",
+                "long_sentence_weight",
+                "scanner_target",
+                "scanner_signal_coherence_gap",
+            ],
+            "finding_response_plan": [],
+        },
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 0.4, "topk_delta": 0.5, "unsafe_cluster_count_delta": 0.0},
+        "local_scores": {
+            "unsafe_cluster_count": 1,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 2.0,
+            "topk_delta": 0.5,
+            "topk_calibrated_risk_delta": 1.0,
+        },
+        "incremental": {
+            "ai_delta": 0.4,
+            "topk_delta": 0.5,
+            "external_delta": 0.2,
+            "rank_delta": 0.1,
+            "unsafe_cluster_count_delta": 0.0,
+        },
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+            "checks": [
+                {"name": "source_support_ratio_minimum", "passed": True},
+                {"name": "unsupported_terms_within_limit", "passed": True},
+            ],
+        },
+        "author_proxy_quality": {
+            "active": True,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+                "checks": [
+                    {"name": "contextual_density_not_worse", "passed": True},
+                    {"name": "closure_keeps_context_or_short_limit", "passed": True},
+                    {"name": "sentence_shape_has_variation", "passed": True},
+                ],
+            },
+        },
+    }
+
+    assert v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan) == []
+
+
+def test_v5_candidate_obligation_gaps_require_positive_grounding_evidence():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["unsupported_claim", "weak_source_grounding"],
+            "finding_response_plan": [],
+        },
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 1.0, "topk_delta": 1.0, "unsafe_cluster_count_delta": 1.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "unsafe_word_ratio_delta": 3.0,
+            "topk_delta": 1.0,
+            "topk_calibrated_risk_delta": 1.0,
+        },
+        "incremental": {
+            "ai_delta": 1.0,
+            "topk_delta": 1.0,
+            "external_delta": 1.0,
+            "rank_delta": 1.0,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+        },
+        "author_proxy_quality": {
+            "active": True,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+                "checks": [
+                    {"name": "contextual_density_not_worse", "passed": True},
+                    {"name": "citation_rhythm_not_expanded", "passed": True},
+                    {"name": "citation_cluster_not_worse", "passed": True},
+                ],
+            },
+        },
+    }
+
+    gaps = v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan)
+
+    assert gaps == ["unsupported_claim", "weak_source_grounding"]
+
+
+def test_v5_candidate_obligation_gaps_require_positive_compiler_evidence():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["semantic_uniformity", "style_shift"],
+            "finding_response_plan": [],
+        },
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 1.0, "topk_delta": 1.0, "unsafe_cluster_count_delta": 1.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "unsafe_word_ratio_delta": 3.0,
+            "topk_delta": 1.0,
+            "topk_calibrated_risk_delta": 1.0,
+        },
+        "incremental": {
+            "ai_delta": 1.0,
+            "topk_delta": 1.0,
+            "external_delta": 1.0,
+            "rank_delta": 1.0,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+            "checks": [
+                {"name": "source_support_ratio_minimum", "passed": True},
+                {"name": "unsupported_terms_within_limit", "passed": True},
+            ],
+        },
+        "author_proxy_quality": {
+            "active": True,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+            },
+        },
+    }
+
+    gaps = v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan)
+
+    assert gaps == ["semantic_uniformity", "style_shift"]
+
+
+def test_v5_candidate_obligation_gaps_require_ai_route_evidence_not_rank_only():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["ai_generation_likelihood", "predictable_next_word_path"],
+            "finding_response_plan": [],
+        },
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"rank_delta": 3.0, "external_delta": 2.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "unsafe_word_ratio_delta": 3.0,
+            "topk_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
+        "incremental": {
+            "rank_delta": 3.0,
+            "external_delta": 2.0,
+            "ai_delta": 0.0,
+            "topk_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+    }
+
+    gaps = v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan)
+
+    assert gaps == ["ai_generation_likelihood", "predictable_next_word_path"]
+
+
+def test_v5_candidate_obligation_gaps_require_ai_route_quality_gate_not_score_only():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["ai_generation_likelihood"],
+            "finding_response_plan": [],
+        },
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 2.0, "topk_delta": 2.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "topk_delta": 2.0,
+            "topk_calibrated_risk_delta": 2.0,
+            "ai_delta": 2.0,
+        },
+        "incremental": {
+            "ai_delta": 2.0,
+            "topk_delta": 2.0,
+            "topk_calibrated_risk_delta": 2.0,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+    }
+
+    assert v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan) == ["ai_generation_likelihood"]
+
+    row["paragraph_candidate_judge"] = {
+        "active": True,
+        "passed": True,
+        "failed_checks": [],
+    }
+    row["author_proxy_quality"] = {
+        "active": True,
+        "revision_compiler_audit": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+        },
+    }
+
+    assert v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan) == []
+
+
+def test_v5_candidate_obligation_gaps_require_custom_signal_judge_and_compiler_evidence():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["scanner_signal_coherence_gap"],
+            "finding_response_plan": [],
+        },
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 1.0, "topk_delta": 1.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "unsafe_word_ratio_delta": 3.0,
+            "topk_delta": 1.0,
+            "topk_calibrated_risk_delta": 1.0,
+        },
+        "incremental": {
+            "ai_delta": 1.0,
+            "topk_delta": 1.0,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+        },
+    }
+
+    gaps = v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan)
+
+    assert gaps == ["scanner_signal_coherence_gap"]
+
+    row["author_proxy_quality"] = {
+        "active": True,
+        "revision_compiler_audit": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+            "checks": [{"name": "contextual_density_not_worse", "passed": True}],
+        },
+    }
+
+    assert v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan) == []
+
+
+def test_v5_paragraph_obligation_ledger_explains_missing_finding_evidence():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": [
+                "ai_generation_likelihood",
+                "unsupported_claim",
+                "scanner_signal_coherence_gap",
+            ],
+            "finding_response_plan": [],
+        },
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"rank_delta": 2.0, "external_delta": 1.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "unsafe_word_ratio_delta": 3.0,
+            "topk_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
+        "incremental": {
+            "rank_delta": 2.0,
+            "external_delta": 1.0,
+            "unsafe_cluster_count_delta": 1.0,
+            "topk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+        },
+    }
+
+    ledger = v5_residual_comb._paragraph_obligation_evidence_ledger(row, route_plan)
+    by_tag = {item["finding_tag"]: item for item in ledger}
+
+    assert by_tag["ai_generation_likelihood"]["status"] == "unresolved"
+    assert "ai_or_topk_movement" in by_tag["ai_generation_likelihood"]["missing_evidence"]
+    assert "revision_compiler_passed" in by_tag["ai_generation_likelihood"]["missing_evidence"]
+    assert by_tag["unsupported_claim"]["status"] == "unresolved"
+    assert "source_support_ratio_minimum" in by_tag["unsupported_claim"]["missing_evidence"]
+    assert "contextual_density_not_worse" in by_tag["unsupported_claim"]["missing_evidence"]
+    assert by_tag["scanner_signal_coherence_gap"]["status"] == "unresolved"
+    assert "revision_compiler_passed" in by_tag["scanner_signal_coherence_gap"]["missing_evidence"]
+
+
+def test_v5_paragraph_obligations_require_each_target_unit_route_materiality():
+    first_source = "The opening sentence keeps a predictable assisted route."
+    second_source = "The second sentence repeats the same polished movement."
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["ai_generation_likelihood"],
+            "finding_response_plan": [],
+            "target_unit_findings": [
+                {
+                    "unit_id": "u001",
+                    "source_preview": first_source,
+                    "finding_tags": ["ai_generation_likelihood"],
+                },
+                {
+                    "unit_id": "u002",
+                    "source_preview": second_source,
+                    "finding_tags": ["ai_generation_likelihood"],
+                },
+            ],
+        },
+    }
+    row = {
+        "text": f"{first_source} The second point now starts from the submitted source detail.",
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 2.0, "topk_delta": 2.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "topk_delta": 2.0,
+            "topk_calibrated_risk_delta": 2.0,
+            "ai_delta": 2.0,
+        },
+        "incremental": {"ai_delta": 2.0, "topk_delta": 2.0},
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+        },
+        "author_proxy_quality": {
+            "active": True,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+            },
+        },
+    }
+
+    gaps = v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan)
+    ledger = v5_residual_comb._paragraph_obligation_evidence_ledger(row, route_plan)
+
+    assert gaps == ["ai_generation_likelihood"]
+    assert ledger[0]["status"] == "unresolved"
+    assert "target_unit_route_changed" in ledger[0]["missing_evidence"]
+    assert ledger[0]["target_unit_materiality"]["unchanged_units"][0]["unit_id"] == "u001"
+
+    row["text"] = (
+        "A predictable assisted route appears only after the opening source detail changes the sentence job. "
+        "The second point uses a different sentence path before returning to the same claim."
+    )
+
+    assert v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan) == []
+
+
+def test_v5_paragraph_obligations_reject_light_paraphrase_of_target_unit():
+    source = "The opening sentence keeps a predictable assisted route."
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["ai_generation_likelihood"],
+            "finding_response_plan": [],
+            "target_unit_findings": [{
+                "unit_id": "u001",
+                "source_preview": source,
+                "finding_tags": ["ai_generation_likelihood"],
+            }],
+        },
+    }
+    row = {
+        "text": "The opening sentence maintains a predictable assisted route.",
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 2.0, "topk_delta": 2.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "topk_delta": 2.0,
+            "topk_calibrated_risk_delta": 2.0,
+            "ai_delta": 2.0,
+        },
+        "incremental": {"ai_delta": 2.0, "topk_delta": 2.0},
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+        },
+        "author_proxy_quality": {
+            "active": True,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+            },
+        },
+    }
+
+    gaps = v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan)
+    ledger = v5_residual_comb._paragraph_obligation_evidence_ledger(row, route_plan)
+    materiality = ledger[0]["target_unit_materiality"]["unchanged_units"][0]["materiality"]
+
+    assert gaps == ["ai_generation_likelihood"]
+    assert materiality["reason"] == "target_unit_light_paraphrase_near_copy"
+    assert materiality["source_overlap_ratio"] >= 0.78
+    assert "target_unit_route_changed" in ledger[0]["required_evidence"]
+    assert "target_unit_route_changed" in ledger[0]["missing_evidence"]
+
+
+def test_v5_paragraph_obligations_reject_deleted_target_unit_source_coverage():
+    source = "The opening sentence keeps a predictable assisted route."
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["ai_generation_likelihood"],
+            "finding_response_plan": [],
+            "target_unit_findings": [{
+                "unit_id": "u001",
+                "source_preview": source,
+                "finding_tags": ["ai_generation_likelihood"],
+            }],
+        },
+    }
+    row = {
+        "text": "A different source point now opens the paragraph with a changed route.",
+        "apply_status": {"applied": True},
+        "scores": {"ai_delta": 2.0, "topk_delta": 2.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "topk_delta": 2.0,
+            "topk_calibrated_risk_delta": 2.0,
+            "ai_delta": 2.0,
+        },
+        "incremental": {"ai_delta": 2.0, "topk_delta": 2.0},
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": True,
+            "failed_checks": [],
+        },
+        "author_proxy_quality": {
+            "active": True,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+            },
+        },
+    }
+
+    gaps = v5_residual_comb._candidate_unmoved_paragraph_findings(row, route_plan)
+    ledger = v5_residual_comb._paragraph_obligation_evidence_ledger(row, route_plan)
+    undercovered = ledger[0]["target_unit_materiality"]["undercovered_units"][0]
+
+    assert gaps == ["ai_generation_likelihood"]
+    assert "target_unit_route_changed" in ledger[0]["passed_evidence"]
+    assert "target_unit_source_coverage" in ledger[0]["missing_evidence"]
+    assert undercovered["unit_id"] == "u001"
+    assert undercovered["coverage"]["reason"] == "target_unit_source_coverage_missing"
+
+
+def test_v5_paragraph_obligation_repair_feedback_carries_unresolved_evidence():
+    route_plan = {
+        **_sample_route_plan(),
+        "paragraph_finding_digest": {
+            "schema_version": "paragraph_finding_digest.v1",
+            "active": True,
+            "dominant_findings": ["ai_generation_likelihood"],
+            "finding_response_plan": [],
+        },
+    }
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"rank_delta": 2.0},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 1.0,
+            "topk_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "ai_delta": 0.0,
+        },
+        "incremental": {"rank_delta": 2.0, "ai_delta": 0.0, "topk_delta": 0.0},
+    }
+    ledger = v5_residual_comb._paragraph_obligation_evidence_ledger(row, route_plan)
+
+    feedback = v5_residual_comb._paragraph_obligation_repair_feedback(
+        {"reason": "paragraph_findings_not_moved"},
+        gaps=["ai_generation_likelihood"],
+        evidence_ledger=ledger,
+    )
+
+    assert feedback["remaining_paragraph_finding_gaps"] == ["ai_generation_likelihood"]
+    unresolved = feedback["unresolved_paragraph_finding_evidence"]
+    assert unresolved == [{
+        "finding_tag": "ai_generation_likelihood",
+        "missing_evidence": [
+            "target_unit_route_changed",
+            "target_unit_source_coverage",
+            "ai_or_topk_movement",
+            "paragraph_candidate_judge_passed",
+            "revision_compiler_passed",
+        ],
+        "required_evidence": [
+            "target_unit_route_changed",
+            "target_unit_source_coverage",
+            "ai_or_topk_movement",
+            "paragraph_candidate_judge_passed",
+            "revision_compiler_passed",
+        ],
+    }]
+
+
+def test_v5_author_proxy_compiler_failure_blocks_core_acceptance_and_triggers_retune(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_ADAPTIVE_WRITER", raising=False)
+    route_plan = {**_sample_route_plan(), "primary_metric": "topk_density"}
+    failed_row = {
+        "apply_status": {"applied": True},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_word_ratio": 0.0,
+            "topk_calibrated_risk": 20.0,
+            "topk_calibrated_risk_delta": 15.0,
+        },
+        "incremental": {
+            "ai_delta": 2.0,
+            "topk_delta": 3.0,
+            "rank_delta": 8.0,
+            "unsafe_cluster_count_delta": 1.0,
+        },
+        "scores": {"ai_delta": 2.0, "topk_delta": 3.0, "rank_delta": 8.0},
+        "author_proxy_quality": {
+            "active": True,
+            "score": 0.84,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": False,
+                "failed_checks": ["closure_keeps_context_or_short_limit"],
+            },
+        },
+    }
+    passed_row = {
+        **failed_row,
+        "author_proxy_quality": {
+            "active": True,
+            "score": 0.84,
+            "revision_compiler_audit": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+            },
+        },
+    }
+
+    feedback = _adaptive_writer_feedback([failed_row], route_plan=route_plan, selected=failed_row)
+
+    assert not _has_incremental_movement(failed_row)
+    assert not _has_core_round_acceptance_movement(failed_row, current_scores={}, round_index=1)
+    assert _has_core_round_acceptance_movement(passed_row, current_scores={}, round_index=1)
+    assert feedback["reason"] == "author_proxy_revision_compiler_failed"
+    assert feedback["revision_compiler_failed_checks"] == ["closure_keeps_context_or_short_limit"]
+    assert _author_proxy_revision_compiler_failed_checks(failed_row) == ["closure_keeps_context_or_short_limit"]
+    assert _should_generate_adaptive_remainder(feedback, remaining_count=3, best_candidate=failed_row)
+    assert _should_retune_residual_candidate(failed_row, route_plan=route_plan, adaptive_feedback=feedback)
+
+
+def test_v5_residual_retune_prompt_carries_author_proxy_compiler_feedback():
+    section = SectionUnit(
+        section_id="density_cluster_001",
+        heading="Density cluster",
+        text=(
+            "Students received knowledge from trusted sources, practiced it through homework, "
+            "and proved their learning through tests."
+        ),
+        start_char=0,
+        end_char=116,
+        paragraph_count=1,
+        word_count=15,
+        metadata={"before_context": "", "after_context": "That model still exists."},
+    )
+    feedback = {
+        "reason": "author_proxy_revision_compiler_failed",
+        "revision_compiler_failed_checks": ["closure_keeps_context_or_short_limit"],
+        "required_correction": "Keep the scanner-moving direction, but fix the failed compiler checks.",
+    }
+
+    prompt = build_residual_cluster_retune_prompt(
+        section=section,
+        current_best_text="The old model still matters, but it now sits beside other ways of learning.",
+        local_goal={},
+        variant_count=2,
+        route_plan=_sample_route_plan(),
+        adaptive_feedback=feedback,
+        author_proxy_context={"schema_version": "author_proxy_context.v1", "active": True, "mode": "non_interrupting_author_proxy_draft"},
+    )
+    payload = json.loads(prompt.removeprefix("Return valid JSON only.\n"))
+
+    assert payload["score_feedback"] == feedback
+    assert any("failed the Author-Proxy revision compiler" in rule for rule in payload["adaptive_retry_rules"])
+    assert any("final sentence" in rule and "13 words or fewer" in rule for rule in payload["adaptive_retry_rules"])
+    assert payload["writer_variant_plan"][0]["route_shape"] == "source_specific_closure"
+    assert payload["writer_variant_plan"][0]["metric_lane"] == "compiler_contextual_density"
+    assert payload["revision_compiler_contract"]["schema_version"] == "author_proxy_revision_compiler_contract.v1"
+    closure = payload["revision_compiler_retry_constraints"]["paragraph_closure"]
+    assert closure["max_ungrounded_closing_words"] == 13
+    assert "final_sentence_word_count <= 13" in closure["must_satisfy_one"]
+    assert closure["self_check"] == "Count the final sentence words before returning the variant."
+    assert any("revision_compiler_retry_constraints.active" in rule for rule in payload["method"])
+    assert payload["author_proxy_context"]["mode"] == "non_interrupting_author_proxy_draft"
 
 
 def test_v5_direct_scanner_leapfrog_prompt_uses_scanner_cluster_and_small_variants():
@@ -4409,9 +8263,19 @@ def test_v5_direct_scanner_adaptive_batch_policy_continues_only_for_weak_candida
             "external_delta": 4.0,
         },
     }
+    external_only = {
+        "apply_status": {"applied": True},
+        "incremental": {
+            "ai_delta": 2.0,
+            "topk_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "external_delta": 20.0,
+        },
+    }
 
     assert _direct_scanner_batch_policy() == "adaptive"
     assert not _direct_scanner_candidate_strong_enough(weak)
+    assert not _direct_scanner_candidate_strong_enough(external_only)
     assert _direct_scanner_candidate_strong_enough(strong)
     assert _should_continue_direct_scanner_batches(
         weak,
@@ -4453,6 +8317,57 @@ def test_v5_residual_candidate_sort_prefers_cleared_local_cluster():
     }
 
     assert _residual_candidate_sort_key(cleared) > _residual_candidate_sort_key(uncleared)
+
+
+def test_v5_residual_retune_anchor_can_use_failed_paragraph_candidate():
+    weak_failed = {
+        "label": "initial_v1",
+        "text": "The case showed a result, but the paragraph stayed broad.",
+        "apply_status": {
+            "applied": False,
+            "reason": "paragraph_candidate_judge_failed",
+        },
+        "paragraph_candidate_judge": {
+            "active": True,
+            "passed": False,
+            "failed_checks": ["document_unsafe_cluster_not_worse"],
+        },
+        "local_scores": {
+            "unsafe_cluster_count": 1,
+            "unsafe_word_ratio": 42.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "topk_calibrated_risk_delta": 3.0,
+            "unsafe_word_ratio_delta": 10.0,
+        },
+        "incremental": {
+            "unsafe_cluster_count_delta": -1.0,
+            "ai_delta": 0.1,
+            "topk_delta": 0.2,
+            "rank_delta": 1.0,
+        },
+        "scores": {"ai_delta": 0.1, "topk_delta": 0.2, "rank_delta": 1.0},
+    }
+    stronger_failed = {
+        **weak_failed,
+        "label": "initial_v2",
+        "text": "The case moved from starting state to result, but still tripped one document gate.",
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_word_ratio": 0.0,
+            "unsafe_cluster_count_delta": 1.0,
+            "topk_calibrated_risk_delta": 12.0,
+            "unsafe_word_ratio_delta": 100.0,
+        },
+        "incremental": {
+            "unsafe_cluster_count_delta": -1.0,
+            "ai_delta": 0.4,
+            "topk_delta": 0.8,
+            "rank_delta": 2.0,
+        },
+        "scores": {"ai_delta": 0.4, "topk_delta": 0.8, "rank_delta": 2.0},
+    }
+
+    assert _best_residual_retune_anchor([weak_failed, stronger_failed]) is stronger_failed
 
 
 def test_v5_residual_acceptance_requires_local_cluster_clearance():
@@ -4728,6 +8643,7 @@ def test_v5_author_proxy_safe_band_runs_before_legacy_cleanup(tmp_path, monkeypa
 
     monkeypatch.setattr(v5_residual_comb, "_run_safe_band_evidence_pack_attempt", fake_safe_band_pack)
     monkeypatch.setattr(v5_residual_comb, "_run_risky_window_cleanup_pass", fake_risky_cleanup)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_ENABLED", "1")
 
     payload = run_v5_residual_cluster_comb_experiment(
         input_text="The submitted draft needs author-owned repair.",
@@ -5036,6 +8952,68 @@ def test_v5_incremental_deltas_ignore_external_ai_flag_as_second_judge():
     assert "external_ai_flag_risk_delta" not in deltas
 
 
+def test_v5_single_judge_movement_ignores_external_only_delta():
+    row = {
+        "apply_status": {"applied": True},
+        "local_scores": {
+            "unsafe_cluster_count": 0,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+        },
+        "incremental": {
+            "ai_delta": 0.0,
+            "topk_delta": 0.0,
+            "rank_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "external_delta": 9.0,
+        },
+    }
+
+    assert not _has_incremental_movement(row)
+    assert not v5_residual_comb._row_has_global_score_movement({
+        "incremental": {"external_delta": 9.0},
+        "scores": {"external_delta": 9.0},
+    })
+
+
+def test_v5_full_document_fallback_ignores_external_only_delta():
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai_delta": 0.0,
+            "topk_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "qualifying_text_ai_density_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+            "external_delta": 12.0,
+        },
+    }
+
+    assert not _has_full_document_fallback_movement(row)
+
+
+def test_v5_borderline_verdict_ignores_external_only_direction(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_MIN_TOPK_DELTA", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_MIN_TOPK_RISK_DELTA", raising=False)
+    row = {
+        "apply_status": {"applied": True},
+        "scores": {"ai": 42.0, "ai_authorship": 42.0},
+        "incremental": {
+            "ai_delta": 0.0,
+            "ai_authorship_delta": 0.0,
+            "topk_delta": 0.0,
+            "topk_calibrated_risk_delta": 0.0,
+            "external_delta": 8.0,
+            "risky_window_count_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+        },
+    }
+
+    assert not _has_borderline_verdict_movement(row)
+
+
 def test_v5_full_document_variant_rejects_compression_before_scan(tmp_path):
     current_text = " ".join(["source"] * 120)
     candidate = RecompositionVariant(variant_id="v1", text="short text", word_count=2)
@@ -5116,7 +9094,8 @@ def test_v5_residual_seed_generator_stays_disabled_for_content_agnostic_output()
 
     assert variants
     assert variants[0].variant_id == "route_seed_1"
-    assert "That starting point mattered before the next step." in variants[0].text
+    assert variants[0].word_count / section.word_count >= 0.92
+    assert any("That starting point mattered before the next step." in variant.text for variant in variants)
 
 
 def test_v5_residual_seed_generator_skips_unmatched_clusters():
@@ -6049,15 +10028,16 @@ def test_v5_core_route_runs_before_unsafe_cluster_probe_by_default(tmp_path, mon
         return section
 
     def fake_seed_variants(**_kwargs):
-        return [SimpleNamespace(variant_id="seed1", text="The route rewrite worked.")]
+        return [SimpleNamespace(variant_id="seed1", text="The cluster route now rewrites the need through source support.")]
 
     def fake_score_variant(**_kwargs):
+        candidate = "The cluster route now rewrites the need through source support."
         return {
             "variant_id": "seed1",
             "label": "seed_seed1",
-            "text": "The route rewrite worked.",
-            "candidate_text": "The route rewrite worked.",
-            "candidate_report": fake_scan("The route rewrite worked."),
+            "text": candidate,
+            "candidate_text": candidate,
+            "candidate_report": fake_scan(candidate),
             "candidate_goal": {"unsafe_cluster_count": 2},
             "apply_status": {"applied": True},
             "scores": {
@@ -6096,6 +10076,28 @@ def test_v5_core_route_runs_before_unsafe_cluster_probe_by_default(tmp_path, mon
                 "risky_window_count_delta": 0.0,
                 "topk_calibrated_risk_delta": 1.0,
                 "external_ai_flag_risk_delta": 1.0,
+            },
+            "paragraph_candidate_judge": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+                "checks": [
+                    {"name": "source_support_ratio_minimum", "passed": True},
+                    {"name": "unsupported_terms_within_limit", "passed": True},
+                ],
+            },
+            "author_proxy_quality": {
+                "active": True,
+                "revision_compiler_audit": {
+                    "active": True,
+                    "passed": True,
+                    "failed_checks": [],
+                    "checks": [
+                        {"name": "contextual_density_not_worse", "passed": True},
+                        {"name": "closure_keeps_context_or_short_limit", "passed": True},
+                        {"name": "sentence_shape_has_variation", "passed": True},
+                    ],
+                },
             },
         }
 
@@ -6367,6 +10369,883 @@ def test_v5_core_round_skips_failed_cluster_and_continues_to_next_target(tmp_pat
         "no_incremental_movement",
         "accepted_incremental_movement",
     ]
+
+
+def test_v5_seed_short_circuit_round_exposes_scanner_derived_paragraph_plan(tmp_path, monkeypatch):
+    section_text = (
+        "The first sentence has a generated shape. "
+        "The second sentence keeps support near the submitted source."
+    )
+    profile = {
+        "schema_version": "scanner_finding_profile.v1",
+        "active": True,
+        "document_driver_tags": ["weak_source_grounding"],
+        "sentence_signal_targets": [
+            {
+                "sentence_id": "s001",
+                "sentence_index": 0,
+                "preview": "The first sentence has a generated shape.",
+                "finding_tags": ["ai_generation_likelihood"],
+                "risk_score": 6.0,
+            }
+        ],
+    }
+
+    def fake_scan(text):
+        return {"input_text": text}
+
+    def fake_goal(**_kwargs):
+        return SimpleNamespace(to_dict=lambda: {
+            "scanner_finding_profile": profile,
+            "eligible_span_density_gate": {"safe": False},
+        })
+
+    def fake_score(_text, _report, _goal):
+        return {
+            "ai": 48.0,
+            "topk": 90.0,
+            "external": 44.0,
+            "rank": 100.0,
+            "risky_window_count": 1,
+            "unsafe_word_ratio": 40.0,
+            "unsafe_cluster_count": 2,
+            "topk_calibrated_risk": 80.0,
+            "qualifying_text_ai_density": 60.0,
+            "ai_authorship": 48.0,
+            "external_ai_flag_risk": 45.0,
+        }
+
+    def fake_section_from_cluster(_current_text, _cluster):
+        return SectionUnit(
+            section_id="seed_short_circuit_001",
+            heading="",
+            text=section_text,
+            start_char=0,
+            end_char=len(section_text),
+            paragraph_count=1,
+            word_count=len(section_text.split()),
+            metadata={"unit_type": "route_paragraph_run"},
+        )
+
+    def fake_seed_variants(**_kwargs):
+        return [RecompositionVariant(
+            variant_id="route_seed_1",
+            text=section_text.replace("generated shape", "source-grounded shape"),
+            word_count=len(section_text.split()),
+        )]
+
+    def fake_score_variant(*, variant, **_kwargs):
+        return {
+            "section_id": "seed_short_circuit_001",
+            "variant_id": variant.variant_id,
+            "label": f"seed_{variant.variant_id}",
+            "text": variant.text,
+            "candidate_text": variant.text,
+            "candidate_report": fake_scan(variant.text),
+            "candidate_goal": {"eligible_span_density_gate": {"safe": False}},
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 46.0,
+                "topk": 88.0,
+                "external": 42.0,
+                "rank": 95.0,
+                "unsafe_cluster_count": 2,
+            },
+            "local_scores": {
+                "unsafe_cluster_count": 1,
+                "unsafe_word_ratio": 35.0,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 5.0,
+                "topk_delta": 2.0,
+                "topk_calibrated_risk_delta": 3.0,
+                "rank_delta": -1.0,
+            },
+            "incremental": {
+                "unsafe_cluster_count_delta": 0.0,
+                "rank_delta": 5.0,
+                "ai_delta": 2.0,
+                "topk_delta": 2.0,
+                "external_delta": 2.0,
+                "risky_window_count_delta": 0.0,
+                "topk_calibrated_risk_delta": 3.0,
+                "external_ai_flag_risk_delta": 2.0,
+            },
+            "paragraph_candidate_judge": {
+                "active": True,
+                "passed": True,
+                "failed_checks": [],
+                "checks": [
+                    {"name": "source_support_ratio_minimum", "passed": True},
+                    {"name": "unsupported_terms_within_limit", "passed": True},
+                ],
+            },
+            "author_proxy_quality": {
+                "active": True,
+                "revision_compiler_audit": {
+                    "active": True,
+                    "passed": True,
+                    "failed_checks": [],
+                    "checks": [
+                        {"name": "contextual_density_not_worse", "passed": True},
+                        {"name": "citation_rhythm_not_expanded", "passed": True},
+                        {"name": "citation_cluster_not_worse", "passed": True},
+                    ],
+                },
+            },
+        }
+
+    monkeypatch.setattr(v5_residual_comb, "_scan_report", fake_scan)
+    monkeypatch.setattr(v5_residual_comb, "evaluate_rewrite_goal", fake_goal)
+    monkeypatch.setattr(v5_residual_comb, "_score_summary", fake_score)
+    monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, goal: goal)
+    monkeypatch.setattr(v5_residual_comb, "build_cluster_repair_units", lambda **_kwargs: [{"text": section_text}])
+    monkeypatch.setattr(v5_residual_comb, "_section_from_core_cluster_unit", fake_section_from_cluster)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_seed_variants", fake_seed_variants)
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score_variant)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_CLEANUP", "0")
+
+    result = run_v5_residual_cluster_comb_experiment(
+        input_text=section_text,
+        output_dir=tmp_path,
+        max_rounds=1,
+        variant_count=1,
+        retune_variant_count=1,
+        risky_window_cleanup_rounds=0,
+        unsafe_cluster_cleanup_rounds=0,
+        final_risky_window_cleanup_rounds=0,
+        direct_scanner_leapfrog_rounds=0,
+        max_seconds=60,
+        api_key="test-key",
+    )
+
+    round_payload = result["rounds"][0]
+    digest = round_payload["route_plan"]["paragraph_finding_digest"]
+    writer_digest = round_payload["writer_execution_card"]["paragraph_finding_digest"]
+
+    assert round_payload["generator_diagnostics"]["seed_short_circuited"] is True
+    assert round_payload["generator_diagnostics"]["seed_route_plan_available"] is True
+    assert "ai_generation_likelihood" in digest["dominant_findings"]
+    assert "weak_source_grounding" in digest["dominant_findings"]
+    assert "ai_generation_likelihood" in [
+        row["finding_tag"] for row in writer_digest["finding_response_plan"]
+    ]
+
+
+def test_v5_seed_does_not_short_circuit_when_unsafe_density_finding_is_unmoved(tmp_path, monkeypatch):
+    section_text = (
+        "The first sentence has an unsafe generated shape. "
+        "The second sentence keeps the same cluster route."
+    )
+    profile = {
+        "schema_version": "scanner_finding_profile.v1",
+        "active": True,
+        "document_driver_tags": [],
+        "sentence_signal_targets": [
+            {
+                "sentence_id": "s001",
+                "sentence_index": 0,
+                "preview": "The first sentence has an unsafe generated shape.",
+                "finding_tags": ["unsafe_density", "ai_generation_likelihood"],
+                "risk_score": 6.0,
+                "unsafe": True,
+            }
+        ],
+    }
+    planner_called = {"value": False}
+
+    def fake_scan(text):
+        return {"input_text": text}
+
+    def fake_goal(**_kwargs):
+        return SimpleNamespace(to_dict=lambda: {
+            "scanner_finding_profile": profile,
+            "eligible_span_density_gate": {"safe": False},
+        })
+
+    def fake_score(_text, _report, _goal):
+        return {
+            "ai": 48.0,
+            "topk": 90.0,
+            "external": 44.0,
+            "rank": 100.0,
+            "risky_window_count": 1,
+            "unsafe_word_ratio": 40.0,
+            "unsafe_cluster_count": 2,
+            "topk_calibrated_risk": 80.0,
+            "qualifying_text_ai_density": 60.0,
+            "ai_authorship": 48.0,
+            "external_ai_flag_risk": 45.0,
+        }
+
+    def fake_section_from_cluster(_current_text, _cluster):
+        return SectionUnit(
+            section_id="unsafe_seed_gate_001",
+            heading="",
+            text=section_text,
+            start_char=0,
+            end_char=len(section_text),
+            paragraph_count=1,
+            word_count=len(section_text.split()),
+            metadata={"unit_type": "route_paragraph_run"},
+        )
+
+    def fake_seed_variants(**_kwargs):
+        return [RecompositionVariant(
+            variant_id="route_seed_1",
+            text=section_text.replace("generated shape", "source-grounded shape"),
+            word_count=len(section_text.split()),
+        )]
+
+    def fake_score_variant(*, variant, **_kwargs):
+        return {
+            "section_id": "unsafe_seed_gate_001",
+            "variant_id": variant.variant_id,
+            "label": f"seed_{variant.variant_id}",
+            "text": variant.text,
+            "candidate_text": variant.text,
+            "candidate_report": fake_scan(variant.text),
+            "candidate_goal": {"eligible_span_density_gate": {"safe": False}},
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 46.0,
+                "topk": 88.0,
+                "external": 42.0,
+                "rank": 95.0,
+                "unsafe_cluster_count": 2,
+            },
+            "local_scores": {
+                "unsafe_cluster_count": 1,
+                "unsafe_word_ratio": 35.0,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 5.0,
+                "topk_delta": 2.0,
+                "topk_calibrated_risk_delta": 3.0,
+                "rank_delta": -1.0,
+            },
+            "incremental": {
+                "unsafe_cluster_count_delta": 0.0,
+                "rank_delta": 5.0,
+                "ai_delta": 2.0,
+                "topk_delta": 2.0,
+                "external_delta": 2.0,
+                "risky_window_count_delta": 0.0,
+                "topk_calibrated_risk_delta": 3.0,
+                "external_ai_flag_risk_delta": 2.0,
+            },
+        }
+
+    def fake_route_plan(*, section, local_goal, **_kwargs):
+        planner_called["value"] = True
+        return (
+            v5_residual_comb._scanner_derived_route_plan(section=section, local_goal=local_goal),
+            {"status": "ok", "route_plan_source": "test"},
+            "{}",
+            "{}",
+        )
+
+    monkeypatch.setattr(v5_residual_comb, "_scan_report", fake_scan)
+    monkeypatch.setattr(v5_residual_comb, "evaluate_rewrite_goal", fake_goal)
+    monkeypatch.setattr(v5_residual_comb, "_score_summary", fake_score)
+    monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, goal: goal)
+    monkeypatch.setattr(v5_residual_comb, "build_cluster_repair_units", lambda **_kwargs: [{"text": section_text}])
+    monkeypatch.setattr(v5_residual_comb, "_section_from_core_cluster_unit", fake_section_from_cluster)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_seed_variants", fake_seed_variants)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_route_plan", fake_route_plan)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_variants", lambda **_kwargs: ([], {}, "{}", "{}"))
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_retunes", lambda **_kwargs: ([], {}, "{}", "{}"))
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score_variant)
+    monkeypatch.setattr(
+        v5_residual_comb,
+        "_run_risky_window_cleanup_pass",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("cleanup must not run after unresolved paragraph findings")),
+    )
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_CLEANUP", "0")
+
+    result = run_v5_residual_cluster_comb_experiment(
+        input_text=section_text,
+        output_dir=tmp_path,
+        max_rounds=2,
+        variant_count=1,
+        retune_variant_count=1,
+        risky_window_cleanup_rounds=1,
+        unsafe_cluster_cleanup_rounds=0,
+        final_risky_window_cleanup_rounds=0,
+        direct_scanner_leapfrog_rounds=0,
+        max_seconds=60,
+        api_key="test-key",
+    )
+
+    diagnostics = result["rounds"][0]["generator_diagnostics"]
+
+    assert planner_called["value"] is True
+    assert len(result["rounds"]) == 1
+    assert diagnostics["seed_short_circuited"] is False
+    assert diagnostics["seed_short_circuit_blocked_by_paragraph_findings"] == ["unsafe_density", "ai_generation_likelihood"]
+    assert diagnostics["adaptive_writer"]["final_feedback"]["reason"] == "paragraph_findings_not_moved"
+    assert diagnostics["adaptive_writer"]["acceptance_block_reason"] == "paragraph_findings_not_moved"
+    assert result["rounds"][0]["status"] == "stopped"
+    assert result["rounds"][0]["reason"] == "paragraph_findings_not_moved"
+    assert result["rounds"][0]["accepted"] is None
+    assert result["rounds"][0]["accepted_paragraph_finding_gaps"] == ["unsafe_density", "ai_generation_likelihood"]
+    assert result["paragraph_obligation_hard_stop"]["active"] is True
+    assert result["paragraph_obligation_hard_stop"]["blocked_findings"] == ["unsafe_density", "ai_generation_likelihood"]
+    assert result["global_best_fallback"]["applied"] is False
+    assert result["global_best_fallback"]["reason"] == "blocked_by_unresolved_paragraph_findings"
+
+
+def test_v5_obligation_repair_can_clear_unmoved_paragraph_findings(tmp_path, monkeypatch):
+    section_text = (
+        "The paragraph opens with a predictable abstract claim. "
+        "The next sentence keeps the same risk concentrated in the paragraph route."
+    )
+    profile = {
+        "schema_version": "scanner_finding_profile.v1",
+        "active": True,
+        "document_driver_tags": [],
+        "sentence_signal_targets": [
+            {
+                "sentence_id": "s001",
+                "sentence_index": 0,
+                "preview": "The paragraph opens with a predictable abstract claim.",
+                "finding_tags": ["unsafe_density", "ai_generation_likelihood"],
+                "risk_score": 6.0,
+                "unsafe": True,
+            }
+        ],
+    }
+    retune_calls = []
+
+    def fake_scan(text):
+        return {"input_text": text}
+
+    def fake_goal(**_kwargs):
+        return SimpleNamespace(to_dict=lambda: {
+            "scanner_finding_profile": profile,
+            "eligible_span_density_gate": {"safe": False},
+        })
+
+    def fake_score(_text, _report, _goal):
+        return {
+            "ai": 48.0,
+            "topk": 90.0,
+            "external": 44.0,
+            "rank": 100.0,
+            "risky_window_count": 1,
+            "unsafe_word_ratio": 40.0,
+            "unsafe_cluster_count": 2,
+            "topk_calibrated_risk": 80.0,
+            "qualifying_text_ai_density": 60.0,
+            "ai_authorship": 48.0,
+            "external_ai_flag_risk": 45.0,
+        }
+
+    def fake_section_from_cluster(_current_text, _cluster):
+        return SectionUnit(
+            section_id="obligation_repair_001",
+            heading="",
+            text=section_text,
+            start_char=0,
+            end_char=len(section_text),
+            paragraph_count=1,
+            word_count=len(section_text.split()),
+            metadata={"unit_type": "route_paragraph_run"},
+        )
+
+    def fake_seed_variants(**_kwargs):
+        return [RecompositionVariant(
+            variant_id="route_seed_1",
+            text=section_text.replace("predictable abstract claim", "source-shaped abstract claim"),
+            word_count=len(section_text.split()),
+        )]
+
+    def fake_retunes(**kwargs):
+        retune_calls.append(kwargs.get("adaptive_feedback") or {})
+        if len(retune_calls) == 1:
+            return (
+                [RecompositionVariant(variant_id="first", text=section_text.replace("same risk", "similar risk"), word_count=len(section_text.split()))],
+                {"phase": "retune"},
+                "{}",
+                "{}",
+            )
+        return (
+            [RecompositionVariant(
+                variant_id="repair",
+                text=(
+                    "A source-shaped opening replaces the predictable abstract claim. "
+                    "The next sentence keeps support distributed across the paragraph route."
+                ),
+                word_count=len(section_text.split()),
+            )],
+            {"phase": "obligation_repair"},
+            "{}",
+            "{}",
+        )
+
+    def fake_score_variant(*, variant, label, **_kwargs):
+        repaired = str(label).startswith("obligation_repair_")
+        return {
+            "section_id": "obligation_repair_001",
+            "variant_id": variant.variant_id,
+            "label": label,
+            "text": variant.text,
+            "candidate_text": variant.text,
+            "candidate_report": fake_scan(variant.text),
+            "candidate_goal": {"eligible_span_density_gate": {"safe": False}},
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 44.0 if repaired else 46.0,
+                "topk": 84.0 if repaired else 88.0,
+                "external": 40.0,
+                "rank": 94.0,
+                "unsafe_cluster_count": 1 if repaired else 2,
+            },
+            "local_scores": {
+                "unsafe_cluster_count": 0 if repaired else 1,
+                "unsafe_word_ratio": 0.0 if repaired else 35.0,
+                "unsafe_cluster_count_delta": 1.0 if repaired else 0.0,
+                "unsafe_word_ratio_delta": 40.0 if repaired else 5.0,
+                "topk_delta": 4.0 if repaired else 2.0,
+                "topk_calibrated_risk_delta": 5.0 if repaired else 3.0,
+                "rank_delta": 4.0,
+            },
+            "incremental": {
+                "unsafe_cluster_count_delta": 1.0 if repaired else 0.0,
+                "rank_delta": 6.0 if repaired else 5.0,
+                "ai_delta": 4.0 if repaired else 2.0,
+                "topk_delta": 4.0 if repaired else 2.0,
+                "external_delta": 3.0,
+                "risky_window_count_delta": 0.0,
+                "topk_calibrated_risk_delta": 5.0 if repaired else 3.0,
+                "external_ai_flag_risk_delta": 3.0,
+            },
+            **({
+                "paragraph_candidate_judge": {
+                    "active": True,
+                    "passed": True,
+                    "failed_checks": [],
+                },
+                "author_proxy_quality": {
+                    "active": True,
+                    "revision_compiler_audit": {
+                        "active": True,
+                        "passed": True,
+                        "failed_checks": [],
+                    },
+                },
+            } if repaired else {}),
+        }
+
+    def fake_route_plan(*, section, local_goal, **_kwargs):
+        return (
+            v5_residual_comb._scanner_derived_route_plan(section=section, local_goal=local_goal),
+            {"status": "ok", "route_plan_source": "test"},
+            "{}",
+            "{}",
+        )
+
+    monkeypatch.setattr(v5_residual_comb, "_scan_report", fake_scan)
+    monkeypatch.setattr(v5_residual_comb, "evaluate_rewrite_goal", fake_goal)
+    monkeypatch.setattr(v5_residual_comb, "_score_summary", fake_score)
+    monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, goal: goal)
+    monkeypatch.setattr(v5_residual_comb, "build_cluster_repair_units", lambda **_kwargs: [{"text": section_text}])
+    monkeypatch.setattr(v5_residual_comb, "_section_from_core_cluster_unit", fake_section_from_cluster)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_seed_variants", fake_seed_variants)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_route_plan", fake_route_plan)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_variants", lambda **_kwargs: ([], {}, "{}", "{}"))
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_retunes", fake_retunes)
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score_variant)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_CLEANUP", "0")
+
+    result = run_v5_residual_cluster_comb_experiment(
+        input_text=section_text,
+        output_dir=tmp_path,
+        max_rounds=1,
+        variant_count=1,
+        retune_variant_count=1,
+        risky_window_cleanup_rounds=0,
+        unsafe_cluster_cleanup_rounds=0,
+        final_risky_window_cleanup_rounds=0,
+        direct_scanner_leapfrog_rounds=0,
+        max_seconds=60,
+        api_key="test-key",
+    )
+
+    round_payload = result["rounds"][0]
+    diagnostics = round_payload["generator_diagnostics"]
+
+    assert len(retune_calls) == 2
+    assert retune_calls[1]["reason"] == "paragraph_findings_not_moved"
+    assert retune_calls[1]["remaining_paragraph_finding_gaps"] == ["unsafe_density", "ai_generation_likelihood"]
+    repair = diagnostics["adaptive_writer"]["obligation_repair"]
+    assert repair["status"] == "cleared"
+    assert repair["attempt_count"] == 1
+    assert repair["attempts"][0]["status"] == "triggered"
+    assert repair["attempts"][0]["blocked_findings_before"] == ["unsafe_density", "ai_generation_likelihood"]
+    assert repair["attempts"][0]["blocked_findings_after"] == []
+    assert repair["attempts"][0]["reduced_findings"] == ["unsafe_density", "ai_generation_likelihood"]
+    assert round_payload["status"] == "accepted"
+    assert round_payload["accepted"]["label"] == "obligation_repair_1_repair"
+    assert round_payload["accepted_paragraph_finding_gaps"] == []
+
+
+def test_v5_obligation_repair_route_resets_when_paragraph_findings_have_no_movement(tmp_path, monkeypatch):
+    section_text = (
+        "The paragraph presents a broad claim in a repeated route. "
+        "The following sentence repeats the same abstract movement."
+    )
+    profile = {
+        "schema_version": "scanner_finding_profile.v1",
+        "active": True,
+        "document_driver_tags": [],
+        "sentence_signal_targets": [
+            {
+                "sentence_id": "s001",
+                "sentence_index": 0,
+                "preview": "The paragraph presents a broad claim in a repeated route.",
+                "finding_tags": ["unsafe_density", "ai_generation_likelihood"],
+                "risk_score": 6.0,
+                "unsafe": True,
+            }
+        ],
+    }
+    retune_calls = []
+
+    def fake_scan(text):
+        return {"input_text": text}
+
+    def fake_goal(**_kwargs):
+        return SimpleNamespace(to_dict=lambda: {
+            "scanner_finding_profile": profile,
+            "eligible_span_density_gate": {"safe": False},
+        })
+
+    def fake_score(_text, _report, _goal):
+        return {
+            "ai": 48.0,
+            "topk": 90.0,
+            "external": 44.0,
+            "rank": 100.0,
+            "risky_window_count": 1,
+            "unsafe_word_ratio": 40.0,
+            "unsafe_cluster_count": 2,
+            "topk_calibrated_risk": 80.0,
+            "qualifying_text_ai_density": 60.0,
+            "ai_authorship": 48.0,
+            "external_ai_flag_risk": 45.0,
+        }
+
+    def fake_section_from_cluster(_current_text, _cluster):
+        return SectionUnit(
+            section_id="obligation_reset_001",
+            heading="",
+            text=section_text,
+            start_char=0,
+            end_char=len(section_text),
+            paragraph_count=1,
+            word_count=len(section_text.split()),
+            metadata={"unit_type": "route_paragraph_run"},
+        )
+
+    def fake_seed_variants(**_kwargs):
+        return [RecompositionVariant(
+            variant_id="route_seed_1",
+            text=section_text.replace("repeated route", "similar route"),
+            word_count=len(section_text.split()),
+        )]
+
+    def fake_retunes(**kwargs):
+        retune_calls.append(kwargs.get("adaptive_feedback") or {})
+        return (
+            [RecompositionVariant(
+                variant_id="reset",
+                text=(
+                    "The paragraph rebuilds the broad claim through a source-linked route. "
+                    "The following sentence adds support instead of repeating the same abstract movement."
+                ),
+                word_count=len(section_text.split()),
+            )],
+            {"phase": "obligation_repair"},
+            "{}",
+            "{}",
+        )
+
+    def fake_score_variant(*, variant, label, **_kwargs):
+        repaired = str(label).startswith("obligation_repair_")
+        return {
+            "section_id": "obligation_reset_001",
+            "variant_id": variant.variant_id,
+            "label": label,
+            "text": variant.text,
+            "candidate_text": variant.text,
+            "candidate_report": fake_scan(variant.text),
+            "candidate_goal": {"eligible_span_density_gate": {"safe": False}},
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 43.0 if repaired else 48.0,
+                "topk": 84.0 if repaired else 90.0,
+                "external": 40.0 if repaired else 44.0,
+                "rank": 94.0 if repaired else 100.0,
+                "unsafe_cluster_count": 1 if repaired else 2,
+            },
+            "local_scores": {
+                "unsafe_cluster_count": 0 if repaired else 1,
+                "unsafe_word_ratio": 0.0 if repaired else 40.0,
+                "unsafe_cluster_count_delta": 1.0 if repaired else 0.0,
+                "unsafe_word_ratio_delta": 40.0 if repaired else 0.0,
+                "topk_delta": 5.0 if repaired else 0.0,
+                "topk_calibrated_risk_delta": 6.0 if repaired else 0.0,
+                "rank_delta": 5.0 if repaired else 0.0,
+            },
+            "incremental": {
+                "unsafe_cluster_count_delta": 1.0 if repaired else 0.0,
+                "rank_delta": 6.0 if repaired else 0.0,
+                "ai_delta": 5.0 if repaired else 0.0,
+                "topk_delta": 6.0 if repaired else 0.0,
+                "external_delta": 4.0 if repaired else 0.0,
+                "risky_window_count_delta": 0.0,
+                "topk_calibrated_risk_delta": 6.0 if repaired else 0.0,
+                "external_ai_flag_risk_delta": 4.0 if repaired else 0.0,
+            },
+            **({
+                "paragraph_candidate_judge": {
+                    "active": True,
+                    "passed": True,
+                    "failed_checks": [],
+                },
+                "author_proxy_quality": {
+                    "active": True,
+                    "revision_compiler_audit": {
+                        "active": True,
+                        "passed": True,
+                        "failed_checks": [],
+                    },
+                },
+            } if repaired else {}),
+        }
+
+    def fake_route_plan(*, section, local_goal, **_kwargs):
+        return (
+            v5_residual_comb._scanner_derived_route_plan(section=section, local_goal=local_goal),
+            {"status": "ok", "route_plan_source": "test"},
+            "{}",
+            "{}",
+        )
+
+    monkeypatch.setattr(v5_residual_comb, "_scan_report", fake_scan)
+    monkeypatch.setattr(v5_residual_comb, "evaluate_rewrite_goal", fake_goal)
+    monkeypatch.setattr(v5_residual_comb, "_score_summary", fake_score)
+    monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, goal: goal)
+    monkeypatch.setattr(v5_residual_comb, "build_cluster_repair_units", lambda **_kwargs: [{"text": section_text}])
+    monkeypatch.setattr(v5_residual_comb, "_section_from_core_cluster_unit", fake_section_from_cluster)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_seed_variants", fake_seed_variants)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_route_plan", fake_route_plan)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_variants", lambda **_kwargs: ([], {}, "{}", "{}"))
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_retunes", fake_retunes)
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score_variant)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_CLEANUP", "0")
+
+    result = run_v5_residual_cluster_comb_experiment(
+        input_text=section_text,
+        output_dir=tmp_path,
+        max_rounds=1,
+        variant_count=1,
+        retune_variant_count=1,
+        risky_window_cleanup_rounds=0,
+        unsafe_cluster_cleanup_rounds=0,
+        final_risky_window_cleanup_rounds=0,
+        direct_scanner_leapfrog_rounds=0,
+        max_seconds=60,
+        api_key="test-key",
+    )
+
+    round_payload = result["rounds"][0]
+    diagnostics = round_payload["generator_diagnostics"]
+
+    assert len(retune_calls) == 1
+    assert retune_calls[0]["reason"] == "paragraph_findings_not_moved"
+    assert retune_calls[0]["route_reset_required"] is True
+    assert retune_calls[0]["remaining_paragraph_finding_gaps"] == ["unsafe_density", "ai_generation_likelihood"]
+    repair = diagnostics["adaptive_writer"]["obligation_repair"]
+    assert repair["status"] == "cleared"
+    assert repair["attempt_count"] == 1
+    assert repair["attempts"][0]["trigger_reason"] == "no_movement_route_reset"
+    assert repair["attempts"][0]["blocked_findings_before"] == ["unsafe_density", "ai_generation_likelihood"]
+    assert repair["attempts"][0]["blocked_findings_after"] == []
+    assert round_payload["status"] == "accepted"
+    assert round_payload["accepted"]["label"] == "obligation_repair_1_reset"
+    assert round_payload["accepted_paragraph_finding_gaps"] == []
+
+
+def test_v5_obligation_repair_stops_when_gap_set_does_not_shrink(tmp_path, monkeypatch):
+    section_text = (
+        "The paragraph repeats an abstract route. "
+        "The next sentence keeps the same repeated path."
+    )
+    profile = {
+        "schema_version": "scanner_finding_profile.v1",
+        "active": True,
+        "document_driver_tags": [],
+        "sentence_signal_targets": [
+            {
+                "sentence_id": "s001",
+                "sentence_index": 0,
+                "preview": "The paragraph repeats an abstract route.",
+                "finding_tags": ["unsafe_density", "ai_generation_likelihood"],
+                "risk_score": 6.0,
+                "unsafe": True,
+            }
+        ],
+    }
+    retune_calls = []
+
+    def fake_scan(text):
+        return {"input_text": text}
+
+    def fake_goal(**_kwargs):
+        return SimpleNamespace(to_dict=lambda: {
+            "scanner_finding_profile": profile,
+            "eligible_span_density_gate": {"safe": False},
+        })
+
+    def fake_score(_text, _report, _goal):
+        return {
+            "ai": 48.0,
+            "topk": 90.0,
+            "external": 44.0,
+            "rank": 100.0,
+            "risky_window_count": 1,
+            "unsafe_word_ratio": 40.0,
+            "unsafe_cluster_count": 2,
+            "topk_calibrated_risk": 80.0,
+            "qualifying_text_ai_density": 60.0,
+            "ai_authorship": 48.0,
+            "external_ai_flag_risk": 45.0,
+        }
+
+    def fake_section_from_cluster(_current_text, _cluster):
+        return SectionUnit(
+            section_id="obligation_blocked_001",
+            heading="",
+            text=section_text,
+            start_char=0,
+            end_char=len(section_text),
+            paragraph_count=1,
+            word_count=len(section_text.split()),
+            metadata={"unit_type": "route_paragraph_run"},
+        )
+
+    def fake_seed_variants(**_kwargs):
+        return [RecompositionVariant(
+            variant_id="route_seed_1",
+            text=section_text.replace("abstract route", "abstract pattern"),
+            word_count=len(section_text.split()),
+        )]
+
+    def fake_retunes(**kwargs):
+        retune_calls.append(kwargs.get("adaptive_feedback") or {})
+        return (
+            [RecompositionVariant(variant_id="still_blocked", text=section_text.replace("same repeated path", "similar repeated path"), word_count=len(section_text.split()))],
+            {"phase": "obligation_repair"},
+            "{}",
+            "{}",
+        )
+
+    def fake_score_variant(*, variant, label, **_kwargs):
+        return {
+            "section_id": "obligation_blocked_001",
+            "variant_id": variant.variant_id,
+            "label": label,
+            "text": variant.text,
+            "candidate_text": variant.text,
+            "candidate_report": fake_scan(variant.text),
+            "candidate_goal": {"eligible_span_density_gate": {"safe": False}},
+            "apply_status": {"applied": True},
+            "scores": {
+                "ai": 47.0,
+                "topk": 89.0,
+                "external": 43.0,
+                "rank": 96.0,
+                "unsafe_cluster_count": 2,
+            },
+            "local_scores": {
+                "unsafe_cluster_count": 1,
+                "unsafe_word_ratio": 35.0,
+                "unsafe_cluster_count_delta": 0.0,
+                "unsafe_word_ratio_delta": 5.0,
+                "topk_delta": 1.0,
+                "topk_calibrated_risk_delta": 1.0,
+                "rank_delta": 2.0,
+            },
+            "incremental": {
+                "unsafe_cluster_count_delta": 0.0,
+                "rank_delta": 2.0,
+                "ai_delta": 1.0,
+                "topk_delta": 1.0,
+                "external_delta": 1.0,
+                "risky_window_count_delta": 0.0,
+                "topk_calibrated_risk_delta": 1.0,
+                "external_ai_flag_risk_delta": 1.0,
+            },
+        }
+
+    def fake_route_plan(*, section, local_goal, **_kwargs):
+        return (
+            v5_residual_comb._scanner_derived_route_plan(section=section, local_goal=local_goal),
+            {"status": "ok", "route_plan_source": "test"},
+            "{}",
+            "{}",
+        )
+
+    monkeypatch.setattr(v5_residual_comb, "_scan_report", fake_scan)
+    monkeypatch.setattr(v5_residual_comb, "evaluate_rewrite_goal", fake_goal)
+    monkeypatch.setattr(v5_residual_comb, "_score_summary", fake_score)
+    monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, goal: goal)
+    monkeypatch.setattr(v5_residual_comb, "build_cluster_repair_units", lambda **_kwargs: [{"text": section_text}])
+    monkeypatch.setattr(v5_residual_comb, "_section_from_core_cluster_unit", fake_section_from_cluster)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_seed_variants", fake_seed_variants)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_route_plan", fake_route_plan)
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_variants", lambda **_kwargs: ([], {}, "{}", "{}"))
+    monkeypatch.setattr(v5_residual_comb, "generate_residual_cluster_retunes", fake_retunes)
+    monkeypatch.setattr(v5_residual_comb, "_score_residual_variant", fake_score_variant)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_CLEANUP", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_OBLIGATION_REPAIR_MAX_PASSES", "3")
+
+    result = run_v5_residual_cluster_comb_experiment(
+        input_text=section_text,
+        output_dir=tmp_path,
+        max_rounds=1,
+        variant_count=1,
+        retune_variant_count=1,
+        risky_window_cleanup_rounds=0,
+        unsafe_cluster_cleanup_rounds=0,
+        final_risky_window_cleanup_rounds=0,
+        direct_scanner_leapfrog_rounds=0,
+        max_seconds=60,
+        api_key="test-key",
+    )
+
+    round_payload = result["rounds"][0]
+    repair = round_payload["generator_diagnostics"]["adaptive_writer"]["obligation_repair"]
+
+    assert len(retune_calls) == 2
+    assert retune_calls[-1]["reason"] == "paragraph_findings_not_moved"
+    assert repair["status"] == "blocked"
+    assert repair["attempt_count"] == 1
+    assert repair["attempts"][0]["reduced_findings"] == []
+    assert repair["blocked_findings"] == ["unsafe_density", "ai_generation_likelihood"]
+    assert round_payload["status"] == "stopped"
+    assert round_payload["accepted"] is None
+    assert round_payload["accepted_paragraph_finding_gaps"] == ["unsafe_density", "ai_generation_likelihood"]
 
 
 def test_v5_production_defaults_protect_winning_phase_budget(monkeypatch):
@@ -7274,6 +12153,97 @@ def test_v5_production_treats_global_best_fallback_as_selected_candidate(tmp_pat
     assert layer["phase_order"]["reason"] == "default_route_then_cleanup"
 
 
+def test_v5_production_surfaces_paragraph_obligation_hard_stop_as_no_safe_candidate(tmp_path, monkeypatch):
+    original = "The original paragraph keeps an unresolved scanner route."
+    hard_stop = {
+        "active": True,
+        "reason": "unresolved_paragraph_findings",
+        "round": 1,
+        "section_id": "p001",
+        "blocked_findings": ["unsafe_density", "ai_generation_likelihood"],
+        "evidence_ledger": [{
+            "finding_tag": "unsafe_density",
+            "status": "unresolved",
+            "missing_evidence": ["unsafe_cluster_count_delta"],
+        }],
+    }
+
+    def fake_residual_comb(**_kwargs):
+        return {
+            "stage": "v5_residual_cluster_comb",
+            "baseline_scores": {"ai": 52.0, "topk": 88.0, "rank": 100.0},
+            "final_scores": {"ai": 49.0, "topk": 86.0, "rank": 96.0},
+            "goal": {
+                "status": "mitigation_failed_no_safe_candidate",
+                "goal_met": False,
+                "reason": "unresolved_paragraph_findings",
+            },
+            "rounds": [{
+                "round": 1,
+                "status": "stopped",
+                "reason": "paragraph_findings_not_moved",
+                "accepted": None,
+                "accepted_paragraph_finding_gaps": ["unsafe_density", "ai_generation_likelihood"],
+            }],
+            "global_best_fallback": {
+                "applied": False,
+                "reason": "blocked_by_unresolved_paragraph_findings",
+                "selected": None,
+            },
+            "paragraph_obligation_hard_stop": hard_stop,
+            "candidate_ledger": [{
+                "rank": 1,
+                "source": "failed_candidate",
+                "section_id": "full_document",
+                "text": "A partial text that must not be delivered.",
+            }],
+            "rewritten_document": "A partial text that must not be delivered.",
+        }
+
+    monkeypatch.setattr(v5_production, "run_v5_residual_cluster_comb_experiment", fake_residual_comb)
+    monkeypatch.setattr(v5_production, "_scan_report", lambda text: {
+        "input_text": text,
+        "ai_score": 52.0,
+        "ai_risk_badge": {"ai_likelihood_score": 52.0},
+        "findings": {},
+    })
+    monkeypatch.setattr(v5_production, "evaluate_rewrite_goal", lambda **_: SimpleNamespace(
+        to_dict=lambda: {
+            "status": "original_preserved",
+            "goal_met": False,
+            "reason": "candidate_same_as_original",
+        }
+    ))
+    monkeypatch.setattr(v5_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+
+    result = v5_production.run_rewrite_pipeline_v5(
+        detect_json={
+            "input_text": original,
+            "ai_score": 52.0,
+            "ai_risk_badge": {"ai_likelihood_score": 52.0},
+            "findings": {},
+        },
+        output_dir=str(tmp_path),
+        model="deepseek/deepseek-v3.2",
+    )
+
+    summary = json.loads(Path(result["json_path"]).read_text())
+    layer = summary["rewrite_layers"]["v5_residual_cluster_comb"]
+    assert result["status"] == "mitigation_failed_no_safe_candidate"
+    assert summary["final_text"] == original
+    assert summary["selected_candidate"] is None
+    assert summary["candidate_ledger"] == []
+    assert summary["candidate_generation_status"]["accepted_count"] == 0
+    assert summary["candidate_generation_status"]["reason"] == "unresolved_paragraph_findings"
+    assert summary["candidate_generation_status"]["blocked_findings"] == ["unsafe_density", "ai_generation_likelihood"]
+    assert summary["paragraph_obligation_hard_stop"]["active"] is True
+    assert summary["rewrite_goal_status"]["reason"] == "unresolved_paragraph_findings"
+    assert summary["no_text_change_reason"] == "v5_unresolved_paragraph_findings"
+    assert layer["candidate_ledger"] == []
+    assert layer["paragraph_obligation_hard_stop"]["blocked_findings"] == ["unsafe_density", "ai_generation_likelihood"]
+    assert layer["global_best_fallback"]["reason"] == "blocked_by_unresolved_paragraph_findings"
+
+
 def test_v5_residual_comb_starts_from_historical_seed_when_it_beats_original(tmp_path, monkeypatch):
     original = (
         "The original draft explains the teaching problem in a broad way and repeats the same conclusion. "
@@ -7454,6 +12424,7 @@ def test_v5_residual_comb_routes_density_blocker_to_safe_band_before_final_topk(
     monkeypatch.setattr(v5_residual_comb, "_final_topk_sentence_route_should_run", lambda **_kwargs: True)
     monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_ENABLED", "0")
     monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", "1")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_ENABLED", "1")
     monkeypatch.setenv("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", "1")
 
     payload = v5_residual_comb.run_v5_residual_cluster_comb_experiment(
