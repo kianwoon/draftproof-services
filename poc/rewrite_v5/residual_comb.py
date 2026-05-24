@@ -3502,6 +3502,8 @@ def build_residual_cluster_route_plan_prompt(
             "Do not only summarize scanner findings; bind every planned action to an affected content unit.",
             "When primary_metric is topk_density, diagnose the predictable sentence route in topk_route_diagnosis.",
             "For topk_density, prefer route disruption over paraphrase: CLAUSE_ROUTE_CHANGE first, then LIST_RHYTHM_BREAK, ABSTRACT_TO_PRACTICAL_FRAME, GENERIC_TRANSITION_REMOVAL, SENTENCE_WEIGHT_VARIATION.",
+            "For source-grounding findings, use SOURCE_GROUNDING_REPAIR, CLAIM_SCOPE_LIMIT, CITATION_SUPPORT_REFRAME, or AUTHOR_ANCHOR_RESTORE before any style movement.",
+            "For transformation or style findings, use PARAPHRASE_REVOICE, DISCOURSE_RHYTHM_BREAK, SEMANTIC_BRIDGE_REPAIR, SENTENCE_WEIGHT_VARIATION, or STYLE_CONTINUITY_REPAIR instead of generic paraphrase.",
             "For each affected unit, provide operator_stack from topk_operator_options; the first operator must be the main action.",
             "Do not use synonym replacement as a top-k action unless it is incidental to a route change.",
             "First choose content_profile and cluster_role from the supplied options.",
@@ -3563,7 +3565,7 @@ def build_residual_cluster_route_plan_prompt(
                     "infected_unit_id": "u001",
                     "current_route": "how the affected sentence currently travels",
                     "predictable_path": "the expected word or phrase path that must be broken",
-                    "primary_operator": "CLAUSE_ROUTE_CHANGE | LIST_RHYTHM_BREAK | ABSTRACT_TO_PRACTICAL_FRAME | GENERIC_TRANSITION_REMOVAL | SENTENCE_WEIGHT_VARIATION",
+                    "primary_operator": "CLAUSE_ROUTE_CHANGE | LIST_RHYTHM_BREAK | ABSTRACT_TO_PRACTICAL_FRAME | GENERIC_TRANSITION_REMOVAL | SENTENCE_WEIGHT_VARIATION | SOURCE_GROUNDING_REPAIR | CITATION_SUPPORT_REFRAME | CLAIM_SCOPE_LIMIT | AUTHOR_ANCHOR_RESTORE | PARAPHRASE_REVOICE | DISCOURSE_RHYTHM_BREAK | SEMANTIC_BRIDGE_REPAIR | STYLE_CONTINUITY_REPAIR",
                     "replacement_route": "new sentence route, not a synonym swap",
                     "insufficient_edit": "what would preserve the same top-k path"
                 },
@@ -4743,14 +4745,28 @@ def _writer_operation_source_terms(text: str) -> list[str]:
 
 def _writer_operation_operators(*, tags: list[str], source_text: str) -> list[str]:
     operators: list[str] = []
+    if "unsupported_claim" in tags or "weak_source_grounding" in tags:
+        operators.append("SOURCE_GROUNDING_REPAIR")
+    if "citation_weakness" in tags:
+        operators.append("CITATION_SUPPORT_REFRAME")
+    if "broad_claim" in tags:
+        operators.append("CLAIM_SCOPE_LIMIT")
+    if "human_anchor_gap" in tags:
+        operators.append("AUTHOR_ANCHOR_RESTORE")
+    if "paraphrase_transformation" in tags:
+        operators.append("PARAPHRASE_REVOICE")
+    if "semantic_uniformity" in tags or "discourse_regularity" in tags:
+        operators.append("DISCOURSE_RHYTHM_BREAK")
+    if "style_shift" in tags:
+        operators.append("STYLE_CONTINUITY_REPAIR")
     if "semantic_drift" in tags:
-        operators.extend(["CLAUSE_ROUTE_CHANGE", "ABSTRACT_TO_PRACTICAL_FRAME"])
+        operators.extend(["SEMANTIC_BRIDGE_REPAIR", "CLAUSE_ROUTE_CHANGE", "ABSTRACT_TO_PRACTICAL_FRAME"])
     if "predictable_next_word_path" in tags:
         operators.extend(["CLAUSE_ROUTE_CHANGE", "LIST_RHYTHM_BREAK", "SENTENCE_WEIGHT_VARIATION"])
     if "ai_generation_likelihood" in tags:
-        operators.extend(["SENTENCE_WEIGHT_VARIATION", "ABSTRACT_TO_PRACTICAL_FRAME", "GENERIC_TRANSITION_REMOVAL"])
+        operators.extend(["PARAPHRASE_REVOICE", "SENTENCE_WEIGHT_VARIATION", "ABSTRACT_TO_PRACTICAL_FRAME", "GENERIC_TRANSITION_REMOVAL"])
     if _has_citation_shape(source_text):
-        operators.extend(["CLAUSE_ROUTE_CHANGE", "LIST_RHYTHM_BREAK"])
+        operators.extend(["CITATION_SUPPORT_REFRAME", "CLAUSE_ROUTE_CHANGE", "LIST_RHYTHM_BREAK"])
     if _has_list_shape(source_text):
         operators.append("LIST_RHYTHM_BREAK")
     if not operators:
@@ -4760,6 +4776,20 @@ def _writer_operation_operators(*, tags: list[str], source_text: str) -> list[st
 
 def _writer_operation_finding_translation(*, tags: list[str], source_text: str) -> str:
     parts: list[str] = []
+    if "unsupported_claim" in tags or "weak_source_grounding" in tags:
+        parts.append("The unit needs source support or narrower source wording before any style cleanup.")
+    if "citation_weakness" in tags:
+        parts.append("The unit's citation/support relationship must be repaired without inventing a new citation.")
+    if "broad_claim" in tags:
+        parts.append("The unit makes a broad claim that needs source-supported scope or limitation.")
+    if "human_anchor_gap" in tags:
+        parts.append("The unit needs author-owned context already present in the source, not invented lived detail.")
+    if "paraphrase_transformation" in tags:
+        parts.append("The unit reads like polished paraphrase and needs source-level vocabulary and less uniform pressure.")
+    if "semantic_uniformity" in tags or "discourse_regularity" in tags:
+        parts.append("The adjacent units move with too much regular rhythm and need distinct sentence jobs.")
+    if "style_shift" in tags:
+        parts.append("The unit changes voice or pressure and needs continuity with the paragraph's source voice.")
     if "semantic_drift" in tags:
         parts.append("The unit needs an explicit source-to-claim bridge, not a jump from frame to conclusion.")
     if "predictable_next_word_path" in tags:
@@ -4774,6 +4804,18 @@ def _writer_operation_finding_translation(*, tags: list[str], source_text: str) 
 def _writer_operation_text_symptom(*, tags: list[str], source_text: str) -> str:
     if _has_citation_shape(source_text) and _has_list_shape(source_text):
         return "Citation-led list cadence makes the sentence move like a polished academic wrapper instead of a source-specific explanation."
+    if "unsupported_claim" in tags or "weak_source_grounding" in tags:
+        return "The sentence carries claim pressure without enough nearby source support."
+    if "broad_claim" in tags:
+        return "The sentence expands beyond the source boundary before it narrows the claim."
+    if "human_anchor_gap" in tags:
+        return "The sentence lacks author-owned context even though the repair must stay inside submitted material."
+    if "paraphrase_transformation" in tags:
+        return "The sentence sounds like a cleaned paraphrase rather than the source writer's own route."
+    if "semantic_uniformity" in tags or "discourse_regularity" in tags:
+        return "The sentence shares the same balanced explanatory rhythm as its neighbors."
+    if "style_shift" in tags:
+        return "The sentence pressure or voice shifts away from the surrounding paragraph."
     if "semantic_drift" in tags:
         return "The sentence frames the source material broadly before making the local relationship clear."
     if "ai_generation_likelihood" in tags and _has_observation_shape(source_text):
@@ -4786,6 +4828,18 @@ def _writer_operation_text_symptom(*, tags: list[str], source_text: str) -> str:
 def _writer_operation_sentence_job(*, tags: list[str], source_text: str, context_units: list[str]) -> str:
     if _has_citation_shape(source_text):
         job = "Turn the cited concept into the explanation for the source task pressure."
+    elif "unsupported_claim" in tags or "weak_source_grounding" in tags:
+        job = "Tie the claim back to source terms or support before changing the sentence style."
+    elif "broad_claim" in tags:
+        job = "Carry a narrower source-supported claim with its limit or condition visible."
+    elif "human_anchor_gap" in tags:
+        job = "Carry author-owned source context without inventing new personal detail."
+    elif "paraphrase_transformation" in tags:
+        job = "Carry source-level wording with less polished paraphrase movement."
+    elif "semantic_uniformity" in tags or "discourse_regularity" in tags:
+        job = "Take a distinct paragraph role so adjacent sentences do not share the same rhythm."
+    elif "style_shift" in tags:
+        job = "Keep voice and sentence pressure continuous with the surrounding paragraph."
     elif "semantic_drift" in tags:
         job = "Build the paragraph's source frame and bridge it to the next concrete support."
     elif _has_observation_shape(source_text):
@@ -4801,6 +4855,20 @@ def _writer_operation_required_move(*, tags: list[str], source_text: str, source
     terms = ", ".join(source_terms[:4])
     term_instruction = f" Use source term pressure from: {terms}." if terms else ""
     moves: list[str] = []
+    if "unsupported_claim" in tags or "weak_source_grounding" in tags:
+        moves.append("Before changing style, tie the claim to source terms, visible context, or support already present in the selected text.")
+    if "citation_weakness" in tags:
+        moves.append("Keep citation-bearing or citation-needing material next to its support; do not add a citation that is not in the source.")
+    if "broad_claim" in tags:
+        moves.append("Narrow the claim through a source-supported condition, limit, or contrast.")
+    if "human_anchor_gap" in tags:
+        moves.append("Restore author-owned framing already present in the source/context without adding new personal experience.")
+    if "paraphrase_transformation" in tags:
+        moves.append("Return to source-level vocabulary and less balanced sentence pressure instead of polished paraphrase.")
+    if "semantic_uniformity" in tags or "discourse_regularity" in tags:
+        moves.append("Give this unit a different sentence role or boundary from adjacent target units.")
+    if "style_shift" in tags:
+        moves.append("Keep the voice and sentence pressure consistent with surrounding source units.")
     if "semantic_drift" in tags:
         moves.append("State the local relationship before the broad claim so the sentence explains what its source material is doing.")
     if "predictable_next_word_path" in tags:
@@ -4816,6 +4884,20 @@ def _writer_operation_required_move(*, tags: list[str], source_text: str, source
 def _writer_operation_route_operation(*, tags: list[str], source_text: str, source_terms: list[str]) -> str:
     if _has_citation_shape(source_text):
         return "Rebuild as citation concept -> practical overload relationship -> selected source task elements; keep the closing role short or split citation relation from task bundle instead of ending with one polished wrapper."
+    if "unsupported_claim" in tags or "weak_source_grounding" in tags:
+        return "Rebuild as source term/support -> bounded claim -> brief route movement; remove unsupported claim pressure before style cleanup."
+    if "citation_weakness" in tags:
+        return "Rebuild as claim needing support -> existing citation/source support -> limited implication; do not invent citation material."
+    if "broad_claim" in tags:
+        return "Rebuild as source context -> narrowed condition or limit -> claim, rather than broad claim -> polished explanation."
+    if "human_anchor_gap" in tags:
+        return "Rebuild as author/source context already present -> local choice or constraint -> limited claim."
+    if "paraphrase_transformation" in tags:
+        return "Rebuild as source-level phrase pressure -> uneven sentence movement -> preserved claim, avoiding cleaned paraphrase texture."
+    if "semantic_uniformity" in tags or "discourse_regularity" in tags:
+        return "Rebuild with a distinct sentence job and boundary so adjacent units do not repeat the same explanatory cadence."
+    if "style_shift" in tags:
+        return "Rebuild with the same paragraph voice and source vocabulary pressure as neighboring units."
     if "semantic_drift" in tags:
         return "Rebuild as source frame -> local observation or requirement -> narrow bridge to the next unit."
     if "predictable_next_word_path" in tags and "ai_generation_likelihood" in tags:
@@ -4834,6 +4916,20 @@ def _writer_operation_context_instruction(context_units: list[str]) -> str:
 def _writer_operation_forbidden_shortcut(*, tags: list[str], source_text: str) -> str:
     if _has_citation_shape(source_text):
         return "Do not keep the citation-led academic opener, clean comma-list, or final broad citation wrapper."
+    if "citation_weakness" in tags:
+        return "Do not invent a citation or move a citation-needing claim farther from its existing support."
+    if "unsupported_claim" in tags or "weak_source_grounding" in tags:
+        return "Do not make the sentence smoother while leaving the claim unsupported or farther from source terms."
+    if "broad_claim" in tags:
+        return "Do not replace one broad claim with another broad claim or a larger generalization."
+    if "human_anchor_gap" in tags:
+        return "Do not invent lived detail, personal reaction, named evidence, or sensory context."
+    if "paraphrase_transformation" in tags:
+        return "Do not keep the same polished paraphrase route with slightly more casual wording."
+    if "semantic_uniformity" in tags or "discourse_regularity" in tags:
+        return "Do not give adjacent target units the same opener, bridge shape, or balanced explanatory cadence."
+    if "style_shift" in tags:
+        return "Do not fix the sentence by changing it into a voice that no longer matches the paragraph."
     if "semantic_drift" in tags:
         return "Do not replace words while leaving the broad frame-to-claim jump intact."
     if "predictable_next_word_path" in tags and "ai_generation_likelihood" in tags:
@@ -4844,6 +4940,69 @@ def _writer_operation_forbidden_shortcut(*, tags: list[str], source_text: str) -
 
 
 def _writer_operation_pattern_contrast(*, tags: list[str], source_text: str) -> dict[str, Any]:
+    if "citation_weakness" in tags and not _has_citation_shape(source_text):
+        return {
+            "active": True,
+            "invalid_shape": "The candidate adds citation-like authority or leaves the support relationship vague.",
+            "required_shape": "Keep citation-needing claims close to existing source support without inventing a citation.",
+            "binary_gate": "Reject the candidate if it adds a new citation, author name, year, statistic, or unsupported source label.",
+            "self_check": "Before returning, verify every citation-like marker already appears in the source text.",
+            "required_split_rule": "",
+        }
+    if "unsupported_claim" in tags or "weak_source_grounding" in tags:
+        return {
+            "active": True,
+            "invalid_shape": "A smoother sentence keeps the same claim pressure while source support remains distant or missing.",
+            "required_shape": "Put source terms, context, citation support, or source-implied limits next to the claim before changing style.",
+            "binary_gate": "Reject the candidate if the target claim becomes broader, smoother, or more confident without nearby source support.",
+            "self_check": "Before returning, verify the candidate's claim can be traced to submitted source terms in the same or adjacent sentence.",
+            "required_split_rule": "",
+        }
+    if "broad_claim" in tags:
+        return {
+            "active": True,
+            "invalid_shape": "The candidate replaces a broad claim with another broad claim, summary label, or polished generalization.",
+            "required_shape": "Narrow the claim with source-supported scope, condition, contrast, or limitation.",
+            "binary_gate": "Reject the candidate if the target unit still opens or closes as a broad general claim without a source boundary.",
+            "self_check": "Before returning, identify the exact source-supported limit or condition in the target unit.",
+            "required_split_rule": "",
+        }
+    if "human_anchor_gap" in tags:
+        return {
+            "active": True,
+            "invalid_shape": "The candidate adds invented lived detail or removes the author's existing source-owned context.",
+            "required_shape": "Use only author/source context already present in the selected text or nearby context.",
+            "binary_gate": "Reject the candidate if it adds a new personal story, reaction, scene, object, event, date, place, or named evidence.",
+            "self_check": "Before returning, compare concrete details against the source and remove anything unsupported.",
+            "required_split_rule": "",
+        }
+    if "paraphrase_transformation" in tags:
+        return {
+            "active": True,
+            "invalid_shape": "The candidate keeps the same polished paraphrase route with cleaner or more casual synonyms.",
+            "required_shape": "Return to source-level vocabulary and make at least one sentence boundary, opener, or clause pressure less uniformly polished.",
+            "binary_gate": "Reject the candidate if it reads like a synonym-smoothed version of the same route.",
+            "self_check": "Before returning, compare the target route with the source: at least one route job must change, not only vocabulary.",
+            "required_split_rule": "",
+        }
+    if "semantic_uniformity" in tags or "discourse_regularity" in tags:
+        return {
+            "active": True,
+            "invalid_shape": "Adjacent target units keep the same sentence role, opener rhythm, or balanced explanatory shape.",
+            "required_shape": "Give adjacent target units different paragraph jobs while preserving source logic.",
+            "binary_gate": "Reject the candidate if the target run uses repeated opener/bridge rhythm or all sentences carry the same weight.",
+            "self_check": "Before returning, inspect adjacent target units and verify their sentence jobs are distinct.",
+            "required_split_rule": "",
+        }
+    if "style_shift" in tags:
+        return {
+            "active": True,
+            "invalid_shape": "The candidate fixes one unit by shifting voice, formality, or sentence pressure away from neighboring units.",
+            "required_shape": "Keep the same paragraph voice while changing the local route operation.",
+            "binary_gate": "Reject the candidate if one target unit sounds more formal, generic, or polished than its surrounding source units.",
+            "self_check": "Before returning, compare target-unit voice with neighboring sentences and remove abrupt style change.",
+            "required_split_rule": "",
+        }
     if "semantic_drift" in tags:
         return {
             "active": True,
@@ -7731,6 +7890,14 @@ _TOPK_ROUTE_OPERATORS = {
     "ABSTRACT_TO_PRACTICAL_FRAME",
     "GENERIC_TRANSITION_REMOVAL",
     "SENTENCE_WEIGHT_VARIATION",
+    "SOURCE_GROUNDING_REPAIR",
+    "CITATION_SUPPORT_REFRAME",
+    "CLAIM_SCOPE_LIMIT",
+    "AUTHOR_ANCHOR_RESTORE",
+    "PARAPHRASE_REVOICE",
+    "DISCOURSE_RHYTHM_BREAK",
+    "SEMANTIC_BRIDGE_REPAIR",
+    "STYLE_CONTINUITY_REPAIR",
 }
 
 
@@ -7740,6 +7907,14 @@ _TOPK_ROUTE_OPERATOR_WRITER_ACTIONS = {
     "ABSTRACT_TO_PRACTICAL_FRAME": "Replace abstract summary movement with a concrete source action, condition, decision, or consequence.",
     "GENERIC_TRANSITION_REMOVAL": "Remove formulaic transition movement and make the source subject or action carry the bridge.",
     "SENTENCE_WEIGHT_VARIATION": "Vary sentence weight by letting one short bridge or longer concrete sentence carry the route change.",
+    "SOURCE_GROUNDING_REPAIR": "Map the affected claim back to source terms, support, or context before changing style.",
+    "CITATION_SUPPORT_REFRAME": "Move citation-bearing material into a support relationship; do not let citation plus list become a polished wrapper.",
+    "CLAIM_SCOPE_LIMIT": "Narrow broad claims with a source-supported limit, condition, or contrast instead of adding a larger claim.",
+    "AUTHOR_ANCHOR_RESTORE": "Restore author-owned context already present in the source or nearby context without inventing experience.",
+    "PARAPHRASE_REVOICE": "Reduce polished paraphrase texture by returning to source-level vocabulary and less uniform sentence pressure.",
+    "DISCOURSE_RHYTHM_BREAK": "Break repeated discourse rhythm across adjacent units while preserving the paragraph logic.",
+    "SEMANTIC_BRIDGE_REPAIR": "Make the missing source-to-claim reasoning bridge explicit without adding unsupported detail.",
+    "STYLE_CONTINUITY_REPAIR": "Keep the paragraph voice and sentence pressure consistent across the target run.",
 }
 
 
@@ -8654,6 +8829,7 @@ def _paragraph_route_execution_audit(
             candidate_unit=candidate_unit,
             source_text=source_text,
             tags=tags,
+            operators=_operator_stack(operation.get("operator_stack")),
         )
         failed = [check["name"] for check in unit_checks if not check.get("passed")]
         unit_results.append({
@@ -8746,6 +8922,7 @@ def _route_audit_unit_checks(
     candidate_unit: dict[str, Any],
     source_text: str,
     tags: list[str],
+    operators: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     candidate_text = str(candidate_unit.get("text") or "")
     source_terms = _route_audit_terms(source_unit)
@@ -8773,6 +8950,7 @@ def _route_audit_unit_checks(
     )
     diagnostic_terms = _route_audit_unsupported_diagnostic_labels(source_text, candidate_text)
     citation_wrapper = _route_audit_citation_led_list_wrapper(candidate_text)
+    operator_set = set(_operator_stack(operators or []))
     topk_or_ai = bool({"predictable_next_word_path", "ai_generation_likelihood"} & set(tags))
     checks = [
         {
@@ -8805,6 +8983,124 @@ def _route_audit_unit_checks(
             "name": "citation_not_clean_list_wrapper",
             "passed": not citation_wrapper,
             "citation_wrapper": citation_wrapper,
+        })
+    checks.extend(_route_audit_operator_checks(
+        source_unit=source_unit,
+        candidate_text=candidate_text,
+        source_text=source_text,
+        source_terms=source_terms,
+        candidate_terms=candidate_terms,
+        same_surface_route=same_surface_route,
+        same_prefix_count=same_prefix_count,
+        source_sentence_count=source_sentence_count,
+        candidate_sentence_count=candidate_sentence_count,
+        diagnostic_terms=diagnostic_terms,
+        citation_wrapper=citation_wrapper,
+        operators=operator_set,
+    ))
+    return checks
+
+
+def _route_audit_operator_checks(
+    *,
+    source_unit: str,
+    candidate_text: str,
+    source_text: str,
+    source_terms: set[str],
+    candidate_terms: set[str],
+    same_surface_route: bool,
+    same_prefix_count: int,
+    source_sentence_count: int,
+    candidate_sentence_count: int,
+    diagnostic_terms: list[str],
+    citation_wrapper: bool,
+    operators: set[str],
+) -> list[dict[str, Any]]:
+    if not operators:
+        return []
+    checks: list[dict[str, Any]] = []
+    source_support_ratio = _bounded_ratio(len(source_terms & candidate_terms), len(candidate_terms) or 1)
+    unsupported_terms = _non_source_terms(source_text, candidate_text)
+    max_unsupported = _int_env(
+        "DRAFTPROOF_REWRITE_V5_ROUTE_AUDIT_MAX_OPERATOR_UNSUPPORTED_TERMS",
+        8,
+        minimum=0,
+        maximum=30,
+    )
+    novel_citations = _route_audit_novel_citations(source_text, candidate_text)
+    sentence_weight_varied = _route_audit_sentence_weight_varied(candidate_text)
+    has_bridge = _route_audit_has_bridge_marker(candidate_text)
+    broad_shape = _route_audit_broad_claim_shape(candidate_text)
+
+    if "SOURCE_GROUNDING_REPAIR" in operators:
+        checks.append({
+            "name": "operator_source_grounding_repair",
+            "passed": source_support_ratio >= _float_env(
+                "DRAFTPROOF_REWRITE_V5_ROUTE_AUDIT_MIN_OPERATOR_SOURCE_SUPPORT",
+                0.55,
+                minimum=0.0,
+                maximum=1.0,
+            ) and len(unsupported_terms) <= max_unsupported,
+            "source_support_ratio": round(source_support_ratio, 4),
+            "unsupported_terms": unsupported_terms[:12],
+            "max_unsupported_terms": max_unsupported,
+        })
+    if "CITATION_SUPPORT_REFRAME" in operators:
+        checks.append({
+            "name": "operator_citation_support_reframe",
+            "passed": not novel_citations and not citation_wrapper,
+            "novel_citations": novel_citations,
+            "citation_wrapper": citation_wrapper,
+        })
+    if "CLAIM_SCOPE_LIMIT" in operators:
+        checks.append({
+            "name": "operator_claim_scope_limit",
+            "passed": not broad_shape or _route_audit_has_scope_limit(candidate_text),
+            "broad_claim_shape": broad_shape,
+            "scope_limit_present": _route_audit_has_scope_limit(candidate_text),
+        })
+    if "AUTHOR_ANCHOR_RESTORE" in operators:
+        novel_refs = _novel_reference_tokens(source_text, candidate_text)
+        has_novel_reference = bool(novel_refs.get("numbers") or novel_refs.get("named_references"))
+        checks.append({
+            "name": "operator_author_anchor_restore",
+            "passed": not has_novel_reference,
+            "novel_candidate_references": novel_refs,
+        })
+    if "PARAPHRASE_REVOICE" in operators:
+        checks.append({
+            "name": "operator_paraphrase_revoice",
+            "passed": not same_surface_route and (same_prefix_count < 2 or sentence_weight_varied or candidate_sentence_count != source_sentence_count),
+            "same_surface_route": same_surface_route,
+            "same_prefix_count": same_prefix_count,
+            "sentence_weight_varied": sentence_weight_varied,
+            "source_sentence_count": source_sentence_count,
+            "candidate_sentence_count": candidate_sentence_count,
+        })
+    if "DISCOURSE_RHYTHM_BREAK" in operators:
+        checks.append({
+            "name": "operator_discourse_rhythm_break",
+            "passed": sentence_weight_varied or candidate_sentence_count != source_sentence_count or same_prefix_count < 2,
+            "sentence_weight_varied": sentence_weight_varied,
+            "source_sentence_count": source_sentence_count,
+            "candidate_sentence_count": candidate_sentence_count,
+            "same_prefix_count": same_prefix_count,
+        })
+    if "SEMANTIC_BRIDGE_REPAIR" in operators:
+        checks.append({
+            "name": "operator_semantic_bridge_repair",
+            "passed": has_bridge or candidate_sentence_count > source_sentence_count,
+            "bridge_marker_present": has_bridge,
+            "source_sentence_count": source_sentence_count,
+            "candidate_sentence_count": candidate_sentence_count,
+        })
+    if "STYLE_CONTINUITY_REPAIR" in operators:
+        checks.append({
+            "name": "operator_style_continuity_repair",
+            "passed": len(diagnostic_terms) <= 2 and len(unsupported_terms) <= max_unsupported,
+            "unsupported_diagnostic_terms": diagnostic_terms,
+            "unsupported_terms": unsupported_terms[:12],
+            "max_unsupported_terms": max_unsupported,
         })
     return checks
 
@@ -8858,6 +9154,64 @@ def _route_audit_citation_led_list_wrapper(text: str) -> bool:
         if citation_near_start and list_like and (wrapper_bridge or comma_count >= 4):
             return True
     return False
+
+
+def _route_audit_novel_citations(source_text: str, candidate_text: str) -> list[str]:
+    citation_pattern = re.compile(
+        r"(?:\b[A-Z][a-z]+(?:\s+and\s+[A-Z][a-z]+)?(?:'s|’s)?\s*)?\(\s*(?:19|20)\d{2}[a-z]?\s*\)"
+    )
+    source_citations = {_route_audit_normalized_citation(match.group(0)) for match in citation_pattern.finditer(str(source_text or ""))}
+    novel: list[str] = []
+    for match in citation_pattern.finditer(str(candidate_text or "")):
+        citation = match.group(0).strip()
+        normalized = _route_audit_normalized_citation(citation)
+        if citation and normalized not in source_citations and citation not in novel:
+            novel.append(citation)
+    return novel[:8]
+
+
+def _route_audit_normalized_citation(value: str) -> str:
+    normalized = str(value or "").casefold()
+    normalized = normalized.replace("’s", "").replace("'s", "")
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _route_audit_has_scope_limit(text: str) -> bool:
+    return bool(re.search(
+        r"\b(?:only|when|if|where|within|under|unless|depends on|limited to|rather than|instead of|not all|in this|for this|because|but)\b",
+        str(text or ""),
+        flags=re.IGNORECASE,
+    ))
+
+
+def _route_audit_broad_claim_shape(text: str) -> bool:
+    value = str(text or "")
+    return bool(re.search(
+        r"\b(?:important|significant|essential|crucial|central|overall|clearly|shows|demonstrates|highlights|reflects|plays a role|is a key|is an important)\b",
+        value,
+        flags=re.IGNORECASE,
+    ))
+
+
+def _route_audit_has_bridge_marker(text: str) -> bool:
+    return bool(re.search(
+        r"\b(?:because|while|when|so|but|through|as|rather than|instead of|which|that means|this means|therefore)\b",
+        str(text or ""),
+        flags=re.IGNORECASE,
+    ))
+
+
+def _route_audit_sentence_weight_varied(text: str) -> bool:
+    lengths = [word_count(sentence) for sentence in _sentences(text)]
+    if len(lengths) < 2:
+        return False
+    return max(lengths) - min(lengths) >= _int_env(
+        "DRAFTPROOF_REWRITE_V5_ROUTE_AUDIT_SENTENCE_WEIGHT_DELTA",
+        6,
+        minimum=1,
+        maximum=30,
+    )
 
 
 def _document_unsafe_word_ratio_check_passed(

@@ -6765,6 +6765,100 @@ def test_v5_paragraph_digest_preserves_all_finding_families_as_writer_obligation
     assert "digest_sentence_weight_rebalance" in [shape["route_shape"] for shape in shapes]
 
 
+def test_v5_writer_operation_playbook_assigns_specific_operators_for_finding_families():
+    source = (
+        "The paragraph makes a broad claim without enough support. "
+        "The citation support is too distant from the claim. "
+        "The final sentence reads like a polished paraphrase."
+    )
+    affected_units = [
+        {
+            "unit_id": "u001",
+            "source_text": "The paragraph makes a broad claim without enough support.",
+            "is_scanner_target": True,
+            "finding_tags": ["unsupported_claim", "weak_source_grounding", "broad_claim"],
+            "target_severity": 6.8,
+        },
+        {
+            "unit_id": "u002",
+            "source_text": "The citation support is too distant from the claim.",
+            "is_scanner_target": True,
+            "finding_tags": ["citation_weakness"],
+            "target_severity": 5.9,
+        },
+        {
+            "unit_id": "u003",
+            "source_text": "The final sentence reads like a polished paraphrase.",
+            "is_scanner_target": True,
+            "finding_tags": ["paraphrase_transformation", "semantic_uniformity", "style_shift"],
+            "target_severity": 6.1,
+        },
+    ]
+
+    playbook = v5_residual_comb._writer_operation_playbook(
+        affected_units=affected_units,
+        source_text=source,
+    )
+
+    by_unit = {row["unit_id"]: row for row in playbook}
+    assert by_unit["u001"]["operator_stack"][:2] == [
+        "SOURCE_GROUNDING_REPAIR",
+        "CLAIM_SCOPE_LIMIT",
+    ]
+    assert by_unit["u001"]["pattern_contrast"]["binary_gate"].startswith("Reject the candidate")
+    assert "support already present" in by_unit["u001"]["required_move"]
+    assert by_unit["u002"]["operator_stack"][0] == "CITATION_SUPPORT_REFRAME"
+    assert "invent" in by_unit["u002"]["forbidden_shortcut"]
+    assert by_unit["u003"]["operator_stack"][:3] == [
+        "PARAPHRASE_REVOICE",
+        "DISCOURSE_RHYTHM_BREAK",
+        "STYLE_CONTINUITY_REPAIR",
+    ]
+    assert "same polished paraphrase route" in by_unit["u003"]["forbidden_shortcut"]
+
+
+def test_v5_route_audit_enforces_operator_specific_gates():
+    source_unit = "The source says the alpha result depends on beta support."
+    source_text = source_unit
+    weak_candidate = "Smith (2024) clearly demonstrates an important transformational outcome for the whole system."
+
+    weak_checks = v5_residual_comb._route_audit_unit_checks(
+        source_unit=source_unit,
+        candidate_unit={"text": weak_candidate, "score": 0.4},
+        source_text=source_text,
+        tags=["weak_source_grounding", "citation_weakness", "broad_claim"],
+        operators=[
+            "SOURCE_GROUNDING_REPAIR",
+            "CITATION_SUPPORT_REFRAME",
+            "CLAIM_SCOPE_LIMIT",
+        ],
+    )
+    weak_by_name = {check["name"]: check for check in weak_checks}
+
+    assert weak_by_name["operator_source_grounding_repair"]["passed"] is False
+    assert weak_by_name["operator_citation_support_reframe"]["passed"] is False
+    assert weak_by_name["operator_citation_support_reframe"]["novel_citations"] == ["Smith (2024)"]
+    assert weak_by_name["operator_claim_scope_limit"]["passed"] is False
+
+    stronger_candidate = "The alpha result depends on beta support when the source keeps that support close to the result."
+    strong_checks = v5_residual_comb._route_audit_unit_checks(
+        source_unit=source_unit,
+        candidate_unit={"text": stronger_candidate, "score": 0.8},
+        source_text=source_text,
+        tags=["weak_source_grounding", "broad_claim"],
+        operators=[
+            "SOURCE_GROUNDING_REPAIR",
+            "CLAIM_SCOPE_LIMIT",
+            "SEMANTIC_BRIDGE_REPAIR",
+        ],
+    )
+    strong_by_name = {check["name"]: check for check in strong_checks}
+
+    assert strong_by_name["operator_source_grounding_repair"]["passed"] is True
+    assert strong_by_name["operator_claim_scope_limit"]["passed"] is True
+    assert strong_by_name["operator_semantic_bridge_repair"]["passed"] is True
+
+
 def test_v5_paragraph_digest_acceptance_plan_covers_custom_future_finding():
     digest = v5_residual_comb._paragraph_finding_digest([
         {
