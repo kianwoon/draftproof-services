@@ -2648,7 +2648,7 @@ def test_v5_safe_band_evidence_pack_partial_material_variant_keeps_only_passing_
             "replacements": [
                 {
                     "section_id": "safe_band_density_section_s1",
-                    "text": "The first idea is rebuilt around the author action. The target changes route. The ending changes too.",
+                    "text": "First source sentence now starts from the author action. The target sentence changes route. Third source sentence changes its ending too.",
                 },
                 {"section_id": "safe_band_density_section_s2", "text": second.text},
             ],
@@ -2659,7 +2659,7 @@ def test_v5_safe_band_evidence_pack_partial_material_variant_keeps_only_passing_
                 {"section_id": "safe_band_density_section_s1", "text": first.text},
                 {
                     "section_id": "safe_band_density_section_s2",
-                    "text": "The fourth idea is rebuilt around the teaching choice. The second target is recast. The ending changes as well.",
+                    "text": "Fourth source sentence now starts from the teaching choice. Another target changes route. Sixth source sentence changes its ending too.",
                 },
             ],
         },
@@ -2725,7 +2725,7 @@ def test_v5_safe_band_evidence_pack_section_probe_variants_deduplicate_by_sectio
     ]
 
 
-def test_v5_safe_band_evidence_pack_section_probes_add_length_normalized_density_variant(monkeypatch):
+def test_v5_safe_band_evidence_pack_section_probes_do_not_normalize_length_only(monkeypatch):
     monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.5)
     monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 1.5)
     section = SectionUnit(
@@ -2752,9 +2752,9 @@ def test_v5_safe_band_evidence_pack_section_probes_add_length_normalized_density
                 {
                     "section_id": "safe_band_density_section_s1",
                     "text": (
-                        "I start with the class moment before naming the problem. "
-                        "The target idea now follows the student's hesitation. "
-                        "The closing point links it back to practice. "
+                        "First source idea stays in the class moment before naming the problem. "
+                        "The target sentence now changes route today through the student's hesitation. "
+                        "Third source idea stays linked back to practice too. "
                         "Extra background sentence adds unnecessary detail beyond the source."
                     ),
                 }
@@ -2768,15 +2768,15 @@ def test_v5_safe_band_evidence_pack_section_probes_add_length_normalized_density
     )
     normalized = [probe for probe in probes if probe["variant_id"].endswith("_length_normalized")]
 
-    assert len(normalized) == 1
-    replacement = normalized[0]["replacements"][0]["text"]
-    assert v5_residual_comb.word_count(replacement) <= round(v5_residual_comb.word_count(section.text) * 1.5)
+    assert normalized == []
+    replacement = probes[0]["replacements"][0]["text"]
     materiality = v5_residual_comb._safe_band_density_section_repair_materiality(
         source_text=section.text,
         candidate_text=replacement,
         target_sentence=section.metadata["target_sentence"],
     )
     assert materiality["passed"] is True
+    assert materiality["length_within_diagnostic_bounds"] is False
 
 
 def test_v5_safe_band_evidence_pack_scored_section_composite_uses_only_internal_judge_movers():
@@ -3096,6 +3096,50 @@ def test_v5_safe_band_evidence_repair_allows_tiny_unsafe_word_ratio_regression(m
 
     assert _has_safe_band_evidence_repair_movement(row, current_scores=current_scores)
     assert not _has_safe_band_evidence_repair_movement(too_much_regression, current_scores=current_scores)
+
+
+def test_v5_safe_band_density_only_gap_rejects_tiny_controlled_operation_move():
+    current_scores = {
+        "ai": 32.96,
+        "topk_calibrated_risk": 24.955,
+        "qualifying_text_ai_density": 39.53,
+        "unsafe_cluster_count": 0,
+        "unsafe_word_ratio": 0.0,
+        "risky_window_count": 0,
+    }
+    tiny_move = {
+        "apply_status": {"applied": True},
+        "scores": {
+            "ai": 32.86,
+            "topk_calibrated_risk": 24.541,
+            "qualifying_text_ai_density": 39.42,
+            "unsafe_cluster_count": 0,
+            "unsafe_word_ratio": 0.0,
+            "risky_window_count": 0,
+        },
+        "incremental": {
+            "ai_delta": 0.1,
+            "ai_authorship_delta": 0.0,
+            "unsafe_cluster_count_delta": 0.0,
+            "unsafe_word_ratio_delta": 0.0,
+            "risky_window_count_delta": 0.0,
+            "qualifying_text_ai_density_delta": 0.11,
+        },
+    }
+    stronger_move = {
+        **tiny_move,
+        "scores": {
+            **tiny_move["scores"],
+            "qualifying_text_ai_density": 38.9,
+        },
+        "incremental": {
+            **tiny_move["incremental"],
+            "qualifying_text_ai_density_delta": 0.63,
+        },
+    }
+
+    assert not _has_safe_band_evidence_repair_movement(tiny_move, current_scores=current_scores)
+    assert _has_safe_band_evidence_repair_movement(stronger_move, current_scores=current_scores)
 
 
 def test_v5_density_checkpoint_accepts_topk_regression_when_topk_remains_safe(monkeypatch):
@@ -3486,7 +3530,7 @@ def test_v5_safe_band_density_section_selection_skips_spent_ranges():
     assert [section.section_id for section in sections] == ["safe_band_density_section_s002"]
 
 
-def test_v5_safe_band_density_materiality_rejects_repetition_and_compression(monkeypatch):
+def test_v5_safe_band_density_materiality_rejects_repetition_and_coverage_loss(monkeypatch):
     monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_min_word_ratio", lambda: 0.75)
     monkeypatch.setattr(v5_residual_comb, "_safe_band_density_section_repair_max_word_ratio", lambda: 2.0)
     source = (
@@ -3513,7 +3557,8 @@ def test_v5_safe_band_density_materiality_rejects_repetition_and_compression(mon
     assert not repeated_result["passed"]
     assert repeated_result["reason"] == "density_section_repair_repetition_regression"
     assert not compressed_result["passed"]
-    assert compressed_result["reason"] == "density_section_repair_length_out_of_bounds"
+    assert compressed_result["reason"] == "density_section_source_coverage_missing"
+    assert compressed_result["length_within_diagnostic_bounds"] is False
 
 
 def test_v5_safe_band_density_materiality_requires_section_level_change(monkeypatch):
@@ -3597,6 +3642,81 @@ def test_v5_safe_band_density_materiality_allows_adjacent_duplicate_cleanup(monk
     assert result["reason"] == "density_section_adjacent_duplicate_cleanup"
     assert result["word_ratio"] < result["minimum_word_ratio"]
     assert result["duplicate_cleanup_audit"]["removed_duplicate_sentence_count"] == 1
+
+
+def test_v5_safe_band_density_generation_uses_bounded_timeout_and_restores_gateway(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_LLM_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_LLM_MAX_RETRIES", "1")
+    section = SectionUnit(
+        "safe_band_density_section_s001",
+        "Density",
+        "First source sentence stays here. Target sentence must change route. Third source sentence stays too.",
+        0,
+        92,
+        1,
+        14,
+        {"selection_reason": "ai_mitigation_density_target_segment"},
+    )
+
+    class TimeoutGateway:
+        model = "test-model"
+        provider = None
+        timeout = 180
+        max_retries = 3
+
+        def __init__(self):
+            self.seen_limits = []
+
+        def chat(self, *_args, **_kwargs):
+            self.seen_limits.append((self.timeout, self.max_retries))
+            raise TimeoutError("simulated late density-section response")
+
+    gateway = TimeoutGateway()
+    prompt = "Return valid JSON only.\n{}"
+
+    variants, diagnostics, returned_prompt, completion = (
+        v5_residual_comb.generate_safe_band_density_section_repair_variants(
+            section=section,
+            current_scores={"qualifying_text_ai_density": 39.0, "topk_calibrated_risk": 24.0},
+            current_goal={},
+            gateway=gateway,
+            variant_count=1,
+            prebuilt_prompt=prompt,
+        )
+    )
+
+    assert variants == []
+    assert diagnostics["status"] == "failed"
+    assert diagnostics["reason"] == "safe_band_density_section_llm_generation_failed"
+    assert diagnostics["timeout_seconds"] == 12
+    assert diagnostics["wall_timeout_seconds"] == 12
+    assert diagnostics["max_retries"] == 1
+    assert gateway.seen_limits == [(12, 1)]
+    assert gateway.timeout == 180
+    assert gateway.max_retries == 3
+    assert returned_prompt == prompt
+    assert completion == ""
+
+
+def test_v5_optional_wall_timeout_interrupts_slow_density_llm_call():
+    started = time.monotonic()
+
+    def slow_call():
+        time.sleep(2)
+        return "late"
+
+    try:
+        v5_residual_comb._run_with_optional_wall_timeout(
+            slow_call,
+            seconds=1,
+            label="test_density_wall_timeout",
+        )
+    except TimeoutError as exc:
+        assert "test_density_wall_timeout" in str(exc)
+    else:
+        raise AssertionError("wall timeout did not interrupt slow call")
+
+    assert time.monotonic() - started < 1.8
 
 
 def test_v5_safe_band_density_section_repair_adds_deterministic_duplicate_cleanup_variant():
@@ -8615,6 +8735,158 @@ def test_v5_adaptive_cutoff_keeps_running_when_risky_windows_remain(monkeypatch)
         current_scores=scores,
         density_gate=density_gate,
     ) is None
+
+
+def test_v5_adaptive_cutoff_keeps_running_when_texture_density_remains(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_SAFE_RISKY_WINDOWS", raising=False)
+    scores = {
+        "risky_window_count": 0,
+        "unsafe_cluster_count": 0,
+        "unsafe_word_ratio": 0.0,
+        "topk": 67.56,
+        "topk_calibrated_risk": 24.955,
+        "qualifying_text_ai_density": 39.53,
+    }
+    density_gate = {
+        "safe": True,
+        "unsafe_cluster_count": 0,
+        "unsafe_eligible_word_ratio": 0.0,
+        "thresholds": {
+            "max_unsafe_cluster_count": 4,
+            "max_unsafe_eligible_word_ratio": 35.0,
+        },
+    }
+
+    state = _adaptive_cutoff_blocker_state(scores, density_gate)
+
+    assert state["structural_safe"]
+    assert not state["texture_safe"]
+    assert not state["safe"]
+    assert round(state["qualifying_text_ai_density_over_limit"], 2) == 4.53
+    assert state["topk_calibrated_risk_over_limit"] == 0.0
+    assert _adaptive_cutoff_stop_event(
+        phase="before_core_rounds",
+        current_scores=scores,
+        density_gate=density_gate,
+    ) is None
+
+
+def test_v5_adaptive_cutoff_stops_when_structural_and_texture_lanes_safe(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_REWRITE_V5_SAFE_RISKY_WINDOWS", raising=False)
+    scores = {
+        "risky_window_count": 0,
+        "unsafe_cluster_count": 0,
+        "unsafe_word_ratio": 0.0,
+        "topk": 60.0,
+        "topk_calibrated_risk": 20.0,
+        "qualifying_text_ai_density": 30.0,
+    }
+    density_gate = {
+        "safe": True,
+        "unsafe_cluster_count": 0,
+        "unsafe_eligible_word_ratio": 0.0,
+        "thresholds": {
+            "max_unsafe_cluster_count": 4,
+            "max_unsafe_eligible_word_ratio": 35.0,
+        },
+    }
+
+    state = _adaptive_cutoff_blocker_state(scores, density_gate)
+    event = _adaptive_cutoff_stop_event(
+        phase="before_core_rounds",
+        current_scores=scores,
+        density_gate=density_gate,
+    )
+
+    assert state["structural_safe"]
+    assert state["texture_safe"]
+    assert state["safe"]
+    assert event is not None
+    assert event["blocker_state"]["texture_safe"]
+
+
+def test_v5_no_residual_cluster_routes_texture_blocker_to_safe_band_fallback(tmp_path, monkeypatch):
+    text = (
+        "The first paragraph carries a polished explanatory route that needs density repair.\n\n"
+        "The second paragraph stays available as context for the repair."
+    )
+    scores = {
+        "ai": 32.96,
+        "topk": 67.56,
+        "external": 35.995,
+        "rank": 57.817,
+        "risky_window_count": 0,
+        "unsafe_cluster_count": 0,
+        "unsafe_word_ratio": 0.0,
+        "topk_calibrated_risk": 24.955,
+        "qualifying_text_ai_density": 39.53,
+        "ai_authorship": 33.0,
+    }
+    density_gate = {
+        "safe": True,
+        "unsafe_cluster_count": 0,
+        "unsafe_eligible_word_ratio": 0.0,
+        "thresholds": {
+            "max_unsafe_cluster_count": 4,
+            "max_unsafe_eligible_word_ratio": 35.0,
+        },
+    }
+    goal = {
+        "eligible_span_density_gate": density_gate,
+        "ai_footprint_gate": {
+            "safe_band": False,
+            "safe_band_thresholds": {
+                "topk_calibrated_risk": 25.0,
+                "qualifying_text_ai_density": 35.0,
+            },
+        },
+    }
+    safe_band_calls: list[dict[str, object]] = []
+
+    def fake_safe_band_pass(**kwargs):
+        safe_band_calls.append(kwargs)
+        return (
+            kwargs["current_text"],
+            kwargs["current_report"],
+            kwargs["current_goal"],
+            kwargs["current_scores"],
+            [{"phase": "safe_band_evidence_repair", "status": "called"}],
+            kwargs["global_best_candidate"],
+        )
+
+    monkeypatch.setattr(v5_residual_comb, "_scan_report", lambda _text: {"input_text": _text})
+    monkeypatch.setattr(v5_residual_comb, "evaluate_rewrite_goal", lambda **_kwargs: SimpleNamespace(to_dict=lambda: goal))
+    monkeypatch.setattr(v5_residual_comb, "_with_v5_density_gate", lambda _text, _report, current_goal: current_goal)
+    monkeypatch.setattr(v5_residual_comb, "_density_gate_for_report", lambda _text, _report: density_gate)
+    monkeypatch.setattr(v5_residual_comb, "_score_summary", lambda _text, _report, _goal: dict(scores))
+    monkeypatch.setattr(v5_residual_comb, "build_cluster_repair_units", lambda **_kwargs: [])
+    monkeypatch.setattr(v5_residual_comb, "_run_safe_band_evidence_repair_pass", fake_safe_band_pass)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", "1")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_POST_CORE_SAFE_BAND_EVIDENCE_REPAIR_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_SAFE_BAND_EVIDENCE_PACK_ENABLED", "0")
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_V5_BORDERLINE_VERDICT_CLEANUP", "0")
+    monkeypatch.setenv("DRAFTPROOF_FINAL_TOPK_SENTENCE_ROUTE_ENABLED", "0")
+
+    result = run_v5_residual_cluster_comb_experiment(
+        input_text=text,
+        output_dir=tmp_path,
+        max_rounds=1,
+        variant_count=1,
+        retune_variant_count=1,
+        risky_window_cleanup_rounds=0,
+        unsafe_cluster_cleanup_rounds=0,
+        final_risky_window_cleanup_rounds=0,
+        direct_scanner_leapfrog_rounds=0,
+        max_seconds=60,
+        api_key="test-key",
+    )
+
+    assert safe_band_calls
+    assert result["rounds"][0]["reason"] == "no_residual_cluster"
+    assert result["rounds"][0]["fallback_repair"] == "safe_band_evidence_repair"
+    assert result["rounds"][0]["blocker_state"]["texture_safe"] is False
+    assert result["phase_order"]["safe_band_evidence_repair"]["trigger"] == "texture_blocker_without_residual_cluster"
+    assert result["safe_band_evidence_repair_rounds"] == [{"phase": "safe_band_evidence_repair", "status": "called"}]
 
 
 def test_v5_adaptive_runtime_budget_scales_with_length_and_pressure(monkeypatch):

@@ -13,6 +13,8 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
+import threading
 import time
 from typing import Any, Callable, Iterable
 
@@ -437,6 +439,7 @@ def run_v5_residual_cluster_comb_experiment(
     final_topk_sentence_route_rounds: list[dict[str, Any]] = []
     safe_band_evidence_repair_rounds: list[dict[str, Any]] = []
     skipped_core_signatures: set[tuple[Any, ...]] = set()
+    core_no_residual_texture_blocker = False
     if seed_recovery_targeted_repair:
         rounds.append({
             "round": 0,
@@ -630,7 +633,22 @@ def run_v5_residual_cluster_comb_experiment(
             section_signature = candidate_signature
             break
         if section is None:
-            rounds.append({"round": round_index, "status": "stopped", "reason": "no_residual_cluster"})
+            blocker_state = _adaptive_cutoff_blocker_state(
+                current_scores,
+                _density_gate_for_report(current_text, current_report),
+            )
+            core_no_residual_texture_blocker = (
+                blocker_state.get("structural_safe") is True
+                and blocker_state.get("texture_safe") is False
+                and _safe_band_evidence_repair_should_run(current_scores=current_scores, current_goal=current_goal)
+            )
+            rounds.append({
+                "round": round_index,
+                "status": "stopped",
+                "reason": "no_residual_cluster",
+                "blocker_state": blocker_state,
+                "fallback_repair": "safe_band_evidence_repair" if core_no_residual_texture_blocker else None,
+            })
             break
         local_source_goal = _section_local_goal(section=section, current_goal=current_goal)
         route_plan: dict[str, Any] | None = _scanner_derived_route_plan(section=section, local_goal=local_source_goal)
@@ -1151,7 +1169,7 @@ def run_v5_residual_cluster_comb_experiment(
 
     if (
         safe_band_evidence_repair_enabled
-        and post_core_safe_band_evidence_repair_enabled
+        and (post_core_safe_band_evidence_repair_enabled or core_no_residual_texture_blocker)
         and not safe_band_evidence_repair_rounds
         and not paragraph_obligation_hard_stop
         and not _runtime_budget_exhausted(started_at, budget_seconds)
@@ -1159,6 +1177,8 @@ def run_v5_residual_cluster_comb_experiment(
         and _safe_band_evidence_repair_should_run(current_scores=current_scores, current_goal=current_goal)
     ):
         phase_order["safe_band_evidence_repair"]["pre_cleanup_author_proxy_route"] = True
+        if core_no_residual_texture_blocker:
+            phase_order["safe_band_evidence_repair"]["trigger"] = "texture_blocker_without_residual_cluster"
         _emit_progress(progress_callback, 76, "Running V5 author-proxy safe-band compiler")
         (
             current_text,
@@ -1796,6 +1816,9 @@ def _adaptive_cutoff_runtime_budget_seconds(
         _number(state.get("risky_window_over_limit"))
         + _number(state.get("unsafe_cluster_over_limit"))
         + (_number(state.get("unsafe_word_ratio_over_limit")) / 10.0)
+        + (_number(state.get("topk_over_limit")) / 10.0)
+        + (_number(state.get("topk_calibrated_risk_over_limit")) / 5.0)
+        + (_number(state.get("qualifying_text_ai_density_over_limit")) / 5.0)
     )
     base_seconds = _float_env(
         "DRAFTPROOF_REWRITE_V5_CUTOFF_BASE_SECONDS",
@@ -1873,8 +1896,48 @@ def _adaptive_cutoff_blocker_state(
         unsafe_cluster_over <= 0.0
         and unsafe_word_ratio_over <= 0.0
     )
+    topk_limit = _float_env(
+        "DRAFTPROOF_REWRITE_V5_CUTOFF_TOPK_THRESHOLD",
+        72.0,
+        minimum=0.0,
+        maximum=100.0,
+    )
+    topk_calibrated_limit = _float_env(
+        "DRAFTPROOF_REWRITE_V5_CUTOFF_TOPK_CALIBRATED_RISK_THRESHOLD",
+        25.0,
+        minimum=0.0,
+        maximum=100.0,
+    )
+    qualifying_density_limit = _float_env(
+        "DRAFTPROOF_REWRITE_V5_CUTOFF_QUALIFYING_DENSITY_THRESHOLD",
+        35.0,
+        minimum=0.0,
+        maximum=100.0,
+    )
+    topk = _number(scores.get("topk"))
+    topk_calibrated = _number(scores.get("topk_calibrated_risk"))
+    qualifying_density = _number(scores.get("qualifying_text_ai_density"))
+    topk_over = max(0.0, topk - topk_limit) if "topk" in scores else 0.0
+    topk_calibrated_over = (
+        max(0.0, topk_calibrated - topk_calibrated_limit)
+        if "topk_calibrated_risk" in scores
+        else 0.0
+    )
+    qualifying_density_over = (
+        max(0.0, qualifying_density - qualifying_density_limit)
+        if "qualifying_text_ai_density" in scores
+        else 0.0
+    )
+    structural_safe = risky_over <= 0.0 and unsafe_density_safe
+    texture_safe = (
+        topk_over <= 0.0
+        and topk_calibrated_over <= 0.0
+        and qualifying_density_over <= 0.0
+    )
     return {
-        "safe": risky_over <= 0.0 and unsafe_density_safe,
+        "safe": structural_safe and texture_safe,
+        "structural_safe": structural_safe,
+        "texture_safe": texture_safe,
         "risky_window_count": risky_windows,
         "risky_window_limit": risky_limit,
         "risky_window_over_limit": risky_over,
@@ -1886,6 +1949,15 @@ def _adaptive_cutoff_blocker_state(
         "unsafe_word_ratio_over_limit": unsafe_word_ratio_over,
         "unsafe_density_safe": unsafe_density_safe,
         "density_gate_safe": density.get("safe"),
+        "topk": topk if "topk" in scores else None,
+        "topk_limit": topk_limit,
+        "topk_over_limit": topk_over,
+        "topk_calibrated_risk": topk_calibrated if "topk_calibrated_risk" in scores else None,
+        "topk_calibrated_risk_limit": topk_calibrated_limit,
+        "topk_calibrated_risk_over_limit": topk_calibrated_over,
+        "qualifying_text_ai_density": qualifying_density if "qualifying_text_ai_density" in scores else None,
+        "qualifying_text_ai_density_limit": qualifying_density_limit,
+        "qualifying_text_ai_density_over_limit": qualifying_density_over,
     }
 
 
@@ -10711,6 +10783,11 @@ def _run_safe_band_evidence_repair_pass(
             author_proxy_context=author_proxy_context,
         )
         rounds.extend(density_rounds)
+        if (
+            _candidate_strict_safe_band_achieved({"candidate_goal": current_goal, "scores": current_scores})
+            or _safe_band_gap_for_scores(current_scores, current_goal) <= 0
+        ):
+            return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
         sections = _safe_band_evidence_repair_sections(
             current_text,
             current_report,
@@ -10816,6 +10893,11 @@ def _run_safe_band_evidence_repair_pass(
             author_proxy_context=author_proxy_context,
         )
         rounds.extend(density_rounds)
+        if (
+            _candidate_strict_safe_band_achieved({"candidate_goal": current_goal, "scores": current_scores})
+            or _safe_band_gap_for_scores(current_scores, current_goal) <= 0
+        ):
+            return current_text, current_report, current_goal, current_scores, rounds, global_best_candidate
         sections = _safe_band_evidence_repair_sections(
             current_text,
             current_report,
@@ -11402,6 +11484,14 @@ def _run_safe_band_density_section_repair_loop(
                         "deterministic_variant_count": len(deterministic_variants),
                     }
             if llm_diagnostics.get("status") != "skipped":
+                prompt = build_safe_band_density_section_repair_prompt(
+                    section=section,
+                    current_scores=current_scores,
+                    current_goal=current_goal,
+                    variant_count=_safe_band_density_section_repair_variant_count(),
+                    author_proxy_context=author_proxy_context,
+                )
+                (section_dir / "safe_band_density_section_repair_prompt.json.txt").write_text(prompt)
                 variants, generated_diagnostics, prompt, completion = generate_safe_band_density_section_repair_variants(
                     section=section,
                     current_scores=current_scores,
@@ -11409,10 +11499,11 @@ def _run_safe_band_density_section_repair_loop(
                     gateway=gateway,
                     variant_count=_safe_band_density_section_repair_variant_count(),
                     author_proxy_context=author_proxy_context,
+                    prebuilt_prompt=prompt,
                 )
                 llm_diagnostics = {
-                    **(generated_diagnostics if isinstance(generated_diagnostics, dict) else {}),
                     **llm_diagnostics,
+                    **(generated_diagnostics if isinstance(generated_diagnostics, dict) else {}),
                     "llm_variant_count": len(variants),
                 }
                 rows.extend([
@@ -11775,26 +11866,104 @@ def generate_safe_band_density_section_repair_variants(
     gateway: LLMGateway,
     variant_count: int,
     author_proxy_context: dict[str, Any] | None = None,
+    prebuilt_prompt: str | None = None,
 ) -> tuple[list[RecompositionVariant], dict[str, Any], str, str]:
     variants = max(1, min(5, int(variant_count or 1)))
-    prompt = build_safe_band_density_section_repair_prompt(
+    prompt = prebuilt_prompt or build_safe_band_density_section_repair_prompt(
         section=section,
         current_scores=current_scores,
         current_goal=current_goal,
         variant_count=variants,
         author_proxy_context=author_proxy_context,
     )
-    return _generate_loose_variants(
-        prompt=prompt,
-        gateway=gateway,
-        variant_count=variants,
-        max_tokens=_int_env(
-            "DRAFTPROOF_SAFE_BAND_DENSITY_SECTION_REPAIR_MAX_TOKENS",
-            5200,
-            minimum=1600,
-            maximum=10000,
-        ),
+    timeout = _safe_band_density_section_llm_timeout_seconds()
+    retries = _safe_band_density_section_llm_max_retries()
+    original_timeout = getattr(gateway, "timeout", None)
+    original_retries = getattr(gateway, "max_retries", None)
+    started = time.monotonic()
+    if timeout > 0:
+        gateway.timeout = timeout
+    if retries > 0:
+        gateway.max_retries = retries
+    try:
+        return _run_with_optional_wall_timeout(
+            lambda: _generate_loose_variants(
+                prompt=prompt,
+                gateway=gateway,
+                variant_count=variants,
+                max_tokens=_int_env(
+                    "DRAFTPROOF_SAFE_BAND_DENSITY_SECTION_REPAIR_MAX_TOKENS",
+                    5200,
+                    minimum=1600,
+                    maximum=10000,
+                ),
+            ),
+            seconds=_safe_band_density_section_llm_wall_timeout_seconds(),
+            label="safe_band_density_section_llm_generation",
+        )
+    except Exception as exc:
+        return [], {
+            "status": "failed",
+            "reason": "safe_band_density_section_llm_generation_failed",
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500],
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "timeout_seconds": timeout,
+            "wall_timeout_seconds": _safe_band_density_section_llm_wall_timeout_seconds(),
+            "max_retries": retries,
+        }, prompt, ""
+    finally:
+        if original_timeout is not None:
+            gateway.timeout = original_timeout
+        if original_retries is not None:
+            gateway.max_retries = original_retries
+
+
+def _safe_band_density_section_llm_timeout_seconds() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_LLM_TIMEOUT_SECONDS",
+        75,
+        minimum=10,
+        maximum=240,
     )
+
+
+def _safe_band_density_section_llm_wall_timeout_seconds() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_LLM_WALL_TIMEOUT_SECONDS",
+        _safe_band_density_section_llm_timeout_seconds(),
+        minimum=10,
+        maximum=300,
+    )
+
+
+def _safe_band_density_section_llm_max_retries() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_LLM_MAX_RETRIES",
+        1,
+        minimum=1,
+        maximum=3,
+    )
+
+
+def _run_with_optional_wall_timeout(fn: Callable[[], Any], *, seconds: int, label: str) -> Any:
+    if seconds <= 0 or threading.current_thread() is not threading.main_thread():
+        return fn()
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, 0.0)
+
+    def _raise_timeout(_signum: int, _frame: Any) -> None:
+        raise TimeoutError(f"{label} exceeded {seconds}s wall timeout")
+
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, float(seconds))
+    try:
+        return fn()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0:
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
 
 
 def build_safe_band_density_section_repair_prompt(
@@ -14851,9 +15020,22 @@ def _has_safe_band_evidence_repair_movement(
         return True
     current_gap = _safe_band_gap_for_scores(current_scores)
     candidate_gap = _candidate_safe_band_gap(row)
-    if current_gap - candidate_gap >= _safe_band_evidence_repair_min_gap_delta():
+    gap_delta = current_gap - candidate_gap
+    if (
+        _safe_band_density_only_gap_active(current_scores)
+        and candidate_gap > 0
+        and gap_delta < _safe_band_density_checkpoint_min_density_delta()
+    ):
+        return False
+    if gap_delta >= _safe_band_evidence_repair_min_gap_delta():
         return True
     return False
+
+
+def _safe_band_density_only_gap_active(current_scores: dict[str, Any]) -> bool:
+    topk_gap = max(0.0, _number(current_scores.get("topk_calibrated_risk")) - 25.0)
+    density_gap = max(0.0, _number(current_scores.get("qualifying_text_ai_density")) - 35.0)
+    return density_gap > 0 and topk_gap <= _safe_band_density_section_repair_max_topk_gap()
 
 
 def _has_density_safe_band_checkpoint_movement(
@@ -14996,6 +15178,7 @@ def _safe_band_density_section_repair_materiality(
     ratio = candidate_words / source_words
     repetition = _safe_band_density_repetition_audit(source_text, candidate_text)
     voice = _safe_band_density_voice_audit(source_text, candidate_text)
+    source_coverage = _safe_band_density_section_source_coverage_audit(candidate_text, source_text)
     min_ratio = _safe_band_density_section_repair_min_word_ratio_for_text(source_text)
     max_ratio = _safe_band_density_section_repair_max_word_ratio()
     length_ok = min_ratio <= ratio <= max_ratio
@@ -15003,14 +15186,18 @@ def _safe_band_density_section_repair_materiality(
     duplicate_cleanup = _safe_band_density_duplicate_cleanup_materiality(source_text, candidate_text)
     duplicate_cleanup_ok = bool(duplicate_cleanup.get("passed")) and repetition.get("passed") is True and voice.get("passed") is True
     passed = (
-        bool(base.get("passed")) and density_change_ok and length_ok and repetition.get("passed") is True and voice.get("passed") is True
+        bool(base.get("passed"))
+        and density_change_ok
+        and source_coverage.get("passed") is True
+        and repetition.get("passed") is True
+        and voice.get("passed") is True
     ) or duplicate_cleanup_ok
     if not density_change_ok:
         reason = "density_section_repair_too_few_changed_sentences"
     elif not base.get("passed"):
         reason = str(base.get("reason") or "near_copy_or_target_route_unchanged")
-    elif not length_ok:
-        reason = "density_section_repair_length_out_of_bounds"
+    elif source_coverage.get("passed") is not True:
+        reason = str(source_coverage.get("reason") or "density_section_source_coverage_missing")
     elif repetition.get("passed") is not True:
         reason = "density_section_repair_repetition_regression"
     elif voice.get("passed") is not True:
@@ -15032,10 +15219,55 @@ def _safe_band_density_section_repair_materiality(
         "density_min_changed_sentence_ratio": _safe_band_density_section_repair_min_changed_sentence_ratio(),
         "minimum_word_ratio": min_ratio,
         "maximum_word_ratio": max_ratio,
+        "length_within_diagnostic_bounds": length_ok,
+        "source_coverage_audit": source_coverage,
         "repetition_audit": repetition,
         "voice_audit": voice,
         "duplicate_cleanup_audit": duplicate_cleanup,
     }
+
+
+def _safe_band_density_section_source_coverage_audit(candidate_text: str, source_text: str) -> dict[str, Any]:
+    source_terms = _target_unit_materiality_terms(source_text)
+    candidate_terms = _target_unit_materiality_terms(candidate_text)
+    if len(source_terms) < _target_unit_coverage_min_source_terms():
+        return {
+            "passed": True,
+            "reason": "too_few_content_terms_for_density_section_coverage_check",
+            "source_content_term_count": len(source_terms),
+        }
+    shared = source_terms & candidate_terms
+    min_shared = min(
+        len(source_terms),
+        max(
+            _target_unit_coverage_min_shared_terms(),
+            int(len(source_terms) * _safe_band_density_section_source_coverage_min_ratio() + 0.999),
+        ),
+    )
+    coverage_ratio = _bounded_ratio(len(shared), len(source_terms))
+    passed = len(shared) >= min_shared
+    return {
+        "passed": passed,
+        "reason": (
+            "density_section_source_coverage_preserved"
+            if passed
+            else "density_section_source_coverage_missing"
+        ),
+        "source_coverage_ratio": round(coverage_ratio, 3),
+        "shared_content_term_count": len(shared),
+        "required_shared_content_term_count": min_shared,
+        "source_content_term_count": len(source_terms),
+        "minimum_source_coverage_ratio": _safe_band_density_section_source_coverage_min_ratio(),
+    }
+
+
+def _safe_band_density_section_source_coverage_min_ratio() -> float:
+    return _float_env(
+        "DRAFTPROOF_REWRITE_V5_SAFE_BAND_DENSITY_SECTION_SOURCE_COVERAGE_MIN_RATIO",
+        0.35,
+        minimum=0.1,
+        maximum=1.0,
+    )
 
 
 def _attach_safe_band_quality_materiality(row: dict[str, Any], *, current_text: str) -> None:
