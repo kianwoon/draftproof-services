@@ -1096,8 +1096,20 @@ export default function Report() {
   const sealReferenceScore = hasRewriteSignalComparison
     ? rewrittenCalibratedAuthorshipRisk
     : calibratedAuthorshipRisk;
-  const sealAiSignalStamp = getAiSignalStamp(sealReferenceScore, t);
-  const sealRatingBadge = hasRewriteSignalComparison ? rewrittenColumnRatingBadge : originalColumnRatingBadge;
+  const sealDisplayReferenceScore = hasRewriteSignalComparison
+    ? calibratedReportAiScore(transformationRewrittenScore)
+    : sealReferenceScore;
+  const sealAiSignalStamp = getAiSignalStamp(sealDisplayReferenceScore ?? sealReferenceScore, t);
+  const rewriteBelowReferenceBand = hasRewriteSignalComparison && sealDisplayReferenceScore != null && sealDisplayReferenceScore < 20;
+  const displayedRewrittenColumnRatingBadge = rewriteBelowReferenceBand
+    ? {
+      ...rewrittenColumnRatingBadge,
+      label: sealAiSignalStamp.label,
+      fullLabel: sealAiSignalStamp.label,
+      tone: sealAiSignalStamp.tone,
+    }
+    : rewrittenColumnRatingBadge;
+  const sealRatingBadge = hasRewriteSignalComparison ? displayedRewrittenColumnRatingBadge : originalColumnRatingBadge;
   const sealTone = sealRatingBadge.tone || sealAiSignalStamp.tone;
   const sealRatingCaption = sealRatingBadge.caption || (hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal'));
   const sealRatingLabel = sealRatingBadge.label || sealAiSignalStamp.label;
@@ -1107,7 +1119,7 @@ export default function Report() {
     ? t('rewritePage.externalReviewTitle')
     : formatAuthorshipSealDetailWithReference(
       hasRewriteSignalComparison ? rewrittenAuthorshipSealDetail : authorshipSealDetail,
-      sealReferenceScore,
+      sealDisplayReferenceScore ?? sealReferenceScore,
       t
     );
   const canStartRewrite = hasAIFindings && !hasRewriteResult;
@@ -1429,7 +1441,7 @@ export default function Report() {
         {hasRewriteSignalComparison ? (
           <div className="transformation-comparison-grid">
             {renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore, originalColumnRatingBadge)}
-            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, transformationRewrittenScore, rewrittenColumnRatingBadge)}
+            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, transformationRewrittenScore, displayedRewrittenColumnRatingBadge)}
           </div>
         ) : (
           renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore)
