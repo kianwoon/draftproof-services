@@ -30,6 +30,7 @@ import {
   clampPercent,
   buildTransformationSignals,
   buildPairedTransformationSignals,
+  normalizeRewriteComparisonSignals,
   groupTransformationSignals,
   getTransformationSignalImprovement,
   transformationSignalFeatureMap,
@@ -1485,9 +1486,11 @@ export default function Report() {
   ) : null;
 
   const scoreProfilePairs = transformationSignals.length > 0
-    ? buildPairedTransformationSignals(
-      transformationSignals,
-      hasRewriteSignalComparison ? rewrittenTransformationSignals : []
+    ? normalizeRewriteComparisonSignals(
+      buildPairedTransformationSignals(
+        transformationSignals,
+        hasRewriteSignalComparison ? rewrittenTransformationSignals : []
+      )
     )
     : [];
   const scoreProfileGroups = groupTransformationSignals(scoreProfilePairs).map((group) => translatedGroup(group, t));

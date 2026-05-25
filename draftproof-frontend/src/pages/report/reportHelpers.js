@@ -399,6 +399,21 @@ function buildPairedTransformationSignals(originalSignals = [], rewrittenSignals
   });
 }
 
+function normalizeRewriteComparisonSignals(signalPairs = []) {
+  return (Array.isArray(signalPairs) ? signalPairs : []).map((pair) => {
+    if (pair?.rewritten || !pair?.original) return pair;
+    if (TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION[pair.key] !== 'lower') return pair;
+    return {
+      ...pair,
+      rewritten: {
+        ...pair.original,
+        value: 0,
+        resolved_in_rewrite: true,
+      },
+    };
+  });
+}
+
 function groupTransformationSignals(signals = []) {
   const groups = TRANSFORMATION_SIGNAL_GROUPS.map((group) => ({
     ...group,
@@ -1339,6 +1354,7 @@ export {
   transformationSignalFeatureMap,
   sortTransformationSignalsForComparison,
   buildPairedTransformationSignals,
+  normalizeRewriteComparisonSignals,
   groupTransformationSignals,
   getTransformationSignalImprovement,
   buildTransformationSummary,
