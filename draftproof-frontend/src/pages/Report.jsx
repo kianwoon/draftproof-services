@@ -30,7 +30,6 @@ import {
   clampPercent,
   buildTransformationSignals,
   buildPairedTransformationSignals,
-  normalizeRewriteComparisonSignals,
   groupTransformationSignals,
   getTransformationSignalImprovement,
   transformationSignalFeatureMap,
@@ -1486,17 +1485,15 @@ export default function Report() {
   ) : null;
 
   const scoreProfilePairs = transformationSignals.length > 0
-    ? normalizeRewriteComparisonSignals(
-      buildPairedTransformationSignals(
-        transformationSignals,
-        hasRewriteSignalComparison ? rewrittenTransformationSignals : []
-      )
+    ? buildPairedTransformationSignals(
+      transformationSignals,
+      hasRewriteSignalComparison ? rewrittenTransformationSignals : []
     )
     : [];
   const scoreProfileGroups = groupTransformationSignals(scoreProfilePairs).map((group) => translatedGroup(group, t));
   const scoreProfileSummaryGroups = scoreProfileGroups.slice(0, 3).map((group) => {
     const signalEntries = group.signals.map((pair) => {
-      const current = hasRewriteSignalComparison ? pair.rewritten : pair.original;
+      const current = hasRewriteSignalComparison ? (pair.rewritten || pair.original) : pair.original;
       const baseline = hasRewriteSignalComparison ? pair.original : null;
       return {
         pair,
@@ -1618,7 +1615,7 @@ export default function Report() {
               {activeGroup.signals.map((pair) => {
                 const originalSignal = pair.original ? translatedSignal(pair.original, t) : null;
                 const rewrittenSignal = pair.rewritten ? translatedSignal(pair.rewritten, t) : null;
-                const currentSignal = hasRewriteSignalComparison ? rewrittenSignal : originalSignal;
+                const currentSignal = hasRewriteSignalComparison ? (rewrittenSignal || originalSignal) : originalSignal;
                 const improvement = getTransformationSignalImprovement(pair.rewritten, pair.original);
                 const signalColor = currentSignal?.color || originalSignal?.color || pair.color || '#0f766e';
                 return (
