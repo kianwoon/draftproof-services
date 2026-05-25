@@ -4,7 +4,6 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
-from .compiler import compile_plain_text
 from .json_io import parse_json
 from .plan import Plan
 from .scan import scan_text
@@ -29,18 +28,18 @@ class Variant:
 
 
 def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> list[Variant]:
-    compiled = compile_plain_variant(paragraph, plan)
-    variants = [compiled]
-    if not _needs_live_writer(compiled, plan):
+    variants = [source_preserved_variant(paragraph)]
+    try:
+        response = client.chat(
+            build_prompt(paragraph, plan),
+            system="Return valid JSON only. Preserve submitted facts as written; mark inferred bridge material for author review.",
+            temperature=0.12,
+            top_p=0.75,
+            max_tokens=900,
+            response_format={"type": "json_object"},
+        )
+    except Exception:
         return variants
-    response = client.chat(
-        build_prompt(paragraph, plan),
-        system="Return valid JSON only. Preserve submitted facts as written; mark inferred bridge material for author review.",
-        temperature=0.12,
-        top_p=0.75,
-        max_tokens=900,
-        response_format={"type": "json_object"},
-    )
     try:
         variants.extend(parse_variants(parse_json(getattr(response, "raw_content", "") or response.content)))
     except ValueError:
@@ -130,15 +129,8 @@ def build_prompt(paragraph: Paragraph, plan: Plan) -> str:
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def compile_plain_variant(paragraph: Paragraph, plan: Plan) -> Variant:
-    return Variant(id="compiled_plain", text=compile_plain_text(paragraph, plan), source="compiler")
-
-
-def _needs_live_writer(compiled: Variant, plan: Plan) -> bool:
-    if scan_text(compiled.text).findings:
-        return True
-    live_methods = {"author_proxy_bridge", "context_anchor_bridge", "semantic_bridge_repair"}
-    return any(action.method in live_methods for action in plan.actions)
+def source_preserved_variant(paragraph: Paragraph) -> Variant:
+    return Variant(id="source_preserved", text=paragraph.text, source="source_preserved")
 
 
 def parse_variants(payload: Any) -> list[Variant]:
