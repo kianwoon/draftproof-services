@@ -334,6 +334,65 @@ def test_bounded_rewrite_json_preserves_paragraph_hard_stop():
     assert summary["candidate_generation_status"]["reason"] == "unresolved_paragraph_findings"
 
 
+def test_bounded_rewrite_json_preserves_rewritten_score_profile_signals():
+    core_signals = [
+        {"key": "patchwork_variance", "name": "Patchwork variance", "value": 85},
+        {"key": "topk_pattern_raw", "name": "Raw Top-k Predictability", "value": 71},
+        {"key": "semantic_uniformity", "name": "Semantic uniformity", "value": 48},
+        {"key": "expansion_pattern", "name": "Expansion pattern", "value": 46},
+        {"key": "ai_likelihood", "name": "AI likelihood", "value": 43},
+        {"key": "discourse_regularity", "name": "Discourse regularity", "value": 42},
+        {"key": "rewrite_smoothness", "name": "Rewrite smoothness", "value": 37},
+        {"key": "topk_calibrated_risk", "name": "Calibrated Top-k Risk", "value": 28},
+        {"key": "human_anchor", "name": "Human anchor", "value": 36},
+        {"key": "grounding_risk", "name": "Grounding risk", "value": 80},
+    ]
+    payload = {
+        "status": "rewritten",
+        "elapsed": 1.0,
+        "original_text": "source",
+        "final_text": "rewritten",
+        "summary": {
+            "outcome": "ai_mitigated",
+            "detect_scan_rewritten": {
+                "ai_score": 43,
+                "writing_score": 72,
+                "ai_risk_badge": {
+                    "ai_likelihood_score": 43,
+                    "writing_quality_score": 72,
+                    "authorship_rating": "ai_mitigated",
+                    "transformation_classification": {"pattern": "rewritten"},
+                    "ai_components": {
+                        "topk_pattern_raw": 71,
+                        "topk_calibrated_risk": 28,
+                        "ai_likelihood": 43,
+                    },
+                },
+                "scan_intelligence": {
+                    "transformation": {
+                        "classification": {"pattern": "rewritten"},
+                        "contribution": {"human": 83, "ai": 17},
+                        "core_signals": core_signals,
+                    },
+                    "document": {"word_count": 500, "sentence_count": 30},
+                },
+                "findings": {"low": [{"finding_id": "f1", "title": "Low signal", "text": "x" * 5000}]},
+            },
+            "candidate_loop_trace": [{"candidate_report": {"blob": "x" * 2000}} for _ in range(300)],
+        },
+        "sentence_comparison": [{"original": "a" * 2000, "rewritten": "b" * 2000} for _ in range(300)],
+    }
+
+    bounded = _bounded_rewrite_json_payload(payload, max_bytes=12000)
+    rewritten_scan = bounded["summary"]["detect_scan_rewritten"]
+    rewritten_signals = rewritten_scan["scan_intelligence"]["transformation"]["core_signals"]
+
+    assert bounded["rewrite_json_truncated"] is True
+    assert [signal["key"] for signal in rewritten_signals] == [signal["key"] for signal in core_signals]
+    assert rewritten_scan["ai_risk_badge"]["ai_components"]["topk_pattern_raw"] == 71
+    assert rewritten_scan["scan_intelligence"]["transformation"]["contribution"]["human"] == 83
+
+
 def test_bounded_debug_log_preserves_author_proxy_kpi_status():
     debug_text = _bounded_json_debug_log(
         {

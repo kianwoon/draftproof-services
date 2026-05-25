@@ -84,11 +84,13 @@ def _ai_signal_stamp(score) -> dict:
         return {"label": "AI Review", "color": "#334155", "bg": "#f8fafc"}
     value = float(score)
     if value >= 60:
-        return {"label": "High AI Signal", "color": "#b91c1c", "bg": "#fef2f2"}
-    if value >= 40:
-        return {"label": "Likely AI", "color": "#c2410c", "bg": "#fff7ed"}
+        return {"label": "Strong AI Signal", "color": "#b91c1c", "bg": "#fef2f2"}
+    if value >= 45:
+        return {"label": "Likely AI-Assisted", "color": "#c2410c", "bg": "#fff7ed"}
+    if value >= 32:
+        return {"label": "Possible AI-Assisted", "color": "#b45309", "bg": "#fff7ed"}
     if value >= _TURNITIN_AI_REFERENCE_THRESHOLD:
-        return {"label": "AI Review", "color": "#b45309", "bg": "#fff7ed"}
+        return {"label": "Unlikely AI-Assisted", "color": "#0f766e", "bg": "#f0fdfa"}
     return {"label": "Low AI Signal", "color": "#15803d", "bg": "#f0fdf4"}
 
 
@@ -242,6 +244,11 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
     )
     if not author_review_required and not external_review_required:
         risk_text = _with_ai_reference(risk_text, risk)
+    scan_heading = (
+        _authorship_label(rewritten_scan)
+        if author_review_required or external_review_required
+        else stamp["label"]
+    ) or result_label
     scan_score = f"{ai_score}%" if ai_score is not None else "-"
     human = contribution.get("human")
     ai = contribution.get("ai")
@@ -276,7 +283,7 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
   </div>
   <div class="dp-rewrite-scan-summary">
     <span>Rewritten Scan</span>
-    <h3>{html.escape(_authorship_label(rewritten_scan) or result_label)}</h3>
+    <h3>{html.escape(scan_heading)}</h3>
     <b>{html.escape(scan_score)}</b>
     <p>{html.escape(str(summary_text))}</p>
     <p class="dp-ai-reference-note">{html.escape(_TURNITIN_AI_REFERENCE_NOTE)}</p>

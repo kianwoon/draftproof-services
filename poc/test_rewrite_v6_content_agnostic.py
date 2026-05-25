@@ -338,13 +338,29 @@ def test_v6_json_result_is_serializable():
     json.dumps(result.to_dict())
 
 
+def test_v6_document_rewrite_reports_paragraph_progress():
+    events = []
+
+    run_v6_rewrite_all(
+        "A process uses a form, a queue, and a review.",
+        writer_client=FakeClient(),
+        progress_callback=lambda percent, message: events.append((percent, message)),
+    )
+
+    assert any(percent > 62 for percent, _message in events)
+    assert any("Planning V6 paragraph" in message for _percent, message in events)
+    assert any("Writing V6 paragraph" in message for _percent, message in events)
+
+
 def test_v6_production_adapter_returns_worker_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(v6_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
     monkeypatch.setattr(v6_production, "_scan_report", fake_full_scan_report)
+    events = []
     result = v6_production.run_rewrite_pipeline_v6(
         detect_json={"input_text": "The review moved from intake to approval."},
         output_dir=str(tmp_path),
         model="qwen/qwen3-30b-a3b-instruct-2507",
+        progress_callback=lambda percent, message: events.append((percent, message)),
     )
     summary = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
     assert result["status"] in {"ai_mitigated", "partial_candidate_not_strict_safe", "original_preserved"}
@@ -362,6 +378,7 @@ def test_v6_production_adapter_returns_worker_contract(tmp_path, monkeypatch):
     assert summary["detect_scores"]["human_shift_score"] == 0
     assert summary["original_risk"] == 2
     assert summary["final_risk"] == 2
+    assert any(percent > 62 for percent, _message in events)
     rewritten_scan = summary["detect_scan_rewritten"]
     rewritten_badge = rewritten_scan["ai_risk_badge"]
     rewritten_intelligence = rewritten_scan["scan_intelligence"]["transformation"]
@@ -401,6 +418,45 @@ def test_v6_rewrite_pdf_metrics_use_detect_scores_when_scan_badges_are_compact()
     assert "| **AI Transformation** | `44%` | `17%` | `-27%` |" in report
     assert "| **Grounding Quality Risk** | `90.00%` | `25.00%` | `-65.00%` |" in report
     assert "15% calibrated risk · below 20% reference" in report
+
+
+def test_v6_rewrite_pdf_stamp_uses_calibrated_authorship_band():
+    summary = {
+        "outcome": "partial_candidate_not_strict_safe",
+        "status": "partial_candidate_not_strict_safe",
+        "detect_scores": {
+            "original_ai_authorship": 70,
+            "rewritten_ai_authorship": 43,
+            "rewritten_human_contribution": 72,
+            "rewritten_ai_transformation": 28,
+        },
+        "detect_scan_original": {
+            "findings": {"critical": [], "high": [], "medium": [], "low": []},
+            "ai_risk_badge": {"ai_likelihood_score": 70, "writing_quality_score": 60},
+        },
+        "detect_scan_rewritten": {
+            "findings": {"critical": [], "high": [], "medium": [], "low": []},
+            "ai_risk_badge": {
+                "ai_likelihood_score": 43,
+                "writing_quality_score": 72,
+                "authorship_rating": {"label": "AI-Generated / AI-Paraphrased Signals", "short_label": "AI Signals"},
+            },
+            "scan_intelligence": {
+                "transformation": {
+                    "contribution": {
+                        "human_contribution_ratio": 72,
+                        "ai_transformation_ratio": 28,
+                    }
+                }
+            },
+        },
+    }
+
+    report = render_rewrite_report(summary, [], [], original_text="Original.", final_text="Rewritten.")
+
+    assert "UNLIKELY AI-ASSISTED" in report
+    assert "<h3>Unlikely AI-Assisted</h3>" in report
+    assert "22% calibrated risk · review threshold exceeded" in report
 
 
 def fake_full_scan_report(text: str) -> dict:

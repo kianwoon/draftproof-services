@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Callable
 
 from poc.llm.gateway import LLMConfig, LLMGateway
 
@@ -54,9 +54,12 @@ def run_v6_rewrite(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
+    progress_callback: Callable[[int, str], None] | None = None,
+    progress_percent: int | None = None,
 ) -> Result:
     scan = scan_text(text)
     paragraph, plan = build_plan(scan, excluded_paragraph_ids)
+    _emit_progress(progress_callback, progress_percent, f"Planning V6 paragraph {paragraph.id}")
     if planner_client is not None or writer_client is None:
         plan = run_planner_llm(
             paragraph,
@@ -64,6 +67,7 @@ def run_v6_rewrite(
             findings_for_paragraph(scan, paragraph.id),
             client=planner_client or _planner_gateway(api_key=api_key, base_url=base_url),
         )
+    _emit_progress(progress_callback, progress_percent, f"Writing V6 paragraph {paragraph.id}")
     client = writer_client or LLMGateway(
         LLMConfig(
             model=model or _writer_model(),
@@ -76,6 +80,7 @@ def run_v6_rewrite(
         )
     )
     variants = write_variants(paragraph, plan, client=client)
+    _emit_progress(progress_callback, progress_percent, f"Scanning V6 paragraph {paragraph.id} candidate")
     selected = choose_variant(variants, paragraph)
     return Result(scan=scan, plan=plan, variants=variants, selected=selected, rewritten_text=_compose(scan, paragraph.id, selected))
 
@@ -89,6 +94,7 @@ def run_v6_rewrite_all(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
+    progress_callback: Callable[[int, str], None] | None = None,
 ) -> DocumentResult:
     initial_scan = scan_text(text)
     current = text
@@ -96,12 +102,18 @@ def run_v6_rewrite_all(
     limit = max_passes if max_passes is not None else max(1, len(initial_scan.paragraphs) * 3)
     attempts: dict[str, int] = {}
     exhausted: set[str] = set()
-    for _ in range(limit):
+    for pass_index in range(limit):
         before = scan_text(current)
         if not before.findings:
             break
         if len(exhausted) >= len(before.paragraphs):
             break
+        start_percent = _rewrite_progress_percent(pass_index, limit)
+        _emit_progress(
+            progress_callback,
+            start_percent,
+            f"V6 rewrite pass {pass_index + 1}: {len(before.findings)} finding(s) remaining",
+        )
         result = run_v6_rewrite(
             current,
             planner_client=planner_client,
@@ -110,20 +122,26 @@ def run_v6_rewrite_all(
             model=model,
             api_key=api_key,
             base_url=base_url,
+            progress_callback=progress_callback,
+            progress_percent=start_percent,
         )
+        end_percent = _rewrite_progress_percent(pass_index + 1, limit)
         if result.rewritten_text == current:
             exhausted.add(result.plan.paragraph_id)
+            _emit_progress(progress_callback, end_percent, f"V6 paragraph {result.plan.paragraph_id} made no change")
             continue
         after = scan_text(result.rewritten_text)
         if not _improved(before, after):
             attempts[result.plan.paragraph_id] = attempts.get(result.plan.paragraph_id, 0) + 1
             if attempts[result.plan.paragraph_id] >= 2:
                 exhausted.add(result.plan.paragraph_id)
+            _emit_progress(progress_callback, end_percent, f"V6 paragraph {result.plan.paragraph_id} did not improve")
             continue
         attempts[result.plan.paragraph_id] = 0
         exhausted.discard(result.plan.paragraph_id)
         passes.append(result)
         current = result.rewritten_text
+        _emit_progress(progress_callback, end_percent, f"Accepted V6 paragraph {result.plan.paragraph_id}")
     return DocumentResult(initial_scan=initial_scan, final_scan=scan_text(current), passes=passes, rewritten_text=current)
 
 
@@ -139,6 +157,19 @@ def _improved(before: Scan, after: Scan) -> bool:
         after.scores["finding_count"] < before.scores["finding_count"]
         or after.scores["mean_sentence_shape_risk"] < before.scores["mean_sentence_shape_risk"]
     )
+
+
+def _rewrite_progress_percent(step: int, limit: int) -> int:
+    span_start = 63
+    span_end = 87
+    bounded_limit = max(1, int(limit or 1))
+    bounded_step = max(0, min(bounded_limit, int(step or 0)))
+    return span_start + int(round((span_end - span_start) * (bounded_step / bounded_limit)))
+
+
+def _emit_progress(callback: Callable[[int, str], None] | None, percent: int | None, message: str) -> None:
+    if callback is not None and percent is not None:
+        callback(percent, message)
 
 
 def _writer_model() -> str:

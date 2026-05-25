@@ -123,6 +123,25 @@ def test_build_scan_completion_email_formats_page_aligned_outcome_and_ai_score()
     assert "Findings: 37" in payload["text"]
 
 
+def test_build_scan_completion_email_uses_calibrated_authorship_band():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="181952b4-73bd-4a66-bb4f-c89d0e8d2aa9",
+        tier="amber",
+        ai_score=42,
+        ai_signal_score=21,
+        writing_score=59.33,
+        finding_count=28,
+        pdf_bytes=b"%PDF-1.7 scan",
+        settings=_settings(),
+    )
+
+    assert "Report outcome: Unlikely AI-Assisted" in payload["text"]
+    assert "AI likelihood score: 21%" in payload["text"]
+    assert "Writing score: 59.33%" in payload["text"]
+    assert "Findings: 28" in payload["text"]
+
+
 def test_send_rewrite_completion_email_skips_when_disabled(monkeypatch):
     sent = []
     monkeypatch.setattr("app.email_service.send_email", lambda payload, *, settings: sent.append(payload))

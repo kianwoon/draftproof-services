@@ -51,6 +51,7 @@ def run_rewrite_pipeline_v6(
         model=model,
         api_key=api_key,
         base_url=base_url,
+        progress_callback=progress,
     )
     final_text = document.rewritten_text
     changed = final_text.strip() != original_text.strip()

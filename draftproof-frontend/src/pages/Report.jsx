@@ -865,7 +865,8 @@ export default function Report() {
   const calibratedAuthorshipRisk = clampPercent(authorshipFeatures.calibrated_ai_risk);
   const topkPatternScore = clampPercent(originalComparisonBadge.ai_components?.topk_pattern_raw ?? originalComparisonBadge.ai_components?.topk_pattern);
   const topkCalibratedRisk = clampPercent(originalComparisonBadge.ai_components?.topk_calibrated_risk);
-  const rewrittenCalibratedAuthorshipRisk = clampPercent(rewrittenAuthorshipFeatures.calibrated_ai_risk);
+  const rewrittenCalibratedAuthorshipRisk = clampPercent(rewrittenAuthorshipFeatures.calibrated_ai_risk)
+    ?? calibratedReportAiScore(rewrittenAiScore);
   const rewrittenTopkPatternScore = clampPercent(rewrittenBadge.ai_components?.topk_pattern_raw ?? rewrittenBadge.ai_components?.topk_pattern);
   const rewrittenTopkCalibratedRisk = clampPercent(rewrittenBadge.ai_components?.topk_calibrated_risk);
   const rewrittenDocumentContext = getScanDocumentContext(rewrittenScan);

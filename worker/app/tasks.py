@@ -36,6 +36,7 @@ from .db import (
     release_rewrite_credits,
 )
 from .email_service import send_rewrite_completion_email, send_scan_completion_email
+from .rewrite_scan_compaction import compact_rewrite_scan_summary
 from celery.signals import worker_process_init
 from celery.exceptions import SoftTimeLimitExceeded
 
@@ -615,6 +616,8 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
             continue
         if key == "candidate_ledger":
             compact_summary[key] = _compact_rewrite_candidate_ledger(summary.get(key))
+        elif key in {"detect_scan_original_saved", "detect_scan_original", "detect_scan_rewritten"}:
+            compact_summary[key] = compact_rewrite_scan_summary(summary.get(key))
         else:
             compact_summary[key] = _compact_debug_value(summary.get(key))
     compact_payload = {

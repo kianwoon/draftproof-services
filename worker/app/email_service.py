@@ -19,9 +19,10 @@ SCAN_REPORT_OUTCOME_LABELS = {
     "red": "Critical Risk",
 }
 AI_SIGNAL_STAMP_LEVELS = [
-    (60, "High AI Signal"),
-    (40, "Likely AI"),
-    (20, "AI Review"),
+    (60, "Strong AI Signal"),
+    (45, "Likely AI-Assisted"),
+    (32, "Possible AI-Assisted"),
+    (20, "Unlikely AI-Assisted"),
     (0, "Low AI Signal"),
 ]
 
