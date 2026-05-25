@@ -29,20 +29,7 @@ def run_planner_llm(paragraph: Paragraph, plan: Plan, findings: list[Finding], *
         )
         raw = getattr(response, "raw_content", "") or response.content
         decision = _planner_decision(parse_json(raw))
-        reasons = _planner_contract_gaps(decision, findings)
-        if reasons:
-            retry = client.chat(
-                prompt + "\n\nPlanner retry required:\n" + json.dumps({"contract_gaps": reasons}, ensure_ascii=False, indent=2),
-                system="Return valid JSON only with a corrected planner_decision object. Do not write replacement prose.",
-                temperature=0.05,
-                top_p=0.7,
-                max_tokens=None,
-                response_format={"type": "json_object"},
-            )
-            retry_raw = getattr(retry, "raw_content", "") or retry.content
-            retry_decision = _planner_decision(parse_json(retry_raw))
-            if not _planner_contract_gaps(retry_decision, findings):
-                decision = retry_decision
+        decision["contract_gaps"] = _planner_contract_gaps(decision, findings)
     except Exception as exc:
         return _with_planner_status(plan, {"status": "fallback", "reason": type(exc).__name__})
     return _merge_decision(plan, decision)
@@ -72,8 +59,8 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
         ],
         "deterministic_route_skeleton": {
             "paragraph_strategy": plan.paragraph_strategy,
-            "coverage_beats": plan.ai_safe_route.get("coverage_beats", []),
-            "construction_recipes": plan.ai_safe_route.get("construction_recipes", []),
+            "coverage_beats": _compact_rows(plan.ai_safe_route.get("coverage_beats", []), limit=16),
+            "construction_recipes": _compact_rows(plan.ai_safe_route.get("construction_recipes", []), limit=16),
             "golden_route": plan.ai_safe_route.get("golden_route", {}),
         },
         "required_decision": {
@@ -152,6 +139,7 @@ def _merge_decision(plan: Plan, decision: dict[str, Any]) -> Plan:
         "finding_recipe_overrides": _recipe_rows(decision.get("finding_recipe_overrides")),
         "author_proxy_plan": decision.get("author_proxy_plan", ""),
         "do_not_copy_route": _string_rows(decision.get("do_not_copy_route")),
+        "contract_gaps": _string_rows(decision.get("contract_gaps")),
     }
     return replace(plan, ai_safe_route=route)
 
@@ -172,6 +160,31 @@ def _string_rows(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(row) for row in value if str(row).strip()]
+
+
+def _compact_rows(value: Any, *, limit: int) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value[:limit]:
+        if not isinstance(item, dict):
+            continue
+        rows.append({
+            key: item.get(key)
+            for key in (
+                "id",
+                "beat_id",
+                "recipe_id",
+                "source_sentence_id",
+                "finding_tags",
+                "coverage_terms",
+                "starter_terms",
+                "build_route",
+                "positive_pattern",
+            )
+            if key in item
+        })
+    return rows
 
 
 def _planner_contract_gaps(decision: dict[str, Any], findings: list[Finding]) -> list[str]:

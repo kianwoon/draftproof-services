@@ -151,6 +151,8 @@ def test_v6_pipeline_calls_planner_before_writer_when_supplied():
     assert "Use source relation before claim" in writer_prompt
     assert "p001_s001:predictable_start" in writer_prompt
     assert "Treat planner_decision.finding_contracts as the primary build contract" in writer_prompt
+    assert "planner_decision.contract_gaps" in writer_prompt
+    assert "quoted phrase must not appear" in writer_prompt
     assert "If safe_rebuild_shape contains placeholder brackets" in writer_prompt
     assert "Do not copy planning labels" in writer_prompt
     assert "scoped partial-relation sentence" in writer_prompt
@@ -158,8 +160,8 @@ def test_v6_pipeline_calls_planner_before_writer_when_supplied():
     assert result.plan.ai_safe_route["llm_planner_decision"]["status"] == "ok"
 
 
-def test_v6_planner_retries_when_contract_copies_risky_source_route():
-    bad = json.dumps({
+def test_v6_planner_records_contract_gap_when_contract_copies_risky_source_route():
+    payload = json.dumps({
         "planner_decision": {
             "paragraph_route": "bad",
             "finding_contracts": [
@@ -177,33 +179,15 @@ def test_v6_planner_retries_when_contract_copies_risky_source_route():
             "paragraph_blueprint": [],
         }
     })
-    good = json.dumps({
-        "planner_decision": {
-            "paragraph_route": "good",
-            "finding_contracts": [
-                {
-                    "finding_id": "p001_s001:broad_claim",
-                    "source_sentence_id": "p001_s001",
-                    "finding_tags": ["broad_claim"],
-                    "unsafe_original_shape": "This model no longer fully reflects how people learn.",
-                    "safe_rebuild_shape": "The model explains only part of how people learn.",
-                    "writer_must_do": ["scope relation"],
-                    "writer_must_not_do": ["copy broad predicate"],
-                    "coverage_terms": ["model", "people learn"],
-                }
-            ],
-            "paragraph_blueprint": [],
-        }
-    })
     writer = StaticJsonClient(json.dumps({"variants": []}))
-    planner = SequenceClient([bad, good])
+    planner = CaptureClient(payload)
     result = run_v6_rewrite("This model no longer fully reflects how people learn.", planner_client=planner, writer_client=writer)
-    assert len(planner.calls) == 2
-    assert result.plan.ai_safe_route["llm_planner_decision"]["paragraph_route"] == "good"
+    assert len(planner.calls) == 1
+    assert result.plan.ai_safe_route["llm_planner_decision"]["contract_gaps"]
 
 
-def test_v6_planner_retries_when_contract_uses_planning_labels():
-    bad = json.dumps({
+def test_v6_planner_records_contract_gap_when_contract_uses_planning_labels():
+    payload = json.dumps({
         "planner_decision": {
             "paragraph_route": "bad",
             "finding_contracts": [
@@ -221,26 +205,8 @@ def test_v6_planner_retries_when_contract_uses_planning_labels():
             "paragraph_blueprint": [],
         }
     })
-    good = json.dumps({
-        "planner_decision": {
-            "paragraph_route": "good",
-            "finding_contracts": [
-                {
-                    "finding_id": "p001_s001:packed_list",
-                    "source_sentence_id": "p001_s001",
-                    "finding_tags": ["packed_list"],
-                    "unsafe_original_shape": "A, B, and C",
-                    "safe_rebuild_shape": "A handled the first part. B handled the next part.",
-                    "writer_must_do": ["split list"],
-                    "writer_must_not_do": ["use three-item list"],
-                    "coverage_terms": ["A", "B"],
-                }
-            ],
-            "paragraph_blueprint": [],
-        }
-    })
-    planner = SequenceClient([bad, good])
+    planner = CaptureClient(payload)
     writer = StaticJsonClient(json.dumps({"variants": []}))
     result = run_v6_rewrite("A, B, and C shaped the process.", planner_client=planner, writer_client=writer)
-    assert len(planner.calls) == 2
-    assert result.plan.ai_safe_route["llm_planner_decision"]["paragraph_route"] == "good"
+    assert len(planner.calls) == 1
+    assert result.plan.ai_safe_route["llm_planner_decision"]["contract_gaps"]
