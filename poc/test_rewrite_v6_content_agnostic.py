@@ -329,6 +329,89 @@ def test_v6_selection_prefers_writer_over_source_when_writer_improves_route():
     assert "That structure also included" not in result.rewritten_text
 
 
+def test_v6_selection_rejects_polished_lexical_inflation_without_provenance():
+    source = (
+        "The intake system is changing faster than many teams can manage. "
+        "The old process used a form, a queue, and a reviewer."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "The contemporary intake ecosystem is undergoing accelerated transformation beyond organizational adaptation. "
+                    "Its traditional procedural framework relied on documentation infrastructure, sequential prioritization, and evaluative personnel."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+    assert result.rewritten_text == source
+
+
+def test_v6_selection_rejects_weak_movement_with_source_drift():
+    source = (
+        "Today the workflow is changing faster than many teams can comfortably manage. "
+        "In the past, the process was mostly built around the form, the queue, and the reviewer. "
+        "Clients received updates from trusted staff, practiced the steps, and proved completion through checks. "
+        "That model still exists, but it no longer fully reflects how clients move through intake today."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "Today the workflow is evolving at a pace that many teams struggle to keep up with. "
+                    "In the past, intake centered on the form, the queue, and the reviewer. "
+                    "The process was structured around these pillars, with clients receiving updates from trusted staff. "
+                    "They practiced the steps and demonstrated completion through checks. "
+                    "While this model still exists, it no longer captures how clients engage with intake today. "
+                    "The shift reflects deeper changes in how support is accessed and processed."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+    assert result.rewritten_text == source
+
+
+def test_v6_selection_allows_reviewable_author_proxy_bridges():
+    source = (
+        "The intake system is changing faster than many teams can manage. "
+        "The old process used a form, a queue, and a reviewer."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "Teams now manage intake under pressure that the older route only partly explains. "
+                    "The form and queue still matter. "
+                    "The reviewer remains part of the route, but the bridge between those steps needs author confirmation."
+                ),
+                "author_review_items": [
+                    {
+                        "item_id": "r001",
+                        "provenance": "needs_author_confirmation",
+                        "target_text": "bridge between those steps",
+                        "generated_text": "needs author confirmation",
+                        "user_input_needed": "confirm this bridge",
+                        "author_task": "verify or replace",
+                    }
+                ],
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "llm"
+    assert "author confirmation" in result.rewritten_text
+
+
 def test_v6_writer_prompt_marks_unverified_bridges_for_review_not_blocking():
     scan = scan_text("This result shows a gap because the process should improve.")
     paragraph, plan = build_plan(scan)

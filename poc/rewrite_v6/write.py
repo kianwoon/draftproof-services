@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
@@ -66,6 +67,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan) -> str:
         ],
         "execution_method": [
             "Keep all source ideas, but rebuild the paragraph route instead of polishing sentence wording.",
+            "Prefer source-level wording. Do not replace plain source words with elevated academic wrappers unless the source already uses that register.",
             "Decompress packed lists by blending listed nouns or actions into varied ordinary sentences; do not split every item into repeated-subject sentences.",
             "When repairing a list, group related items into two or three natural prose beats instead of keeping one long comma list.",
             "Use at most one short pair joined by 'and' in a sentence; avoid three-or-more-item comma lists.",
@@ -104,6 +106,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan) -> str:
         "bad_patterns_to_avoid": [
             "same first sentence route with synonyms",
             "single smooth summary",
+            "polished academic wrapper phrases that add abstraction without source support",
             "neat three-item list in one sentence",
             "repeated sentence frame such as the same subject plus verb pattern three or more times",
             "mechanical one-item-per-sentence decomposition",
@@ -161,18 +164,36 @@ def choose_variant(variants: list[Variant], paragraph: Paragraph) -> Variant | N
     if not variants:
         return None
     source_words = max(1, word_count(paragraph.text))
-    return max(
+    ranked = max(
         variants,
         key=lambda variant: _variant_rank(variant, paragraph, source_words),
     )
+    source_variant = next((variant for variant in variants if variant.source == "source_preserved"), None)
+    if source_variant and ranked.source != "source_preserved" and not _has_meaningful_movement(ranked, source_variant, paragraph):
+        return source_variant
+    return ranked
+
+
+def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragraph: Paragraph) -> bool:
+    before = scan_text(source_variant.text)
+    after = scan_text(candidate.text)
+    finding_drop = before.scores["finding_count"] - after.scores["finding_count"]
+    risk_drop = before.scores["mean_sentence_shape_risk"] - after.scores["mean_sentence_shape_risk"]
+    drift_penalty = _source_drift_penalty(candidate, paragraph)
+    if finding_drop >= 2:
+        return True
+    if finding_drop >= 1 and risk_drop >= 8.0 and drift_penalty < 0.5:
+        return True
+    return False
 
 
 def _variant_rank(variant: Variant, paragraph: Paragraph, source_words: int) -> tuple[float, float, float, bool, int]:
     scan = scan_text(variant.text)
     words = word_count(variant.text)
     quality_penalty = _mechanical_quality_penalty(variant.text, paragraph)
+    source_drift_penalty = _source_drift_penalty(variant, paragraph)
     return (
-        -(scan.scores["finding_count"] + quality_penalty),
+        -(scan.scores["finding_count"] + quality_penalty + source_drift_penalty),
         -scan.scores["mean_sentence_shape_risk"],
         _coverage(variant.text, paragraph),
         words >= source_words * 0.9,
@@ -215,6 +236,52 @@ def _mechanical_quality_penalty(text: str, source_paragraph: Paragraph) -> float
     if repeated_frame_ratio >= 0.30:
         penalty += repeated_frame_ratio * 4.0
     return round(penalty, 3)
+
+
+def _source_drift_penalty(variant: Variant, paragraph: Paragraph) -> float:
+    if variant.source == "source_preserved":
+        return 0.0
+    source_words = _content_word_set(paragraph.text)
+    candidate_words = _content_word_set(variant.text)
+    if not source_words or not candidate_words:
+        return 0.0
+    new_words = candidate_words - source_words
+    flagged = {
+        word
+        for word in new_words
+        if len(word) >= 9 or word.endswith(("tion", "ment", "ity", "ness", "ance", "ence"))
+    }
+    reviewed_words = _reviewed_word_set(variant)
+    unsupported = [word for word in flagged if word not in reviewed_words]
+    unsupported_ratio = len(unsupported) / max(1, len(candidate_words))
+    adjusted = max(0.0, unsupported_ratio - 0.04)
+    return round(adjusted * 8.0, 3)
+
+
+def _reviewed_word_set(variant: Variant) -> set[str]:
+    chunks: list[str] = []
+    for row in [*(variant.author_review_items or []), *(variant.author_proxy_provenance or [])]:
+        if not isinstance(row, dict):
+            continue
+        for value in row.values():
+            if isinstance(value, str):
+                chunks.append(value)
+    return _content_word_set(" ".join(chunks))
+
+
+def _content_word_set(text: str) -> set[str]:
+    stop = {
+        "about", "above", "after", "again", "against", "also", "because", "before",
+        "being", "between", "could", "every", "from", "have", "into", "more",
+        "most", "only", "other", "over", "should", "still", "their", "there",
+        "these", "those", "through", "under", "where", "which", "while", "would",
+    }
+    return {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", str(text or ""))
+        if token.casefold() not in stop
+    }
+
 
 def _coverage(text: str, paragraph: Paragraph) -> float:
     anchors = source_terms(paragraph.text, limit=24)
