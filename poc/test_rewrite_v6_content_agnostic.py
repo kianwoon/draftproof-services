@@ -8,6 +8,7 @@ from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6 import production as v6_production
 from poc.rewrite_v6.scan import scan_text
 from poc.rewrite_v6.write import build_prompt
+from poc.report.render_rewrite import render_rewrite_report
 
 
 class FakeResponse:
@@ -116,6 +117,37 @@ def test_v6_production_adapter_returns_worker_contract(tmp_path, monkeypatch):
     assert rewritten_intelligence["contribution"]["human_contribution_ratio"] == 96
     assert rewritten_intelligence["core_signals"][0]["key"] == "topk_calibrated_risk"
     assert rewritten_scan["integrity_layers"]["layers"]["human_contribution_signal"]["score"] == 96
+
+
+def test_v6_rewrite_pdf_metrics_use_detect_scores_when_scan_badges_are_compact():
+    summary = {
+        "outcome": "ai_mitigated",
+        "status": "ai_mitigated",
+        "detect_scores": {
+            "original_ai_authorship": 70,
+            "rewritten_ai_authorship": 30,
+            "original_human_contribution": 56,
+            "rewritten_human_contribution": 83,
+            "original_ai_transformation": 44,
+            "rewritten_ai_transformation": 17,
+            "original_grounding_quality_risk": 90,
+            "rewritten_grounding_quality_risk": 25,
+        },
+        "detect_scan_original": {
+            "findings": {"critical": [], "high": [], "medium": [], "low": []},
+            "ai_risk_badge": {"ai_likelihood_score": 0, "writing_quality_score": 0},
+        },
+        "detect_scan_rewritten": {
+            "findings": {"critical": [], "high": [], "medium": [], "low": []},
+            "ai_risk_badge": {"ai_likelihood_score": 0, "writing_quality_score": 0},
+        },
+    }
+    report = render_rewrite_report(summary, [], [], original_text="Original.", final_text="Rewritten.")
+    assert "| **AI Likelihood** | `35%` | `15%` | `-20%` |" in report
+    assert "| **Human Contribution** | `56%` | `83%` | `+27%` |" in report
+    assert "| **AI Transformation** | `44%` | `17%` | `-27%` |" in report
+    assert "| **Grounding Quality Risk** | `90.00%` | `25.00%` | `-65.00%` |" in report
+    assert "15% calibrated risk · below 20% reference" in report
 
 
 def fake_full_scan_report(text: str) -> dict:

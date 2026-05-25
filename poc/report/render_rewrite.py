@@ -40,13 +40,30 @@ def _badge(report: dict) -> dict:
     return (report or {}).get("ai_risk_badge") or {}
 
 
+def _metric_percent(value, *, clamp: bool = True) -> float | None:
+    if not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if 0 <= abs(number) <= 1:
+        number *= 100
+    return max(0.0, min(100.0, number)) if clamp else number
+
+
+def _first_metric(*values) -> float | None:
+    for value in values:
+        percent = _metric_percent(value)
+        if percent is not None:
+            return percent
+    return None
+
+
 def _ai_score(report: dict) -> float:
-    score = _badge(report).get("ai_likelihood_score", 0)
-    return float(score) if isinstance(score, (int, float)) else 0.0
+    return _first_metric((report or {}).get("ai_score"), _badge(report).get("ai_likelihood_score")) or 0.0
 
 
 def _display_ai_score(value: float) -> float:
-    return float(value) * _REPORT_AI_SCORE_DISPLAY_MULTIPLIER
+    percent = _metric_percent(value, clamp=False)
+    return (percent or 0.0) * _REPORT_AI_SCORE_DISPLAY_MULTIPLIER
 
 
 def _ai_reference_suffix(score) -> str | None:
@@ -126,8 +143,7 @@ def _rewrite_stamp(summary: dict, risk) -> dict:
 
 
 def _wq_score(report: dict) -> float:
-    score = _badge(report).get("writing_quality_score", 0)
-    return float(score) if isinstance(score, (int, float)) else 0.0
+    return _first_metric((report or {}).get("writing_score"), _badge(report).get("writing_quality_score")) or 0.0
 
 
 def _tier(report: dict) -> str:
@@ -202,9 +218,16 @@ def _scan_contribution(scan: dict) -> dict:
 
 def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) -> str:
     contribution = _scan_contribution(rewritten_scan)
-    ai_score = _pct(_ai_score(rewritten_scan)) if rewritten_scan else None
+    detect_scores = summary.get("detect_scores") if isinstance(summary.get("detect_scores"), dict) else {}
+    rewritten_raw_ai = _first_metric(
+        detect_scores.get("rewritten_ai_authorship"),
+        detect_scores.get("rewritten_ai"),
+        summary.get("final_risk"),
+        _ai_score(rewritten_scan) if rewritten_scan else None,
+    )
+    ai_score = _pct(_display_ai_score(rewritten_raw_ai)) if rewritten_raw_ai is not None else None
     calibrated = contribution.get("calibrated")
-    risk = calibrated if calibrated is not None else ai_score
+    risk = ai_score if ai_score is not None else calibrated
     author_review_required = _requires_author_review(summary)
     external_review_required = _requires_external_review(summary)
     stamp = _rewrite_stamp(summary, risk)
@@ -548,16 +571,39 @@ def render_rewrite_report(
     final_output_preserved = no_text_change
 
     if orig_scan and new_scan:
+        detect_scores = summary.get("detect_scores") if isinstance(summary.get("detect_scores"), dict) else {}
         orig_badge = _badge(orig_scan)
         new_badge = _badge(new_scan)
 
-        orig_ai = _ai_score(orig_scan)
-        new_ai = _ai_score(new_scan)
+        orig_ai = _first_metric(
+            detect_scores.get("original_ai_authorship"),
+            detect_scores.get("original_ai"),
+            summary.get("original_risk"),
+            _ai_score(orig_scan),
+        ) or 0.0
+        new_ai = _first_metric(
+            detect_scores.get("rewritten_ai_authorship"),
+            detect_scores.get("rewritten_ai"),
+            summary.get("final_risk"),
+            _ai_score(new_scan),
+        ) or 0.0
         ai_delta = new_ai - orig_ai
 
-        orig_wq = _wq_score(orig_scan)
-        new_wq = _wq_score(new_scan)
+        orig_wq = _first_metric(
+            detect_scores.get("original_grounding_quality_risk"),
+            _wq_score(orig_scan),
+        ) or 0.0
+        new_wq = _first_metric(
+            detect_scores.get("rewritten_grounding_quality_risk"),
+            _wq_score(new_scan),
+        ) or 0.0
         wq_delta = new_wq - orig_wq
+        orig_contribution = _scan_contribution(orig_scan)
+        new_contribution = _scan_contribution(new_scan)
+        orig_human = _first_metric(detect_scores.get("original_human_contribution"), orig_contribution.get("human"))
+        new_human = _first_metric(detect_scores.get("rewritten_human_contribution"), new_contribution.get("human"))
+        orig_transformation = _first_metric(detect_scores.get("original_ai_transformation"), orig_contribution.get("ai"))
+        new_transformation = _first_metric(detect_scores.get("rewritten_ai_transformation"), new_contribution.get("ai"))
 
         orig_findings = orig_scan.get("findings", {})
         new_findings = new_scan.get("findings", {})
@@ -677,7 +723,6 @@ def render_rewrite_report(
             f"| **AI Likelihood** | `{_display_ai_score(orig_ai):.0f}%` | "
             f"`{_display_ai_score(new_ai):.0f}%` | `{_display_ai_score(ai_delta):+.0f}%` |"
         )
-        detect_scores = summary.get("detect_scores") or {}
         turnitin_before = summary.get("turnitin_like_ai_score_before", detect_scores.get("turnitin_like_ai_score_before"))
         turnitin_after = summary.get("turnitin_like_ai_score_after", detect_scores.get("turnitin_like_ai_score_after"))
         turnitin_drop = summary.get("turnitin_like_ai_score_drop", detect_scores.get("turnitin_like_ai_score_drop"))
@@ -718,7 +763,18 @@ def render_rewrite_report(
         new_authorship = _authorship_label(new_scan)
         if orig_authorship or new_authorship:
             lines.append(f"| **Authorship Rating** | {orig_authorship or '-'} | {new_authorship or '-'} | - |")
-        lines.append(f"| **Writing Quality Risk** | `{orig_wq:.2f}%` | `{new_wq:.2f}%` | `{wq_delta:+.2f}%` |")
+        if orig_human is not None and new_human is not None:
+            lines.append(f"| **Human Contribution** | `{orig_human:.0f}%` | `{new_human:.0f}%` | `{new_human - orig_human:+.0f}%` |")
+        if orig_transformation is not None and new_transformation is not None:
+            lines.append(
+                f"| **AI Transformation** | `{orig_transformation:.0f}%` | "
+                f"`{new_transformation:.0f}%` | `{new_transformation - orig_transformation:+.0f}%` |"
+            )
+        quality_label = "Grounding Quality Risk" if (
+            detect_scores.get("original_grounding_quality_risk") is not None
+            or detect_scores.get("rewritten_grounding_quality_risk") is not None
+        ) else "Writing Quality Risk"
+        lines.append(f"| **{quality_label}** | `{orig_wq:.2f}%` | `{new_wq:.2f}%` | `{wq_delta:+.2f}%` |")
         lines.append(f"| **Total Findings** | {o_total} | {n_total} | `{n_total - o_total:+d}` |")
 
         # Axis-level scores
