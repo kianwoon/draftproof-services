@@ -76,5 +76,7 @@ REWRITE_STALE_THRESHOLD_MINUTES = max(
     50,
     int(os.getenv("REWRITE_STALE_THRESHOLD_MINUTES", "50")),
 )
-REWRITE_CANCEL_TERMINATE = os.getenv("REWRITE_CANCEL_TERMINATE", "true").strip().lower() in {"1", "true", "yes", "on"}
+# Cancellation is DB-authoritative and cooperative. Hard termination can cause
+# late-ack task redelivery, so keep it opt-in for emergency operations only.
+REWRITE_CANCEL_TERMINATE = os.getenv("REWRITE_CANCEL_TERMINATE", "false").strip().lower() in {"1", "true", "yes", "on"}
 REWRITE_CANCEL_TERMINATE_SIGNAL = os.getenv("REWRITE_CANCEL_TERMINATE_SIGNAL", "SIGTERM").strip() or "SIGTERM"

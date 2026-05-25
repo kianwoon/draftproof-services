@@ -44,10 +44,10 @@ regenerate_rewrite_report_assets = celery_app.signature("app.tasks.regenerate_re
 
 
 def cancel_rewrite_task(task_id: str) -> bool:
-    """Revoke a rewrite task and optionally terminate its running worker child.
+    """Revoke a rewrite task and let the DB cancellation flag stop active work.
 
-    The rewrite job row is the source of truth. If a terminated late-ack task is
-    redelivered, the worker claim step will see ``canceled`` and exit.
+    Termination is an opt-in emergency setting because killing a late-ack worker
+    child can redeliver the task before the UI has settled on the terminal row.
     """
     try:
         celery_app.control.revoke(

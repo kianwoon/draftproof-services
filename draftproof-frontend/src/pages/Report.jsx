@@ -1174,7 +1174,17 @@ export default function Report() {
   const handleRewrite = async (event) => {
     event?.preventDefault();
     event?.stopPropagation();
-    if (rewriteLoading || hasRewriteResult) return;
+    if (rewriteLoading || rewriteCanceling || hasRewriteResult) return;
+    if (rewriteInProgress && currentRewrite?.id) {
+      setRewriteStartedHere(true);
+      setRewriteError(null);
+      setRewriteSseUnavailable(false);
+      watchedRewriteIdsRef.current.add(currentRewrite.id);
+      if (!connectRewriteEvents(currentRewrite.id)) {
+        await pollRewriteStatus(currentRewrite.id);
+      }
+      return;
+    }
     requestBrowserNotificationPermission();
     setRewriteStartedHere(true);
     setRewriteLoading(true);

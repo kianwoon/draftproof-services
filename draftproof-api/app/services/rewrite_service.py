@@ -416,6 +416,7 @@ async def cancel_rewrite(rewrite_id: str, user_id: str) -> dict | None:
         if job.status in _ACTIVE_REWRITE_STATUSES:
             job.status = "canceled"
             job.error = "Rewrite canceled by user"
+            job.progress_percent = 100
             job.progress_message = "Rewrite canceled"
             job.completed_at = datetime.now(timezone.utc)
             await _release_active_reservation(session, job.id)

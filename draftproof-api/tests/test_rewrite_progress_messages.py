@@ -116,7 +116,7 @@ def test_canceled_rewrite_does_not_block_new_rewrite_job():
     assert "canceled" not in rewrite_service._ACTIVE_REWRITE_STATUSES
 
 
-def test_cancel_rewrite_task_revokes_and_terminates_worker_child(monkeypatch):
+def test_cancel_rewrite_task_revokes_without_terminating_by_default(monkeypatch):
     calls = []
 
     def fake_revoke(task_id, *, terminate, signal):
@@ -127,7 +127,7 @@ def test_cancel_rewrite_task_revokes_and_terminates_worker_child(monkeypatch):
     assert celery_client.cancel_rewrite_task("rewrite-123") is True
     assert calls == [{
         "task_id": "rewrite-123",
-        "terminate": celery_client.REWRITE_CANCEL_TERMINATE,
+        "terminate": False,
         "signal": celery_client.REWRITE_CANCEL_TERMINATE_SIGNAL,
     }]
 
