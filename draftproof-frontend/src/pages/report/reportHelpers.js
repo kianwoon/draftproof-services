@@ -1053,11 +1053,17 @@ function buildRewriteResultSummary(rewriteReport) {
   const rewrittenScan = getRewrittenDetectScan(rewriteReport) || {};
   const originalBadge = originalScan.ai_risk_badge || {};
   const rewrittenBadge = rewrittenScan.ai_risk_badge || {};
+  const originalContribution = getScanContributionSummary(originalScan);
+  const rewrittenContribution = getScanContributionSummary(rewrittenScan);
+  const originalComponents = originalBadge.ai_components || {};
+  const rewrittenComponents = rewrittenBadge.ai_components || {};
   const originalFindings = countRewriteFindings(originalScan.findings) ?? detectScores.original_findings;
   const rewrittenFindings = countRewriteFindings(rewrittenScan.findings) ?? detectScores.rewritten_findings;
   const changedSentences = (rewriteReport?.sentence_comparison || []).filter(
     (row) => String(row.orig_sentence ?? row.original ?? '').trim() !== String(row.new_sentence ?? row.rewritten ?? '').trim()
   ).length;
+  const originalHumanContribution = detectScores.original_human_contribution ?? originalContribution?.humanContribution;
+  const rewrittenHumanContribution = detectScores.rewritten_human_contribution ?? rewrittenContribution?.humanContribution;
 
   return {
     outcome: summary.outcome || '',
@@ -1074,15 +1080,18 @@ function buildRewriteResultSummary(rewriteReport) {
     engine_mode: summary.rewrite_engine_mode || '',
     gate: summary.authenticity_mitigation?.selected_gate || summary.authenticity_mitigation?.best_attempt?.gate || null,
     ai_mitigation_selected: Boolean(summary.authenticity_mitigation?.selected || summary.ai_mitigation_search?.selected),
-    original_ai_authorship: detectScores.original_ai_authorship,
-    rewritten_ai_authorship: detectScores.rewritten_ai_authorship,
-    original_human_contribution: detectScores.original_human_contribution,
-    rewritten_human_contribution: detectScores.rewritten_human_contribution,
-    original_ai_transformation: detectScores.original_ai_transformation,
-    rewritten_ai_transformation: detectScores.rewritten_ai_transformation,
-    original_grounding_quality_risk: detectScores.original_grounding_quality_risk,
-    rewritten_grounding_quality_risk: detectScores.rewritten_grounding_quality_risk,
-    human_shift_score: detectScores.human_shift_score ?? summary.authenticity_mitigation?.selected_human_shift_score ?? summary.ai_mitigation_search?.selected_human_shift_score,
+    original_ai_authorship: detectScores.original_ai_authorship ?? originalBadge.ai_likelihood_score ?? originalScan.ai_score,
+    rewritten_ai_authorship: detectScores.rewritten_ai_authorship ?? rewrittenBadge.ai_likelihood_score ?? rewrittenScan.ai_score,
+    original_human_contribution: originalHumanContribution,
+    rewritten_human_contribution: rewrittenHumanContribution,
+    original_ai_transformation: detectScores.original_ai_transformation ?? originalContribution?.aiTransformation,
+    rewritten_ai_transformation: detectScores.rewritten_ai_transformation ?? rewrittenContribution?.aiTransformation,
+    original_grounding_quality_risk: detectScores.original_grounding_quality_risk ?? originalComponents.source_grounding_risk ?? originalComponents.unsupported_claim_risk,
+    rewritten_grounding_quality_risk: detectScores.rewritten_grounding_quality_risk ?? rewrittenComponents.source_grounding_risk ?? rewrittenComponents.unsupported_claim_risk,
+    human_shift_score: detectScores.human_shift_score
+      ?? (originalHumanContribution != null && rewrittenHumanContribution != null ? rewrittenHumanContribution - originalHumanContribution : null)
+      ?? summary.authenticity_mitigation?.selected_human_shift_score
+      ?? summary.ai_mitigation_search?.selected_human_shift_score,
     human_shift_components: detectScores.human_shift_components ?? summary.authenticity_mitigation?.selected_human_shift_components ?? summary.ai_mitigation_search?.selected_human_shift_components,
     original_risk: originalBadge.ai_likelihood_score ?? detectScores.original_ai ?? summary.original_risk,
     rewrite_risk: rewrittenBadge.ai_likelihood_score ?? detectScores.rewritten_ai ?? summary.final_risk,

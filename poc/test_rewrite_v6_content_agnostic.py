@@ -99,6 +99,15 @@ def test_v6_production_adapter_returns_worker_contract(tmp_path, monkeypatch):
     assert summary["rewrite_pipeline_version"] == "rewrite_v6_scanner_planner_writer"
     assert summary["rewrite_effective_config"]["model"] == "qwen/qwen3-30b-a3b-instruct-2507"
     assert summary["final_text"]
+    assert summary["detect_scores"]["original_ai_authorship"] == 2
+    assert summary["detect_scores"]["rewritten_ai_authorship"] == 2
+    assert summary["detect_scores"]["original_human_contribution"] == 96
+    assert summary["detect_scores"]["rewritten_human_contribution"] == 96
+    assert summary["detect_scores"]["original_ai_transformation"] == 4
+    assert summary["detect_scores"]["rewritten_ai_transformation"] == 4
+    assert summary["detect_scores"]["human_shift_score"] == 0
+    assert summary["original_risk"] == 2
+    assert summary["final_risk"] == 2
     rewritten_scan = summary["detect_scan_rewritten"]
     rewritten_badge = rewritten_scan["ai_risk_badge"]
     rewritten_intelligence = rewritten_scan["scan_intelligence"]["transformation"]

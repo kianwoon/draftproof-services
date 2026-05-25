@@ -67,6 +67,8 @@ import {
 const RESCAN_POLL_INTERVAL = 3000;
 const RESCAN_MAX_POLLS = 200;
 const SUBMITTED_EDITOR_TRANSITION_MS = 240;
+const REWRITE_REPORT_RETRY_LIMIT = 8;
+const REWRITE_REPORT_RETRY_DELAY_MS = 1500;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -672,21 +674,42 @@ export default function Report() {
     }
 
     let cancelled = false;
-    getRewriteReport(completedRewrite.id)
-      .then(({ data }) => {
-        if (cancelled) return;
-        setRewriteResultReport(data);
-        setRewriteResultSummary(buildRewriteResultSummary(data));
-      })
-      .catch(() => {
-        if (!cancelled) {
+    let retryTimer = null;
+
+    const loadRewriteReport = (attempt = 0) => {
+      getRewriteReport(completedRewrite.id)
+        .then(({ data }) => {
+          if (cancelled) return;
+          setRewriteResultReport(data);
+          setRewriteResultSummary(buildRewriteResultSummary(data));
+          if (!hasRewriteComparisonData(data) && attempt < REWRITE_REPORT_RETRY_LIMIT) {
+            retryTimer = window.setTimeout(
+              () => loadRewriteReport(attempt + 1),
+              REWRITE_REPORT_RETRY_DELAY_MS
+            );
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          if (attempt < REWRITE_REPORT_RETRY_LIMIT) {
+            retryTimer = window.setTimeout(
+              () => loadRewriteReport(attempt + 1),
+              REWRITE_REPORT_RETRY_DELAY_MS
+            );
+            return;
+          }
           setRewriteResultReport(null);
           setRewriteResultSummary(null);
-        }
-      });
+        });
+    };
+
+    loadRewriteReport();
 
     return () => {
       cancelled = true;
+      if (retryTimer) {
+        window.clearTimeout(retryTimer);
+      }
     };
   }, [rewriteJob, report?.rewrite]);
 

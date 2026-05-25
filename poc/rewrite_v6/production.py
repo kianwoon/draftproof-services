@@ -68,6 +68,7 @@ def run_rewrite_pipeline_v6(
         provided=None,
         fallback_scan=document.final_scan.to_dict(),
     )
+    detect_scores = _detect_scores_for_summary(original_scan_report, rewritten_scan_report)
     summary = {
         "rewrite_pipeline_version": "rewrite_v6_scanner_planner_writer",
         "rewrite_engine_mode": "v6_production",
@@ -91,6 +92,9 @@ def run_rewrite_pipeline_v6(
             "initial": document.initial_scan.scores,
             "final": document.final_scan.scores,
         },
+        "detect_scores": detect_scores,
+        "original_risk": detect_scores.get("original_ai"),
+        "final_risk": detect_scores.get("rewritten_ai"),
         "detect_scan_original_saved": original_scan_report,
         "detect_scan_original": original_scan_report,
         "detect_scan_rewritten": rewritten_scan_report,
@@ -167,3 +171,101 @@ def _has_full_report_shape(report: dict[str, Any] | None) -> bool:
             or transformation.get("core_signals")
         )
     )
+
+
+def _detect_scores_for_summary(original_report: dict[str, Any], rewritten_report: dict[str, Any]) -> dict[str, Any]:
+    original = _scan_metrics_for_summary(original_report)
+    rewritten = _scan_metrics_for_summary(rewritten_report)
+    original_human = original.get("human_contribution")
+    rewritten_human = rewritten.get("human_contribution")
+    human_shift = None
+    if original_human is not None and rewritten_human is not None:
+        human_shift = round(rewritten_human - original_human, 3)
+    return {
+        "original_ai": original.get("ai"),
+        "rewritten_ai": rewritten.get("ai"),
+        "original_ai_authorship": original.get("ai_authorship"),
+        "rewritten_ai_authorship": rewritten.get("ai_authorship"),
+        "original_human_contribution": original_human,
+        "rewritten_human_contribution": rewritten_human,
+        "original_ai_transformation": original.get("ai_transformation"),
+        "rewritten_ai_transformation": rewritten.get("ai_transformation"),
+        "original_grounding_quality_risk": original.get("grounding_quality_risk"),
+        "rewritten_grounding_quality_risk": rewritten.get("grounding_quality_risk"),
+        "original_findings": _finding_count(original_report.get("findings")),
+        "rewritten_findings": _finding_count(rewritten_report.get("findings")),
+        "human_shift_score": human_shift,
+    }
+
+
+def _scan_metrics_for_summary(report: dict[str, Any]) -> dict[str, float | None]:
+    badge = report.get("ai_risk_badge") if isinstance(report.get("ai_risk_badge"), dict) else {}
+    intelligence = report.get("scan_intelligence") if isinstance(report.get("scan_intelligence"), dict) else {}
+    transformation = intelligence.get("transformation") if isinstance(intelligence.get("transformation"), dict) else {}
+    contribution = transformation.get("contribution") if isinstance(transformation.get("contribution"), dict) else {}
+    layers_root = report.get("integrity_layers") if isinstance(report.get("integrity_layers"), dict) else {}
+    intelligence_layers = intelligence.get("integrity_layers") if isinstance(intelligence.get("integrity_layers"), dict) else {}
+    layers = layers_root.get("layers") if isinstance(layers_root.get("layers"), dict) else intelligence_layers.get("layers") or {}
+    human_layer = layers.get("human_contribution_signal") if isinstance(layers.get("human_contribution_signal"), dict) else {}
+    ai_layer = layers.get("ai_transformation_risk") if isinstance(layers.get("ai_transformation_risk"), dict) else {}
+    components = badge.get("ai_components") if isinstance(badge.get("ai_components"), dict) else {}
+    return {
+        "ai": _metric_percent(_first_metric(report.get("ai_score"), badge.get("ai_likelihood_score"))),
+        "ai_authorship": _metric_percent(_first_metric(badge.get("ai_likelihood_score"), report.get("ai_score"))),
+        "human_contribution": _metric_percent(
+            _first_metric(
+                contribution.get("human_contribution_ratio"),
+                contribution.get("human_contribution"),
+                contribution.get("human_ratio"),
+                human_layer.get("score"),
+            )
+        ),
+        "ai_transformation": _metric_percent(
+            _first_metric(
+                contribution.get("ai_transformation_ratio"),
+                contribution.get("ai_transformation"),
+                contribution.get("transformation_ratio"),
+                ai_layer.get("score"),
+            )
+        ),
+        "grounding_quality_risk": _metric_percent(
+            _first_metric(
+                components.get("source_grounding_risk"),
+                components.get("unsupported_claim_risk"),
+                components.get("citation_grounding_risk"),
+                badge.get("writing_quality_score"),
+                report.get("writing_score"),
+            )
+        ),
+    }
+
+
+def _first_metric(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _metric_percent(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:
+        return None
+    percent = number * 100 if abs(number) <= 1 else number
+    return round(max(0.0, min(100.0, percent)), 3)
+
+
+def _finding_count(findings: Any) -> int | None:
+    if not isinstance(findings, dict):
+        return None
+    total = 0
+    found = False
+    for tier in ("critical", "high", "medium", "low"):
+        rows = findings.get(tier)
+        if isinstance(rows, list):
+            found = True
+            total += len(rows)
+    return total if found else None
