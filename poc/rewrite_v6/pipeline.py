@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
@@ -56,18 +57,26 @@ def run_v6_rewrite(
     base_url: str | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     progress_percent: int | None = None,
+    cancellation_check: Callable[[], None] | None = None,
 ) -> Result:
+    _raise_if_canceled(cancellation_check)
     scan = scan_text(text)
     paragraph, plan = build_plan(scan, excluded_paragraph_ids)
     _emit_progress(progress_callback, progress_percent, f"Planning V6 paragraph {paragraph.id}")
+    _raise_if_canceled(cancellation_check)
     if planner_client is not None or writer_client is None:
         plan = run_planner_llm(
             paragraph,
             plan,
             findings_for_paragraph(scan, paragraph.id),
-            client=planner_client or _planner_gateway(api_key=api_key, base_url=base_url),
+            client=planner_client or _planner_gateway(
+                api_key=api_key,
+                base_url=base_url,
+                cancellation_check=cancellation_check,
+            ),
         )
     _emit_progress(progress_callback, progress_percent, f"Writing V6 paragraph {paragraph.id}")
+    _raise_if_canceled(cancellation_check)
     client = writer_client or LLMGateway(
         LLMConfig(
             model=model or _writer_model(),
@@ -77,9 +86,11 @@ def run_v6_rewrite(
             temperature=0.12,
             top_p=0.75,
             extra_body=_writer_extra_body(model or _writer_model()),
+            cancellation_check=cancellation_check,
         )
     )
     variants = write_variants(paragraph, plan, client=client)
+    _raise_if_canceled(cancellation_check)
     _emit_progress(progress_callback, progress_percent, f"Scanning V6 paragraph {paragraph.id} candidate")
     selected = choose_variant(variants, paragraph)
     return Result(scan=scan, plan=plan, variants=variants, selected=selected, rewritten_text=_compose(scan, paragraph.id, selected))
@@ -95,7 +106,11 @@ def run_v6_rewrite_all(
     api_key: str | None = None,
     base_url: str | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
+    cancellation_check: Callable[[], None] | None = None,
+    runtime_budget_seconds: float | None = None,
+    min_llm_request_seconds: float = 180.0,
 ) -> DocumentResult:
+    started_at = time.monotonic()
     initial_scan = scan_text(text)
     current = text
     passes: list[Result] = []
@@ -103,6 +118,7 @@ def run_v6_rewrite_all(
     attempts: dict[str, int] = {}
     exhausted: set[str] = set()
     for pass_index in range(limit):
+        _raise_if_canceled(cancellation_check)
         before = scan_text(current)
         if not before.findings:
             break
@@ -114,6 +130,13 @@ def run_v6_rewrite_all(
             start_percent,
             f"V6 rewrite pass {pass_index + 1}: {len(before.findings)} finding(s) remaining",
         )
+        if not _has_runtime_for_llm(
+            started_at=started_at,
+            runtime_budget_seconds=runtime_budget_seconds,
+            min_llm_request_seconds=min_llm_request_seconds,
+        ):
+            _emit_progress(progress_callback, start_percent, "V6 runtime budget reached before starting another LLM request")
+            break
         result = run_v6_rewrite(
             current,
             planner_client=planner_client,
@@ -124,6 +147,7 @@ def run_v6_rewrite_all(
             base_url=base_url,
             progress_callback=progress_callback,
             progress_percent=start_percent,
+            cancellation_check=cancellation_check,
         )
         end_percent = _rewrite_progress_percent(pass_index + 1, limit)
         if result.rewritten_text == current:
@@ -143,6 +167,24 @@ def run_v6_rewrite_all(
         current = result.rewritten_text
         _emit_progress(progress_callback, end_percent, f"Accepted V6 paragraph {result.plan.paragraph_id}")
     return DocumentResult(initial_scan=initial_scan, final_scan=scan_text(current), passes=passes, rewritten_text=current)
+
+
+def _raise_if_canceled(cancellation_check: Callable[[], None] | None) -> None:
+    if cancellation_check is not None:
+        cancellation_check()
+
+
+def _has_runtime_for_llm(
+    *,
+    started_at: float,
+    runtime_budget_seconds: float | None,
+    min_llm_request_seconds: float,
+) -> bool:
+    if runtime_budget_seconds is None or runtime_budget_seconds <= 0:
+        return True
+    elapsed = time.monotonic() - started_at
+    remaining = float(runtime_budget_seconds) - elapsed
+    return remaining >= max(1.0, float(min_llm_request_seconds or 0.0))
 
 
 def _compose(scan: Scan, target_paragraph_id: str, selected: Variant | None) -> str:
@@ -189,7 +231,12 @@ def _planner_model() -> str:
     )
 
 
-def _planner_gateway(*, api_key: str | None, base_url: str | None) -> LLMGateway:
+def _planner_gateway(
+    *,
+    api_key: str | None,
+    base_url: str | None,
+    cancellation_check: Callable[[], None] | None = None,
+) -> LLMGateway:
     model = _planner_model()
     return LLMGateway(
         LLMConfig(
@@ -200,6 +247,7 @@ def _planner_gateway(*, api_key: str | None, base_url: str | None) -> LLMGateway
             temperature=0.1,
             top_p=0.75,
             extra_body=_planner_extra_body(model),
+            cancellation_check=cancellation_check,
         )
     )
 

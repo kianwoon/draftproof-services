@@ -52,6 +52,9 @@ def run_rewrite_pipeline_v6(
         api_key=api_key,
         base_url=base_url,
         progress_callback=progress,
+        cancellation_check=raise_if_canceled,
+        runtime_budget_seconds=_v6_runtime_budget_seconds(started),
+        min_llm_request_seconds=_v6_min_llm_request_seconds(),
     )
     final_text = document.rewritten_text
     changed = final_text.strip() != original_text.strip()
@@ -157,6 +160,37 @@ def _scan_report_for_summary(text: str, *, provided: dict[str, Any] | None, fall
     except Exception:
         pass
     return _scan_report_shape(fallback_scan)
+
+
+def _v6_runtime_budget_seconds(started_at: float) -> int:
+    soft_limit = _int_env("REWRITE_SOFT_TIME_LIMIT_SECONDS", 900, minimum=180, maximum=7200)
+    buffer_seconds = _int_env(
+        "DRAFTPROOF_REWRITE_V6_RUNTIME_SOFT_LIMIT_BUFFER_SECONDS",
+        240,
+        minimum=60,
+        maximum=1800,
+    )
+    elapsed = max(0, int(time.time() - started_at))
+    return max(60, soft_limit - buffer_seconds - elapsed)
+
+
+def _v6_min_llm_request_seconds() -> int:
+    return _int_env(
+        "DRAFTPROOF_REWRITE_V6_MIN_LLM_REQUEST_SECONDS",
+        180,
+        minimum=30,
+        maximum=900,
+    )
+
+
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    import os
+
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 def _has_full_report_shape(report: dict[str, Any] | None) -> bool:

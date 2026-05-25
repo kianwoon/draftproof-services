@@ -100,7 +100,7 @@ else
     touch "${SEMANTIC_MARKER}"
 fi
 
-echo "[entrypoint] Model cache ready. Celery worker child will preload ${MODEL} and ${SEMANTIC_MODEL} before processing scans."
+echo "[entrypoint] Model cache ready. Celery worker child will lazy-load cached scan models unless preload env flags are enabled."
 
 echo "[entrypoint] Starting Celery worker..."
 cd /app/worker

@@ -352,6 +352,44 @@ def test_v6_document_rewrite_reports_paragraph_progress():
     assert any("Writing V6 paragraph" in message for _percent, message in events)
 
 
+def test_v6_document_rewrite_stops_before_llm_when_runtime_budget_is_tight():
+    writer = FakeClient()
+    events = []
+
+    result = run_v6_rewrite_all(
+        "A process uses a form, a queue, and a review.",
+        writer_client=writer,
+        progress_callback=lambda percent, message: events.append((percent, message)),
+        runtime_budget_seconds=1,
+        min_llm_request_seconds=30,
+    )
+
+    assert writer.calls == 0
+    assert result.passes == []
+    assert result.rewritten_text == "A process uses a form, a queue, and a review."
+    assert any("runtime budget reached" in message for _percent, message in events)
+
+
+def test_v6_document_rewrite_honors_cancellation_before_llm():
+    class Canceled(BaseException):
+        pass
+
+    writer = FakeClient()
+
+    try:
+        run_v6_rewrite_all(
+            "A process uses a form, a queue, and a review.",
+            writer_client=writer,
+            cancellation_check=lambda: (_ for _ in ()).throw(Canceled()),
+        )
+    except Canceled:
+        pass
+    else:
+        raise AssertionError("Expected cancellation to stop V6 before LLM calls")
+
+    assert writer.calls == 0
+
+
 def test_v6_production_adapter_returns_worker_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(v6_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
     monkeypatch.setattr(v6_production, "_scan_report", fake_full_scan_report)

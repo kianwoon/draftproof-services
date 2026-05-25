@@ -399,15 +399,20 @@ def _configure_torch_threads(torch) -> int | None:
 
 @worker_process_init.connect
 def _preload_scan_models(**_kwargs):
-    """Warm scan models inside the Celery worker child process."""
-    enabled = os.environ.get("DRAFTPROOF_PRELOAD_PREDICTABILITY", "1").lower()
+    """Optionally warm scan models inside the Celery worker child process.
+
+    Celery kills a child if this init signal blocks for too long, so expensive
+    model warmup must stay opt-in. Normal tasks still lazy-load cached models on
+    first use without tripping the worker startup watchdog.
+    """
+    enabled = os.environ.get("DRAFTPROOF_PRELOAD_PREDICTABILITY", "0").lower()
     if enabled not in {"0", "false", "no"}:
         try:
             _preload_predictability_model()
         except Exception:
             logger.warning("Failed to preload predictability model in worker child", exc_info=True)
 
-    semantic_enabled = os.environ.get("DRAFTPROOF_PRELOAD_SEMANTIC", "1").lower()
+    semantic_enabled = os.environ.get("DRAFTPROOF_PRELOAD_SEMANTIC", "0").lower()
     if semantic_enabled not in {"0", "false", "no"}:
         try:
             _preload_semantic_model()
