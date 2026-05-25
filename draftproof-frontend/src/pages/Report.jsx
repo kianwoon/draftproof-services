@@ -74,6 +74,14 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function addScoreProfileFeature(features, key, value) {
+  if (features[key] != null) return;
+  const percent = clampPercent(value);
+  if (percent != null) {
+    features[key] = percent;
+  }
+}
+
 function submittedContentToText(model) {
   return (model?.paragraphs || [])
     .map((paragraph) => paragraph.segments.map((segment) => segment.text).join(' ').trim())
@@ -787,12 +795,21 @@ export default function Report() {
     ...transformationFeatureFallbacks,
     ...(transformation?.features || {}),
   };
-  const transformationSignals = buildTransformationSignals(authorshipFeatures, transformationSignalMetadata);
   const originalScanContributionSummary = getScanContributionSummary(originalComparisonScan);
   const originalContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'original') || originalScanContributionSummary;
-  if (authorshipFeatures.calibrated_ai_risk == null && originalContributionOverride?.adjustedAiRisk != null) {
-    authorshipFeatures.calibrated_ai_risk = originalContributionOverride.adjustedAiRisk;
-  }
+  const originalAiComponents = originalComparisonBadge.ai_components || {};
+  const originalWritingComponents = originalComparisonBadge.writing_components || {};
+  addScoreProfileFeature(authorshipFeatures, 'ai_likelihood', originalComparisonAiScore);
+  addScoreProfileFeature(authorshipFeatures, 'topk_pattern_raw', originalAiComponents.topk_pattern_raw ?? originalAiComponents.topk_pattern);
+  addScoreProfileFeature(authorshipFeatures, 'topk_calibrated_risk', originalAiComponents.topk_calibrated_risk);
+  addScoreProfileFeature(authorshipFeatures, 'adjusted_ai_risk', originalContributionOverride?.rawAdjustedAiRisk ?? originalContributionOverride?.adjustedAiRisk);
+  addScoreProfileFeature(authorshipFeatures, 'calibrated_ai_risk', originalContributionOverride?.adjustedAiRisk);
+  addScoreProfileFeature(authorshipFeatures, 'human_anchor_score', originalContributionOverride?.humanContribution);
+  addScoreProfileFeature(authorshipFeatures, 'human_anchor_discount', originalContributionOverride?.humanAnchorDiscount);
+  addScoreProfileFeature(authorshipFeatures, 'calibration_confidence', originalContributionOverride?.calibrationConfidence);
+  addScoreProfileFeature(authorshipFeatures, 'reporting_suppression', originalContributionOverride?.reportingSuppression);
+  addScoreProfileFeature(authorshipFeatures, 'citation_grounding_risk', originalWritingComponents.source_grounding_risk ?? originalWritingComponents.unsupported_claim_risk ?? originalWritingComponents.citation_grounding_risk);
+  const transformationSignals = buildTransformationSignals(authorshipFeatures, transformationSignalMetadata);
   const transformationSummary = transformation
     ? mergeTransformationSummary(
       buildTransformationSummary(authorshipFeatures, transformationSignals, originalContributionOverride, t),
@@ -801,6 +818,7 @@ export default function Report() {
     : null;
   const rewrittenScan = getRewrittenDetectScan(rewriteResultReport) || {};
   const rewrittenBadge = rewrittenScan.ai_risk_badge || {};
+  const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
   const rewrittenTransformation = rewrittenBadge.transformation_classification || null;
   const rewrittenTransformationSignalMetadata = getScanTransformationSignals(rewrittenScan);
   const rewrittenTransformationFeatureFallbacks = transformationSignalFeatureMap(rewrittenTransformationSignalMetadata);
@@ -808,15 +826,24 @@ export default function Report() {
     ...rewrittenTransformationFeatureFallbacks,
     ...(rewrittenTransformation?.features || {}),
   };
+  const rewrittenScanContributionSummary = getScanContributionSummary(rewrittenScan);
+  const rewrittenContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'rewritten') || rewrittenScanContributionSummary;
+  const rewrittenAiComponents = rewrittenBadge.ai_components || {};
+  const rewrittenWritingComponents = rewrittenBadge.writing_components || {};
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'ai_likelihood', rewrittenAiScore);
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'topk_pattern_raw', rewrittenAiComponents.topk_pattern_raw ?? rewrittenAiComponents.topk_pattern);
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'topk_calibrated_risk', rewrittenAiComponents.topk_calibrated_risk);
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'adjusted_ai_risk', rewrittenContributionOverride?.rawAdjustedAiRisk ?? rewrittenContributionOverride?.adjustedAiRisk);
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'calibrated_ai_risk', rewrittenContributionOverride?.adjustedAiRisk);
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'human_anchor_score', rewrittenContributionOverride?.humanContribution);
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'human_anchor_discount', rewrittenContributionOverride?.humanAnchorDiscount);
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'calibration_confidence', rewrittenContributionOverride?.calibrationConfidence);
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'reporting_suppression', rewrittenContributionOverride?.reportingSuppression);
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'citation_grounding_risk', rewrittenWritingComponents.source_grounding_risk ?? rewrittenWritingComponents.unsupported_claim_risk ?? rewrittenWritingComponents.citation_grounding_risk);
   const rewrittenTransformationSignals = buildTransformationSignals(
     rewrittenAuthorshipFeatures,
     rewrittenTransformationSignalMetadata
   );
-  const rewrittenScanContributionSummary = getScanContributionSummary(rewrittenScan);
-  const rewrittenContributionOverride = buildRewriteContributionOverride(rewriteResultSummary, 'rewritten') || rewrittenScanContributionSummary;
-  if (rewrittenAuthorshipFeatures.calibrated_ai_risk == null && rewrittenContributionOverride?.adjustedAiRisk != null) {
-    rewrittenAuthorshipFeatures.calibrated_ai_risk = rewrittenContributionOverride.adjustedAiRisk;
-  }
   const rewrittenTransformationSummary = rewrittenTransformation
     ? mergeTransformationSummary(
       buildTransformationSummary(rewrittenAuthorshipFeatures, rewrittenTransformationSignals, rewrittenContributionOverride, t),
@@ -834,7 +861,6 @@ export default function Report() {
         summary: t('report.transformation.rewrittenContributionEstimate'),
       }
     : null;
-  const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
   const rewrittenWritingScore = rewrittenScan.writing_score ?? rewrittenBadge.writing_quality_score ?? null;
   const calibratedAuthorshipRisk = clampPercent(authorshipFeatures.calibrated_ai_risk);
   const topkPatternScore = clampPercent(originalComparisonBadge.ai_components?.topk_pattern_raw ?? originalComparisonBadge.ai_components?.topk_pattern);
@@ -1467,7 +1493,7 @@ export default function Report() {
   const scoreProfileGroups = groupTransformationSignals(scoreProfilePairs).map((group) => translatedGroup(group, t));
   const scoreProfileSummaryGroups = scoreProfileGroups.slice(0, 3).map((group) => {
     const signalEntries = group.signals.map((pair) => {
-      const current = hasRewriteSignalComparison ? (pair.rewritten || pair.original) : pair.original;
+      const current = hasRewriteSignalComparison ? pair.rewritten : pair.original;
       const baseline = hasRewriteSignalComparison ? pair.original : null;
       return {
         pair,
@@ -1589,9 +1615,9 @@ export default function Report() {
               {activeGroup.signals.map((pair) => {
                 const originalSignal = pair.original ? translatedSignal(pair.original, t) : null;
                 const rewrittenSignal = pair.rewritten ? translatedSignal(pair.rewritten, t) : null;
-                const currentSignal = hasRewriteSignalComparison ? (rewrittenSignal || originalSignal) : originalSignal;
+                const currentSignal = hasRewriteSignalComparison ? rewrittenSignal : originalSignal;
                 const improvement = getTransformationSignalImprovement(pair.rewritten, pair.original);
-                const signalColor = currentSignal?.color || pair.color || '#0f766e';
+                const signalColor = currentSignal?.color || originalSignal?.color || pair.color || '#0f766e';
                 return (
                   <div key={pair.key} className="score-profile-row">
                      <div className="score-profile-row-head">
