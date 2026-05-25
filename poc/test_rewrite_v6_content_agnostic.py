@@ -86,6 +86,7 @@ def test_v6_json_result_is_serializable():
 
 def test_v6_production_adapter_returns_worker_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(v6_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+    monkeypatch.setattr(v6_production, "_scan_report", fake_full_scan_report)
     result = v6_production.run_rewrite_pipeline_v6(
         detect_json={"input_text": "The review moved from intake to approval."},
         output_dir=str(tmp_path),
@@ -98,6 +99,72 @@ def test_v6_production_adapter_returns_worker_contract(tmp_path, monkeypatch):
     assert summary["rewrite_pipeline_version"] == "rewrite_v6_scanner_planner_writer"
     assert summary["rewrite_effective_config"]["model"] == "qwen/qwen3-30b-a3b-instruct-2507"
     assert summary["final_text"]
+    rewritten_scan = summary["detect_scan_rewritten"]
+    rewritten_badge = rewritten_scan["ai_risk_badge"]
+    rewritten_intelligence = rewritten_scan["scan_intelligence"]["transformation"]
+    assert rewritten_badge["transformation_classification"]["code"] == "low_ai_signal"
+    assert rewritten_badge["ai_components"]["topk_calibrated_risk"] == 4
+    assert rewritten_intelligence["contribution"]["human_contribution_ratio"] == 96
+    assert rewritten_intelligence["core_signals"][0]["key"] == "topk_calibrated_risk"
+    assert rewritten_scan["integrity_layers"]["layers"]["human_contribution_signal"]["score"] == 96
+
+
+def fake_full_scan_report(text: str) -> dict:
+    return {
+        "input_text": text,
+        "findings": {"critical": [], "high": [], "medium": [], "low": []},
+        "ai_score": 2,
+        "writing_score": 3,
+        "ai_risk_badge": {
+            "ai_likelihood_score": 2,
+            "writing_quality_score": 3,
+            "tier": "green",
+            "authorship_rating": {"label": "Good", "short_label": "Good", "code": "low_ai_signal"},
+            "authorship_rating_label": "Good",
+            "ai_components": {
+                "topk_pattern_raw": 7,
+                "topk_calibrated_risk": 4,
+                "topk_calibration_eligible": True,
+            },
+            "transformation_classification": {
+                "code": "low_ai_signal",
+                "label": "Human contribution pattern",
+                "confidence": "high",
+                "features": {
+                    "ai_likelihood": 2,
+                    "human_anchor_score": 96,
+                    "calibrated_ai_risk": 2,
+                    "topk_calibrated_risk": 4,
+                },
+            },
+        },
+        "scan_intelligence": {
+            "transformation": {
+                "contribution": {
+                    "human_contribution_ratio": 96,
+                    "ai_transformation_ratio": 4,
+                    "calibrated_ai_risk": 2,
+                    "human_anchor_discount": 70,
+                    "calibration_confidence": 92,
+                    "reporting_suppression": 15,
+                    "summary": "Human anchoring dominates the rewritten scan.",
+                },
+                "core_signals": [
+                    {
+                        "key": "topk_calibrated_risk",
+                        "label": "Calibrated Top-k Risk",
+                        "score": 4,
+                    }
+                ],
+            }
+        },
+        "integrity_layers": {
+            "layers": {
+                "human_contribution_signal": {"score": 96},
+                "ai_transformation_risk": {"score": 4},
+            }
+        },
+    }
 
 
 def test_v6_finding_methods_are_exposed_to_writer_contract():

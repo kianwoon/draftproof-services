@@ -10,10 +10,12 @@ try:
     from report.pdf import render_pdf
     from report.render_rewrite import render_rewrite_report
     from rewrite_v2.pipeline import _extract_original_text, _sentence_comparison
+    from rewrite_v3.pipeline import _scan_report
 except ModuleNotFoundError:
     from poc.report.pdf import render_pdf
     from poc.report.render_rewrite import render_rewrite_report
     from poc.rewrite_v2.pipeline import _extract_original_text, _sentence_comparison
+    from poc.rewrite_v3.pipeline import _scan_report
 
 from .pipeline import run_v6_rewrite_all
 
@@ -56,8 +58,16 @@ def run_rewrite_pipeline_v6(
     status = "ai_mitigated" if changed and cleared else "partial_candidate_not_strict_safe" if changed else "original_preserved"
     elapsed = time.time() - started
     sentence_comparison = _sentence_comparison(original_text, final_text)
-    original_scan_report = _scan_report_shape(document.initial_scan.to_dict())
-    rewritten_scan_report = _scan_report_shape(document.final_scan.to_dict())
+    original_scan_report = _scan_report_for_summary(
+        original_text,
+        provided=detect_json,
+        fallback_scan=document.initial_scan.to_dict(),
+    )
+    rewritten_scan_report = _scan_report_for_summary(
+        final_text,
+        provided=None,
+        fallback_scan=document.final_scan.to_dict(),
+    )
     summary = {
         "rewrite_pipeline_version": "rewrite_v6_scanner_planner_writer",
         "rewrite_engine_mode": "v6_production",
@@ -130,3 +140,30 @@ def _scan_report_shape(scan: dict[str, Any]) -> dict[str, Any]:
             "writing_quality_score": mean_risk,
         },
     }
+
+
+def _scan_report_for_summary(text: str, *, provided: dict[str, Any] | None, fallback_scan: dict[str, Any]) -> dict[str, Any]:
+    if _has_full_report_shape(provided):
+        return dict(provided or {})
+    try:
+        report = _scan_report(text)
+        if _has_full_report_shape(report):
+            return report
+    except Exception:
+        pass
+    return _scan_report_shape(fallback_scan)
+
+
+def _has_full_report_shape(report: dict[str, Any] | None) -> bool:
+    if not isinstance(report, dict):
+        return False
+    badge = report.get("ai_risk_badge") if isinstance(report.get("ai_risk_badge"), dict) else {}
+    intelligence = report.get("scan_intelligence") if isinstance(report.get("scan_intelligence"), dict) else {}
+    transformation = intelligence.get("transformation") if isinstance(intelligence.get("transformation"), dict) else {}
+    return bool(
+        badge.get("transformation_classification")
+        and (
+            transformation.get("contribution")
+            or transformation.get("core_signals")
+        )
+    )
