@@ -263,7 +263,7 @@ def _context_anchor_gap(sentence: Sentence) -> bool:
 
 def _author_anchor_gap(sentence: Sentence) -> bool:
     lowered = sentence.text.casefold()
-    if any(token in lowered for token in (" i ", " my ", " we ", " our ")):
+    if re.search(r"\b(i|my|we|our)\b", lowered):
         return False
     evaluative_markers = ("important", "challenge", "concern")
     evidence_markers = ("this shows", "that shows", "shows that", "this demonstrates", "that demonstrates", "demonstrates that")

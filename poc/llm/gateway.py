@@ -37,7 +37,7 @@ class LLMConfig:
     api_key: Optional[str] = None
     base_url: Optional[str] = None       # None → resolved from LLM_BASE_URL env var (fallback: OpenRouter)
     model: Optional[str] = None          # None → resolved from LLM_MODEL env var at runtime
-    max_tokens: int = 4096
+    max_tokens: Optional[int] = 4096
     temperature: float = 0.3
     top_p: Optional[float] = None
     top_k: Optional[int] = None
@@ -131,6 +131,10 @@ _RETRYABLE_PATTERNS = [
 ]
 
 
+class EmptyLLMContentError(RuntimeError):
+    """Provider returned no assistant completion text."""
+
+
 _MODEL_CAPABILITIES = {
     "openai/gpt-4.1-mini": {
         "top_k": False,
@@ -214,6 +218,7 @@ _MODEL_CAPABILITIES = {
         "structured_outputs": False,
         "json_object_response_format": False,
         "reasoning": True,
+        "reasoning_required": True,
         "reasoning_token_control": "max_tokens",
     },
 }
@@ -246,6 +251,7 @@ def _model_capabilities(model: str) -> dict:
         "structured_outputs": normalized.startswith(("deepseek/", "qwen/", "mistral/", "meta-llama/", "anthropic/")),
         "json_object_response_format": True,
         "reasoning": "thinking" in normalized,
+        "reasoning_required": "qwen" in normalized and "thinking" in normalized,
         "reasoning_token_control": "max_tokens" if "qwen" in normalized and "thinking" in normalized else None,
     }
 
@@ -265,6 +271,15 @@ def model_supports_structured_outputs(model: str | None) -> bool:
 
 def model_supports_json_object_response_format(model: str | None) -> bool:
     return bool(_model_capabilities(str(model or "")).get("json_object_response_format", True))
+
+
+def model_supports_reasoning(model: str | None) -> bool:
+    return bool(_model_capabilities(str(model or "")).get("reasoning"))
+
+
+def _reasoning_explicitly_disabled(reasoning: dict[str, Any]) -> bool:
+    effort = str(reasoning.get("effort") or "").strip().lower()
+    return effort == "none" or reasoning.get("enabled") is False
 
 
 def _first_env(*names: str) -> str | None:
@@ -556,12 +571,14 @@ class LLMGateway:
         provider: Optional[dict[str, Any]] = None,
     ) -> LLMResponse:
         url = f"{self.base_url}/chat/completions"
+        effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
         payload = {
             "model": self.model,
             "messages": messages,
-            "max_tokens": max_tokens or self.max_tokens,
             "temperature": temperature if temperature is not None else self.temperature,
         }
+        if effective_max_tokens is not None:
+            payload["max_tokens"] = effective_max_tokens
         effective_top_p = top_p if top_p is not None else self.top_p
         effective_top_k = top_k if top_k is not None else self.top_k
         effective_presence_penalty = (
@@ -608,25 +625,49 @@ class LLMGateway:
             payload["provider"] = effective_provider
         if self.extra_body is not None:
             payload.update(self.extra_body)
-        if caps.get("reasoning"):
+        if not caps.get("reasoning"):
+            current_reasoning = payload.get("reasoning") if isinstance(payload.get("reasoning"), dict) else {}
+            if _reasoning_explicitly_disabled(current_reasoning):
+                payload["reasoning"] = {
+                    "effort": "none",
+                    "exclude": current_reasoning.get(
+                        "exclude",
+                        _bool_env_default("DRAFTPROOF_OPENROUTER_EXCLUDE_REASONING", True),
+                    ),
+                }
+                payload["include_reasoning"] = False
+            else:
+                payload.pop("reasoning", None)
+                payload.pop("include_reasoning", None)
+        else:
             current_reasoning = payload.get("reasoning") if isinstance(payload.get("reasoning"), dict) else {}
             exclude_reasoning = _bool_env_default("DRAFTPROOF_OPENROUTER_EXCLUDE_REASONING", True)
+            reasoning_disabled = _reasoning_explicitly_disabled(current_reasoning)
             reasoning_max_tokens = _int_env(
                 "DRAFTPROOF_OPENROUTER_REASONING_MAX_TOKENS",
-                1200,
+                256 if reasoning_disabled else 1200,
                 minimum=0,
                 maximum=8000,
             )
             payload["reasoning"] = {
                 **current_reasoning,
-                "enabled": current_reasoning.get("enabled", True),
                 "exclude": current_reasoning.get("exclude", exclude_reasoning),
             }
-            if reasoning_max_tokens > 0 and "max_tokens" not in payload["reasoning"]:
-                if caps.get("reasoning_token_control") == "max_tokens":
+            if reasoning_disabled:
+                payload["reasoning"].pop("max_tokens", None)
+                payload["reasoning"].pop("enabled", None)
+                if caps.get("reasoning_required"):
                     payload["reasoning"].pop("effort", None)
-                    payload["reasoning"]["max_tokens"] = reasoning_max_tokens
-                elif "effort" not in payload["reasoning"]:
+                    payload["reasoning"]["max_tokens"] = max(128, reasoning_max_tokens)
+                else:
+                    payload["reasoning"]["effort"] = "none"
+            else:
+                payload["reasoning"]["enabled"] = current_reasoning.get("enabled", True)
+                if (
+                    reasoning_max_tokens > 0
+                    and "max_tokens" not in payload["reasoning"]
+                    and "effort" not in payload["reasoning"]
+                ):
                     payload["reasoning"]["max_tokens"] = reasoning_max_tokens
             payload["include_reasoning"] = False
         effective_sampling = {
@@ -643,7 +684,7 @@ class LLMGateway:
             self.model,
             len(messages),
             prompt_chars,
-            payload["max_tokens"],
+            payload.get("max_tokens"),
             json.dumps(requested_sampling, sort_keys=True),
             json.dumps(effective_sampling, sort_keys=True),
             json.dumps(effective_provider, sort_keys=True) if effective_provider is not None else None,
@@ -665,6 +706,8 @@ class LLMGateway:
 
                 data = self._strip_reasoning_from_response(data)
                 content = self._extract_content(data)
+                if not content.strip():
+                    raise EmptyLLMContentError(self._empty_content_error_message(data))
                 usage = data.get("usage", {})
                 model_used = data.get("model", self.model)
 
@@ -770,6 +813,27 @@ class LLMGateway:
         except (KeyError, IndexError, TypeError):
             logger.warning("Unexpected response structure: %s", json.dumps(data)[:500])
             return ""
+
+    @staticmethod
+    def _empty_content_error_message(data: dict[str, Any]) -> str:
+        usage = data.get("usage") if isinstance(data, dict) else {}
+        choices = data.get("choices") if isinstance(data, dict) else []
+        first = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+        message = first.get("message") if isinstance(first.get("message"), dict) else {}
+        completion_details = usage.get("completion_tokens_details") if isinstance(usage, dict) else {}
+        reason = {
+            "model": data.get("model") if isinstance(data, dict) else None,
+            "provider": data.get("provider") if isinstance(data, dict) else None,
+            "finish_reason": first.get("finish_reason"),
+            "native_finish_reason": first.get("native_finish_reason"),
+            "content_is_null": message.get("content") is None,
+            "reasoning_tokens": (
+                completion_details.get("reasoning_tokens")
+                if isinstance(completion_details, dict)
+                else None
+            ),
+        }
+        return "empty LLM response content: " + json.dumps(reason, sort_keys=True)
 
     @staticmethod
     def _strip_reasoning_text(text: str) -> str:

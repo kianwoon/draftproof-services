@@ -6,7 +6,8 @@ from typing import Any
 from poc.llm.gateway import LLMConfig, LLMGateway
 
 from .plan import Plan, build_plan
-from .scan import Scan, scan_text
+from .planner_llm import run_planner_llm
+from .scan import Scan, findings_for_paragraph, scan_text
 from .write import Variant, choose_variant, write_variants
 
 
@@ -47,6 +48,7 @@ class DocumentResult:
 def run_v6_rewrite(
     text: str,
     *,
+    planner_client: Any | None = None,
     writer_client: Any | None = None,
     excluded_paragraph_ids: set[str] | None = None,
     model: str | None = None,
@@ -55,12 +57,19 @@ def run_v6_rewrite(
 ) -> Result:
     scan = scan_text(text)
     paragraph, plan = build_plan(scan, excluded_paragraph_ids)
+    if planner_client is not None or writer_client is None:
+        plan = run_planner_llm(
+            paragraph,
+            plan,
+            findings_for_paragraph(scan, paragraph.id),
+            client=planner_client or _planner_gateway(api_key=api_key, base_url=base_url),
+        )
     client = writer_client or LLMGateway(
         LLMConfig(
             model=model or _writer_model(),
             api_key=api_key,
             base_url=base_url,
-            max_tokens=900,
+            max_tokens=None,
             temperature=0.12,
             top_p=0.75,
             extra_body=_writer_extra_body(model or _writer_model()),
@@ -74,6 +83,7 @@ def run_v6_rewrite(
 def run_v6_rewrite_all(
     text: str,
     *,
+    planner_client: Any | None = None,
     writer_client: Any | None = None,
     max_passes: int | None = None,
     model: str | None = None,
@@ -94,6 +104,7 @@ def run_v6_rewrite_all(
             break
         result = run_v6_rewrite(
             current,
+            planner_client=planner_client,
             writer_client=writer_client,
             excluded_paragraph_ids=exhausted,
             model=model,
@@ -134,6 +145,38 @@ def _writer_model() -> str:
     import os
 
     return os.environ.get("DRAFTPROOF_V6_WRITER_MODEL") or os.environ.get("LLM_MODEL") or "qwen/qwen3-30b-a3b-instruct-2507"
+
+
+def _planner_model() -> str:
+    import os
+
+    return (
+        os.environ.get("DRAFTPROOF_V6_PLANNER_MODEL")
+        or os.environ.get("DRAFTPROOF_PLANNER_MODEL")
+        or os.environ.get("DRAFTPROOF_REWRITE_V5_PLANNER_MODEL")
+        or "z-ai/glm-5.1"
+    )
+
+
+def _planner_gateway(*, api_key: str | None, base_url: str | None) -> LLMGateway:
+    model = _planner_model()
+    return LLMGateway(
+        LLMConfig(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            max_tokens=None,
+            temperature=0.1,
+            top_p=0.75,
+            extra_body=_planner_extra_body(model),
+        )
+    )
+
+
+def _planner_extra_body(model: str) -> dict[str, Any] | None:
+    if "thinking" in str(model or "").casefold():
+        return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 128}, "include_reasoning": False}
+    return {"reasoning": {"enabled": False}, "include_reasoning": False}
 
 
 def _writer_extra_body(model: str) -> dict[str, Any] | None:

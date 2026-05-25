@@ -91,6 +91,8 @@ def source_terms(text: str, *, limit: int = 12) -> list[str]:
         "every", "from", "have", "into", "more", "most", "only", "other", "over",
         "should", "still", "their", "there", "these", "those", "through", "under",
         "where", "which", "while", "would",
+        "than", "that", "this", "they", "with", "many", "because", "however", "therefore",
+        "does",
     }
     for token in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", str(text or "")):
         key = token.strip("'").casefold()

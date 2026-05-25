@@ -65,9 +65,222 @@ def test_v6_prompt_uses_source_terms_and_not_fixed_domain_starts():
     scan = scan_text(sample_text())
     paragraph, plan = build_plan(scan)
     prompt = build_prompt(paragraph, plan)
-    assert "source_terms" in prompt
+    assert "coverage_beats_must_all_appear" in prompt
     assert "form" in prompt
     assert "Start with" not in prompt
+
+
+def test_v6_packed_list_plan_uses_prose_rebuild_not_atomic_decomposition():
+    source = "The process used a form, a queue, a reviewer, and a final check."
+    scan = scan_text(source)
+    paragraph, plan = build_plan(scan)
+    methods = {action.method for action in plan.actions}
+    prompt = build_prompt(paragraph, plan)
+    payload = json.loads(prompt.split("\n", 1)[1])
+    assert "list_rhythm_rebuild" in methods
+    assert "atomic_decomposition" not in prompt
+    assert "uncapped during golden-route discovery" in payload["required_shape"]["sentence_count"]
+    assert payload["coverage_beats_must_all_appear"]
+    assert "affected_sentence_routes" not in payload
+    assert "generation_brief" not in payload
+    assert "source_text" not in payload
+    assert "source_beat_map" not in prompt
+    assert "coverage_phrase" not in prompt
+    assert source not in prompt
+    assert "coverage_map" in prompt
+    assert "reviewer" in prompt
+    assert "Write one ordinary sentence for each coverage beat first" in prompt
+    assert "Do not put three or more examples" in prompt
+
+
+def test_v6_dense_list_coverage_uses_grouped_beats_not_one_item_chain():
+    scan = scan_text(
+        "The service uses calls, forms, queues, reviewers, messages, dashboards, and follow-up checks."
+    )
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    beats = payload["coverage_beats_must_all_appear"]
+    assert len(beats) < 7
+    assert any("calls" in beat["coverage_capsule"].casefold() and "forms" in beat["coverage_capsule"].casefold() for beat in beats)
+    assert any("queues" in beat["coverage_capsule"].casefold() and "reviewers" in beat["coverage_capsule"].casefold() for beat in beats)
+    assert any("messages" in beat["coverage_capsule"].casefold() and "dashboards" in beat["coverage_capsule"].casefold() for beat in beats)
+    assert "Do not turn grouped coverage terms into repeated one-item sentences" in build_prompt(paragraph, plan)
+
+
+def test_v6_writer_prompt_blocks_unsubmitted_intensity_expansion():
+    scan = scan_text("The service uses calls, forms, queues, reviewers, messages, dashboards, and follow-up checks.")
+    paragraph, plan = build_plan(scan)
+    prompt = build_prompt(paragraph, plan)
+    payload = json.loads(prompt.split("\n", 1)[1])
+    assert "Do not add unsubmitted intensity" in prompt
+    assert "source relation only" in prompt
+    assert "Do not use semicolons" in prompt
+    assert "plain_route_contract_for_v1" in payload
+    assert "common/essential/dynamic" in prompt
+    assert "has become more important/challenging/serious" in prompt
+    assert "become/becomes <descriptor A>, <descriptor B>, and <descriptor C>" in prompt
+    assert "coverage capsule words" in prompt
+
+
+def test_v6_coverage_keeps_late_contrast_terms():
+    scan = scan_text(
+        "A client with strong support may progress quickly, while another client may fall behind through no fault of their own."
+    )
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    capsules = " ".join(beat["coverage_capsule"] for beat in payload["coverage_beats_must_all_appear"]).casefold()
+    assert "fall" in capsules
+    assert "behind" in capsules
+    assert "fault" in capsules
+    assert "Every source-side contrast must survive" in build_prompt(paragraph, plan)
+
+
+def test_v6_writer_prompt_filters_selected_source_terms_from_context_terms():
+    scan = scan_text(
+        "Today, the workflow is changing faster than staff can manage. "
+        "The process used a form, a queue, and a reviewer.\n\n"
+        "Clients also use chat, email, and online forms before the review."
+    )
+    paragraph, plan = build_plan(scan, {p.id for p in scan.paragraphs if p.id != "p001"})
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    prompt_context_terms = payload["context_anchors"]["context_terms"]
+    assert "Today" not in prompt_context_terms
+    assert "form" not in [term.casefold() for term in prompt_context_terms]
+    assert any(term.casefold() == "clients" for term in prompt_context_terms)
+
+
+def test_v6_named_reference_extraction_is_not_domain_keyword_filtered():
+    scan = scan_text(
+        "Students in Group Alpha used Review Method (2024).\n\n"
+        "This result shows an important concern because the process should improve."
+    )
+    _paragraph, plan = build_plan(scan)
+    assert "Group Alpha" in plan.author_proxy_context["named_references"]
+    assert "Review Method" in plan.author_proxy_context["named_references"]
+    assert "Students" not in plan.author_proxy_context["named_references"]
+
+
+def test_v6_planner_extracts_author_proxy_context_from_submitted_text():
+    text = (
+        "Before the review, Alpha Method was introduced by Smith (2020). "
+        "The team called this step \"guided intake\".\n\n"
+        "This result shows a serious concern because the process should improve across teams and client support.\n\n"
+        "According to Rivera et al. (2021), the next review checked client response time."
+    )
+    scan = scan_text(text)
+    paragraph, plan = build_plan(scan)
+    context = plan.author_proxy_context
+    assert paragraph.id == "p002"
+    assert "Alpha Method" in context["named_references"]
+    assert "Smith (2020)" in context["citation_spans"]
+    assert "Rivera et al. (2021)" in context["citation_spans"]
+    assert "2020" in context["years"]
+    assert "2021" in context["years"]
+    assert "guided intake" in context["quoted_terms"]
+    prompt_payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    assert prompt_payload["context_anchors"]["named_references"] == context["named_references"]
+    assert prompt_payload["context_anchors"]["named_references"]
+    assert "context_anchors" in build_prompt(paragraph, plan)
+
+
+def test_v6_planner_turns_findings_into_concrete_safe_route_targets():
+    scan = scan_text(
+        "This result shows an important concern because the process should improve across teams and client support. "
+        "The review used a form, a queue, and a final check."
+    )
+    paragraph, plan = build_plan(scan)
+    prompt_payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    route_steps = plan.ai_safe_route["sentence_route_steps"]
+    targets = [
+        target
+        for step in route_steps
+        for target in step.get("finding_resolution_targets", [])
+    ]
+    target_tags = {target["finding_tag"] for target in targets}
+    assert {"author_anchor_gap", "unsupported_claim_gap", "packed_list"} <= target_tags
+    assert any("inside the same beat" in target["safe_route"] for target in targets)
+    assert any("two connected prose beats" in target["safe_route"] for target in targets)
+    assert plan.ai_safe_route["golden_route"]["compact_formula"] == "Scope it. Anchor it. Show it. Explain it. Close it."
+    assert plan.ai_safe_route["golden_route"]["question_rule"]
+    assert plan.ai_safe_route["golden_route_questions"]
+    assert plan.ai_safe_route["coverage_beats"]
+    assert all(beat.get("coverage_terms") for beat in plan.ai_safe_route["coverage_beats"])
+    assert any("merge only" in beat["merge_rule"] for beat in plan.ai_safe_route["coverage_beats"])
+    assert not _contains_key(plan.ai_safe_route, "source_text")
+    assert not _contains_key(plan.ai_safe_route, "coverage_phrase")
+    assert prompt_payload["golden_question"]
+    assert prompt_payload["golden_route"]["compact_formula"] == "Scope it. Anchor it. Show it. Explain it. Close it."
+    assert prompt_payload["coverage_beats_must_all_appear"]
+    assert any(beat.get("finding_tags") for beat in prompt_payload["coverage_beats_must_all_appear"])
+    assert any(beat.get("finding_instruction") for beat in prompt_payload["coverage_beats_must_all_appear"])
+    assert "generation_brief" not in prompt_payload
+    assert "affected_sentence_routes" not in prompt_payload
+    assert "what did the writer see, read, compare, struggle with, or decide" in build_prompt(paragraph, plan).casefold()
+    assert "do not preserve exact source wording" in build_prompt(paragraph, plan).casefold()
+
+
+def test_v6_author_anchor_instruction_reaches_writer_beat():
+    scan = scan_text("This is an important concern because the process should improve across teams.")
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    instructions = " ".join(beat.get("finding_instruction", "") for beat in payload["coverage_beats_must_all_appear"])
+    assert "concrete source relation before any evaluative word" in instructions
+    assert "important, challenge, or concern" in instructions
+    assert "observable role, pressure, decision, support, or contrast relation" in instructions
+
+
+def _contains_key(value, key: str) -> bool:
+    if isinstance(value, dict):
+        return key in value or any(_contains_key(child, key) for child in value.values())
+    if isinstance(value, list):
+        return any(_contains_key(child, key) for child in value)
+    return False
+
+
+def test_v6_planner_passes_polarity_markers_to_writer_prompt():
+    scan = scan_text(
+        "The process does not only reward people who remember facts. "
+        "It rewards people who can analyse, adapt, communicate, and create."
+    )
+    paragraph, plan = build_plan(scan)
+    markers = [
+        marker
+        for beat in plan.ai_safe_route["coverage_beats"]
+        for marker in beat.get("polarity_markers", [])
+    ]
+    prompt_payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    prompt_markers = [
+        marker
+        for beat in prompt_payload["coverage_beats_must_all_appear"]
+        for marker in beat.get("polarity_markers", [])
+    ]
+    assert any(marker.casefold() == "does not only" for marker in markers)
+    assert any(marker.casefold() == "does not only" for marker in prompt_markers)
+    assert any("not enough" in beat.get("polarity_instruction", "") for beat in prompt_payload["coverage_beats_must_all_appear"])
+    assert "Preserve every beat's polarity_markers" in build_prompt(paragraph, plan)
+
+
+def test_v6_no_longer_without_reflects_keeps_own_fact_capsule():
+    scan = scan_text("Knowledge is no longer scarce. Access is no longer the biggest problem.")
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    capsules = [beat["coverage_capsule"] for beat in payload["coverage_beats_must_all_appear"]]
+    assert any("Knowledge" in capsule and "scarce" in capsule for capsule in capsules)
+    assert any("Access" in capsule and "problem" in capsule for capsule in capsules)
+    assert all("young people learn" not in capsule for capsule in capsules)
+
+
+def test_v6_list_rebuild_does_not_allow_sentence_count_compression():
+    scan = scan_text(
+        "The process used a form, a queue, and a reviewer. "
+        "Clients submitted details, waited for confirmation, and received a response."
+    )
+    paragraph, plan = build_plan(scan)
+    prompt = build_prompt(paragraph, plan)
+    payload = json.loads(prompt.split("\n", 1)[1])
+    assert "uncapped during golden-route discovery" in payload["required_shape"]["sentence_count"]
+    assert "uncapped during golden-route discovery" in payload["required_shape"]["word_count"]
+    assert "Write one ordinary sentence for each coverage beat first" in prompt
 
 
 def test_v6_rewrite_preserves_source_when_writer_returns_no_candidate():
@@ -88,6 +301,28 @@ def test_v6_bad_writer_json_preserves_source_instead_of_compiling():
     assert result.selected.source == "source_preserved"
     assert result.rewritten_text == source
     assert client.calls == 1
+
+
+def test_v6_parse_variants_preserves_string_author_review_rows():
+    from poc.rewrite_v6.write import parse_variants
+
+    variants = parse_variants({
+        "variants": [
+            {
+                "id": "v1",
+                "text": "The route needs a bridge.",
+                "author_proxy_provenance": ["bridge inferred from nearby context"],
+                "author_review_items": ["confirm this bridge"],
+                "coverage_map": [{"coverage_beat_id": "b1", "sentence": "The route needs a bridge."}],
+            }
+        ]
+    })
+    assert variants[0].author_proxy_provenance
+    assert variants[0].author_proxy_provenance[0]["generated_text"] == "bridge inferred from nearby context"
+    assert variants[0].author_review_items
+    assert variants[0].author_review_items[0]["provenance"] == "needs_author_confirmation"
+    assert variants[0].coverage_map
+    assert variants[0].coverage_map[0]["coverage_beat_id"] == "b1"
 
 
 def test_v6_files_stay_below_1000_lines_and_do_not_import_v5():
@@ -235,13 +470,25 @@ def test_v6_finding_methods_are_exposed_to_writer_contract():
     scan = scan_text(text)
     paragraph, plan = build_plan(scan)
     prompt = build_prompt(paragraph, plan)
-    methods = {action.method for action in plan.actions}
-    assert methods
-    for method in methods:
-        assert f'"{method}"' in prompt
+    assert plan.ai_safe_route["sentence_route_steps"]
+    assert "resolution_targets" not in prompt
     assert "author_proxy_policy" in prompt
     assert "author_proxy_provenance" in prompt
     assert "author_review_items" in prompt
+
+
+def test_v6_planner_scopes_evaluative_unsupported_author_gap_instead_of_adding_conclusion():
+    scan = scan_text("This is a serious concern because the modern process should improve across teams and client support.")
+    _paragraph, plan = build_plan(scan)
+    assert plan.actions[0].method == "claim_scope_repair"
+    assert "not as an added conclusion" in plan.actions[0].operation
+    assert "failed_route" in plan.paragraph_strategy
+    assert "source-beat plan" in plan.paragraph_strategy["writer_instruction"]
+
+
+def test_v6_scanner_does_not_mistake_this_is_for_first_person_i():
+    scan = scan_text("This is a serious concern because the modern process should improve across teams and client support.")
+    assert any("author_anchor_gap" in finding.tags for finding in scan.findings)
 
 
 def test_v6_author_proxy_prompt_does_not_block_reviewable_bridges():
@@ -249,8 +496,8 @@ def test_v6_author_proxy_prompt_does_not_block_reviewable_bridges():
     paragraph, plan = build_plan(scan)
     prompt = build_prompt(paragraph, plan)
     assert "source-derived terms only" not in prompt
-    assert "record its provenance" in prompt
-    assert "author-review provenance" in prompt
+    assert "Use author_proxy_provenance or author_review_items" in prompt
+    assert "author_proxy_provenance" in prompt
 
 
 def test_v6_scanner_does_not_count_parenthetical_citation_commas_as_lists():
@@ -313,10 +560,12 @@ def test_v6_selection_prefers_writer_over_source_when_writer_improves_route():
             {
                 "id": "v1",
                 "text": (
-                    "Teams now handle intake in conditions that the older review model only partly explains. "
-                    "The earlier process still matters because forms, queues, reviewers, confirmation, and responses gave clients a clear route through the work. "
-                    "What has changed is the pressure around that route. "
-                    "The model can still guide some cases, but it does not fit every intake path teams now manage."
+                    "Teams now handle intake under pressure the older route partly explains. "
+                    "Forms and queues still matter. "
+                    "Reviewers give clients a route through the work. "
+                    "Confirmation and responses stay inside that route. "
+                    "Some cases still fit the model. "
+                    "Every intake path does not fit it now."
                 ),
             }
         ]
@@ -342,6 +591,114 @@ def test_v6_selection_rejects_polished_lexical_inflation_without_provenance():
                     "The contemporary intake ecosystem is undergoing accelerated transformation beyond organizational adaptation. "
                     "Its traditional procedural framework relied on documentation infrastructure, sequential prioritization, and evaluative personnel."
                 ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+    assert result.rewritten_text == source
+
+
+def test_v6_selection_rejects_mechanical_itemized_decomposition():
+    source = (
+        "The intake system is changing faster than many teams can manage. "
+        "The old process used a form, a queue, and a reviewer. "
+        "Clients submitted details, waited for confirmation, and received a response."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "The intake system carries this pressure. "
+                    "The old process used a form. "
+                    "The old process used a queue. "
+                    "The old process used a reviewer. "
+                    "Clients submitted details. "
+                    "Clients waited for confirmation. "
+                    "Clients received a response."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+    assert result.rewritten_text == source
+
+
+def test_v6_selection_rejects_finding_drop_when_risk_and_drift_get_worse():
+    source = (
+        "However, the current education system still carries many old habits. "
+        "Many schools continue to place heavy pressure on grades, exams, and standard answers. "
+        "This can encourage memorisation rather than understanding. "
+        "Students may learn how to pass, but not always how to think deeply, solve problems, or connect ideas across subjects. "
+        "This is a serious concern because the modern world does not only reward people who can remember facts. "
+        "It rewards people who can analyse, adapt, communicate, and create."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "However, the current education system still carries many old habits. "
+                    "Many schools continue to place heavy pressure on grades, exams, and standard answers, which often leads to memorisation over understanding. "
+                    "This focus can result in students learning how to pass tests without always developing the ability to think deeply, solve problems, or connect ideas across subjects. "
+                    "This is a serious concern because the modern world does not only reward people who can remember facts—it rewards those who can analyse, adapt, communicate, and create. "
+                    "The gap between what schools emphasize and what the world demands highlights a growing mismatch that needs attention."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+    assert result.rewritten_text == source
+
+
+def test_v6_selection_rejects_extra_unmapped_conclusion_beat():
+    source = (
+        "The current process still carries old habits. "
+        "Teams place heavy pressure on forms, queues, and standard answers. "
+        "Clients may learn how to pass checks, but not how to explain problems."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "The current process still carries old habits. "
+                    "Teams place heavy pressure on forms and queues, with standard answers treated as the goal. "
+                    "Clients may learn how to pass checks, but not how to explain problems. "
+                    "The shift shows why the whole system needs deeper transformation."
+                ),
+                "author_review_items": ["The final sentence is inferred from the draft."],
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+    assert result.rewritten_text == source
+
+
+def test_v6_selection_rejects_final_source_beat_replaced_by_conclusion():
+    source = (
+        "The process still carries old habits. "
+        "Teams place pressure on forms, queues, and standard answers. "
+        "It rewards people who can analyse, adapt, communicate, and create."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "The process still carries old habits. "
+                    "Teams place pressure on forms and queues, with standard answers treated as the goal. "
+                    "The shift in expectations demands a rethinking of how the process is structured."
+                ),
+                "author_review_items": ["The final sentence is inferred from the draft."],
             }
         ]
     })
@@ -416,9 +773,8 @@ def test_v6_writer_prompt_marks_unverified_bridges_for_review_not_blocking():
     scan = scan_text("This result shows a gap because the process should improve.")
     paragraph, plan = build_plan(scan)
     prompt = build_prompt(paragraph, plan)
-    assert "author-review provenance" in prompt
+    assert "author_proxy_provenance" in prompt
     assert "user must review and owns facts, citations, anchors" in prompt
-    assert "presented as source-confirmed without author-review provenance" in prompt
     assert "truth" not in prompt.casefold()
 
 
