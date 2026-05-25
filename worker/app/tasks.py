@@ -91,6 +91,8 @@ EXTERNAL_REVIEW_REWRITE_WARNINGS = {
 def _selected_rewrite_pipeline(settings_obj) -> str:
     """Return the first enabled rewrite pipeline in production priority order."""
 
+    if getattr(settings_obj, "DRAFTPROOF_REWRITE_V6_ENABLED", False):
+        return "v6"
     if getattr(settings_obj, "DRAFTPROOF_REWRITE_V5_ENABLED", False):
         return "v5"
     if getattr(settings_obj, "DRAFTPROOF_REWRITE_V4_ENABLED", False):
@@ -2058,7 +2060,19 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 if isinstance(rewrite_model, str) and rewrite_model.strip().lower() in {"0", "false", "no", "off"}:
                     rewrite_model = settings.DRAFTPROOF_GENERATOR_MODEL or settings.LLM_MODEL or None
                 pipeline_choice = _selected_rewrite_pipeline(settings)
-                if pipeline_choice == "v5":
+                if pipeline_choice == "v6":
+                    from rewrite_v6 import run_rewrite_pipeline_v6
+                    v6_rewrite_model = settings.DRAFTPROOF_V6_WRITER_MODEL or rewrite_model
+                    result = run_rewrite_pipeline_v6(
+                        detect_json=report_json,
+                        output_dir=tmpdir,
+                        api_key=llm_api_key or None,
+                        model=v6_rewrite_model,
+                        base_url=settings.LLM_BASE_URL or None,
+                        progress_callback=report_rewrite_progress,
+                        cancellation_check=raise_if_canceled,
+                    )
+                elif pipeline_choice == "v5":
                     from rewrite_v5 import run_rewrite_pipeline_v5
                     v5_rewrite_model = (
                         settings.DRAFTPROOF_REWRITE_V5_MODEL
