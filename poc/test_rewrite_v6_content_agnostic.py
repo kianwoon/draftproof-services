@@ -38,6 +38,22 @@ class BadJsonClient:
         return BadJsonResponse()
 
 
+class StaticJsonResponse:
+    def __init__(self, content: str):
+        self.content = content
+        self.raw_content = content
+
+
+class StaticJsonClient:
+    def __init__(self, content: str):
+        self.content = content
+        self.calls = 0
+
+    def chat(self, *args, **kwargs):
+        self.calls += 1
+        return StaticJsonResponse(self.content)
+
+
 def sample_text() -> str:
     return (
         "The intake process is built around a form, a queue, and a review. "
@@ -311,6 +327,47 @@ def test_v6_scanner_does_not_overflag_short_result_sentence():
 def test_v6_scanner_does_not_mark_named_method_as_smooth_paraphrase():
     scan = scan_text("The Alpha Method gives participants a concrete way to grasp projection angles before naming them.")
     assert not any("paraphrase_smoothing" in finding.tags for finding in scan.findings)
+
+
+def test_v6_scanner_flags_repeated_sentence_frames():
+    scan = scan_text(
+        "The review process changed after intake. "
+        "Clients also use the portal. "
+        "Clients also use phone support. "
+        "Clients also use the front desk. "
+        "The final step checks the result."
+    )
+    repeated = [finding for finding in scan.findings if "repeated_sentence_frame" in finding.tags]
+    assert len(repeated) == 3
+    assert {finding.evidence["repeated_frame"] for finding in repeated} == {"clients also use"}
+
+
+def test_v6_selection_does_not_reward_mechanical_compiler_decomposition():
+    source = (
+        "The intake system is changing faster than many teams can manage. "
+        "In the past, the process was built around the form, the queue, and the reviewer. "
+        "Clients submitted details, waited for confirmation, and received a response. "
+        "That model still exists, but it no longer fits every intake path today."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "Teams now handle intake in conditions that the older review model only partly explains. "
+                    "The earlier process still matters because forms, queues, reviewers, confirmation, and responses gave clients a clear route through the work. "
+                    "What has changed is the pressure around that route. "
+                    "The model can still guide some cases, but it does not fit every intake path teams now manage."
+                ),
+            }
+        ]
+    })
+    client = StaticJsonClient(writer_payload)
+    result = run_v6_rewrite(source, writer_client=client)
+    assert client.calls == 1
+    assert result.selected is not None
+    assert result.selected.source == "llm"
+    assert "That structure also included" not in result.rewritten_text
 
 
 def test_v6_compiler_removes_unsupported_important_and_rebuilds_it_has_route():

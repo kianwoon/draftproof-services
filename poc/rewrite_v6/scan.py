@@ -42,12 +42,15 @@ def scan_text(text: str) -> Scan:
     risks = [_risk(sentence) for sentence in sentences]
     threshold = max(12.0, mean(risks) if risks else 0.0)
     findings: list[Finding] = []
+    seen_findings: set[tuple[str, str]] = set()
     for sentence, risk in zip(sentences, risks, strict=False):
         tags = _tags(sentence)
         if risk >= threshold:
             tags.append("paragraph_rhythm")
         tags = _dedupe(tags)
         if tags and risk >= 12.0:
+            for tag in tags:
+                seen_findings.add((sentence.id, tag))
             findings.append(
                 Finding(
                     sentence_id=sentence.id,
@@ -62,6 +65,12 @@ def scan_text(text: str) -> Scan:
                     },
                 )
             )
+    for finding in _repeated_frame_findings(paragraphs):
+        key = (finding.sentence_id, "repeated_sentence_frame")
+        if key in seen_findings:
+            continue
+        findings.append(finding)
+        seen_findings.add(key)
     return Scan(
         source_text=text,
         paragraphs=paragraphs,
@@ -73,6 +82,44 @@ def scan_text(text: str) -> Scan:
             "mean_sentence_shape_risk": round(mean(risks), 3) if risks else 0.0,
         },
     )
+
+
+def _repeated_frame_findings(paragraphs: list[Paragraph]) -> list[Finding]:
+    findings: list[Finding] = []
+    for paragraph in paragraphs:
+        frames: dict[str, list[Sentence]] = {}
+        for sentence in paragraph.sentences:
+            frame = _sentence_frame(sentence.text)
+            if frame:
+                frames.setdefault(frame, []).append(sentence)
+        for frame, matches in frames.items():
+            if len(matches) < 3:
+                continue
+            for sentence in matches:
+                findings.append(
+                    Finding(
+                        sentence_id=sentence.id,
+                        paragraph_id=sentence.paragraph_id,
+                        tags=["repeated_sentence_frame", "paragraph_rhythm"],
+                        severity=22.0 + len(matches),
+                        evidence={
+                            "text": sentence.text,
+                            "word_count": sentence.word_count,
+                            "repeated_frame": frame,
+                            "frame_count": len(matches),
+                        },
+                    )
+                )
+    return findings
+
+
+def _sentence_frame(text: str) -> str:
+    words = re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", str(text or "").casefold())
+    if len(words) < 4:
+        return ""
+    if words[0] in {"the", "a", "an"} and len(words) >= 4:
+        return " ".join(words[:4])
+    return " ".join(words[:3])
 
 
 def select_target_paragraph(scan: Scan, excluded_ids: set[str] | None = None) -> Paragraph:

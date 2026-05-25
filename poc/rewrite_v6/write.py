@@ -8,7 +8,7 @@ from .compiler import compile_plain_text
 from .json_io import parse_json
 from .plan import Plan
 from .scan import scan_text
-from .text import Paragraph, source_terms, word_count
+from .text import Paragraph, source_terms, split_paragraphs, word_count
 
 
 class ChatClient(Protocol):
@@ -67,12 +67,22 @@ def build_prompt(paragraph: Paragraph, plan: Plan) -> str:
         ],
         "execution_method": [
             "Keep all source ideas, but rebuild the paragraph route instead of polishing sentence wording.",
-            "Decompress packed lists by spreading listed nouns or actions across ordinary sentence beats.",
+            "Decompress packed lists by blending listed nouns or actions into varied ordinary sentences; do not split every item into repeated-subject sentences.",
+            "When repairing a list, group related items into two or three natural prose beats instead of keeping one long comma list.",
+            "Use at most one short pair joined by 'and' in a sentence; avoid three-or-more-item comma lists.",
             "Break predictable starts with source-derived terms, not fixed domain wording.",
             "Keep the paragraph at least as detailed as the source; do not summarize.",
+            "Do not start more than two sentences with the same first three words.",
+            "Most sentences should be complete prose sentences between 8 and 24 words.",
+            "Return grammatical prose, not atomic bullet-like sentences joined with periods.",
             "If bridge material is not directly supported by the submitted text, keep rewriting and mark it with author-review provenance instead of presenting it as source-confirmed.",
             "For author_proxy_bridge, context_anchor_bridge, or semantic_bridge_repair methods, include reviewable bridge wording when needed and record its provenance.",
         ],
+        "list_repair_boundary": {
+            "bad_under_repair": "one long comma list OR one repeated sentence per item",
+            "good_under_repair": "two or three varied prose beats that preserve the source ideas without itemizing every noun or action",
+            "self_check": "If three consecutive sentences start the same way, rewrite again before returning JSON.",
+        },
         "method_contract": {
             "atomic_decomposition": "split packed source meaning into atomic sentences without dropping source ideas",
             "route_rebuild": "change opener, clause order, or sentence boundary",
@@ -96,6 +106,8 @@ def build_prompt(paragraph: Paragraph, plan: Plan) -> str:
             "same first sentence route with synonyms",
             "single smooth summary",
             "neat three-item list in one sentence",
+            "repeated sentence frame such as the same subject plus verb pattern three or more times",
+            "mechanical one-item-per-sentence decomposition",
             "compressed timeline conclusion",
             "new external fact or citation presented as source-confirmed without author-review provenance",
         ],
@@ -166,13 +178,51 @@ def choose_variant(variants: list[Variant], paragraph: Paragraph) -> Variant | N
 def _variant_rank(variant: Variant, paragraph: Paragraph, source_words: int) -> tuple[float, float, float, bool, int]:
     scan = scan_text(variant.text)
     words = word_count(variant.text)
+    quality_penalty = _mechanical_quality_penalty(variant.text, paragraph)
     return (
-        -scan.scores["finding_count"],
+        -(scan.scores["finding_count"] + quality_penalty),
         -scan.scores["mean_sentence_shape_risk"],
         _coverage(variant.text, paragraph),
         words >= source_words * 0.9,
         -abs(words - source_words),
     )
+
+
+def _mechanical_quality_penalty(text: str, source_paragraph: Paragraph) -> float:
+    paragraphs = split_paragraphs(text)
+    sentences = [sentence for paragraph in paragraphs for sentence in paragraph.sentences]
+    if not sentences:
+        return 8.0
+    source_sentence_count = max(1, len(source_paragraph.sentences))
+    sentence_count = len(sentences)
+    avg_words = sum(sentence.word_count for sentence in sentences) / max(1, sentence_count)
+    short_ratio = sum(1 for sentence in sentences if sentence.word_count <= 7) / max(1, sentence_count)
+    first_words: dict[str, int] = {}
+    first_frames: dict[str, int] = {}
+    for sentence in sentences:
+        parts = [
+            part.strip(".,:;!?\"'“”’").casefold()
+            for part in sentence.text.split()
+            if part.strip(".,:;!?\"'“”’")
+        ]
+        first = parts[0] if parts else ""
+        if first:
+            first_words[first] = first_words.get(first, 0) + 1
+        if len(parts) >= 3:
+            frame = " ".join(parts[:3])
+            first_frames[frame] = first_frames.get(frame, 0) + 1
+    repeated_first_ratio = max(first_words.values(), default=0) / max(1, sentence_count)
+    repeated_frame_ratio = max(first_frames.values(), default=0) / max(1, sentence_count)
+    penalty = 0.0
+    if sentence_count > source_sentence_count * 1.8:
+        penalty += min(4.0, (sentence_count / source_sentence_count) - 1.0)
+    if short_ratio >= 0.45 and avg_words <= 9.0:
+        penalty += short_ratio * 4.0
+    if repeated_first_ratio >= 0.35:
+        penalty += repeated_first_ratio * 3.0
+    if repeated_frame_ratio >= 0.30:
+        penalty += repeated_frame_ratio * 4.0
+    return round(penalty, 3)
 
 def _coverage(text: str, paragraph: Paragraph) -> float:
     anchors = source_terms(paragraph.text, limit=24)
