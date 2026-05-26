@@ -42,7 +42,7 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
                 "Return valid JSON only with a variants array matching the requested variant ids. "
                 "If list_contract_active is true, no final text sentence may contain two or more commas. "
                 "If paragraph_sentence_plan has required_sentence_groups, write one final sentence per group using only that group's terms; joining groups with because, while, that, or and is invalid. "
-                "Preserve submitted meaning, coverage, and first-person voice when present, but do not preserve submitted wording, order, "
+                "Write complete grammatical sentences with normal articles, prepositions, and subjects. Preserve submitted meaning, coverage, and first-person voice when present, but do not preserve submitted wording, order, "
                 "list rhythm, opener, or closure shape."
             ),
             temperature=0.12,
@@ -143,7 +143,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "For context_anchor_gap or broad_claim contracts, the final sentence must start from the named antecedent, not this, that, model, result, or a generic claim.",
             "For broad_claim contracts, use a scoped partial-relation sentence such as only part of, one part of, limited to, or explains only part of when supported by the contract.",
             "For closure contracts, split continuity and limitation into separate sentences instead of comma-but, as/which, or broad-summary closure.",
-            "Use construction_recipes as the positive build plan. Do not treat avoid rules as the plan.",
+            "Use construction_recipes.repair_sequence in order as the positive build plan. Do not treat avoid rules as the plan.",
             "If planner_decision.status is ok, follow planner_decision.paragraph_blueprint in order before using fallback recipes.",
             "Each final sentence must map to a planner_decision.paragraph_blueprint step or a coverage beat; do not invent extra route filler.",
             "For each blueprint step, use must_include terms and safe_sentence_shape, while avoiding must_avoid_shape.",
@@ -785,7 +785,7 @@ def _repeats_sentence_intent(text: str) -> bool:
     rows = [words for words in sentence_words if words]
     for left, right in zip(rows, rows[1:]):
         overlap = len(left & right) / max(1, min(len(left), len(right)))
-        if overlap >= 0.6:
+        if overlap >= 0.7:
             return True
     return False
 
@@ -873,10 +873,10 @@ def _polarity_violation(text: str, source_paragraph: Paragraph) -> bool:
         return True
     if "not only" in source and "not only" not in candidate:
         has_not_enough = "not enough" in candidate or "not the only" in candidate
-        has_also_side = "also" in candidate
+        has_also_side = "also" in candidate or ("but also" in source and all(term.casefold() in candidate for term in source_terms(source.split("but also", 1)[-1], limit=3)[:2]))
         if not (has_not_enough and has_also_side):
             return True
-    if "not only" in source and not re.search(r"\b(?:also|as well as|too)\b", candidate):
+    if "not only" in source and not (re.search(r"\b(?:also|as well as|too)\b", candidate) or ("but also" in source and all(term.casefold() in candidate for term in source_terms(source.split("but also", 1)[-1], limit=3)[:2]))):
         return True
     if "not only" in source and _malformed_not_only(candidate):
         return True

@@ -59,7 +59,21 @@ def test_v6_planner_emits_positive_construction_recipes():
     assert recipes
     assert any(recipe["positive_pattern"] for recipe in recipes)
     assert any("separate source-relation beats" in recipe["build_route"] for recipe in recipes)
-    assert "Use construction_recipes as the positive build plan" in json.dumps(payload)
+    assert "Use construction_recipes.repair_sequence in order as the positive build plan" in json.dumps(payload)
+
+
+def test_v6_construction_recipes_carry_ordered_repair_sequence():
+    payload = _payload(
+        "This important result shows that teams manage forms, queues, review, follow-up checks, source files, client notes, audit timing, and decisions before making final decisions for clients across the weekly workflow."
+    )
+    recipes = payload["construction_recipes"]
+    sequence = recipes[0]["repair_sequence"]
+    classes = [row["repair_class"] for row in sequence]
+
+    assert "predictable_start" in classes
+    assert "context_author_anchor_gap" in classes
+    assert "sentence_overload" in classes
+    assert classes.index("predictable_start") < classes.index("sentence_overload")
 
 
 def test_v6_coverage_beats_link_to_construction_recipes():
@@ -179,6 +193,17 @@ def test_v6_heading_line_is_not_forced_into_coverage_beats():
     assert "reviewer" in prompt_text
 
 
+def test_v6_heading_stripped_demonstrative_opener_becomes_route_target():
+    payload = _payload(
+        "Conclusion\nThis reflection shows that teams need forms, queues, review, and follow-up checks."
+    )
+    sequence = payload["construction_recipes"][0]["repair_sequence"]
+    classes = [row["repair_class"] for row in sequence]
+
+    assert "predictable_start" in classes
+    assert "context_author_anchor_gap" in classes
+
+
 def test_v6_required_sentence_group_keeps_all_group_terms():
     payload = _payload(
         "This unit requires learners from several backgrounds to master seven procedures while integrating four structures with geometric concepts and workplace checks for assessment."
@@ -253,6 +278,517 @@ def test_v6_writer_compiles_text_from_coverage_map_when_rows_missing():
     })
 
     assert variants[0].text == "Coverage row one. Coverage row two."
+
+
+def test_v6_row_compiler_concretizes_demonstrative_noun_starts():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {"sentence_slot_id": "s1", "coverage_beat_ids": ["b1"], "sentence": "This reflection confirmed the support route."},
+                {"sentence_slot_id": "s2", "coverage_beat_ids": ["b2"], "sentence": "These pathways help learners practise."},
+            ],
+        }]
+    })
+
+    assert variants[0].text == "The reflection confirmed the support route. The pathways help learners practise."
+
+
+def test_v6_row_compiler_removes_near_duplicate_sentence_intent():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {"sentence_slot_id": "s1", "coverage_beat_ids": ["b1"], "sentence": "Every learner has the right to learn and be supported seriously."},
+                {"sentence_slot_id": "s2", "coverage_beat_ids": ["b2"], "sentence": "Every learner has the right to learn and be supported seriously."},
+            ],
+        }]
+    })
+
+    assert variants[0].text == "Every learner has the right to learn and be supported seriously."
+
+
+def test_v6_row_compiler_repairs_simple_context_starts():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {"sentence_slot_id": "s1", "coverage_beat_ids": ["b1"], "sentence": "Every learner has the right to learn."},
+                {"sentence_slot_id": "s2", "coverage_beat_ids": ["b2"], "sentence": "This applies regardless of slower learning."},
+                {"sentence_slot_id": "s3", "coverage_beat_ids": ["b3"], "sentence": "It is a teaching approach that helps learners."},
+            ],
+        }]
+    })
+
+    assert variants[0].text == (
+        "Every learner has the right to learn. "
+        "The right to learn applies regardless of slower learning. "
+        "The teaching approach helps learners."
+    )
+
+
+def test_v6_row_compiler_splits_regardless_comma_lists():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1", "b2"],
+                "sentence": "The right to learn applies regardless of disabilities, slower learning speeds, or the need for different ways to understand things.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The right to learn applies regardless of disabilities. "
+        "The right to learn also covers slower learning speeds and the need for different ways to understand things."
+    )
+
+
+def test_v6_row_compiler_splits_demonstrative_regardless_lists_without_new_this_start():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1", "b2"],
+                "sentence": "This applies regardless of disabilities, slower learning speeds, or the need for different ways to understand things.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "This applies regardless of disabilities. "
+        "The same support also covers slower learning speeds and the need for different ways to understand things."
+    )
+
+
+def test_v6_row_compiler_splits_whether_they_regardless_lists_grammatically():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1", "b2"],
+                "sentence": "The right to learn applies regardless of whether they have disabilities, learn slower, or need different ways to understand things.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The right to learn applies regardless of whether they have disabilities. "
+        "The right to learn still applies when they learn slower or need different ways to understand things."
+    )
+
+
+def test_v6_row_compiler_splits_allow_gradual_build_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1", "b2"],
+                "sentence": "The pathways should allow them to make mistakes and gradually build their own skills and confidence.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The pathways should allow them to make mistakes. "
+        "The same pathways help them gradually build their own skills and confidence."
+    )
+
+
+def test_v6_row_compiler_repairs_connector_fragments_with_previous_subject():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {"sentence_slot_id": "s1", "coverage_beat_ids": ["b1"], "sentence": "The core responsibility is not merely to impart knowledge."},
+                {"sentence_slot_id": "s2", "coverage_beat_ids": ["b2"], "sentence": "Rather stimulate learners motivation."},
+                {"sentence_slot_id": "s3", "coverage_beat_ids": ["b3"], "sentence": "Thereby facilitating a shift from interest to passion."},
+            ],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The core responsibility is not merely to impart knowledge. "
+        "The same responsibility stimulates learners motivation. "
+        "The same responsibility facilitates a shift from interest to passion."
+    )
+
+
+def test_v6_row_compiler_splits_common_academic_connectors():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {
+                    "sentence_slot_id": "s1",
+                    "coverage_beat_ids": ["b1", "b2"],
+                    "sentence": "According to source theory, complex spatial tasks place strain on working memory.",
+                },
+                {
+                    "sentence_slot_id": "s2",
+                    "coverage_beat_ids": ["b3", "b4"],
+                    "sentence": "The plan must move beyond passive support and instead focus on practice.",
+                },
+            ],
+        }]
+    })
+
+    assert variants[0].text == (
+        "Source theory is the source frame. "
+        "Complex spatial tasks place strain on working memory. "
+        "The plan must move beyond passive support. "
+        "The plan should focus on practice."
+    )
+
+
+def test_v6_row_compiler_splits_under_obligation_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:abstract_density",
+                "sentence": "Under the service standard, providers have a legal obligation to provide reasonable adjustment.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The service standard applies to providers. "
+        "Providers must provide reasonable adjustment."
+    )
+
+
+def test_v6_row_compiler_forces_repair_for_scanner_owned_single_beat_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:citation_anchor",
+                "sentence": "According to source theory, complex spatial tasks place strain on working memory.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "Source theory is the source frame. "
+        "Complex spatial tasks place strain on working memory."
+    )
+
+
+def test_v6_row_compiler_splits_must_not_undermine_pairs():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:sentence_overload",
+                "sentence": "The adjustment must not undermine core requirements or performance standards of the package.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The adjustment must not undermine core requirements. "
+        "The same limit also covers performance standards of the package."
+    )
+
+
+def test_v6_row_compiler_splits_such_as_strain_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:paraphrase_smoothing",
+                "sentence": "Complex spatial tasks such as constructing a structure place significant strain on working memory.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "Constructing a structure is part of Complex spatial tasks. "
+        "The task places significant strain on working memory."
+    )
+
+
+def test_v6_row_compiler_splits_demonstrated_ability_needs_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:sentence_overload",
+                "sentence": "He demonstrated the ability to accurately identify and gently address the needs of clients who struggle to explain the issue.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "He accurately identified the needs of clients. "
+        "He gently addressed those needs. "
+        "Clients struggle to explain the issue."
+    )
+
+
+def test_v6_row_compiler_splits_subject_remained_pairs():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:paraphrase_smoothing",
+                "sentence": "The assessment criteria, safety and timing have still remained consistent for all learners.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == "The assessment criteria have still remained consistent for all learners."
+
+
+def test_v6_row_compiler_splits_in_context_comma_openers():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:predictable_start",
+                "sentence": "In service training, learner performance is assessed against industry benchmarks.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "Service training is the context. "
+        "Learner performance is assessed against industry benchmarks."
+    )
+
+
+def test_v6_row_compiler_splits_more_valuable_and_equipping_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {
+                    "sentence_slot_id": "s1",
+                    "coverage_beat_ids": ["b1"],
+                    "finding_contract_id": "s1:paraphrase_smoothing",
+                    "sentence": "Developing awareness is more valuable than endless help.",
+                },
+                {
+                    "sentence_slot_id": "s2",
+                    "coverage_beat_ids": ["b2"],
+                    "finding_contract_id": "s2:sentence_overload",
+                    "sentence": "Equipping them with skills to navigate the workplace will enable them to adapt to workplace demands when they enter the workplace.",
+                },
+            ],
+        }]
+    })
+
+    assert variants[0].text == (
+        "Developing awareness matters more than endless help. "
+        "Endless help is not enough by itself. "
+        "They need skills to navigate the workplace. "
+        "The skills help them adapt to workplace demands. "
+        "The same support matters when they enter the workplace."
+    )
+
+
+def test_v6_row_compiler_repairs_do_not_lie_in_nominalization():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:paraphrase_smoothing",
+                "sentence": "The demonstration that client support needs do not lie in special treatment.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == "Client support needs are not based on special treatment."
+
+
+def test_v6_row_compiler_repairs_nested_based_on_after_do_not_lie_in():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:paraphrase_smoothing",
+                "sentence": "The demonstration that client support needs do not lie in treatment based on pity.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == "Client support needs are not treatment or pity."
+
+
+def test_v6_row_compiler_removes_demonstration_shows_do_not_lie_wrapper():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:paraphrase_smoothing",
+                "sentence": "The demonstration shows that client support needs do not lie in treatment based on pity.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == "Client support needs are not treatment or pity."
+
+
+def test_v6_row_compiler_plainifies_metacognitive_nominalizations():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {
+                    "sentence_slot_id": "s1",
+                    "coverage_beat_ids": ["b1"],
+                    "finding_contract_id": "s1:abstract_density",
+                    "sentence": "The discussion gives learners time for metacognitive monitoring.",
+                },
+                {
+                    "sentence_slot_id": "s2",
+                    "coverage_beat_ids": ["b2"],
+                    "finding_contract_id": "s2:paraphrase_smoothing",
+                    "sentence": "Developing metacognitive awareness matters more than endless help.",
+                },
+            ],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The discussion gives learners time to monitor their thinking. "
+        "Developing awareness of how they learn matters more than endless help."
+    )
+
+
+def test_v6_row_compiler_splits_for_context_matters_more_than_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:paraphrase_smoothing",
+                "sentence": "For clients under pressure, developing awareness matters more than endless help.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "Developing awareness matters for clients under pressure. "
+        "Endless help is not enough by itself."
+    )
+
+
+def test_v6_row_compiler_splits_for_context_is_more_valuable_than_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:paraphrase_smoothing",
+                "sentence": "For clients under pressure, developing awareness is more valuable than endless help.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "Developing awareness matters for clients under pressure. "
+        "Endless help is not enough by itself."
+    )
+
+
+def test_v6_row_compiler_splits_not_by_expectation_when_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:context_anchor_gap",
+                "sentence": "They will not be able to do so by expecting the workplace to change when they enter the role.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The same people cannot rely on the workplace to change. "
+        "The same limit applies when they enter the role."
+    )
+
+
+def test_v6_row_compiler_repairs_they_need_after_learner_context():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {"sentence_slot_id": "s1", "coverage_beat_ids": ["b1"], "sentence": "The support focuses on learners."},
+                {"sentence_slot_id": "s2", "coverage_beat_ids": ["b2"], "sentence": "They need the skills to navigate the workplace."},
+            ],
+        }]
+    })
+
+    assert variants[0].text == "The support focuses on learners. Learners need the skills to navigate the workplace."
+
+
+def test_v6_row_compiler_splits_comma_scaffold_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "finding_contract_id": "s1:packed_list",
+                "sentence": "The progress was tied to purpose, confidence, and practice.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The progress was tied to purpose. "
+        "Confidence and practice carry the same point."
+    )
+
+
+def test_v6_row_compiler_skips_repeated_explanation_but_keeps_not_enough_contrast():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {"sentence_slot_id": "s1", "coverage_beat_ids": ["b1"], "sentence": "The language barrier affected these clients."},
+                {"sentence_slot_id": "s2", "coverage_beat_ids": ["b2"], "sentence": "Language barrier was a challenge for these clients."},
+                {"sentence_slot_id": "s3", "coverage_beat_ids": ["b3"], "sentence": "Developing awareness matters more than endless help."},
+                {"sentence_slot_id": "s4", "coverage_beat_ids": ["b4"], "sentence": "Endless help is not enough by itself."},
+            ],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The language barrier affected these clients. "
+        "Developing awareness matters more than endless help. "
+        "Endless help is not enough by itself."
+    )
 
 
 def test_v6_row_compiler_splits_overloaded_connector_rows():

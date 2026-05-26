@@ -51,7 +51,7 @@ def build_plan(scan: Scan, excluded_paragraph_ids: set[str] | None = None) -> tu
     actions: list[PlanAction] = []
     for sentence in paragraph.sentences:
         finding = findings.get(sentence.id)
-        tags = finding.tags if finding else []
+        tags = _planning_tags(finding.tags if finding else [], sentence.text)
         actions.append(
             PlanAction(
                 sentence_id=sentence.id,
@@ -178,6 +178,17 @@ def _strip_leading_heading(text: str) -> str:
     if len(first.split()) <= 8:
         return "\n".join(lines[1:]).strip() or visible
     return visible
+
+
+def _planning_tags(tags: list[str], source_text: str) -> list[str]:
+    rows = list(tags)
+    stripped = _strip_leading_heading(source_text).strip()
+    if re.match(r"^(this|that|it|they|these|those)\b", stripped, flags=re.I):
+        if "predictable_start" not in rows:
+            rows.append("predictable_start")
+        if "context_anchor_gap" not in rows:
+            rows.append("context_anchor_gap")
+    return rows
 
 
 def _ai_safe_route(paragraph: Paragraph, actions: list[PlanAction], context: dict[str, Any]) -> dict[str, Any]:
@@ -356,12 +367,33 @@ def _construction_recipe(action: PlanAction, context: dict[str, Any]) -> dict[st
         "recipe_id": f"{action.sentence_id}_recipe",
         "source_sentence_id": action.sentence_id,
         "finding_tags": action.tags,
+        "repair_sequence": _repair_sequence(action.tags),
         "coverage_terms": action.preserve_terms,
         "build_route": _recipe_route(action.tags),
         "build_steps": _recipe_steps(action.tags),
         "positive_pattern": _positive_pattern(action.tags),
         "author_proxy_move": _author_proxy_move(action.tags, context),
     }
+
+
+def _repair_sequence(tags: list[str]) -> list[dict[str, Any]]:
+    priority = [
+        ("predictable_start", "OPEN_WITH_SPECIFIC_OBSERVATION", "change the paragraph route before polishing wording"),
+        ("context_author_anchor_gap", "ADD_CONTEXT_ANCHOR", "ground the beat in submitted author, course, setting, source, or task anchors"),
+        ("sentence_overload", "ONE_FUNCTION_PER_SENTENCE", "split by source function such as claim, example, condition, or consequence"),
+        ("packed_list", "GROUP_LIST_ITEMS", "turn packed lists into grouped meaning or action-based prose"),
+        ("paragraph_rhythm", "SENTENCE_WEIGHT_BALANCING", "vary sentence job and weight after route and coverage are stable"),
+    ]
+    tag_set = set(tags)
+    rows: list[dict[str, Any]] = []
+    for repair_class, operator, duty in priority:
+        if repair_class == "context_author_anchor_gap":
+            active = bool(tag_set & {"context_anchor_gap", "author_anchor_gap", "unsupported_claim_gap", "broad_claim"})
+        else:
+            active = repair_class in tag_set
+        if active:
+            rows.append({"repair_class": repair_class, "operator": operator, "writer_duty": duty})
+    return rows
 
 
 def _author_route_questions(actions: list[PlanAction], context: dict[str, Any]) -> list[dict[str, Any]]:
