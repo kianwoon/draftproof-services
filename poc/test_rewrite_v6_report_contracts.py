@@ -6,7 +6,7 @@ from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6.paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _report_target_paragraph_ids, _same_text, run_v6_rewrite_all
 from poc.rewrite_v6.planner_llm import build_planner_prompt
-from poc.rewrite_v6.prose_quality import has_fragment_or_trace_sentences
+from poc.rewrite_v6.prose_quality import drop_redundant_adjacent_sentence_intent, has_fragment_or_trace_sentences
 from poc.rewrite_v6.report_contracts import apply_report_signal_contracts, extract_report_signal_contracts
 from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
 from poc.rewrite_v6.write import Variant, build_prompt, choose_variant
@@ -153,6 +153,24 @@ def test_v6_cross_paragraph_regression_allows_target_paragraph_split():
     assert not _cross_paragraph_regression(before, after, "p001")
 
 
+def test_v6_cross_paragraph_regression_allows_small_recalibration_when_target_split_improves():
+    before = scan_text(
+        "Plain paragraph has one stable finding because teams should improve.\n\n"
+        "The target paragraph has a list, a second item, and a third item because it should improve. "
+        "This target paragraph has another issue because it should improve.\n\n"
+        "Another plain paragraph has a stable issue because teams should improve."
+    )
+    after = scan_text(
+        "Plain paragraph has one stable finding because teams should improve. This nearby sentence should improve.\n\n"
+        "The target paragraph has a list.\n\n"
+        "A second target item remains visible.\n\n"
+        "Another plain paragraph has a stable issue because teams should improve."
+    )
+
+    assert int(before.scores["finding_count"]) > int(after.scores["finding_count"])
+    assert not _cross_paragraph_regression(before, after, "p002")
+
+
 def test_v6_pipeline_schedules_report_target_even_without_local_findings():
     text = (
         "First paragraph has ordinary setup.\n\n"
@@ -267,6 +285,19 @@ def test_v6_architecture_splitter_decompresses_comma_heavy_candidate_sentences()
 
     assert "Educators lower expectations." in split
     assert "the system compromises standards," not in split
+
+
+def test_v6_writer_cleanup_drops_redundant_adjacent_sentence_intent():
+    text = (
+        "Developing awareness of how they learn matters more than endless help and sympathy for diverse learners prone to frustration. "
+        "Endless help and sympathy for diverse learners prone to frustration is not enough by itself. "
+        "Teaching learners to learn and adapt is more effective than simply helping them."
+    )
+
+    cleaned = drop_redundant_adjacent_sentence_intent(text)
+
+    assert cleaned.count("endless help and sympathy") == 1
+    assert "Teaching learners to learn and adapt" in cleaned
 
 
 def test_v6_writer_schema_keeps_coverage_map_separate_from_sentence_text():

@@ -380,13 +380,18 @@ def _cross_paragraph_regression(before: Scan, after: Scan, target_paragraph_id: 
     target = next((paragraph for paragraph in before.paragraphs if paragraph.id == target_paragraph_id), None)
     if target is not None and len(after.paragraphs) != len(before.paragraphs):
         delta = len(after.paragraphs) - len(before.paragraphs)
+        target_after_count = sum(after_counts.get(f"p{index + 1:03d}", 0) for index in range(target.index, target.index + delta + 1))
+        target_drop = before_counts.get(target_paragraph_id, 0) - target_after_count
+        total_drop = int(before.scores.get("finding_count") or 0) - int(after.scores.get("finding_count") or 0)
+        max_non_target_regression = 0
         for paragraph in before.paragraphs:
             if paragraph.id == target_paragraph_id:
                 continue
             after_index = paragraph.index if paragraph.index < target.index else paragraph.index + delta
             if 0 <= after_index < len(after.paragraphs):
                 after_id = after.paragraphs[after_index].id
-                if after_counts.get(after_id, 0) > before_counts.get(paragraph.id, 0):
+                max_non_target_regression = max(max_non_target_regression, after_counts.get(after_id, 0) - before_counts.get(paragraph.id, 0))
+                if after_counts.get(after_id, 0) > before_counts.get(paragraph.id, 0) and not (target_drop >= 2 and total_drop > 0 and max_non_target_regression <= 1):
                     return True
         return False
     return any(

@@ -3,6 +3,21 @@ from __future__ import annotations
 import re
 
 
+def drop_redundant_adjacent_sentence_intent(text: str) -> str:
+    paragraphs = [block.strip() for block in re.split(r"\n\s*\n+", str(text or "")) if block.strip()]
+    cleaned: list[str] = []
+    for block in paragraphs:
+        heading, body = _split_heading(block)
+        kept: list[str] = []
+        for sentence in _sentences(body):
+            if kept and _same_sentence_intent(kept[-1], sentence):
+                continue
+            kept.append(sentence)
+        rebuilt = " ".join(kept).strip()
+        cleaned.append("\n".join(part for part in [heading, rebuilt] if part).strip())
+    return "\n\n".join(cleaned).strip()
+
+
 def has_fragment_or_trace_sentences(text: str) -> bool:
     sentences = _sentences(text)
     if not sentences:
@@ -21,6 +36,41 @@ def fragment_trace_penalty(text: str) -> float:
 
 def _sentences(text: str) -> list[str]:
     return [part.strip() for part in re.split(r"(?<=[.!?])\s+", str(text or "")) if part.strip()]
+
+
+def _split_heading(block: str) -> tuple[str, str]:
+    lines = block.splitlines()
+    if len(lines) >= 2 and lines[0].strip() and not re.search(r"[.!?]$", lines[0].strip()):
+        return lines[0].strip(), "\n".join(lines[1:]).strip()
+    return "", block
+
+
+def _same_sentence_intent(left: str, right: str) -> bool:
+    left_words, right_words = _content_words(left), _content_words(right)
+    if not left_words or not right_words:
+        return False
+    overlap = len(left_words & right_words) / max(1, min(len(left_words), len(right_words)))
+    new_right = right_words - left_words
+    return overlap >= 0.7 and len(new_right) <= 2 and _restates_comparison_limit(left, right)
+
+
+def _restates_comparison_limit(left: str, right: str) -> bool:
+    pair = f"{left} {right}".casefold()
+    return bool(re.search(r"\bmore\s+\w+\s+than\b|\bmatters\s+more\s+than\b|\bnot\s+enough\s+by\s+itself\b|\bby\s+itself\b", pair))
+
+
+def _content_words(sentence: str) -> set[str]:
+    stop = {
+        "about", "above", "after", "again", "against", "also", "because", "being",
+        "between", "could", "does", "from", "have", "into", "itself", "more",
+        "only", "should", "that", "their", "there", "these", "those", "through",
+        "under", "when", "where", "which", "while", "would",
+    }
+    return {
+        word.casefold()
+        for word in re.findall(r"[A-Za-z][A-Za-z'’-]{3,}", sentence)
+        if word.casefold() not in stop
+    }
 
 
 def _fragment_like(sentence: str) -> bool:
