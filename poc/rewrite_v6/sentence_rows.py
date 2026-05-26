@@ -75,9 +75,13 @@ def _row_sentences(item: dict[str, Any]) -> list[str]:
         return [_clean_sentence(part) for part in _split_regardless_list(sentence)]
     if sentence.count(",") >= 2 and not force:
         return [_clean_sentence(part) for part in _split_comma_scaffold(sentence)]
-    for splitter in (_split_obligation_provide, _split_although_main_clause, _split_in_context_comma, _split_yet_result, _split_when_start_creates, _split_on_other_hand):
+    for splitter in (
+        _split_obligation_provide, _split_such_as_strain, _split_move_beyond_to_by,
+        _split_do_not_lie_in, _split_more_valuable_than, _split_although_main_clause,
+        _split_in_context_comma, _split_yet_result, _split_when_start_creates, _split_on_other_hand,
+    ):
         parts = splitter(sentence)
-        if len(parts) >= 2:
+        if len(parts) >= 2 or _parts_changed(parts, sentence):
             return [_clean_sentence(part) for part in parts]
     if not force and _word_count(sentence) <= 24:
         return [sentence]
@@ -124,6 +128,9 @@ def _split_overloaded_sentence(sentence: str, *, force: bool = False) -> list[st
     parts = _split_and_instead_focus(text)
     if len(parts) == 2:
         return [_clean_sentence(parts[0]), _clean_sentence(parts[1])]
+    parts = _split_move_beyond_to_by(text)
+    if len(parts) >= 2:
+        return [_clean_sentence(part) for part in parts]
     parts = _split_although_comma_scaffold(text)
     if len(parts) >= 2:
         return [_clean_sentence(part) for part in parts]
@@ -311,6 +318,12 @@ def _split_such_as_strain(text: str) -> list[str]:
     if not parts:
         return [text]
     category, example, pressure, object_text = parts
+    category = _lower_start(category)
+    source = re.match(r"(.+?)\s+according\s+to\s+(.+)$", object_text, flags=re.I)
+    if source:
+        object_text = source.group(1).strip(" ,;:.!?")
+        frame = source.group(2).strip(" ,;:.!?")
+        return [f"{example} is part of {category}", f"{frame[:1].upper()}{frame[1:]} links the task to {pressure} on {object_text}"]
     return [f"{example} is part of {category}", f"The task places {pressure} on {object_text}"]
 
 
@@ -370,6 +383,17 @@ def _split_and_instead_focus(text: str) -> list[str]:
     rejected = match.group(2).strip(" ,;:")
     focus = match.group(3).strip(" ,;:")
     return [f"{subject} must move beyond {rejected}", f"{_compact_subject(subject)} should focus on {focus}"]
+
+
+def _split_move_beyond_to_by(text: str) -> list[str]:
+    match = re.match(r"\s*(.+?)\s+must\s+move\s+beyond\s+(.+?)\s+to\s+(.+?)\s+by\s+(.+?)(?:\s+instead)?$", str(text or ""), flags=re.I)
+    if not match:
+        return [text]
+    subject = match.group(1).strip(" ,;:")
+    rejected = match.group(2).strip(" ,;:")
+    purpose = match.group(3).strip(" ,;:")
+    method = _plain_method(match.group(4))
+    return [f"{subject} must move beyond {rejected}", f"The purpose is to {purpose}", f"The method uses {method}"]
 
 
 def _split_although_main_clause(text: str) -> list[str]:
@@ -436,13 +460,13 @@ def _split_more_valuable_than(text: str) -> list[str]:
     if match:
         context = match.group(1).strip(" ,;:")
         first = match.group(2).strip(" ,;:")
-        second = match.group(3).strip(" ,;:")
+        second = match.group(3).strip(" ,;:.!?")
         return [f"{first[:1].upper()}{first[1:]} matters for {context}", f"{second[:1].upper()}{second[1:]} is not enough by itself"]
     match = re.match(r"\s*(.+?)\s+is\s+more\s+valuable\s+than\s+(.+)$", str(text or ""), flags=re.I)
     if not match:
         return [text]
     first = match.group(1).strip(" ,;:")
-    second = match.group(2).strip(" ,;:")
+    second = match.group(2).strip(" ,;:.!?")
     return [f"{first} matters more than {second}", f"{second[:1].upper()}{second[1:]} is not enough by itself"]
 
 
@@ -778,6 +802,23 @@ def _right_to_phrase(text: str) -> str:
 
 def _content_words(text: str) -> set[str]:
     return set(_content_word_list(text))
+
+
+def _parts_changed(parts: list[str], original: str) -> bool:
+    if len(parts) != 1:
+        return False
+    return _sentence_key(parts[0]) != _sentence_key(original)
+
+
+def _lower_start(text: str) -> str:
+    value = str(text or "").strip(" ,;:.!?")
+    return value[:1].lower() + value[1:] if value else value
+
+
+def _plain_method(text: str) -> str:
+    value = str(text or "").strip(" ,;:.!?")
+    value = re.sub(r"\s+instead$", "", value, flags=re.I).strip(" ,;:.!?")
+    return re.sub(r"^(?:embedding|using|applying|adding|including|providing)\s+", "", value, count=1, flags=re.I)
 
 
 _STOP_WORDS = {"the", "and", "that", "this", "with", "from", "into", "their", "them", "they", "should", "would", "could", "also"}

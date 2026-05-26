@@ -516,8 +516,26 @@ def test_v6_row_compiler_splits_such_as_strain_rows():
     })
 
     assert variants[0].text == (
-        "Constructing a structure is part of Complex spatial tasks. "
+        "Constructing a structure is part of complex spatial tasks. "
         "The task places significant strain on working memory."
+    )
+
+
+def test_v6_row_compiler_splits_such_as_strain_with_trailing_source_frame():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "sentence": "Complex spatial tasks such as constructing a structure place significant strain on working memory according to source theory.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "Constructing a structure is part of complex spatial tasks. "
+        "Source theory links the task to significant strain on working memory."
     )
 
 
@@ -606,6 +624,25 @@ def test_v6_row_compiler_splits_more_valuable_and_equipping_rows():
     )
 
 
+def test_v6_row_compiler_splits_move_beyond_to_by_rows_without_force():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "sentence": "The plan must move beyond passive support to bridge policy and practice by embedding review routines instead.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The plan must move beyond passive support. "
+        "The purpose is to bridge policy and practice. "
+        "The method uses review routines."
+    )
+
+
 def test_v6_row_compiler_repairs_do_not_lie_in_nominalization():
     variants = parse_variants({
         "variants": [{
@@ -620,6 +657,21 @@ def test_v6_row_compiler_repairs_do_not_lie_in_nominalization():
     })
 
     assert variants[0].text == "Client support needs are not based on special treatment."
+
+
+def test_v6_row_compiler_repairs_short_do_not_lie_in_rows_without_force():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1"],
+                "sentence": "The demonstration shows that client support needs do not lie in treatment based on pity.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == "Client support needs are not treatment or pity."
 
 
 def test_v6_row_compiler_repairs_nested_based_on_after_do_not_lie_in():
