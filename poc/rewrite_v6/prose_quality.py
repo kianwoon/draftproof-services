@@ -182,6 +182,8 @@ def has_fragment_or_trace_sentences(text: str) -> bool:
     sentences = _sentences(text)
     if not sentences:
         return True
+    if any(_hard_fragment_like(sentence) for sentence in sentences):
+        return True
     flagged = sum(1 for sentence in sentences if _fragment_like(sentence) or _repair_trace_like(sentence))
     return flagged >= 2 or flagged / max(1, len(sentences)) >= 0.18
 
@@ -239,7 +241,13 @@ def _fragment_like(sentence: str) -> bool:
     words = re.findall(r"[A-Za-z][A-Za-z'’-]*", value)
     if lowered.endswith((" that", " because", " while", " when", " with", " by", " to", " of", " for")):
         return True
+    if re.match(r"^(?:which|where|that)\b", lowered) and len(words) <= 18:
+        return True
+    if re.match(r"^(?:and|but|or)\s+(?:need|needs|require|requires|must|can|could|should|would|is|are|was|were|has|have|had|do|does|did)\b", lowered):
+        return True
     if re.match(r"^(?:when|while|whilst|although|though|because|if)\b", lowered) and "," not in value:
+        return True
+    if re.match(r"^as\b", lowered) and "," not in value:
         return True
     if re.match(r"^i\s+[a-z]+ly\s+[a-z]+ed$", lowered):
         return True
@@ -248,6 +256,16 @@ def _fragment_like(sentence: str) -> bool:
     if len(words) <= 5 and not _has_finite_verb(lowered):
         return True
     return bool(re.search(r"\b(?:the|a|an)\s+(?:includes|carries|applies)\b", lowered))
+
+
+def _hard_fragment_like(sentence: str) -> bool:
+    value = sentence.strip(" .!?")
+    lowered = value.casefold()
+    if re.match(r"^(?:which|where|that)\b", lowered):
+        return True
+    if re.match(r"^(?:and|but|or)\s+(?:need|needs|require|requires|must|can|could|should|would|is|are|was|were|has|have|had|do|does|did)\b", lowered):
+        return True
+    return bool(re.match(r"^as\b", lowered) and "," not in value)
 
 
 def _repair_trace_like(sentence: str) -> bool:

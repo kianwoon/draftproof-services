@@ -45,7 +45,7 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
                 "If list_contract_active is true, no final text sentence may contain two or more commas. "
                 "If paragraph_sentence_plan has required_sentence_groups, cover every group in coverage_map; adjacent groups may share a natural sentence when grammar, coverage, and source order stay clear. "
                 "Write complete grammatical sentences with normal articles, prepositions, subjects, and objects; never split an action from its object into adjacent fragments. Preserve paired alternatives when the source uses either/or or not-yet wording. Preserve submitted meaning, coverage, and first-person voice when present, but do not preserve submitted wording, order, "
-                "list rhythm, opener, or closure shape."
+                "list rhythm, opener, or closure shape. Never return a final sentence that starts with And, But, Or, Which, Where, That, or As."
             ),
             temperature=0.12,
             top_p=0.75,
@@ -177,6 +177,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "If a beat has no starter_terms, it is probably a vague reference beat; bridge it to a concrete earlier coverage term instead of starting with model, result, this, that, it, or the same vague noun.",
             "Do not start sentences with Today, Now, In the past, This, That, It, They, These, Those, Overall, Therefore, However, or Not always.",
             "Before returning, rewrite any sentence that starts with a pronoun, forbidden opener, or vague reference noun.",
+            "Before returning, rewrite any standalone connector or subordinate fragment. No final sentence may start with And, But, Or, Which, Where, That, or As. Every final sentence must stand alone with a clear subject and finite verb.",
             "Do not use semicolons, em dashes, parenthetical asides, or colon-led lists.",
             "Do not put three or more examples, actions, qualities, or source anchors in one sentence unless the original meaning needs that grouped phrase and no safer split is possible.",
             "For a final four-item ability, reward, need, or skill list, pair the first two items and the last two items in separate relation clauses or sentences; do not repeat the whole four-item list and do not use a comma list.",
@@ -210,8 +211,6 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
         + ".\n"
     )
     return prefix + json.dumps(payload, ensure_ascii=False, indent=2)
-
-
 def _variant_requirements() -> list[dict[str, str]]:
     return [
         {

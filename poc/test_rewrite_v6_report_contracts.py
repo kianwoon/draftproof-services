@@ -8,6 +8,7 @@ from poc.rewrite_v6.paragraph_architecture import apply_architecture_split_text,
 from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _report_target_paragraph_ids, _same_text, run_v6_rewrite_all
 from poc.rewrite_v6.planner_llm import build_planner_prompt
 from poc.rewrite_v6.prose_quality import drop_redundant_adjacent_sentence_intent, has_fragment_or_trace_sentences, repair_generated_prose
+from poc.rewrite_v6.repair_windows import RepairWindow, compose_window_rewrite, select_repair_window
 from poc.rewrite_v6.report_contracts import apply_report_signal_contracts, extract_report_signal_contracts
 from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
 from poc.rewrite_v6.write import Variant, build_prompt, choose_variant
@@ -193,6 +194,85 @@ def test_v6_pipeline_schedules_report_target_even_without_local_findings():
     assert result.pass_trace[0]["status"] == "no_change"
     assert result.pass_trace[0]["target_paragraph_id"] == "p002"
     assert not result.passes
+
+
+def test_v6_selects_sentence_window_for_overloaded_target_paragraph():
+    text = (
+        "Opening setup stays outside the repair. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "A later sentence stays outside the first repair. "
+        "Another later sentence stays outside the first repair. "
+        "A final sentence stays outside the first repair."
+    )
+    scan = scan_text(text)
+    paragraph = scan.paragraphs[0]
+
+    window = select_repair_window(paragraph, findings_for_paragraph(scan, paragraph.id), max_sentences=3, max_words=75)
+
+    assert window is not None
+    assert 1 <= window.start_sentence_index <= window.end_sentence_index < len(paragraph.sentences) - 1
+    assert len(window.source_sentence_ids) <= 3
+    assert "Opening setup stays outside" not in window.source_text
+    assert "A final sentence stays outside" not in window.source_text
+
+
+def test_v6_composes_window_rewrite_without_replacing_whole_paragraph():
+    scan = scan_text(
+        "Opening setup stays outside. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "A final sentence stays outside."
+    )
+    paragraph = scan.paragraphs[0]
+    window = RepairWindow(
+        paragraph_id=paragraph.id,
+        start_sentence_index=1,
+        end_sentence_index=3,
+        source_text=" ".join(sentence.text for sentence in paragraph.sentences[1:4]),
+        source_sentence_ids=[sentence.id for sentence in paragraph.sentences[1:4]],
+        finding_count=3,
+        max_severity=50,
+    )
+
+    rewritten = compose_window_rewrite(
+        scan.paragraphs,
+        window,
+        Variant(id="v1", text="The process moves through forms and reviews before approval checks.", source="llm"),
+    )
+
+    assert rewritten.startswith("Opening setup stays outside.")
+    assert "The process moves through forms and reviews before approval checks." in rewritten
+    assert rewritten.endswith("A final sentence stays outside.")
+    assert "queues, labels, reviews, approvals, and checks" in scan.source_text
+
+
+def test_v6_pipeline_sends_overloaded_paragraph_window_to_writer_not_full_paragraph():
+    text = (
+        "Opening setup stays outside the repair. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "A later sentence stays outside the first repair. "
+        "Another later sentence stays outside the first repair. "
+        "A final sentence stays outside the first repair."
+    )
+    client = EmptyVariantClient()
+
+    result = v6_pipeline.run_v6_rewrite(text, writer_client=client, priority_paragraph_ids={"p001"})
+
+    assert result.plan.paragraph_id == "p001"
+    assert "repair_window" in result.plan.ai_safe_route
+    assert client.prompts
+    prompt_payload = json.loads(client.prompts[0].split("\n", 1)[1])
+    prompt_text = json.dumps(prompt_payload)
+    assert "forms" in prompt_text
+    assert "queues" in prompt_text
+    assert "labels" in prompt_text
+    assert "Opening setup stays outside the repair" not in prompt_text
+    assert "A final sentence stays outside the first repair" not in prompt_text
 
 
 def test_v6_document_rewrite_runs_residual_followup_after_accepted_paragraph(monkeypatch):
@@ -412,6 +492,33 @@ def test_v6_fragment_detector_rejects_subordinate_and_object_split_fragments():
     )
 
     assert has_fragment_or_trace_sentences(text)
+
+
+def test_v6_fragment_detector_rejects_leading_connector_and_relative_fragments():
+    text = (
+        "Class videos help students relate what they are watching to cutting. "
+        "And need repeated practice to master them. "
+        "Which are new for many learners because it relate to geometric concepts."
+    )
+
+    assert has_fragment_or_trace_sentences(text)
+
+
+def test_v6_fragment_detector_rejects_single_hard_subordinate_fragment():
+    text = (
+        "The videos help students relate what they are watching to cutting. "
+        "As the seven procedures require multitasking during a haircut."
+    )
+
+    assert has_fragment_or_trace_sentences(text)
+
+
+def test_v6_writer_prompt_blocks_standalone_connector_fragments():
+    paragraph, plan = build_plan(scan_text("The process uses forms, queues, and reviews because teams should improve."))
+    prompt = build_prompt(paragraph, plan)
+
+    assert "No final sentence may start with And, But, Or, Which, Where, That, or As" in prompt
+    assert "Every final sentence must stand alone" in prompt
 
 
 def test_v6_citation_anchor_recipe_keeps_attribution_as_source_to_claim_relation():

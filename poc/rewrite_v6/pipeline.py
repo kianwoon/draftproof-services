@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Callable
 
 from poc.llm.gateway import LLMConfig, LLMGateway
 
 from .plan import Plan, build_plan
 from .planner_llm import run_planner_llm
+from .repair_windows import RepairWindow, compose_window_rewrite, select_repair_window
 from .report_contracts import apply_report_signal_contracts
 from .scan import Scan, findings_for_paragraph, scan_text
 from .write import Variant, choose_variant, write_variants
@@ -73,13 +74,31 @@ def run_v6_rewrite(
     scan = scan_text(text)
     paragraph, plan = build_plan(scan, excluded_paragraph_ids, priority_paragraph_ids)
     plan = apply_report_signal_contracts(plan, report_signal_contracts)
+    target_findings = findings_for_paragraph(scan, paragraph.id)
+    window = select_repair_window(paragraph, target_findings)
+    if window is not None:
+        return _run_v6_window_rewrite(
+            scan=scan,
+            paragraph=paragraph,
+            parent_plan=plan,
+            window=window,
+            planner_client=planner_client,
+            writer_client=writer_client,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            progress_callback=progress_callback,
+            progress_percent=progress_percent,
+            cancellation_check=cancellation_check,
+            report_signal_contracts=report_signal_contracts,
+        )
     _emit_progress(progress_callback, progress_percent, f"Planning V6 paragraph {paragraph.id}")
     _raise_if_canceled(cancellation_check)
     if planner_client is not None or writer_client is None:
         plan = run_planner_llm(
             paragraph,
             plan,
-            findings_for_paragraph(scan, paragraph.id),
+            target_findings,
             client=planner_client or _planner_gateway(
                 api_key=api_key,
                 base_url=base_url,
@@ -106,6 +125,80 @@ def run_v6_rewrite(
     _emit_progress(progress_callback, progress_percent, f"Scanning V6 paragraph {paragraph.id} candidate")
     selected = choose_variant(variants, paragraph)
     return Result(scan=scan, plan=plan, variants=variants, selected=selected, rewritten_text=_compose(scan, paragraph.id, selected))
+
+
+def _run_v6_window_rewrite(
+    *,
+    scan: Scan,
+    paragraph: Any,
+    parent_plan: Plan,
+    window: RepairWindow,
+    planner_client: Any | None,
+    writer_client: Any | None,
+    model: str | None,
+    api_key: str | None,
+    base_url: str | None,
+    progress_callback: Callable[[int, str], None] | None,
+    progress_percent: int | None,
+    cancellation_check: Callable[[], None] | None,
+    report_signal_contracts: list[dict[str, Any]] | None,
+) -> Result:
+    window_scan = scan_text(window.source_text)
+    window_paragraph, window_plan = build_plan(window_scan, None, {"p001"})
+    window_plan = _attach_window_context(window_plan, parent_plan, window)
+    window_plan = apply_report_signal_contracts(window_plan, report_signal_contracts)
+    _emit_progress(
+        progress_callback,
+        progress_percent,
+        f"Planning V6 paragraph {paragraph.id} window {window.start_sentence_index + 1}-{window.end_sentence_index + 1}",
+    )
+    _raise_if_canceled(cancellation_check)
+    if planner_client is not None or writer_client is None:
+        window_plan = run_planner_llm(
+            window_paragraph,
+            window_plan,
+            findings_for_paragraph(window_scan, window_paragraph.id),
+            client=planner_client or _planner_gateway(
+                api_key=api_key,
+                base_url=base_url,
+                cancellation_check=cancellation_check,
+            ),
+        )
+        window_plan = _attach_window_context(window_plan, parent_plan, window)
+    _emit_progress(
+        progress_callback,
+        progress_percent,
+        f"Writing V6 paragraph {paragraph.id} window {window.start_sentence_index + 1}-{window.end_sentence_index + 1}",
+    )
+    _raise_if_canceled(cancellation_check)
+    client = writer_client or LLMGateway(
+        LLMConfig(
+            model=model or _writer_model(),
+            api_key=api_key,
+            base_url=base_url,
+            max_tokens=None,
+            temperature=0.12,
+            top_p=0.75,
+            provider=_writer_provider(model or _writer_model()),
+            extra_body=_writer_extra_body(model or _writer_model()),
+            cancellation_check=cancellation_check,
+        )
+    )
+    variants = write_variants(window_paragraph, window_plan, client=client)
+    _raise_if_canceled(cancellation_check)
+    _emit_progress(
+        progress_callback,
+        progress_percent,
+        f"Scanning V6 paragraph {paragraph.id} window candidate",
+    )
+    selected = choose_variant(variants, window_paragraph)
+    return Result(
+        scan=scan,
+        plan=_parent_window_plan(parent_plan, window),
+        variants=variants,
+        selected=selected,
+        rewritten_text=compose_window_rewrite(scan.paragraphs, window, selected),
+    )
 
 
 def run_v6_rewrite_all(
@@ -463,6 +556,44 @@ def _finding_counts_by_paragraph(scan: Scan) -> dict[str, int]:
     for finding in scan.findings:
         counts[finding.paragraph_id] = counts.get(finding.paragraph_id, 0) + 1
     return counts
+
+
+def _attach_window_context(plan: Plan, parent_plan: Plan, window: RepairWindow) -> Plan:
+    route = dict(plan.ai_safe_route)
+    route["repair_window"] = _window_payload(window)
+    route["parent_paragraph_id"] = parent_plan.paragraph_id
+    route["parent_route_goal"] = parent_plan.route_goal
+    route["parent_paragraph_strategy"] = parent_plan.paragraph_strategy
+    strategy = dict(plan.paragraph_strategy)
+    strategy["repair_window"] = _window_payload(window)
+    strategy["window_instruction"] = (
+        "Repair only this overloaded sentence window. Preserve the local source meaning, "
+        "but do not copy the parent paragraph's packed list route."
+    )
+    return replace(plan, paragraph_strategy=strategy, ai_safe_route=route)
+
+
+def _parent_window_plan(parent_plan: Plan, window: RepairWindow) -> Plan:
+    route = dict(parent_plan.ai_safe_route)
+    route["repair_window"] = _window_payload(window)
+    strategy = dict(parent_plan.paragraph_strategy)
+    strategy["repair_window"] = _window_payload(window)
+    strategy["window_instruction"] = (
+        "The selected rewrite changed only this sentence window inside the target paragraph."
+    )
+    return replace(parent_plan, paragraph_strategy=strategy, ai_safe_route=route)
+
+
+def _window_payload(window: RepairWindow) -> dict[str, Any]:
+    return {
+        "paragraph_id": window.paragraph_id,
+        "start_sentence_index": window.start_sentence_index,
+        "end_sentence_index": window.end_sentence_index,
+        "source_sentence_ids": list(window.source_sentence_ids),
+        "finding_count": window.finding_count,
+        "max_severity": round(window.max_severity, 3),
+        "source_word_count": len(re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", window.source_text)),
+    }
 
 
 def _raise_if_canceled(cancellation_check: Callable[[], None] | None) -> None:
