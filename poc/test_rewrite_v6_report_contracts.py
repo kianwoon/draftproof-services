@@ -6,7 +6,7 @@ from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6.paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _report_target_paragraph_ids, _same_text, run_v6_rewrite_all
 from poc.rewrite_v6.planner_llm import build_planner_prompt
-from poc.rewrite_v6.prose_quality import drop_redundant_adjacent_sentence_intent, has_fragment_or_trace_sentences
+from poc.rewrite_v6.prose_quality import drop_redundant_adjacent_sentence_intent, has_fragment_or_trace_sentences, repair_generated_prose
 from poc.rewrite_v6.report_contracts import apply_report_signal_contracts, extract_report_signal_contracts
 from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
 from poc.rewrite_v6.write import Variant, build_prompt, choose_variant
@@ -298,6 +298,46 @@ def test_v6_writer_cleanup_drops_redundant_adjacent_sentence_intent():
 
     assert cleaned.count("endless help and sympathy") == 1
     assert "Teaching learners to learn and adapt" in cleaned
+
+
+def test_v6_generated_prose_repair_preserves_not_only_and_repairs_gerund_evidence_fragment():
+    source = (
+        "Johnny demonstrated skill in the meeting. "
+        "The thank cards do not only serve as endorsement of Johnny skill but also attest to professional integrity."
+    )
+    candidate = (
+        "Johnny demonstrated skill in the meeting. "
+        "Demonstrating the ability to support clients. "
+        "The thank cards serve as endorsement of Johnny skill and attest to professional integrity."
+    )
+
+    repaired = repair_generated_prose(candidate, source)
+
+    assert "Johnny demonstrated the ability to support clients." in repaired
+    assert "do not only serve as endorsement of Johnny skill." in repaired
+    assert "The same cards also attest to professional integrity." in repaired
+
+
+def test_v6_generated_prose_repair_splits_client_needs_and_not_only_density():
+    candidate = (
+        "He demonstrated the ability to accurately identify and gently address the needs of clients with Down syndrome and autism. "
+        "The thank cards do not only serve as an endorsement of Johnny skill but also attest to professional integrity."
+    )
+
+    repaired = repair_generated_prose(candidate, candidate)
+
+    assert "He identified the needs of clients with Down syndrome and autism." in repaired
+    assert "He gently addressed those needs." in repaired
+    assert "The thank cards do not only serve as an endorsement of Johnny skill." in repaired
+    assert "The same cards also attest to professional integrity." in repaired
+
+
+def test_v6_generated_prose_repair_revoices_displayed_quality_evidence():
+    candidate = "During voluntary haircutting work with socially vulnerable groups he displayed a high degree of empathy and professional patience."
+
+    repaired = repair_generated_prose(candidate, candidate)
+
+    assert repaired == "Voluntary haircutting work with socially vulnerable groups showed his empathy and professional patience."
 
 
 def test_v6_writer_schema_keeps_coverage_map_separate_from_sentence_text():

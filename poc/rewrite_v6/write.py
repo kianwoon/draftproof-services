@@ -8,7 +8,7 @@ from .json_io import parse_json
 from .paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from .plan import Plan
 from .prompt_shape import coverage_loss_contract, paragraph_sentence_plan
-from .prose_quality import drop_redundant_adjacent_sentence_intent, fragment_trace_penalty, has_fragment_or_trace_sentences
+from .prose_quality import fragment_trace_penalty, has_fragment_or_trace_sentences, repair_generated_prose
 from .review_provenance import annotate_review_items
 from .scan import scan_text
 from .sentence_rows import compile_or_fallback_text
@@ -52,7 +52,7 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
             max_tokens=None,
             response_format={"type": "json_object"},
         )
-        variants.extend(replace(v, text=drop_redundant_adjacent_sentence_intent(apply_architecture_split_text(v.text, split_contract))) for v in parse_variants(parse_json(getattr(response, "raw_content", "") or response.content)))
+        variants.extend(replace(v, text=repair_generated_prose(apply_architecture_split_text(v.text, split_contract), paragraph.text)) for v in parse_variants(parse_json(getattr(response, "raw_content", "") or response.content)))
     except (Exception, ValueError):
         pass
     return _dedupe_variants(variants)
