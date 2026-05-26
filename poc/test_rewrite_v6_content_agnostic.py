@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from poc.rewrite_v6.pipeline import run_v6_rewrite, run_v6_rewrite_all
+from poc.rewrite_v6.pipeline import _planner_provider, run_v6_rewrite, run_v6_rewrite_all
 from poc.rewrite_v6.plan import build_plan
+from poc.rewrite_v6.planner_llm import run_planner_llm
 from poc.rewrite_v6 import production as v6_production
-from poc.rewrite_v6.scan import scan_text
+from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
 from poc.rewrite_v6.write import build_prompt
 from poc.report.render_rewrite import render_rewrite_report
 
@@ -89,7 +90,8 @@ def test_v6_packed_list_plan_uses_prose_rebuild_not_atomic_decomposition():
     assert source not in prompt
     assert "coverage_map" in prompt
     assert "reviewer" in prompt
-    assert "Write one ordinary sentence for each coverage beat first" in prompt
+    assert "Do not write a repair trace" in prompt
+    assert "Group related coverage beats into ordinary paragraph sentences" in prompt
     assert "Do not put three or more examples" in prompt
 
 
@@ -113,13 +115,16 @@ def test_v6_writer_prompt_blocks_unsubmitted_intensity_expansion():
     prompt = build_prompt(paragraph, plan)
     payload = json.loads(prompt.split("\n", 1)[1])
     assert "Do not add unsubmitted intensity" in prompt
-    assert "source relation only" in prompt
+    assert "Do not write a repair trace" in prompt
+    assert "preferred_sentence_count" in prompt
+    assert "Not always" in prompt
+    assert "pair the first two items and the last two items" in prompt
+    assert "not only reward beat" in prompt
+    assert "success, readiness, or essential-skills ending" in prompt
     assert "Do not use semicolons" in prompt
     assert "plain_route_contract_for_v1" in payload
-    assert "common/essential/dynamic" in prompt
-    assert "has become more important/challenging/serious" in prompt
-    assert "become/becomes <descriptor A>, <descriptor B>, and <descriptor C>" in prompt
-    assert "coverage capsule words" in prompt
+    assert "unsubmitted intensity" in payload["plain_route_contract_for_v1"]
+    assert "descriptor lists" in payload["plain_route_contract_for_v1"]
 
 
 def test_v6_coverage_keeps_late_contrast_terms():
@@ -146,7 +151,45 @@ def test_v6_writer_prompt_filters_selected_source_terms_from_context_terms():
     prompt_context_terms = payload["context_anchors"]["context_terms"]
     assert "Today" not in prompt_context_terms
     assert "form" not in [term.casefold() for term in prompt_context_terms]
-    assert any(term.casefold() == "clients" for term in prompt_context_terms)
+    assert "chat" not in [term.casefold() for term in prompt_context_terms]
+    assert "email" not in [term.casefold() for term in prompt_context_terms]
+
+
+def test_v6_writer_prompt_does_not_import_neighbor_named_examples():
+    scan = scan_text(
+        "Clients use PortalX, AlphaTool, online courses, and remote forms before the review.\n\n"
+        "This shift has made the reviewer role more important, not less important."
+    )
+    paragraph, plan = build_plan(scan, {"p001"})
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    assert paragraph.id == "p002"
+    assert "PortalX" not in payload["context_anchors"]["named_references"]
+    assert "AlphaTool" not in payload["content_word_boundary"]["allowed_content_terms"]
+    assert "online" not in payload["content_word_boundary"]["allowed_content_terms"]
+    assert "courses" not in payload["context_anchors"]["context_terms"]
+    question_terms = [
+        term
+        for row in payload["author_route_questions"]
+        for term in row.get("answer_basis_terms", [])
+    ]
+    assert "PortalX" not in question_terms
+
+
+def test_v6_writer_context_terms_do_not_import_generic_neighbor_vocabulary():
+    scan = scan_text(
+        "Alpha Method was introduced by Smith (2020). Constant information filled the review space.\n\n"
+        "This result shows a serious concern because the process should improve across teams.\n\n"
+        "The next review mentioned a noisy environment and peer channels."
+    )
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    context_terms = {term.casefold() for term in payload["context_anchors"]["context_terms"]}
+    assert paragraph.id == "p002"
+    assert "constant" not in context_terms
+    assert "filled" not in context_terms
+    assert "environment" not in context_terms
+    assert "Alpha Method" in payload["context_anchors"]["named_references"]
+    assert "Smith (2020)" in payload["context_anchors"]["citation_spans"]
 
 
 def test_v6_named_reference_extraction_is_not_domain_keyword_filtered():
@@ -178,7 +221,8 @@ def test_v6_planner_extracts_author_proxy_context_from_submitted_text():
     assert "2021" in context["years"]
     assert "guided intake" in context["quoted_terms"]
     prompt_payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
-    assert prompt_payload["context_anchors"]["named_references"] == context["named_references"]
+    assert "Alpha Method" in prompt_payload["context_anchors"]["named_references"]
+    assert "Smith" in prompt_payload["context_anchors"]["named_references"]
     assert prompt_payload["context_anchors"]["named_references"]
     assert "context_anchors" in build_prompt(paragraph, plan)
 
@@ -203,12 +247,19 @@ def test_v6_planner_turns_findings_into_concrete_safe_route_targets():
     assert plan.ai_safe_route["golden_route"]["compact_formula"] == "Scope it. Anchor it. Show it. Explain it. Close it."
     assert plan.ai_safe_route["golden_route"]["question_rule"]
     assert plan.ai_safe_route["golden_route_questions"]
+    assert plan.ai_safe_route["author_route_questions"]
+    assert any("reviewable bridge narrows the claim" in row["question"] for row in plan.ai_safe_route["author_route_questions"])
+    assert any("Which source items belong together" in row["question"] for row in plan.ai_safe_route["author_route_questions"])
     assert plan.ai_safe_route["coverage_beats"]
     assert all(beat.get("coverage_terms") for beat in plan.ai_safe_route["coverage_beats"])
     assert any("merge only" in beat["merge_rule"] for beat in plan.ai_safe_route["coverage_beats"])
     assert not _contains_key(plan.ai_safe_route, "source_text")
     assert not _contains_key(plan.ai_safe_route, "coverage_phrase")
     assert prompt_payload["golden_question"]
+    assert prompt_payload["author_route_questions"]
+    assert any(row["writer_duty"] for row in prompt_payload["author_route_questions"])
+    assert "route_answer_cards" in prompt_payload["output_schema"]["variants"][0]
+    assert prompt_payload["content_word_boundary"]["allowed_content_terms"]
     assert prompt_payload["golden_route"]["compact_formula"] == "Scope it. Anchor it. Show it. Explain it. Close it."
     assert prompt_payload["coverage_beats_must_all_appear"]
     assert any(beat.get("finding_tags") for beat in prompt_payload["coverage_beats_must_all_appear"])
@@ -217,6 +268,49 @@ def test_v6_planner_turns_findings_into_concrete_safe_route_targets():
     assert "affected_sentence_routes" not in prompt_payload
     assert "what did the writer see, read, compare, struggle with, or decide" in build_prompt(paragraph, plan).casefold()
     assert "do not preserve exact source wording" in build_prompt(paragraph, plan).casefold()
+    assert "Build the paragraph by answering author_route_questions" in build_prompt(paragraph, plan)
+    assert "fill route_answer_cards for every author_route_question" in build_prompt(paragraph, plan)
+    assert "route_answer_cards.draft_sentence must be a plain sentence under 18 words" in build_prompt(paragraph, plan)
+    assert "Do not write meta-prose such as the writer sees" in build_prompt(paragraph, plan)
+    assert "do not preserve submitted facts as written" in build_prompt(paragraph, plan)
+    assert "Stay inside content_word_boundary.allowed_content_terms" in build_prompt(paragraph, plan)
+
+
+def test_v6_downgrades_unsafe_llm_planner_contracts_to_route_questions():
+    scan = scan_text(
+        "This result shows an important concern because the process should improve across teams. "
+        "The review used a form, a queue, and a final check."
+    )
+    paragraph, plan = build_plan(scan)
+    planner_payload = json.dumps({
+        "planner_decision": {
+            "paragraph_route": "Use the rewritten planner route.",
+            "finding_contracts": [
+                {
+                    "source_sentence_id": "p001_s001",
+                    "safe_rebuild_shape": "This result shows an important concern because the process should improve across teams.",
+                }
+            ],
+            "paragraph_blueprint": [
+                {
+                    "step_id": "b001",
+                    "safe_sentence_shape": "This result shows an important concern because the process should improve.",
+                }
+            ],
+        }
+    })
+    updated = run_planner_llm(
+        paragraph,
+        plan,
+        findings_for_paragraph(scan, paragraph.id),
+        client=StaticJsonClient(planner_payload),
+    )
+    decision = updated.ai_safe_route["llm_planner_decision"]
+    assert decision["status"] == "degraded_contract_gaps"
+    assert decision["finding_contracts"] == []
+    assert decision["paragraph_blueprint"] == []
+    assert "author_route_questions" in build_prompt(paragraph, updated)
+    assert "Ignore unsafe LLM planner shapes" in decision["fallback_instruction"]
 
 
 def test_v6_author_anchor_instruction_reaches_writer_beat():
@@ -256,8 +350,9 @@ def test_v6_planner_passes_polarity_markers_to_writer_prompt():
     ]
     assert any(marker.casefold() == "does not only" for marker in markers)
     assert any(marker.casefold() == "does not only" for marker in prompt_markers)
-    assert any("not enough" in beat.get("polarity_instruction", "") for beat in prompt_payload["coverage_beats_must_all_appear"])
+    assert any("does not only reward" in beat.get("polarity_instruction", "") for beat in prompt_payload["coverage_beats_must_all_appear"])
     assert "Preserve every beat's polarity_markers" in build_prompt(paragraph, plan)
+    assert "do not repeat not always across a sentence chain" in build_prompt(paragraph, plan)
 
 
 def test_v6_no_longer_without_reflects_keeps_own_fact_capsule():
@@ -270,6 +365,255 @@ def test_v6_no_longer_without_reflects_keeps_own_fact_capsule():
     assert all("young people learn" not in capsule for capsule in capsules)
 
 
+def test_v6_negative_contrast_comma_stays_one_coverage_beat():
+    scan = scan_text("This shift has made the role of teachers even more important, not less important.")
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    beats = [
+        beat for beat in plan.ai_safe_route["coverage_beats"]
+        if beat["source_sentence_id"] == "p001_s001"
+    ]
+    assert len(beats) == 1
+    assert "less" in {term.casefold() for term in beats[0]["coverage_terms"]}
+    assert payload["polarity_constraints"]
+    assert "limits" in payload["polarity_constraints"][0]["forbidden_shapes"]
+    assert "Use neighboring context only to name the bridge" in build_prompt(paragraph, plan)
+
+
+def test_v6_not_only_polarity_requires_two_sided_contrast():
+    source = (
+        "The process does not only reward people who remember facts. "
+        "It rewards people who can analyse, adapt, communicate, and create."
+    )
+    bad_payload = json.dumps({
+        "variants": [
+            {
+                "id": "bad",
+                "text": (
+                    "The process rewards people who remember facts. "
+                    "Analysis and adaptation matter in the next step."
+                ),
+            }
+        ]
+    })
+    bad = run_v6_rewrite(source, writer_client=StaticJsonClient(bad_payload))
+    assert bad.selected is not None
+    assert bad.selected.source == "source_preserved"
+
+    good_payload = json.dumps({
+        "variants": [
+            {
+                "id": "good",
+                "text": (
+                    "Remember facts is not enough by itself. "
+                    "People who analyse and adapt also matter. "
+                    "People who communicate and create carry the next part."
+                ),
+            }
+        ]
+    })
+    good = run_v6_rewrite(source, writer_client=StaticJsonClient(good_payload))
+    assert good.selected is not None
+    assert good.selected.source == "llm"
+    prompt = build_prompt(*build_plan(scan_text(source)))
+    assert "not enough by itself" in prompt
+    assert "also matters" in prompt
+    assert "not only a concern" in prompt
+
+
+def test_v6_four_item_list_gets_grouped_sentence_plan_without_term_hardcode():
+    scan = scan_text("The process asks people to compare, adjust, explain, and build.")
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    assert "paragraph_sentence_plan" in payload
+    slot = payload["paragraph_sentence_plan"][0]
+    assert len(slot["coverage_beat_ids"]) == 2
+    assert "never rejoin the groups into a comma list" in slot["slot_goal"]
+    assert any(row["grouped_relation"] for row in payload["coverage_beats_must_all_appear"])
+    assert not any(row.get("pairing_hint") for row in payload["coverage_beats_must_all_appear"])
+
+
+def test_v6_because_not_only_claim_splits_evaluation_and_cause_beats():
+    scan = scan_text("This is a serious concern because the modern world does not only reward people who remember facts.")
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    beats = payload["coverage_beats_must_all_appear"]
+    concern = next(row for row in beats if "concern" in {term.casefold() for term in row["coverage_terms"]})
+    not_only = next(row for row in beats if "does not only" in [marker.casefold() for marker in row["polarity_markers"]])
+    assert concern["beat_id"] != not_only["beat_id"]
+    assert "concern" not in {term.casefold() for term in not_only["coverage_terms"]}
+
+
+def test_v6_selection_rejects_malformed_not_only_concern():
+    source = (
+        "This is a serious concern because the modern world does not only reward people who remember facts. "
+        "It rewards people who can analyse, adapt, communicate, and create."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "bad",
+                "text": (
+                    "The modern world rewards people who remember facts, not only a serious concern. "
+                    "People who analyse and adapt also matter."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+
+
+def test_v6_selection_rejects_not_only_without_also_side():
+    source = (
+        "The process does not only focus on what clients know, but also on how clients decide. "
+        "Reviewers guide clients through the check."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "bad",
+                "text": (
+                    "The process does not only focus on what clients know. "
+                    "Reviewers guide clients through the check."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+
+
+def test_v6_selection_rejects_reversed_rather_than_contrast():
+    source = (
+        "The process can encourage memorisation rather than understanding. "
+        "Clients may learn how to pass, but not always how to explain the result."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "bad",
+                "text": (
+                    "The process carries habits from old checks. "
+                    "Understanding is encouraged rather than memorisation. "
+                    "Clients learn how to pass but do not always explain the result."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+
+
+def test_v6_rather_than_beat_starts_from_left_side_pressure():
+    scan = scan_text("This can encourage memorisation rather than understanding.")
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    beat = next(
+        row for row in payload["coverage_beats_must_all_appear"]
+        if "rather than" in row.get("polarity_markers", [])
+    )
+    starters = {term.casefold() for term in beat["starter_terms"]}
+    assert "memorisation" in starters
+    assert "understanding" not in starters
+
+
+def test_v6_not_always_contrast_is_not_grouped_with_positive_side():
+    scan = scan_text("Students may learn how to pass, but not always how to think deeply, solve problems, or connect ideas.")
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    beats = payload["coverage_beats_must_all_appear"]
+    positive = next(row for row in beats if "pass" in {term.casefold() for term in row["coverage_terms"]})
+    limited = [row for row in beats if "not always" in [marker.casefold() for marker in row["polarity_markers"]]]
+    assert all(positive["beat_id"] != row["beat_id"] for row in limited)
+    assert "not always" not in [marker.casefold() for marker in positive["polarity_markers"]]
+    assert len(limited) == 1
+    limited_terms = {term.casefold() for term in limited[0]["coverage_terms"]}
+    assert {"think", "solve", "connect"} <= limited_terms
+    assert not limited[0]["coverage_capsule"].casefold().startswith("not always")
+    assert "Use one contrast sentence" in build_prompt(paragraph, plan)
+
+
+def test_v6_selection_rejects_not_always_scope_shift():
+    source = (
+        "Clients may learn how to pass, but not always how to explain the result. "
+        "The review also asks clients to connect ideas."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "bad",
+                "text": (
+                    "Clients do not always learn to pass or explain the result. "
+                    "The review asks clients to connect ideas."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+
+
+def test_v6_selection_rejects_repeated_sentence_intent():
+    source = (
+        "Students may learn how to pass, but not always how to think deeply. "
+        "They also need to solve problems across subjects."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "bad",
+                "text": (
+                    "Students learn to pass but do not always think deeply. "
+                    "Students do not always think deeply about problems. "
+                    "Students solve problems across subjects."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+
+
+def test_v6_selection_rejects_unresolved_comma_list_contract():
+    source = "The process rewards people who analyse, adapt, communicate, and create."
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "bad",
+                "text": "The process rewards people who analyse, adapt, communicate, and create.",
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+
+
+def test_v6_selection_rejects_unsubmitted_success_close():
+    source = "The process rewards people who can analyse, adapt, communicate, and create."
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "bad",
+                "text": (
+                    "The process rewards people who can analyse and adapt. "
+                    "Communicate and create carry the next part. "
+                    "These abilities are essential for success."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+
+
 def test_v6_list_rebuild_does_not_allow_sentence_count_compression():
     scan = scan_text(
         "The process used a form, a queue, and a reviewer. "
@@ -280,7 +624,7 @@ def test_v6_list_rebuild_does_not_allow_sentence_count_compression():
     payload = json.loads(prompt.split("\n", 1)[1])
     assert "uncapped during golden-route discovery" in payload["required_shape"]["sentence_count"]
     assert "uncapped during golden-route discovery" in payload["required_shape"]["word_count"]
-    assert "Write one ordinary sentence for each coverage beat first" in prompt
+    assert "Group related coverage beats into ordinary paragraph sentences" in prompt
 
 
 def test_v6_rewrite_preserves_source_when_writer_returns_no_candidate():
@@ -325,6 +669,37 @@ def test_v6_parse_variants_preserves_string_author_review_rows():
     assert variants[0].coverage_map[0]["coverage_beat_id"] == "b1"
 
 
+def test_v6_writer_prompt_defaults_to_one_variant_to_avoid_duplicate_token_waste(monkeypatch):
+    scan = scan_text("The process used a form, a queue, and a review.")
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    requirements = payload["variant_requirements"]
+    assert [row["id"] for row in requirements] == ["v1"]
+    assert payload["hard_generation_requirements"]["required_variant_ids"] == ["v1"]
+    assert payload["hard_generation_requirements"]["exact_variant_count"] == 1
+    monkeypatch.setenv("DRAFTPROOF_V6_WRITER_VARIANTS", "3")
+    multi_payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    assert [row["id"] for row in multi_payload["variant_requirements"]] == ["v1", "v2", "v3"]
+    assert "return exactly the ids" in build_prompt(paragraph, plan)
+    focused_payload = json.loads(build_prompt(paragraph, plan, variant_focus=multi_payload["variant_requirements"][1]).split("\n", 1)[1])
+    assert focused_payload["active_variant"]["id"] == "v2"
+    assert len(focused_payload["output_schema"]["variants"]) == 1
+
+
+def test_v6_parse_variants_drops_duplicate_texts():
+    from poc.rewrite_v6.write import parse_variants
+
+    variants = parse_variants({
+        "variants": [
+            {"id": "v1", "mode": "coverage_beat_generation", "text": "The route changes."},
+            {"id": "v2", "mode": "golden_question_generation", "text": "The route changes."},
+            {"id": "v3", "mode": "context_anchor_generation", "text": "The route changes differently."},
+        ]
+    })
+    assert [variant.id for variant in variants] == ["v1", "v3"]
+    assert variants[0].mode == "coverage_beat_generation"
+
+
 def test_v6_files_stay_below_1000_lines_and_do_not_import_v5():
     root = Path(__file__).resolve().parent / "rewrite_v6"
     for path in root.glob("*.py"):
@@ -335,7 +710,10 @@ def test_v6_files_stay_below_1000_lines_and_do_not_import_v5():
 
 def test_v6_json_result_is_serializable():
     result = run_v6_rewrite("A process uses a step, a check, and a result.", writer_client=FakeClient())
-    json.dumps(result.to_dict())
+    payload = result.to_dict()
+    json.dumps(payload)
+    assert payload["variants"] == []
+    assert payload["source_preserved"]["source"] == "source_preserved"
 
 
 def test_v6_document_rewrite_reports_paragraph_progress():
@@ -694,6 +1072,144 @@ def test_v6_selection_rejects_polished_lexical_inflation_without_provenance():
     assert result.rewritten_text == source
 
 
+def test_v6_selection_rejects_polarity_inversion_even_when_scanner_improves():
+    source = (
+        "This shift has made the role of reviewers more important, not less important. "
+        "Reviewers guide clients to question sources, compare notes, develop judgment, and apply decisions."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "The shift is reducing the role of reviewers in this process. "
+                    "Reviewers guide clients to question sources and compare notes. "
+                    "Judgment and decisions carry the next part."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+
+
+def test_v6_selection_rejects_polarity_omission_even_when_scanner_improves():
+    source = (
+        "This shift has made the role of reviewers more important, not less important. "
+        "Reviewers guide clients to question sources, compare notes, develop judgment, and apply decisions."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "The shift changes the reviewer role in this process. "
+                    "Reviewers guide clients to question sources and compare notes. "
+                    "Judgment and decisions carry the next part."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+
+
+def test_v6_selection_accepts_negated_reduction_for_not_less_polarity():
+    source = (
+        "This shift has made the role of reviewers more important, not less important. "
+        "Reviewers guide clients to question sources and compare notes."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "The shift does not reduce the reviewer role. "
+                    "Reviewers guide clients to question sources and compare notes."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "llm"
+
+
+def test_v6_selection_rejects_unreviewed_bridge_terms_when_alternative_is_grounded():
+    source = (
+        "This shift has made the role of reviewers more important, not less important. "
+        "Reviewers guide clients to question sources and compare notes."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "bad",
+                "text": (
+                    "Digital platforms changed the reviewer role, which remains important, not less. "
+                    "Reviewers guide clients to question sources and compare notes."
+                ),
+            },
+            {
+                "id": "good",
+                "text": (
+                    "The shift keeps the reviewer role more important, not less. "
+                    "Reviewers guide clients to question sources and compare notes."
+                ),
+            },
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.id == "good"
+
+
+def test_v6_selection_accepts_material_risk_drop_without_finding_count_drop():
+    source = (
+        "This shift has made the role of reviewers even more important, not less important. "
+        "Reviewers guide clients to question sources, compare viewpoints, develop judgment, and apply knowledge in real situations."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "The shift makes the reviewer role even more important, not less. "
+                    "Reviewers guide clients to question sources and compare viewpoints. "
+                    "They help clients develop judgment and apply knowledge in real situations."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "llm"
+
+
+def test_v6_selected_bridge_terms_are_marked_for_author_review():
+    source = (
+        "This result shows an important concern because the process should improve. "
+        "Teams use a form, a queue, and a review."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "The process carries an improvement concern. "
+                    "Teams use forms and queues before review coordination."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "llm"
+    assert result.selected.author_review_items
+    assert result.selected.author_review_items[0]["provenance"] == "needs_author_confirmation"
+
+
 def test_v6_selection_rejects_mechanical_itemized_decomposition():
     source = (
         "The intake system is changing faster than many teams can manage. "
@@ -802,6 +1318,27 @@ def test_v6_selection_rejects_final_source_beat_replaced_by_conclusion():
     assert result.rewritten_text == source
 
 
+def test_v6_selection_rejects_partial_four_item_source_list_coverage():
+    source = (
+        "The process still carries old habits. "
+        "It rewards people who can compare, adjust, explain, and build."
+    )
+    writer_payload = json.dumps({
+        "variants": [
+            {
+                "id": "v1",
+                "text": (
+                    "The process still carries old habits. "
+                    "The process rewards people who can compare and adjust."
+                ),
+            }
+        ]
+    })
+    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    assert result.selected is not None
+    assert result.selected.source == "source_preserved"
+
+
 def test_v6_selection_rejects_weak_movement_with_source_drift():
     source = (
         "Today the workflow is changing faster than many teams can comfortably manage. "
@@ -877,3 +1414,29 @@ def test_v6_document_rewrite_preserves_source_when_writer_has_no_candidates():
     assert result.passes == []
     assert "form" in result.rewritten_text
     json.dumps(result.to_dict())
+
+
+def test_v6_glm47_planner_prefers_cerebras_provider(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_PROVIDER_ROUTING_JSON", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_PROVIDER_ORDER", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_PROVIDER_ONLY", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_PROVIDER_IGNORE", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_PROVIDER_SORT", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_ALLOW_FALLBACKS", raising=False)
+
+    assert _planner_provider("z-ai/glm-4.7") == {
+        "order": ["Cerebras"],
+        "allow_fallbacks": True,
+    }
+
+
+def test_v6_planner_provider_env_overrides_default(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_PLANNER_PROVIDER_ORDER", "Cerebras,Fireworks")
+    monkeypatch.setenv("DRAFTPROOF_V6_PLANNER_PROVIDER_SORT", "throughput")
+    monkeypatch.setenv("DRAFTPROOF_V6_PLANNER_ALLOW_FALLBACKS", "0")
+
+    assert _planner_provider("z-ai/glm-4.7") == {
+        "order": ["Cerebras", "Fireworks"],
+        "allow_fallbacks": False,
+        "sort": "throughput",
+    }

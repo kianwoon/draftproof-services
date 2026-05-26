@@ -88,7 +88,8 @@ def _author_proxy_context(scan: Scan, paragraph: Paragraph) -> dict[str, Any]:
         "before_context": previous_paragraph[:600],
         "after_context": next_paragraph[:600],
         "source_terms": source_terms(paragraph_text, limit=32),
-        "context_terms": source_terms(context_text, limit=40),
+        "context_terms": source_terms(paragraph_text, limit=40),
+        "neighbor_context_terms": source_terms(previous_paragraph + "\n" + next_paragraph, limit=40),
         "named_references": _named_references(context_text),
         "years": _years(context_text),
         "citation_spans": _citation_spans(context_text),
@@ -242,6 +243,7 @@ def _ai_safe_route(paragraph: Paragraph, actions: list[PlanAction], context: dic
         },
         "coverage_beats": _coverage_beats(actions),
         "construction_recipes": [_construction_recipe(action, context) for action in actions if action.tags],
+        "author_route_questions": _author_route_questions(actions, context),
         "route_order": [
             "start from the paragraph's concrete source pressure or condition",
             "repair affected source beats in original order",
@@ -311,6 +313,7 @@ def _coverage_beats(actions: list[PlanAction]) -> list[dict[str, Any]]:
                     "construction_recipe_id": f"{action.sentence_id}_recipe",
                     "construction_recipe": _beat_construction_recipe(action.tags),
                     "coverage_terms": source_terms(phrase, limit=12),
+                    "grouped_relation": " | " in phrase,
                     "polarity_markers": _polarity_markers(phrase),
                     "starter_terms": _starter_terms(phrase, action.tags),
                     "generation_duty": "carry this meaning anchor in its own ordinary prose beat without preserving original phrase order",
@@ -325,6 +328,7 @@ def _coverage_beats(actions: list[PlanAction]) -> list[dict[str, Any]]:
                 "construction_recipe_id": f"{action.sentence_id}_recipe",
                 "construction_recipe": _beat_construction_recipe(action.tags),
                 "coverage_terms": source_terms(phrase, limit=12),
+                "grouped_relation": " | " in phrase,
                 "polarity_markers": _polarity_markers(phrase),
                 "starter_terms": _starter_terms(phrase, action.tags),
                 "generation_duty": "carry this source-supported idea with a scoped route and clear anchor without preserving original wording",
@@ -344,6 +348,140 @@ def _construction_recipe(action: PlanAction, context: dict[str, Any]) -> dict[st
         "positive_pattern": _positive_pattern(action.tags),
         "author_proxy_move": _author_proxy_move(action.tags, context),
     }
+
+
+def _author_route_questions(actions: list[PlanAction], context: dict[str, Any]) -> list[dict[str, Any]]:
+    questions: list[dict[str, Any]] = []
+    for action in actions:
+        if not action.tags:
+            continue
+        question = _route_question(action.tags)
+        questions.append({
+            "question_id": f"{action.sentence_id}_q01",
+            "source_sentence_id": action.sentence_id,
+            "finding_tags": action.tags,
+            "question": question,
+            "answer_basis_terms": _question_basis_terms(action, context),
+            "writer_duty": _question_writer_duty(action.tags),
+            "author_proxy_policy": _question_author_proxy_policy(action.tags),
+        })
+    return questions
+
+
+def _route_question(tags: list[str]) -> str:
+    tag_set = set(tags)
+    if "packed_list" in tag_set or "sentence_overload" in tag_set:
+        return "Which source items belong together, and what plain relationship connects each group to the paragraph purpose?"
+    if "context_anchor_gap" in tag_set and tag_set & {"author_anchor_gap", "unsupported_claim_gap", "broad_claim"}:
+        return "Which earlier actor, object, process, condition, or contrast anchors this sentence, and what submitted or reviewable bridge narrows the claim?"
+    if "context_anchor_gap" in tag_set:
+        return "Which earlier actor, object, process, condition, or contrast does this sentence point back to?"
+    if tag_set & {"author_anchor_gap", "unsupported_claim_gap", "broad_claim"}:
+        return "What submitted anchor, scope limit, or reviewable author-proxy bridge makes this claim belong to the writer's paragraph?"
+    if "semantic_bridge_gap" in tag_set:
+        return "What source-to-claim link is missing between this beat and the paragraph's next idea?"
+    if "transition_stack" in tag_set:
+        return "Which source actor, object, or condition can carry the transition without a discourse marker?"
+    if "predictable_start" in tag_set or "paragraph_rhythm" in tag_set:
+        return "Which concrete source noun, condition, or comparison can open this beat instead of a predictable opener?"
+    if "paraphrase_smoothing" in tag_set or "abstract_density" in tag_set:
+        return "Which submitted source terms can replace the polished or abstract wrapper?"
+    return "What source-supported relationship does this beat need to show, and why does it matter here?"
+
+
+def _question_basis_terms(action: PlanAction, context: dict[str, Any]) -> list[str]:
+    selected_terms = {term.casefold() for term in context.get("source_terms", [])}
+    anchors = [
+        *action.preserve_terms,
+        *context.get("quoted_terms", [])[:3],
+        *context.get("citation_spans", [])[:3],
+        *_selected_named_references(context, selected_terms)[:3],
+    ]
+    if set(action.tags) & {"author_anchor_gap", "unsupported_claim_gap", "broad_claim", "context_anchor_gap"}:
+        anchors.extend(_neighbor_bridge_terms(context, selected_terms)[:5])
+    return _dedupe(anchors)[:18]
+
+
+def _selected_named_references(context: dict[str, Any], selected_terms: set[str]) -> list[str]:
+    rows: list[str] = []
+    for value in context.get("named_references", []):
+        terms = source_terms(str(value), limit=8)
+        if any(term.casefold() in selected_terms for term in terms) or not _reference_in_neighbor_list(context, str(value)):
+            rows.append(str(value))
+    return rows
+
+
+def _neighbor_bridge_terms(context: dict[str, Any], selected_terms: set[str]) -> list[str]:
+    named_terms = {
+        term.casefold()
+        for value in context.get("named_references", [])
+        for term in source_terms(str(value), limit=8)
+        if term.casefold() not in selected_terms
+    }
+    list_terms = _neighbor_list_terms(context) - selected_terms
+    rows: list[str] = []
+    for value in context.get("context_terms", []):
+        key = str(value).casefold()
+        if key in named_terms or key in list_terms:
+            continue
+        rows.append(str(value))
+    return rows
+
+
+def _neighbor_list_terms(context: dict[str, Any]) -> set[str]:
+    terms: set[str] = set()
+    neighbor_text = "\n".join([
+        str(context.get("before_context") or ""),
+        str(context.get("after_context") or ""),
+    ])
+    for sentence in re.split(r"(?<=[.!?])\s+", neighbor_text):
+        if sentence.count(",") < 2 and len(re.findall(r"\b(?:and|or|also|but)\b", sentence, flags=re.I)) < 2:
+            continue
+        for term in source_terms(sentence, limit=32):
+            terms.add(term.casefold())
+    return terms
+
+
+def _reference_in_neighbor_list(context: dict[str, Any], value: str) -> bool:
+    needle = str(value or "").strip()
+    if not needle:
+        return False
+    neighbor_text = "\n".join([
+        str(context.get("before_context") or ""),
+        str(context.get("after_context") or ""),
+    ])
+    for sentence in re.split(r"(?<=[.!?])\s+", neighbor_text):
+        if needle not in sentence:
+            continue
+        if re.search(r"\b(?:19|20)\d{2}[a-z]?\b", sentence):
+            return False
+        named_count = len(re.findall(r"\b(?:[A-Z][A-Za-z0-9'’-]{2,}|[A-Z]{2,})(?:\s+(?:[A-Z][A-Za-z0-9'’-]{2,}|[A-Z]{2,}))*\b", sentence))
+        if named_count >= 2:
+            return True
+        if sentence.count(",") >= 2 or len(re.findall(r"\b(?:and|or)\b", sentence, flags=re.I)) >= 2:
+            return True
+    return False
+
+
+def _question_writer_duty(tags: list[str]) -> str:
+    tag_set = set(tags)
+    if "packed_list" in tag_set or "sentence_overload" in tag_set:
+        return "Answer with grouped prose beats, not a comma list and not repeated one-item sentences."
+    if "context_anchor_gap" in tag_set and tag_set & {"author_anchor_gap", "unsupported_claim_gap", "broad_claim"}:
+        return "Answer by naming the antecedent, narrowing the claim, and marking any inferred bridge inside author_review_items."
+    if "context_anchor_gap" in tag_set:
+        return "Answer by naming the antecedent before the claim continues."
+    if tag_set & {"author_anchor_gap", "unsupported_claim_gap", "broad_claim"}:
+        return "Answer by narrowing the claim or adding reviewable bridge wording inside the same beat."
+    if "predictable_start" in tag_set or "paragraph_rhythm" in tag_set:
+        return "Answer by changing the sentence entry point and neighboring rhythm."
+    return "Answer inside the replacement sentence, not in notes."
+
+
+def _question_author_proxy_policy(tags: list[str]) -> str:
+    if set(tags) & {"author_anchor_gap", "unsupported_claim_gap", "broad_claim", "context_anchor_gap"}:
+        return "Author-Proxy may add a narrow bridge from answer_basis_terms; bridges beyond those terms must be listed in author_review_items."
+    return "Use submitted source terms only unless a narrow bridge is needed for readability and marked for review."
 
 
 def _beat_construction_recipe(tags: list[str]) -> dict[str, Any]:
@@ -437,6 +575,11 @@ def _coverage_phrases(text: str) -> list[str]:
     visible = visible.rstrip(".!?;:")
     if not visible:
         return []
+    if re.search(r",\s+(?:not|rather than|instead of)\b", visible, flags=re.I):
+        return [visible]
+    because_parts = _split_because_parts(visible)
+    if len(because_parts) > 1:
+        return because_parts
     visible = re.sub(r",?\s+\bbut\b\s+", ". ", visible, flags=re.I)
     normalized = re.sub(r",\s+(and|or)\s+", ", ", visible, flags=re.I)
     parts = [part.strip(" ,;:") for part in re.split(r"\.\s+|,\s+|;\s+", normalized) if part.strip(" ,;:")]
@@ -444,12 +587,22 @@ def _coverage_phrases(text: str) -> list[str]:
         parts = [part.strip(" ,;:") for part in re.split(r"\s+\band\b\s+", visible, flags=re.I) if part.strip(" ,;:")]
     parts = [_safe_coverage_phrase(part, ["predictable_start", "context_anchor_gap"]) for part in parts]
     parts = [part for part in parts if part]
+    parts = _propagate_not_always(parts)
     parts = _group_dense_list_parts(parts)
     return parts if len(parts) > 1 else [visible]
 
 
+def _split_because_parts(text: str) -> list[str]:
+    parts = [part.strip(" ,;:") for part in re.split(r"\s+\bbecause\b\s+", str(text or ""), maxsplit=1, flags=re.I)]
+    if len(parts) != 2 or not all(parts):
+        return [str(text or "").strip()]
+    return [_safe_coverage_phrase(part, ["predictable_start", "context_anchor_gap"]) for part in parts]
+
+
 def _group_dense_list_parts(parts: list[str]) -> list[str]:
     if len(parts) < 4:
+        return parts
+    if any(re.search(r"\b(?:not always|not only|rather than|instead of|without)\b", part, flags=re.I) for part in parts):
         return parts
     groups: list[str] = []
     index = 0
@@ -458,6 +611,23 @@ def _group_dense_list_parts(parts: list[str]) -> list[str]:
         groups.append(" | ".join(group))
         index += 2
     return groups
+
+
+def _propagate_not_always(parts: list[str]) -> list[str]:
+    rows: list[str] = []
+    limited: list[str] = []
+    for part in parts:
+        text = str(part).strip()
+        if re.search(r"\bnot always\b", text, flags=re.I):
+            limited.append(text)
+            continue
+        if limited:
+            limited.append(text)
+            continue
+        rows.append(text)
+    if limited:
+        rows.append(" | ".join(limited))
+    return rows
 
 
 def _polarity_markers(text: str) -> list[str]:
@@ -484,6 +654,7 @@ def _polarity_markers(text: str) -> list[str]:
 
 def _starter_terms(phrase: str, tags: list[str]) -> list[str]:
     terms = source_terms(phrase, limit=8)
+    contrast_left_terms = _left_side_contrast_terms(phrase)
     risky_route = bool({"predictable_start", "broad_claim", "context_anchor_gap", "paragraph_rhythm"} & set(tags))
     head_terms = {term.casefold() for term in terms[:2]} if risky_route and len(terms) >= 4 else set()
     weak_starters = {
@@ -498,6 +669,12 @@ def _starter_terms(phrase: str, tags: list[str]) -> list[str]:
         and not term.casefold().endswith(("ed", "ly"))
         and term.casefold() not in {"received", "proved", "practiced"}
     ]
+    if contrast_left_terms:
+        candidates = [
+            term for term in contrast_left_terms
+            if term.casefold() not in weak_starters
+            and not term.casefold().endswith(("ed", "ly"))
+        ] or contrast_left_terms
     if risky_route:
         later_candidates = [term for term in candidates if term.casefold() not in head_terms]
         if later_candidates:
@@ -506,6 +683,14 @@ def _starter_terms(phrase: str, tags: list[str]) -> list[str]:
     if non_ing:
         candidates = non_ing
     return candidates[:4]
+
+
+def _left_side_contrast_terms(phrase: str) -> list[str]:
+    match = re.search(r"\b(?:rather than|instead of)\b", str(phrase or ""), flags=re.I)
+    if not match:
+        return []
+    left = source_terms(str(phrase)[:match.start()], limit=6)
+    return left[-3:]
 
 
 def _safe_coverage_phrase(text: str, tags: list[str]) -> str:

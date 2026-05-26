@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable
@@ -21,10 +22,13 @@ class Result:
     rewritten_text: str
 
     def to_dict(self) -> dict[str, Any]:
+        generated_variants = [variant for variant in self.variants if variant.source != "source_preserved"]
+        source_variant = next((variant for variant in self.variants if variant.source == "source_preserved"), None)
         return {
             "scan": self.scan.to_dict(),
             "plan": self.plan.to_dict(),
-            "variants": [asdict(variant) for variant in self.variants],
+            "variants": [asdict(variant) for variant in generated_variants],
+            "source_preserved": asdict(source_variant) if source_variant else None,
             "selected": asdict(self.selected) if self.selected else None,
             "rewritten_text": self.rewritten_text,
         }
@@ -246,10 +250,46 @@ def _planner_gateway(
             max_tokens=None,
             temperature=0.1,
             top_p=0.75,
+            provider=_planner_provider(model),
             extra_body=_planner_extra_body(model),
             cancellation_check=cancellation_check,
         )
     )
+
+
+def _planner_provider(model: str) -> dict[str, Any] | None:
+    import os
+
+    raw_json = _first_env("DRAFTPROOF_V6_PLANNER_PROVIDER_ROUTING_JSON")
+    if raw_json:
+        parsed = json.loads(raw_json)
+        if not isinstance(parsed, dict):
+            raise ValueError("V6 planner provider routing JSON must be an object")
+        return parsed
+
+    provider: dict[str, Any] = {}
+    order = _csv_env("DRAFTPROOF_V6_PLANNER_PROVIDER_ORDER")
+    only = _csv_env("DRAFTPROOF_V6_PLANNER_PROVIDER_ONLY")
+    ignore = _csv_env("DRAFTPROOF_V6_PLANNER_PROVIDER_IGNORE")
+    if not order and str(model or "").casefold() == "z-ai/glm-4.7":
+        order = ["Cerebras"]
+    if order:
+        provider["order"] = order
+    if only:
+        provider["only"] = only
+    if ignore:
+        provider["ignore"] = ignore
+
+    allow_fallbacks = _bool_env("DRAFTPROOF_V6_PLANNER_ALLOW_FALLBACKS")
+    if allow_fallbacks is None and order:
+        allow_fallbacks = True
+    if allow_fallbacks is not None:
+        provider["allow_fallbacks"] = allow_fallbacks
+
+    sort = _first_env("DRAFTPROOF_V6_PLANNER_PROVIDER_SORT")
+    if sort:
+        provider["sort"] = sort
+    return provider or None
 
 
 def _planner_extra_body(model: str) -> dict[str, Any] | None:
@@ -262,3 +302,32 @@ def _writer_extra_body(model: str) -> dict[str, Any] | None:
     if "thinking" not in str(model or "").casefold():
         return None
     return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 64}, "include_reasoning": False}
+
+
+def _first_env(*names: str) -> str | None:
+    import os
+
+    for name in names:
+        value = os.environ.get(name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _csv_env(name: str) -> list[str]:
+    value = _first_env(name)
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _bool_env(name: str) -> bool | None:
+    value = _first_env(name)
+    if value is None:
+        return None
+    normalized = value.casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None

@@ -61,6 +61,7 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             "paragraph_strategy": plan.paragraph_strategy,
             "coverage_beats": _compact_rows(plan.ai_safe_route.get("coverage_beats", []), limit=16),
             "construction_recipes": _compact_rows(plan.ai_safe_route.get("construction_recipes", []), limit=16),
+            "author_route_questions": _compact_rows(plan.ai_safe_route.get("author_route_questions", []), limit=16),
             "golden_route": plan.ai_safe_route.get("golden_route", {}),
         },
         "required_decision": {
@@ -81,6 +82,7 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
                 {
                     "step_id": "b001",
                     "function": "what this paragraph beat must do",
+                    "route_question_id": "author_route_question id this step answers, when applicable",
                     "source_basis": ["submitted sentence id or source term"],
                     "must_include": ["source-supported term or relation"],
                     "must_avoid_shape": ["unsafe shape this beat must not copy"],
@@ -112,6 +114,9 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             "For closure findings, split continuity and limitation into separate beats when one sentence would create a comma-but or broad-summary closure.",
             "Every paragraph_blueprint step must reference the finding_contracts it resolves when applicable.",
             "Normalize all findings into positive construction steps.",
+            "Use deterministic_route_skeleton.author_route_questions as the frame for paragraph_blueprint.",
+            "Every blueprint step for a scanner finding must answer a route question, not merely restate an avoid rule.",
+            "When a finding needs author/context support, plan an Author-Proxy bridge from submitted anchors or mark it as reviewable.",
             "Make paragraph_blueprint concrete enough that a writer can follow it without guessing.",
             "Each paragraph_blueprint step must name its source_basis, must_include terms, and unsafe shape to avoid.",
             "For packed lists, plan grouped relation beats, not item-by-item sentences.",
@@ -131,15 +136,21 @@ def _planner_decision(payload: Any) -> dict[str, Any]:
 
 def _merge_decision(plan: Plan, decision: dict[str, Any]) -> Plan:
     route = dict(plan.ai_safe_route)
+    contract_gaps = _string_rows(decision.get("contract_gaps"))
+    unsafe_contracts = _unsafe_contract_gaps(contract_gaps)
     route["llm_planner_decision"] = {
-        "status": "ok",
+        "status": "degraded_contract_gaps" if unsafe_contracts else "ok",
         "paragraph_route": decision.get("paragraph_route", ""),
-        "finding_contracts": _recipe_rows(decision.get("finding_contracts")),
-        "paragraph_blueprint": _recipe_rows(decision.get("paragraph_blueprint")),
-        "finding_recipe_overrides": _recipe_rows(decision.get("finding_recipe_overrides")),
+        "finding_contracts": [] if unsafe_contracts else _recipe_rows(decision.get("finding_contracts")),
+        "paragraph_blueprint": [] if unsafe_contracts else _recipe_rows(decision.get("paragraph_blueprint")),
+        "finding_recipe_overrides": [] if unsafe_contracts else _recipe_rows(decision.get("finding_recipe_overrides")),
         "author_proxy_plan": decision.get("author_proxy_plan", ""),
         "do_not_copy_route": _string_rows(decision.get("do_not_copy_route")),
-        "contract_gaps": _string_rows(decision.get("contract_gaps")),
+        "contract_gaps": contract_gaps,
+        "fallback_instruction": (
+            "Ignore unsafe LLM planner shapes and build from deterministic author_route_questions, "
+            "coverage_beats, and construction_recipes."
+        ) if unsafe_contracts else "",
     }
     return replace(plan, ai_safe_route=route)
 
@@ -162,6 +173,15 @@ def _string_rows(value: Any) -> list[str]:
     return [str(row) for row in value if str(row).strip()]
 
 
+def _unsafe_contract_gaps(gaps: list[str]) -> bool:
+    unsafe_markers = (
+        "copies risky source phrase",
+        "contains planning label",
+        "placeholder brackets",
+    )
+    return any(any(marker in gap for marker in unsafe_markers) for gap in gaps)
+
+
 def _compact_rows(value: Any, *, limit: int) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -179,6 +199,10 @@ def _compact_rows(value: Any, *, limit: int) -> list[dict[str, Any]]:
                 "finding_tags",
                 "coverage_terms",
                 "starter_terms",
+                "question_id",
+                "question",
+                "answer_basis_terms",
+                "writer_duty",
                 "build_route",
                 "positive_pattern",
             )

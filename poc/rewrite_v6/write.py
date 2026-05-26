@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
+from .coverage_guard import coverage_ratio, missing_required_source_terms
 from .json_io import parse_json
 from .plan import Plan
+from .prompt_shape import paragraph_sentence_plan
+from .review_provenance import annotate_review_items
 from .scan import scan_text
 from .text import Paragraph, source_terms, split_paragraphs, word_count
 
@@ -21,9 +25,11 @@ class Variant:
     id: str
     text: str
     source: str
+    mode: str | None = None
     author_proxy_provenance: list[dict[str, Any]] | None = None
     author_review_items: list[dict[str, Any]] | None = None
     coverage_map: list[dict[str, Any]] | None = None
+    route_answer_cards: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -35,27 +41,26 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
         response = client.chat(
             build_prompt(paragraph, plan),
             system=(
-                "Return valid JSON only. Preserve submitted meaning and coverage, "
-                "but do not preserve submitted wording, order, list rhythm, opener, or closure shape. "
-                "Generate from coverage beats and mark inferred bridge material for author review."
+                "Return valid JSON only with a variants array containing exactly v1, v2, and v3. "
+                "If list_contract_active is true, no final text sentence may contain two or more commas. "
+                "Preserve submitted meaning and coverage, but do not preserve submitted wording, order, "
+                "list rhythm, opener, or closure shape."
             ),
             temperature=0.12,
             top_p=0.75,
             max_tokens=None,
             response_format={"type": "json_object"},
         )
-    except Exception:
-        return variants
-    try:
-        parsed = parse_variants(parse_json(getattr(response, "raw_content", "") or response.content))
-    except ValueError:
-        return variants
-    variants.extend(parsed)
-    return variants
+        variants.extend(parse_variants(parse_json(getattr(response, "raw_content", "") or response.content)))
+    except (Exception, ValueError):
+        pass
+    return _dedupe_variants(variants)
 
 
-def build_prompt(paragraph: Paragraph, plan: Plan) -> str:
+def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, str] | None = None) -> str:
     golden_route = plan.ai_safe_route.get("golden_route", {})
+    variant_requirements = [variant_focus] if variant_focus else _requested_variant_requirements()
+    coverage_beats = _prompt_coverage_beats(plan)
     payload = {
         "task": "coverage_beat_paragraph_generation",
         "golden_question": golden_route.get(
@@ -70,31 +75,63 @@ def build_prompt(paragraph: Paragraph, plan: Plan) -> str:
             ),
         },
         "context_anchors": {
-            "context_terms": _prompt_context_terms(plan)[:24],
-            "named_references": plan.author_proxy_context.get("named_references", []),
+            "context_terms": _prompt_context_terms(plan)[:5],
+            "named_references": _prompt_named_references(plan),
             "years": plan.author_proxy_context.get("years", []),
             "citation_spans": plan.author_proxy_context.get("citation_spans", []),
             "quoted_terms": plan.author_proxy_context.get("quoted_terms", []),
         },
-        "coverage_beats_must_all_appear": _prompt_coverage_beats(plan),
+        "content_word_boundary": {
+            "allowed_content_terms": _allowed_content_terms(paragraph, plan),
+            "rule": (
+                "Use these terms and ordinary function words as the content boundary. "
+                "Any new content noun, adjective, or abstract label must be necessary bridge wording and listed in author_review_items."
+            ),
+        },
+        "polarity_constraints": _polarity_constraints(paragraph),
+        "coverage_beats_must_all_appear": coverage_beats,
+        "paragraph_sentence_plan": paragraph_sentence_plan(paragraph, coverage_beats),
+        "author_route_questions": _prompt_author_route_questions(plan),
         "construction_recipes": _prompt_construction_recipes(plan),
         "planner_decision": plan.ai_safe_route.get("llm_planner_decision", {}),
-        "variant_requirements": [
-            {
-                "id": "v1",
-                "route": "plain coverage-beat route: one short source-relation sentence per beat, no added benefit or intensity claim",
-            },
-            {
-                "id": "v2",
-                "route": "golden-question route: source basis, concrete detail, narrow interpretation, and careful close",
-            },
-            {
-                "id": "v3",
-                "route": "context-anchor route: use available anchors first, then carry coverage beats without polished expansion",
-            },
-        ],
+        "hard_generation_requirements": {
+            "required_variant_ids": [row["id"] for row in variant_requirements],
+            "exact_variant_count": len(variant_requirements),
+            "list_contract_active": _list_contract_active(plan),
+            "list_contract_rule": (
+                "No final text sentence may contain two or more commas when list_contract_active is true. "
+                "Use paired relation sentences instead of comma lists."
+            ),
+            "source_preserved_shape_is_failure": "Do not return the original sentence route with synonyms. Change clause route and sentence grouping.",
+        },
+        "active_variant": variant_focus or {},
+        "variant_requirements": variant_requirements,
         "generation_rules": [
+            "Produce only the active_variant when active_variant is present.",
+            "When active_variant is empty, return exactly the ids in hard_generation_requirements.required_variant_ids.",
+            "If hard_generation_requirements.list_contract_active is true, no final text sentence may contain two or more commas.",
+            "If active_variant is empty, produce materially different variants. If two variants would have the same text, return only the stronger one.",
+            "For a single-call response, complete v1, then v2, then v3 as separate drafts; do not copy coverage_map, route_answer_cards, or sentence-slot route from a previous variant.",
+            "Do not create variant difference by simply reversing paragraph order. Keep readable source logic unless a slot explicitly permits movement.",
+            "When v2 or v3 are requested, include route_answer_cards and coverage_map just like v1.",
+            "A variant mode is not decorative: its distinctive_obligation must change the paragraph route.",
             "Answer the golden_question through the paragraph route, not as visible notes.",
+            "Before writing text, fill route_answer_cards for every author_route_question.",
+            "Each route_answer_cards row must include the exact question_id, answer_basis_terms used, bridge_provenance, and draft_sentence.",
+            "Each route_answer_cards.draft_sentence must be a plain sentence under 18 words.",
+            "A route card sentence must not use which, where, especially, because, rather than, vast, complex, critical, digital platform, or landscape.",
+            "A route card sentence must not introduce content words outside answer_basis_terms_used unless bridge_provenance is needs_author_confirmation and author_review_items explains them.",
+            "Build final text only from route_answer_cards.draft_sentence plus coverage-only sentences for unflagged beats.",
+            "Do not write a polished paragraph first and backfill cards afterward.",
+            "Build the paragraph by answering author_route_questions inside the final prose.",
+            "Do not write meta-prose such as the writer sees, the writer reads, the writer compares, the writer struggles, or the writer decides.",
+            "Each author_route_question must change the construction of the mapped source beat; do not answer it by copying the original sentence.",
+            "For author/context/support gaps, use the question answer as Author-Proxy bridge material and label any inferred bridge in author_review_items.",
+            "For packed-list and sentence-overload questions, decompose the relationship before writing; do not preserve submitted facts as written if that carries the unsafe list route forward.",
+            "Stay inside content_word_boundary.allowed_content_terms unless a new term is necessary as reviewable Author-Proxy bridge wording.",
+            "Do not add new abstract content words such as critical, overwhelming, central, landscape, nuanced, complex, abundant, unverified, accessibility, importance, or reliability unless that exact idea appears in content_word_boundary.",
+            "If a new content word is not in content_word_boundary, either replace it with an allowed source term or include an author_review_items row explaining the bridge.",
+            "Use neighboring context only to name the bridge behind a vague source beat. Do not import neighboring examples, platforms, names, or lists into the replacement unless the selected paragraph's own coverage beats contain them.",
             "Treat planner_decision.finding_contracts as the primary build contract.",
             "Every scanner finding must be visibly resolved by a final sentence mapped in coverage_map.",
             "For each finding_contract, execute writer_must_do and avoid writer_must_not_do.",
@@ -111,72 +148,39 @@ def build_prompt(paragraph: Paragraph, plan: Plan) -> str:
             "If planner_decision.status is ok, follow planner_decision.paragraph_blueprint in order before using fallback recipes.",
             "Each final sentence must map to a planner_decision.paragraph_blueprint step or a coverage beat; do not invent extra route filler.",
             "For each blueprint step, use must_include terms and safe_sentence_shape, while avoiding must_avoid_shape.",
-            "For every coverage beat, apply its construction_recipe before writing the sentence.",
+            "For every coverage beat, apply its construction_recipe before writing the paragraph.",
             "Before final text, make coverage_map show the construction_recipe_id used for each sentence.",
             "Create a coverage_map before the final text. Every coverage beat must appear in the candidate meaning.",
+            "Build from paragraph_sentence_plan before individual coverage beats. A sentence may carry multiple coverage_beat_ids when the slot groups one source relation.",
+            "Do not create one sentence per coverage beat when paragraph_sentence_plan groups those beats into one slot.",
+            "Every final sentence must map to a sentence_slot_id or explain which coverage beat required an extra sentence.",
             "Every source-side contrast must survive. If a beat contains terms from both sides of a contrast, preserve both sides instead of keeping only the first side.",
-            "Write one ordinary sentence for each coverage beat first; merge only when the merge does not create a list, repeated frame, or overloaded sentence.",
+            "Do not invert source polarity. If the source says not less, no longer, not only, not always, without, or does not, preserve that direction instead of rewriting it as reduction, limitation, or a positive claim.",
+            "Satisfy every polarity_constraints row before optimizing wording or rhythm.",
+            "For a not only polarity constraint, write the first side as not enough by itself, then write the second side with also matters or also carries weight.",
+            "For a not always polarity constraint, do not repeat not always across a sentence chain. Use one contrast sentence for the positive side and limited side, then one follow-up sentence only if another limited item remains.",
+            "Do not write a repair trace. Group related coverage beats into ordinary paragraph sentences when meaning and contrast stay intact.",
+            "Stay near required_shape.preferred_sentence_count unless source coverage truly requires more.",
             "Preserve submitted meaning, factual scope, and coverage. Do not preserve exact source wording, source order, source opener, source list rhythm, or source closure shape.",
-            "Each sentence should carry one coverage beat unless two beats connect naturally without a comma tail, which clause, where clause, semicolon, dash, or list.",
             "Preserve every beat's polarity_markers. Do not invert not, no longer, not only, not always, rather than, instead of, or without.",
-            "Do not add abstract consequences, institutional labels, or polished explanation after a coverage beat unless that idea is present in coverage_beats_must_all_appear or context_anchors.",
-            "Do not add unsubmitted intensity, speed, frequency, importance, ease, or benefit claims. If the draft does not say how fast, common, essential, easy, immediate, abundant, or effective something is, do not add that quality.",
-            "A coverage sentence should state the source relation only. Do not append why it matters unless that reasoning is a separate coverage beat or an author-review bridge.",
+            "Do not add unsubmitted intensity, speed, frequency, importance, ease, readiness, success, complexity, or benefit claims. If the draft does not say how fast, common, essential, easy, immediate, abundant, effective, successful, ready, or complex something is, do not add that quality.",
             "Do not upgrade plain source nouns into academic labels. Use everyday wording and the concrete coverage terms.",
-            "Every sentence must start with a concrete submitted anchor: source noun, named reference, cited source, quoted term, setting, actor, object, condition, or comparison.",
-            "For each coverage beat, start the mapped sentence with one of its starter_terms when possible.",
+            "Each sentence should start from a concrete submitted anchor when possible: source noun, named reference, cited source, quoted term, setting, actor, object, condition, or comparison.",
             "When starter_terms are present, do not start that beat's sentence with a different coverage term just because it appears earlier in the capsule.",
             "If a beat has no starter_terms, it is probably a vague reference beat; bridge it to a concrete earlier coverage term instead of starting with model, result, this, that, it, or the same vague noun.",
-            "Do not start sentences with Today, Now, In the past, This, That, It, They, These, Those, Overall, Therefore, or However.",
-            "Before returning, rewrite any sentence that starts with a pronoun, forbidden opener, vague reference noun, or a term that is not allowed by the mapped beat's starter_terms.",
-            "The final coverage beat must not start with But, This, That, It, or Model; start from a concrete actor, source term, or young/people/learn when those starter_terms are available.",
-            "If a coverage capsule contains a forbidden opener, choose another concrete term from the same beat.",
-            "Do not add comma-plus-explanation tails to coverage sentences. Put the reasoning in a separate sentence only when needed.",
+            "Do not start sentences with Today, Now, In the past, This, That, It, They, These, Those, Overall, Therefore, However, or Not always.",
+            "Before returning, rewrite any sentence that starts with a pronoun, forbidden opener, or vague reference noun.",
             "Do not use semicolons, em dashes, parenthetical asides, or colon-led lists.",
-            "Do not put three or more examples, nouns, actions, qualities, or source anchors in one sentence.",
+            "Do not put three or more examples, actions, qualities, or source anchors in one sentence unless the original meaning needs that grouped phrase and no safer split is possible.",
+            "For a final four-item ability, reward, need, or skill list, pair the first two items and the last two items in separate relation clauses or sentences; do not repeat the whole four-item list and do not use a comma list.",
+            "When a not only reward beat is followed by ability or skill beats, use this route: the context does not only reward the first side. It also rewards the first pair. The second pair carries the next part. Do not add a success, readiness, or essential-skills ending.",
             "Do not turn grouped coverage terms into repeated one-item sentences. For a grouped beat, write one ordinary relation sentence carrying the group.",
-            "When coverage beats are split from the same source sentence, do not recombine them into the same final list sentence.",
-            "When submitted context has many anchors, use at most two in one sentence or split them across connected sentences.",
             "Use plain submitted source terms. Avoid elevated labels, metaphor labels, abstract engagement phrases, polished role labels, and broad capture/reflect phrases unless present in the source.",
             "Preserve meaning and coverage. Expand when needed for grounding, concrete detail, or reasoning.",
             "Use author_proxy_provenance or author_review_items for inferred bridge wording.",
             "Return JSON only.",
         ],
-        "plain_route_contract_for_v1": {
-            "purpose": "force the first variant to be a low-polish source-coverage candidate before any higher-author-proxy version",
-            "lexical_rule": "Use coverage capsule words, context anchor words, function words, and plain relation verbs. Avoid descriptive adjectives/adverbs that are not in the submitted anchors.",
-            "allowed_relation_moves": [
-                "A remains part of the route.",
-                "A and B add another route.",
-                "A sits beside B.",
-                "A gives another place to compare or check.",
-                "A creates or changes the setting.",
-                "A is not the scarce/main part anymore.",
-                "The difficult part is deciding or judging the remaining source terms.",
-            ],
-            "invalid_pattern_contrasts": [
-                {
-                    "invalid_shape": "<anchor> has become a common/essential/dynamic place where <actor> benefits.",
-                    "reason": "adds intensity and benefit claims not carried by the coverage beat",
-                },
-                {
-                    "invalid_shape": "<role/issue/goal> has become more important/challenging/serious.",
-                    "reason": "starts from an evaluative label before showing the source relation",
-                },
-                {
-                    "invalid_shape": "<actor> become/becomes <descriptor A>, <descriptor B>, and <descriptor C>.",
-                    "reason": "recombines a descriptor list that should be carried as separate source relations",
-                },
-                {
-                    "invalid_shape": "<anchor> serves as an essential tool for <broad outcome>.",
-                    "reason": "turns a source anchor into polished explanatory wrapping",
-                },
-                {
-                    "invalid_shape": "<anchor>; it is widely/easily/instantly available.",
-                    "reason": "uses punctuation and unsubmitted intensity to smooth the claim",
-                },
-            ],
-        },
+        "plain_route_contract_for_v1": "Low-polish source-coverage candidate: use source terms and plain relation verbs; avoid unsubmitted intensity, benefit claims, semicolon lists, and descriptor lists.",
         "author_proxy_policy": {
             "enabled": True,
             "non_interrupting": True,
@@ -188,48 +192,86 @@ def build_prompt(paragraph: Paragraph, plan: Plan) -> str:
         "required_shape": {
             "paragraph_count": 1,
             "sentence_count": "uncapped during golden-route discovery; use as many ordinary prose sentences as needed to preserve coverage and answer the route questions",
+            "preferred_sentence_count": _preferred_sentence_count(paragraph),
             "word_count": "uncapped during golden-route discovery; preserve source coverage and expand only when needed for grounding, concrete detail, or reasoning",
         },
-        "output_schema": {
-            "variants": [
-                {
-                    "id": "v1",
-                    "mode": "coverage_beat_generation",
-                    "route_fragments": {},
-                    "coverage_map": [
-                        {
-                            "coverage_beat_id": "coverage beat id",
-                            "construction_recipe_id": "recipe id used for this beat",
-                            "finding_contract_id": "finding contract id resolved, empty if none",
-                            "sentence": "candidate sentence carrying this beat",
-                        }
-                    ],
-                    "text": "replacement paragraph only",
-                    "author_proxy_provenance": [],
-                    "author_review_items": [],
-                },
-                {
-                    "id": "v2",
-                    "mode": "golden_question_generation",
-                    "route_fragments": {},
-                    "coverage_map": [],
-                    "text": "replacement paragraph only",
-                    "author_proxy_provenance": [],
-                    "author_review_items": [],
-                },
-                {
-                    "id": "v3",
-                    "mode": "context_anchor_generation",
-                    "route_fragments": {},
-                    "coverage_map": [],
-                    "text": "replacement paragraph only",
-                    "author_proxy_provenance": [],
-                    "author_review_items": [],
-                },
-            ]
-        },
+        "output_schema": {"variants": [_variant_schema(requirement) for requirement in variant_requirements]},
     }
-    return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+    prefix = (
+        "Return valid JSON only. The JSON must contain a variants array with exactly "
+        + ", ".join(row["id"] for row in variant_requirements)
+        + ".\n"
+    )
+    return prefix + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _variant_requirements() -> list[dict[str, str]]:
+    return [
+        {
+            "id": "v1",
+            "mode": "coverage_beat_generation",
+            "route": "plain coverage-beat route: group related source relations without trace-like one-beat sentences",
+            "distinctive_obligation": "Use paragraph_sentence_plan slot order as the spine; merge grouped beats inside each slot before moving to the next slot. Change the opener route inside each affected slot.",
+        },
+        {
+            "id": "v2",
+            "mode": "golden_question_generation",
+            "route": "golden-question route: source basis, concrete detail, narrow interpretation, and careful close",
+            "distinctive_obligation": "Answer author_route_questions as the spine; use the question answer to change clause route while keeping readable source logic.",
+        },
+        {
+            "id": "v3",
+            "mode": "context_anchor_generation",
+            "route": "context-anchor route: use available anchors first, then carry coverage beats without polished expansion",
+            "distinctive_obligation": "Start each affected slot from the strongest available context/source antecedent; keep paragraph order unless the antecedent is inside the same source slot.",
+        },
+    ]
+
+
+def _requested_variant_requirements() -> list[dict[str, str]]:
+    return _variant_requirements()[:_requested_variant_count()]
+
+
+def _requested_variant_count() -> int:
+    raw = os.environ.get("DRAFTPROOF_V6_WRITER_VARIANTS", "1")
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 1
+    return max(1, min(3, value))
+
+
+def _variant_schema(requirement: dict[str, str]) -> dict[str, Any]:
+    return {
+        "id": requirement["id"],
+        "mode": requirement["mode"],
+        "route_fragments": {},
+        "route_answer_cards": [{
+            "question_id": "author_route_question id",
+            "source_sentence_id": "source sentence id",
+            "answer_basis_terms_used": ["terms from answer_basis_terms or coverage beats"],
+            "bridge_provenance": "source_preserved | inferred_from_draft | needs_author_confirmation",
+            "draft_sentence": "one plain sentence under 18 words that answers the route question",
+        }],
+        "coverage_map": [{
+            "sentence_slot_id": "paragraph_sentence_plan slot id used by this sentence",
+            "coverage_beat_ids": ["one or more coverage beat ids carried by this sentence"],
+            "coverage_beat_id": "coverage beat id",
+            "construction_recipe_id": "recipe id used for this beat",
+            "finding_contract_id": "finding contract id resolved, empty if none",
+            "sentence": "candidate sentence carrying this beat",
+        }],
+        "text": "replacement paragraph only",
+        "author_proxy_provenance": [],
+        "author_review_items": [],
+    }
+
+
+def _preferred_sentence_count(paragraph: Paragraph) -> str:
+    source_count = max(1, len(paragraph.sentences))
+    low = max(1, source_count)
+    high = min(source_count + 2, max(source_count, int(source_count * 1.35) + 1))
+    return f"{low} to {max(low, high)} ordinary sentences"
 
 
 def _prompt_coverage_beats(plan: Plan) -> list[dict[str, Any]]:
@@ -255,6 +297,7 @@ def _prompt_coverage_beats(plan: Plan) -> list[dict[str, Any]]:
             "polarity_markers": polarity_markers,
             "polarity_instruction": _polarity_instruction(polarity_markers),
             "starter_terms": beat.get("starter_terms", []),
+            "grouped_relation": bool(beat.get("grouped_relation")),
             "coverage_intent": intent,
             "finding_instruction": _finding_instruction(finding_tags),
             "generation_duty": beat.get("generation_duty"),
@@ -265,11 +308,110 @@ def _prompt_coverage_beats(plan: Plan) -> list[dict[str, Any]]:
     return rows
 
 
+def _list_contract_active(plan: Plan) -> bool:
+    return any(
+        "packed_list" in [str(tag) for tag in beat.get("finding_tags", [])]
+        for beat in plan.ai_safe_route.get("coverage_beats", [])
+        if isinstance(beat, dict)
+    )
+
+
+def _polarity_constraints(paragraph: Paragraph) -> list[dict[str, Any]]:
+    text = str(paragraph.text or "")
+    lowered = text.casefold()
+    rows: list[dict[str, Any]] = []
+    if "not less" in lowered:
+        rows.append({
+            "source_marker": "not less",
+            "required_direction": "preserve that the role, value, or condition is not reduced",
+            "required_shapes": ["not less", "remains important", "still important", "more important"],
+            "forbidden_shapes": ["reduced", "reducing", "limited", "limits", "limiting", "diminished", "less than"],
+        })
+    if "no longer" in lowered:
+        rows.append({
+            "source_marker": "no longer",
+            "required_direction": "preserve that the old condition does not fully apply now",
+            "required_shapes": ["no longer", "does not", "not fully", "not the same"],
+            "forbidden_shapes": ["still fully", "continues to fully"],
+        })
+    if "not only" in lowered:
+        rows.append({
+            "source_marker": "not only",
+            "required_direction": "preserve that the first side is insufficient by itself and the second side also matters",
+            "required_shapes": ["does not only reward", "not enough by itself", "not the only", "also matters", "also carries"],
+            "forbidden_shapes": ["only", "rather than", "rewards people who remember facts, not only", "not only a concern", "not only a serious concern"],
+        })
+    if "rather than" in lowered or "instead of" in lowered:
+        rows.append({
+            "source_marker": "rather than",
+            "required_direction": "preserve which side the source treats as the pressure or preference",
+            "required_shapes": ["rather than", "instead of", "over"],
+            "forbidden_shapes": ["reversed contrast direction"],
+        })
+    if "not always" in lowered:
+        rows.append({
+            "source_marker": "not always",
+            "required_direction": "preserve the limited side of the contrast without moving the limitation onto the positive side",
+            "required_shapes": ["not always", "does not always", "do not always"],
+            "forbidden_shapes": ["not always learn to pass", "not always pass"],
+        })
+    return rows
+
+
+def _allowed_content_terms(paragraph: Paragraph, plan: Plan) -> list[str]:
+    terms: list[str] = []
+    terms.extend(source_terms(paragraph.text, limit=80))
+    for value in _prompt_context_terms(plan)[:5]:
+        terms.append(str(value))
+    for value in _prompt_named_references(plan)[:16]:
+        terms.extend(source_terms(str(value), limit=8) or [str(value)])
+    for key in ("years", "citation_spans", "quoted_terms"):
+        for value in plan.author_proxy_context.get(key, [])[:16]:
+            terms.extend(source_terms(str(value), limit=8) or [str(value)])
+    for beat in plan.ai_safe_route.get("coverage_beats", []):
+        if isinstance(beat, dict):
+            terms.extend(str(term) for term in beat.get("coverage_terms", []) if str(term).strip())
+    return _dedupe_terms(terms)[:120]
+
+
+def _dedupe_terms(values: list[str]) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        rows.append(text)
+        seen.add(key)
+    return rows
+
+
 def _prompt_construction_recipes(plan: Plan) -> list[dict[str, Any]]:
     rows = plan.ai_safe_route.get("construction_recipes", [])
     if not isinstance(rows, list):
         return []
     return [row for row in rows if isinstance(row, dict)]
+
+
+def _prompt_author_route_questions(plan: Plan) -> list[dict[str, Any]]:
+    rows = plan.ai_safe_route.get("author_route_questions", [])
+    if not isinstance(rows, list):
+        return []
+    compact: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        compact.append({
+            "question_id": row.get("question_id"),
+            "source_sentence_id": row.get("source_sentence_id"),
+            "finding_tags": row.get("finding_tags", []),
+            "question": row.get("question"),
+            "answer_basis_terms": row.get("answer_basis_terms", []),
+            "writer_duty": row.get("writer_duty"),
+            "author_proxy_policy": row.get("author_proxy_policy"),
+        })
+    return compact
 
 
 def _finding_instruction(tags: list[str]) -> str:
@@ -292,6 +434,8 @@ def _finding_instruction(tags: list[str]) -> str:
 def _capsule_with_polarity(capsule_terms: list[str], polarity_markers: list[str]) -> list[str]:
     if not polarity_markers:
         return capsule_terms
+    if any(str(marker).casefold() == "not always" for marker in polarity_markers):
+        return [*capsule_terms, "not always limit"]
     rows: list[str] = []
     seen: set[str] = set()
     marker_words = {
@@ -311,9 +455,9 @@ def _capsule_with_polarity(capsule_terms: list[str], polarity_markers: list[str]
 def _polarity_instruction(polarity_markers: list[str]) -> str:
     lowered = " ".join(polarity_markers).casefold()
     if "not only" in lowered:
-        return "Do not state the marked idea as a positive claim by itself; write it as not enough, not the only basis, or part of a wider contrast."
+        return "Do not state the first side as a positive claim by itself. If this is a reward relation, write the context does not only reward the first side, then pair the next source items without repeating the whole list."
     if "not always" in lowered:
-        return "Keep the limitation; do not turn it into an absolute claim."
+        return "Keep the limitation on the limited side only. Use one contrast sentence, not repeated not-always sentences."
     if "rather than" in lowered or "instead of" in lowered:
         return "Keep the contrast direction; do not reverse which side is preferred or criticized."
     if "no longer" in lowered:
@@ -362,6 +506,14 @@ def _prompt_context_terms(plan: Plan) -> list[str]:
         if isinstance(beat, dict)
         for term in beat.get("coverage_terms", [])
     }
+    selected_terms = {str(term).casefold() for term in plan.author_proxy_context.get("source_terms", [])}
+    neighbor_named_terms = {
+        term.casefold()
+        for value in plan.author_proxy_context.get("named_references", [])
+        for term in source_terms(str(value), limit=8)
+        if term.casefold() not in selected_terms
+    }
+    neighbor_list_terms = _neighbor_list_terms(plan) - selected_terms
     forbidden = {
         "today", "now", "overall", "therefore", "however", "this", "that",
         "they", "these", "those", "past", "model",
@@ -371,8 +523,57 @@ def _prompt_context_terms(plan: Plan) -> list[str]:
         key = str(term).casefold()
         if key in forbidden or key in coverage_terms:
             continue
+        if key in neighbor_named_terms or key in neighbor_list_terms:
+            continue
         rows.append(term)
     return rows
+
+
+def _neighbor_list_terms(plan: Plan) -> set[str]:
+    context = plan.author_proxy_context
+    terms: set[str] = set()
+    neighbor_text = "\n".join([
+        str(context.get("before_context") or ""),
+        str(context.get("after_context") or ""),
+    ])
+    for sentence in re.split(r"(?<=[.!?])\s+", neighbor_text):
+        if sentence.count(",") < 2 and len(re.findall(r"\b(?:and|or|also|but)\b", sentence, flags=re.I)) < 2:
+            continue
+        for term in source_terms(sentence, limit=32):
+            terms.add(term.casefold())
+    return terms
+
+
+def _prompt_named_references(plan: Plan) -> list[str]:
+    selected_terms = {str(term).casefold() for term in plan.author_proxy_context.get("source_terms", [])}
+    rows: list[str] = []
+    for value in plan.author_proxy_context.get("named_references", []):
+        terms = source_terms(str(value), limit=8)
+        if any(term.casefold() in selected_terms for term in terms) or not _reference_in_neighbor_list(plan, str(value)):
+            rows.append(str(value))
+    return rows
+
+
+def _reference_in_neighbor_list(plan: Plan, value: str) -> bool:
+    needle = str(value or "").strip()
+    if not needle:
+        return False
+    context = plan.author_proxy_context
+    neighbor_text = "\n".join([
+        str(context.get("before_context") or ""),
+        str(context.get("after_context") or ""),
+    ])
+    for sentence in re.split(r"(?<=[.!?])\s+", neighbor_text):
+        if needle not in sentence:
+            continue
+        if re.search(r"\b(?:19|20)\d{2}[a-z]?\b", sentence):
+            return False
+        named_count = len(re.findall(r"\b(?:[A-Z][A-Za-z0-9'’-]{2,}|[A-Z]{2,})(?:\s+(?:[A-Z][A-Za-z0-9'’-]{2,}|[A-Z]{2,}))*\b", sentence))
+        if named_count >= 2:
+            return True
+        if sentence.count(",") >= 2 or len(re.findall(r"\b(?:and|or)\b", sentence, flags=re.I)) >= 2:
+            return True
+    return False
 
 
 def source_preserved_variant(paragraph: Paragraph) -> Variant:
@@ -382,22 +583,45 @@ def source_preserved_variant(paragraph: Paragraph) -> Variant:
 def parse_variants(payload: Any) -> list[Variant]:
     rows = payload.get("variants") if isinstance(payload, dict) else payload if isinstance(payload, list) else []
     variants: list[Variant] = []
+    seen_texts: set[str] = set()
     for index, row in enumerate(rows if isinstance(rows, list) else [], start=1):
         if not isinstance(row, dict):
             continue
         text = str(row.get("text") or "").strip()
+        text_key = _normalize_variant_text(text)
+        if text_key and text_key in seen_texts:
+            continue
         if text:
+            seen_texts.add(text_key)
             variants.append(
                 Variant(
                     id=str(row.get("id") or row.get("variant_id") or f"v{index}"),
                     text=text,
                     source="llm",
+                    mode=str(row.get("mode") or "") or None,
                     author_proxy_provenance=_review_rows(row.get("author_proxy_provenance"), "inferred_from_draft"),
                     author_review_items=_review_rows(row.get("author_review_items"), "needs_author_confirmation"),
                     coverage_map=_coverage_rows(row.get("coverage_map")),
+                    route_answer_cards=_coverage_rows(row.get("route_answer_cards")),
                 )
             )
     return variants
+
+
+def _normalize_variant_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "").strip()).casefold()
+
+
+def _dedupe_variants(variants: list[Variant]) -> list[Variant]:
+    rows: list[Variant] = []
+    seen: set[str] = set()
+    for variant in variants:
+        key = _normalize_variant_text(variant.text)
+        if key in seen:
+            continue
+        rows.append(variant)
+        seen.add(key)
+    return rows
 
 
 def _coverage_rows(value: Any) -> list[dict[str, Any]]:
@@ -437,9 +661,9 @@ def choose_variant(variants: list[Variant], paragraph: Paragraph) -> Variant | N
             and _has_meaningful_movement(variant, source_variant, paragraph)
         ]
         if improved:
-            return max(improved, key=lambda variant: _variant_rank(variant, paragraph, source_words))
+            return annotate_review_items(max(improved, key=lambda variant: _variant_rank(variant, paragraph, source_words)), paragraph.text)
         return source_variant
-    return max(variants, key=lambda variant: _variant_rank(variant, paragraph, source_words))
+    return annotate_review_items(max(variants, key=lambda variant: _variant_rank(variant, paragraph, source_words)), paragraph.text)
 
 
 def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragraph: Paragraph) -> bool:
@@ -447,14 +671,21 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
     after = scan_text(candidate.text)
     finding_drop = before.scores["finding_count"] - after.scores["finding_count"]
     risk_drop = before.scores["mean_sentence_shape_risk"] - after.scores["mean_sentence_shape_risk"]
-    drift_penalty = _source_drift_penalty(candidate, paragraph)
     if _compresses_list_repair(candidate.text, paragraph):
         return False
     if _replaces_final_source_beat_with_conclusion(candidate.text, paragraph):
         return False
+    if _polarity_violation(candidate.text, paragraph):
+        return False
+    if missing_required_source_terms(candidate.text, paragraph):
+        return False
+    if _candidate_contract_violation(candidate.text, paragraph):
+        return False
     if finding_drop >= 2 and risk_drop >= -2.0:
         return True
     if finding_drop >= 1 and risk_drop >= 5.0:
+        return True
+    if finding_drop >= 0 and risk_drop >= 12.0:
         return True
     return False
 
@@ -467,12 +698,15 @@ def _variant_rank(variant: Variant, paragraph: Paragraph, source_words: int) -> 
     compression_penalty = 2.0 if _compresses_list_repair(variant.text, paragraph) else 0.0
     extra_beat_penalty = 2.0 if _adds_extra_conclusion_beat(variant.text, paragraph) else 0.0
     final_beat_penalty = 2.0 if _replaces_final_source_beat_with_conclusion(variant.text, paragraph) else 0.0
+    polarity_penalty = 4.0 if _polarity_violation(variant.text, paragraph) else 0.0
+    bridge_penalty = 4.0 if _unreviewed_bridge_violation(variant, paragraph) else 0.0
+    contract_penalty = 4.0 if _candidate_contract_violation(variant.text, paragraph) else 0.0
     mean_risk = scan.scores["mean_sentence_shape_risk"]
     return (
         -scan.scores["finding_count"],
         -mean_risk,
-        -(quality_penalty + source_drift_penalty * 0.25 + compression_penalty + extra_beat_penalty + final_beat_penalty),
-        _coverage(variant.text, paragraph),
+        -(quality_penalty + source_drift_penalty * 0.25 + compression_penalty + extra_beat_penalty + final_beat_penalty + polarity_penalty + bridge_penalty + contract_penalty),
+        coverage_ratio(variant.text, paragraph),
         words >= source_words * 0.9,
         -abs(words - source_words),
     )
@@ -527,6 +761,60 @@ def _compresses_list_repair(text: str, source_paragraph: Paragraph) -> bool:
     return len(candidate_sentences) < len(source_sentences)
 
 
+def _candidate_contract_violation(text: str, source_paragraph: Paragraph) -> bool:
+    return (
+        _sentence_count_explodes(text, source_paragraph)
+        or _repeats_sentence_intent(text)
+        or _keeps_forbidden_list_contract(text, source_paragraph)
+        or _adds_unsubmitted_success_close(text, source_paragraph)
+    )
+
+
+def _sentence_count_explodes(text: str, source_paragraph: Paragraph) -> bool:
+    source_count = max(1, len(source_paragraph.sentences))
+    candidate_count = sum(1 for paragraph in split_paragraphs(text) for _sentence in paragraph.sentences)
+    return candidate_count > max(source_count + 2, int(source_count * 1.35) + 1)
+
+
+def _repeats_sentence_intent(text: str) -> bool:
+    sentence_words = [
+        _content_word_set(sentence.text)
+        for paragraph in split_paragraphs(text)
+        for sentence in paragraph.sentences
+    ]
+    rows = [words for words in sentence_words if words]
+    for left, right in zip(rows, rows[1:]):
+        overlap = len(left & right) / max(1, min(len(left), len(right)))
+        if overlap >= 0.6:
+            return True
+    return False
+
+
+def _keeps_forbidden_list_contract(text: str, source_paragraph: Paragraph) -> bool:
+    if not any(_has_list_shape(sentence.text) for sentence in source_paragraph.sentences):
+        return False
+    for paragraph in split_paragraphs(text):
+        for sentence in paragraph.sentences:
+            if sentence.text.count(",") >= 2:
+                return True
+    return False
+
+
+def _adds_unsubmitted_success_close(text: str, source_paragraph: Paragraph) -> bool:
+    source = str(source_paragraph.text or "").casefold()
+    if re.search(r"\b(success|essential|readiness|ready|complex|real-world)\b", source):
+        return False
+    candidate_sentences = [
+        sentence.text.casefold()
+        for paragraph in split_paragraphs(text)
+        for sentence in paragraph.sentences
+    ]
+    if not candidate_sentences:
+        return False
+    final = candidate_sentences[-1]
+    return bool(re.search(r"\b(success|essential|readiness|ready|complex|real-world)\b", final))
+
+
 def _adds_extra_conclusion_beat(text: str, source_paragraph: Paragraph) -> bool:
     source_sentences = source_paragraph.sentences
     candidate_sentences = [
@@ -569,6 +857,65 @@ def _replaces_final_source_beat_with_conclusion(text: str, source_paragraph: Par
     return len(source_words & candidate_words) / max(1, len(source_words)) < 0.45
 
 
+def _polarity_violation(text: str, source_paragraph: Paragraph) -> bool:
+    source = str(source_paragraph.text or "").casefold()
+    candidate = str(text or "").casefold()
+    if "not less" in source:
+        reversal_terms = ("reduce", "reduced", "reducing", "limit", "limits", "limited", "limiting", "diminish", "diminished", "diminishing", "smaller", "weaker")
+        negated_reduction = re.search(r"\b(?:does\s+not|do\s+not|not|no)\s+(?:reduce|reduced|reducing|limit|limits|limited|limiting|diminish|diminished|diminishing)\b", candidate)
+        if not negated_reduction and any(re.search(rf"\b{term}\b", candidate) for term in reversal_terms):
+            return True
+        if re.search(r"(?<!not\s)\bless\s+[a-z]+", candidate):
+            return True
+        if not (negated_reduction or any(shape in candidate for shape in ("not less", "remains important", "still important", "more important"))):
+            return True
+    if "no longer" in source and "no longer" not in candidate and not re.search(r"\bnot\b|\bdoes not\b|\bdo not\b", candidate):
+        return True
+    if "not only" in source and "not only" not in candidate:
+        has_not_enough = "not enough" in candidate or "not the only" in candidate
+        has_also_side = "also" in candidate
+        if not (has_not_enough and has_also_side):
+            return True
+    if "not only" in source and not re.search(r"\b(?:also|as well as|too)\b", candidate):
+        return True
+    if "not only" in source and _malformed_not_only(candidate):
+        return True
+    if _reverses_rather_than(source, candidate):
+        return True
+    if _moves_not_always_to_positive_side(source, candidate):
+        return True
+    return False
+
+
+def _malformed_not_only(candidate: str) -> bool:
+    return bool(re.search(r"\bnot\s+only\s+(?:a\s+|an\s+|the\s+)?(?:serious\s+)?(?:concern|issue|problem|challenge)\b", candidate))
+
+
+def _reverses_rather_than(source: str, candidate: str) -> bool:
+    for match in re.finditer(r"\b(rather than|instead of)\b", source):
+        left_terms = source_terms(source[max(0, match.start() - 80):match.start()], limit=6)[-3:]
+        right_terms = source_terms(source[match.end():match.end() + 80], limit=6)[:3]
+        if not left_terms or not right_terms:
+            continue
+        left = "|".join(re.escape(term.casefold()) for term in left_terms)
+        right = "|".join(re.escape(term.casefold()) for term in right_terms)
+        if re.search(rf"\b(?:{right})\b[\s\S]{{0,80}}\b(?:rather than|instead of)\b[\s\S]{{0,80}}\b(?:{left})\b", candidate):
+            return True
+    return False
+
+
+def _moves_not_always_to_positive_side(source: str, candidate: str) -> bool:
+    if "not always" not in source:
+        return False
+    for match in re.finditer(r"\bnot always\b", source):
+        positive_terms = source_terms(source[max(0, match.start() - 80):match.start()], limit=6)
+        scoped_terms = {term.casefold() for term in positive_terms if term.casefold() in {"learn", "pass", "progress"}}
+        for term in scoped_terms:
+            if re.search(rf"\b(?:do\s+not\s+always|does\s+not\s+always|not\s+always)\b(?:\W+\w+){{0,4}}\W+{re.escape(term)}\b", candidate):
+                return True
+    return False
+
+
 def _conclusion_like_start(text: str) -> bool:
     lowered = str(text or "").strip().casefold()
     return lowered.startswith((
@@ -604,6 +951,28 @@ def _source_drift_penalty(variant: Variant, paragraph: Paragraph) -> float:
     return round(adjusted * 8.0, 3)
 
 
+def _unreviewed_bridge_violation(variant: Variant, paragraph: Paragraph) -> bool:
+    if variant.source == "source_preserved":
+        return False
+    reviewed_words = _reviewed_word_set(variant)
+    if reviewed_words:
+        return False
+    source_words = _content_word_set(paragraph.text)
+    candidate_words = _content_word_set(variant.text)
+    new_words = candidate_words - source_words
+    flagged = {
+        word
+        for word in new_words
+        if _word_base(word) not in source_words
+        if len(word) >= 9 or word.endswith(("tion", "ment", "ity", "ness", "ance", "ence", "form"))
+    }
+    return bool(flagged)
+
+
+def _word_base(word: str) -> str:
+    return str(word or "").removesuffix("'s").rstrip("s")
+
+
 def _reviewed_word_set(variant: Variant) -> set[str]:
     chunks: list[str] = []
     for row in [*(variant.author_review_items or []), *(variant.author_proxy_provenance or [])]:
@@ -627,9 +996,3 @@ def _content_word_set(text: str) -> set[str]:
         for token in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", str(text or ""))
         if token.casefold() not in stop
     }
-
-
-def _coverage(text: str, paragraph: Paragraph) -> float:
-    anchors = source_terms(paragraph.text, limit=24)
-    lowered = str(text or "").casefold()
-    return sum(1 for anchor in anchors if anchor.casefold() in lowered) / len(anchors) if anchors else 1.0
