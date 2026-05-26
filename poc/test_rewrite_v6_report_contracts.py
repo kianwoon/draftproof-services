@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 
 from poc.rewrite_v6.plan import build_plan
+from poc.rewrite_v6.paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _report_target_paragraph_ids, _same_text, run_v6_rewrite_all
 from poc.rewrite_v6.planner_llm import build_planner_prompt
+from poc.rewrite_v6.prose_quality import has_fragment_or_trace_sentences
 from poc.rewrite_v6.report_contracts import apply_report_signal_contracts, extract_report_signal_contracts
 from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
 from poc.rewrite_v6.write import Variant, build_prompt, choose_variant
@@ -144,6 +146,13 @@ def test_v6_acceptance_rejects_non_target_paragraph_regression():
     assert _cross_paragraph_regression(before, after, "p001")
 
 
+def test_v6_cross_paragraph_regression_allows_target_paragraph_split():
+    before = scan_text("This process has an important issue because teams should improve.\n\nStable paragraph has a plain sentence.")
+    after = scan_text("The process has an issue.\n\nTeams should improve through review.\n\nStable paragraph has a plain sentence.")
+
+    assert not _cross_paragraph_regression(before, after, "p001")
+
+
 def test_v6_pipeline_schedules_report_target_even_without_local_findings():
     text = (
         "First paragraph has ordinary setup.\n\n"
@@ -190,6 +199,76 @@ def test_v6_writer_prompt_surfaces_required_sentence_groups_as_coverage_loss_con
     assert "Do not write repair-trace labels" in " ".join(payload["generation_rules"])
 
 
+def test_v6_writer_prompt_allows_architecture_split_for_overloaded_paragraphs():
+    text = (
+        "The standard requires support and adjustment while the assessment keeps industry requirements. "
+        "The learner performance is assessed against benchmarks, standards, safety, timing, and commercial expectations. "
+        "I adapted scaffolding through method changes, role practice, client work, and reflection. "
+        "This creates a concern because support can become over-accommodation when expectations fall. "
+        "The workplace would not accept incomplete service, unsafe timing, or weak results. "
+        "The conclusion is that pathways can change while standards remain."
+    )
+    paragraph, plan = build_plan(scan_text(text))
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+
+    assert payload["architecture_split_contract"]["active"]
+    assert payload["required_shape"]["paragraph_count"] == "as many functional paragraphs as needed"
+    assert payload["architecture_split_contract"]["functional_groups"]
+
+
+def test_v6_architecture_splitter_breaks_overloaded_single_block_by_function():
+    text = (
+        "The standard requires support and adjustment while the assessment keeps industry requirements. "
+        "The learner performance is assessed against benchmarks and commercial expectations. "
+        "I adapted scaffolding through method changes and role practice. "
+        "The task still needed client work and reflection. "
+        "This creates a concern because support can become over-accommodation when expectations fall. "
+        "The workplace would not accept incomplete service or unsafe timing. "
+        "The conclusion is that pathways can change while standards remain."
+    )
+    split = apply_architecture_split_text(text, {"active": True})
+
+    assert "\n\n" in split
+    assert len(split.split("\n\n")) >= 2
+
+
+def test_v6_architecture_splitter_preserves_inactive_text():
+    text = "The task changed. The standard remained."
+    assert apply_architecture_split_text(text, {"active": False}) == text
+
+
+def test_v6_architecture_splitter_backfills_missing_source_anchors():
+    text = (
+        "Learner performance is assessed against industry benchmarks. "
+        "I adapted the scaffolding approach. "
+        "The practical assessment criteria remained consistent."
+    )
+    contract = {
+        "active": True,
+        "functional_groups": [{
+            "source_texts": [
+                "Learner performance is assessed against industry benchmarks, although I adapted the scaffolding approach, the practical assessment criteria, salon safety and commercial time constraints have still remained entirely consistent for all learners."
+            ],
+            "must_survive_terms": ["salon", "safety", "commercial", "time", "constraints", "learners"],
+        }],
+    }
+    split = apply_architecture_split_text(text, contract)
+
+    assert "Salon safety and commercial time constraints remained entirely consistent for all learners." in split
+
+
+def test_v6_architecture_splitter_decompresses_comma_heavy_candidate_sentences():
+    text = (
+        "The first sentence stays ordinary. "
+        "The model is flawed, educators lower expectations, the system compromises standards, the result creates an unreal environment. "
+        "The final sentence stays ordinary."
+    )
+    split = apply_architecture_split_text(text, {"active": True})
+
+    assert "Educators lower expectations." in split
+    assert "the system compromises standards," not in split
+
+
 def test_v6_writer_schema_keeps_coverage_map_separate_from_sentence_text():
     paragraph, plan = build_plan(scan_text("The process uses a form, a queue, and a review."))
     payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
@@ -230,6 +309,16 @@ def test_v6_selector_rejects_fragment_and_repair_trace_candidate_even_when_diffe
     selected = choose_variant([Variant(id="source_preserved", source="source_preserved", text=paragraph.text), candidate], paragraph)
 
     assert selected and selected.source == "source_preserved"
+
+
+def test_v6_fragment_detector_rejects_subordinate_and_object_split_fragments():
+    text = (
+        "I actively adapted. "
+        "The scaffolding approach replaced dense technical jargon. "
+        "When the education system compromises core standards to spare frustration."
+    )
+
+    assert has_fragment_or_trace_sentences(text)
 
 
 def test_v6_citation_anchor_recipe_keeps_attribution_as_source_to_claim_relation():

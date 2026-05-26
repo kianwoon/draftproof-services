@@ -1,10 +1,11 @@
 from __future__ import annotations
 import json, os, re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Protocol
 
 from .coverage_guard import coverage_ratio, missing_required_source_terms
 from .json_io import parse_json
+from .paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from .plan import Plan
 from .prompt_shape import coverage_loss_contract, paragraph_sentence_plan
 from .prose_quality import fragment_trace_penalty, has_fragment_or_trace_sentences
@@ -35,7 +36,7 @@ class Variant:
 
 
 def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> list[Variant]:
-    variants = [source_preserved_variant(paragraph)]
+    variants, split_contract = [source_preserved_variant(paragraph)], architecture_split_contract(paragraph, plan)
     try:
         response = client.chat(
             build_prompt(paragraph, plan),
@@ -43,7 +44,7 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
                 "Return valid JSON only with a variants array matching the requested variant ids. "
                 "If list_contract_active is true, no final text sentence may contain two or more commas. "
                 "If paragraph_sentence_plan has required_sentence_groups, cover every group in coverage_map; adjacent groups may share a natural sentence when grammar, coverage, and source order stay clear. "
-                "Write complete grammatical sentences with normal articles, prepositions, and subjects. Preserve submitted meaning, coverage, and first-person voice when present, but do not preserve submitted wording, order, "
+                "Write complete grammatical sentences with normal articles, prepositions, subjects, and objects; never split an action from its object into adjacent fragments. Preserve paired alternatives when the source uses either/or or not-yet wording. Preserve submitted meaning, coverage, and first-person voice when present, but do not preserve submitted wording, order, "
                 "list rhythm, opener, or closure shape."
             ),
             temperature=0.12,
@@ -51,7 +52,7 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
             max_tokens=None,
             response_format={"type": "json_object"},
         )
-        variants.extend(parse_variants(parse_json(getattr(response, "raw_content", "") or response.content)))
+        variants.extend(replace(v, text=apply_architecture_split_text(v.text, split_contract)) for v in parse_variants(parse_json(getattr(response, "raw_content", "") or response.content)))
     except (Exception, ValueError):
         pass
     return _dedupe_variants(variants)
@@ -61,7 +62,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
     golden_route = plan.ai_safe_route.get("golden_route", {})
     variant_requirements = [variant_focus] if variant_focus else _requested_variant_requirements()
     coverage_beats = _prompt_coverage_beats(plan)
-    sentence_plan = paragraph_sentence_plan(paragraph, coverage_beats)
+    sentence_plan, split_contract = paragraph_sentence_plan(paragraph, coverage_beats), architecture_split_contract(paragraph, plan)
     payload = {
         "task": "coverage_beat_paragraph_generation",
         "golden_question": golden_route.get(
@@ -92,6 +93,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
         "polarity_constraints": _polarity_constraints(paragraph),
         "coverage_beats_must_all_appear": coverage_beats,
         "paragraph_sentence_plan": sentence_plan,
+        "architecture_split_contract": split_contract,
         "coverage_loss_contract": coverage_loss_contract(sentence_plan),
         "author_route_questions": _prompt_author_route_questions(plan),
         "construction_recipes": _prompt_construction_recipes(plan),
@@ -115,6 +117,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "If hard_generation_requirements.list_contract_active is true, no final text sentence may contain two or more commas.",
             "If active_variant is empty, produce materially different variants. If two variants would have the same text, return only the stronger one.",
             "Do not create variant difference by simply reversing paragraph order. Keep readable source logic unless a slot explicitly permits movement.",
+            "If architecture_split_contract.active is true, final text may contain paragraph breaks that divide source/support, author/context evidence, and reasoning/consequence; every architecture_split_contract.functional_groups must_survive_terms anchor and every coverage_loss_contract source_terms_to_carry item must still survive.",
             "A variant mode is not decorative: its distinctive_obligation must change the paragraph route.",
             "Answer the golden_question through the paragraph route, not as visible notes.",
             "Before writing text, fill route_answer_cards for every author_route_question.",
@@ -194,7 +197,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "rule": "Do not stop for questions. When a needed anchor is not directly supported by submitted text, continue the rewrite and include it in author_review_items.",
         },
         "required_shape": {
-            "paragraph_count": 1,
+            "paragraph_count": split_contract["paragraph_count"] if split_contract["active"] else 1,
             "sentence_count": "uncapped during golden-route discovery; use as many ordinary prose sentences as needed to preserve coverage and answer the route questions",
             "preferred_sentence_count": _preferred_sentence_count(paragraph),
             "word_count": "uncapped during golden-route discovery; preserve source coverage and expand only when needed for grounding, concrete detail, or reasoning",
@@ -263,8 +266,8 @@ def _variant_schema(requirement: dict[str, str]) -> dict[str, Any]:
             "construction_recipe_id": "recipe id used for this beat",
             "finding_contract_id": "finding contract id resolved, empty if none",
         }],
-        "sentence_rows": [{"sentence_row_id": "srow_001", "sentence_slot_id": "same as coverage_map sentence_slot_id", "coverage_beat_ids": ["coverage beats carried by this sentence"], "sentence": "the exact sentence to compile into final paragraph text"}],
-        "text": "replacement paragraph only",
+        "sentence_rows": [{"sentence_row_id": "srow_001", "sentence_slot_id": "same as coverage_map sentence_slot_id", "coverage_beat_ids": ["coverage beats carried by this sentence"], "sentence": "the exact sentence to compile into final paragraph text", "paragraph_break_after": False}],
+        "text": "replacement text only; may contain paragraph breaks only when architecture_split_contract.active is true",
         "author_proxy_provenance": [],
         "author_review_items": [],
     }

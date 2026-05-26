@@ -29,6 +29,10 @@ def _fragment_like(sentence: str) -> bool:
     words = re.findall(r"[A-Za-z][A-Za-z'’-]*", value)
     if lowered.endswith((" that", " because", " while", " when", " with", " by", " to", " of", " for")):
         return True
+    if re.match(r"^(?:when|while|whilst|although|though|because|if)\b", lowered) and "," not in value:
+        return True
+    if re.match(r"^i\s+[a-z]+ly\s+[a-z]+ed$", lowered):
+        return True
     if re.match(r"^(?:in|under|during|according to|by|with|for)\b", lowered) and len(words) <= 10 and not _has_finite_verb(lowered):
         return True
     if len(words) <= 5 and not _has_finite_verb(lowered):

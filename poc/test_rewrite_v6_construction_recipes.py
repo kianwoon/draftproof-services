@@ -428,6 +428,23 @@ def test_v6_row_compiler_repairs_connector_fragments_with_previous_subject():
     )
 
 
+def test_v6_row_compiler_merges_action_object_and_subordinate_fragments():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {"sentence_slot_id": "s1", "coverage_beat_ids": ["b1"], "sentence": "I actively adapted."},
+                {"sentence_slot_id": "s2", "coverage_beat_ids": ["b2"], "sentence": "The scaffolding approach by replacing dense technical jargon."},
+                {"sentence_slot_id": "s3", "coverage_beat_ids": ["b3"], "sentence": "When the system compromises standards to spare frustration."},
+                {"sentence_slot_id": "s4", "coverage_beat_ids": ["b4"], "sentence": "This creates an unreal environment."},
+            ],
+        }]
+    })
+
+    assert "I actively adapted the scaffolding approach by replacing dense technical jargon." in variants[0].text
+    assert "When the system compromises standards to spare frustration, this creates an unreal environment." in variants[0].text
+
+
 def test_v6_row_compiler_splits_common_academic_connectors():
     variants = parse_variants({
         "variants": [{
@@ -828,6 +845,23 @@ def test_v6_row_compiler_keeps_it_is_predicate_complete():
     })
 
     assert variants[0].text == "It is a fundamental ethical obligation towards learners."
+
+
+def test_v6_row_compiler_preserves_requested_paragraph_breaks():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "sentence_rows": [
+                {"sentence": "The standard sets the support frame.", "paragraph_break_after": True},
+                {"sentence": "My delivery kept the practical task attached to assessment."},
+            ],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The standard sets the support frame.\n\n"
+        "My delivery kept the practical task attached to assessment."
+    )
 
 
 def test_v6_row_compiler_repairs_they_need_after_learner_context():

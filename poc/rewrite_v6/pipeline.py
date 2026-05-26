@@ -185,7 +185,9 @@ def run_v6_rewrite_all(
         )
         end_percent = _rewrite_progress_percent(pass_index + 1, limit)
         if _same_text(result.rewritten_text, current):
-            exhausted.add(result.plan.paragraph_id)
+            attempts[result.plan.paragraph_id] = attempts.get(result.plan.paragraph_id, 0) + 1
+            if attempts[result.plan.paragraph_id] >= 2:
+                exhausted.add(result.plan.paragraph_id)
             pass_trace.append(
                 _pass_trace_row(
                     pass_index=pass_index,
@@ -375,6 +377,18 @@ def _acceptable_progress(before: Scan, after: Scan, *, report_targeted: bool) ->
 def _cross_paragraph_regression(before: Scan, after: Scan, target_paragraph_id: str) -> bool:
     before_counts = _paragraph_counts(before)
     after_counts = _paragraph_counts(after)
+    target = next((paragraph for paragraph in before.paragraphs if paragraph.id == target_paragraph_id), None)
+    if target is not None and len(after.paragraphs) != len(before.paragraphs):
+        delta = len(after.paragraphs) - len(before.paragraphs)
+        for paragraph in before.paragraphs:
+            if paragraph.id == target_paragraph_id:
+                continue
+            after_index = paragraph.index if paragraph.index < target.index else paragraph.index + delta
+            if 0 <= after_index < len(after.paragraphs):
+                after_id = after.paragraphs[after_index].id
+                if after_counts.get(after_id, 0) > before_counts.get(paragraph.id, 0):
+                    return True
+        return False
     return any(
         paragraph_id != target_paragraph_id and count > before_counts.get(paragraph_id, 0)
         for paragraph_id, count in after_counts.items()

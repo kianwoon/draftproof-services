@@ -15,6 +15,7 @@ def compile_sentence_rows(row: dict[str, Any]) -> str:
     sentences: list[str] = []
     seen: set[str] = set()
     for item in rows:
+        accepted = False
         for sentence in _row_sentences(item):
             if sentences:
                 merged = _merge_dangling_sentence(sentences[-1], sentence)
@@ -29,7 +30,10 @@ def compile_sentence_rows(row: dict[str, Any]) -> str:
                 continue
             sentences.append(sentence)
             seen.add(key)
-    return " ".join(sentences).strip()
+            accepted = True
+        if accepted and item.get("paragraph_break_after") and sentences:
+            sentences[-1] = sentences[-1].rstrip() + "\n\n"
+    return re.sub(r" *\n\n *", "\n\n", " ".join(sentences)).strip()
 
 
 def compile_or_fallback_text(row: dict[str, Any]) -> str:
@@ -759,11 +763,13 @@ def _merge_dangling_sentence(previous: str, current: str) -> str:
         return _clean_sentence(f"{bare_left} {_lower_start(bare_right)}")
     if _short_subject_verb_row(bare_left):
         return _clean_sentence(f"{bare_left} {_lower_start(bare_right)}")
+    if re.match(r"^(?:when|while|whilst|although|though|because|if)\b", bare_left, flags=re.I):
+        return _clean_sentence(f"{bare_left}, {_lower_start(bare_right)}")
     return ""
 
 
 def _short_subject_verb_row(text: str) -> bool:
-    return bool(re.match(r"^(?:I|we|they|he|she|it|students?|teachers?|learners?|educators?)\s+[A-Za-z]+(?:ed|s)$", str(text or "").strip(), flags=re.I))
+    return bool(re.match(r"^(?:I|we|they|he|she|it|students?|teachers?|learners?|educators?)\s+(?:[A-Za-z]+ly\s+)?[A-Za-z]+(?:ed|s)$", str(text or "").strip(), flags=re.I))
 
 
 def _repair_fragment_start(sentence: str, previous: str) -> str:
