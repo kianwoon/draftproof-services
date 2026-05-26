@@ -138,18 +138,21 @@ def _merge_decision(plan: Plan, decision: dict[str, Any]) -> Plan:
     route = dict(plan.ai_safe_route)
     contract_gaps = _string_rows(decision.get("contract_gaps"))
     unsafe_contracts = _unsafe_contract_gaps(contract_gaps)
+    fallback_contracts = _fallback_finding_contracts(plan, contract_gaps) if unsafe_contracts else []
+    fallback_blueprint = _fallback_paragraph_blueprint(plan, contract_gaps) if unsafe_contracts else []
     route["llm_planner_decision"] = {
         "status": "degraded_contract_gaps" if unsafe_contracts else "ok",
         "paragraph_route": decision.get("paragraph_route", ""),
-        "finding_contracts": [] if unsafe_contracts else _recipe_rows(decision.get("finding_contracts")),
-        "paragraph_blueprint": [] if unsafe_contracts else _recipe_rows(decision.get("paragraph_blueprint")),
+        "finding_contracts": fallback_contracts if unsafe_contracts else _recipe_rows(decision.get("finding_contracts")),
+        "paragraph_blueprint": fallback_blueprint if unsafe_contracts else _recipe_rows(decision.get("paragraph_blueprint")),
         "finding_recipe_overrides": [] if unsafe_contracts else _recipe_rows(decision.get("finding_recipe_overrides")),
         "author_proxy_plan": decision.get("author_proxy_plan", ""),
         "do_not_copy_route": _string_rows(decision.get("do_not_copy_route")),
+        "do_not_copy_phrases": _do_not_copy_phrases(contract_gaps),
         "contract_gaps": contract_gaps,
         "fallback_instruction": (
-            "Ignore unsafe LLM planner shapes and build from deterministic author_route_questions, "
-            "coverage_beats, and construction_recipes."
+            "Ignore unsafe LLM planner shapes and use the deterministic fallback finding_contracts, "
+            "paragraph_blueprint, author_route_questions, coverage_beats, and construction_recipes."
         ) if unsafe_contracts else "",
     }
     return replace(plan, ai_safe_route=route)
@@ -180,6 +183,72 @@ def _unsafe_contract_gaps(gaps: list[str]) -> bool:
         "placeholder brackets",
     )
     return any(any(marker in gap for marker in unsafe_markers) for gap in gaps)
+
+
+def _do_not_copy_phrases(gaps: list[str]) -> list[str]:
+    phrases: list[str] = []
+    for gap in gaps:
+        phrases.extend(match.group(1).strip() for match in re.finditer(r"'([^']{4,160})'", gap))
+    return _dedupe_strings(phrases)[:12]
+
+
+def _fallback_finding_contracts(plan: Plan, gaps: list[str]) -> list[dict[str, Any]]:
+    copied = _do_not_copy_phrases(gaps)
+    contracts: list[dict[str, Any]] = []
+    for action in plan.actions:
+        if not action.tags:
+            continue
+        contracts.append({
+            "finding_id": f"{action.sentence_id}:{','.join(action.tags)}",
+            "source_sentence_id": action.sentence_id,
+            "finding_tags": list(action.tags),
+            "unsafe_original_shape": action.source_text,
+            "safe_rebuild_shape": "Start from exact anchors, then carry revoiceable source terms as plain meaning across ordinary sentence rows.",
+            "writer_must_do": [
+                action.method,
+                "preserve exact anchors and numeric/source-code terms",
+                "split overload into adjacent sentence rows",
+                "revoice polished or evaluative source wording as plain source meaning",
+            ],
+            "writer_must_not_do": _dedupe_strings([
+                *action.do_not,
+                "copy the original sentence route",
+                "copy risky source phrase fragments",
+                *copied,
+            ]),
+            "coverage_terms": list(action.preserve_terms),
+        })
+    return contracts
+
+
+def _fallback_paragraph_blueprint(plan: Plan, gaps: list[str]) -> list[dict[str, Any]]:
+    copied = _do_not_copy_phrases(gaps)
+    steps: list[dict[str, Any]] = []
+    for index, action in enumerate(plan.actions, start=1):
+        if not action.tags:
+            continue
+        steps.append({
+            "step_id": f"fallback_b{index:03d}",
+            "function": action.operation,
+            "route_question_id": f"{action.sentence_id}_q01",
+            "source_basis": [action.sentence_id],
+            "must_include": list(action.preserve_terms),
+            "must_avoid_shape": _dedupe_strings([*action.do_not, *copied]),
+            "safe_sentence_shape": "exact source anchor first; plain source meaning next; separate row when another relation begins",
+        })
+    return steps
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        key = text.casefold()
+        if text and key not in seen:
+            rows.append(text)
+            seen.add(key)
+    return rows
 
 
 def _compact_rows(value: Any, *, limit: int) -> list[dict[str, Any]]:

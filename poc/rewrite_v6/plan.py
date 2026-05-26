@@ -59,7 +59,7 @@ def build_plan(scan: Scan, excluded_paragraph_ids: set[str] | None = None) -> tu
                 tags=tags,
                 operation=_operation(tags),
                 method=_method(tags),
-                preserve_terms=source_terms(sentence.text, limit=12),
+                preserve_terms=source_terms(_strip_leading_heading(sentence.text), limit=24),
                 do_not=_do_not(tags),
             )
         )
@@ -67,7 +67,7 @@ def build_plan(scan: Scan, excluded_paragraph_ids: set[str] | None = None) -> tu
     plan = Plan(
         paragraph_id=paragraph.id,
         route_goal="change sentence route while preserving source meaning and reducing packed or predictable shape",
-        opening_terms=source_terms(paragraph.sentences[0].text if paragraph.sentences else paragraph.text, limit=6),
+        opening_terms=source_terms(_strip_leading_heading(paragraph.sentences[0].text if paragraph.sentences else paragraph.text), limit=6),
         actions=actions,
         paragraph_strategy=_paragraph_strategy(paragraph, actions),
         author_proxy_context=author_proxy_context,
@@ -80,7 +80,7 @@ def _author_proxy_context(scan: Scan, paragraph: Paragraph) -> dict[str, Any]:
     previous_paragraph = scan.paragraphs[paragraph.index - 1].text if paragraph.index > 0 else ""
     next_paragraph = scan.paragraphs[paragraph.index + 1].text if paragraph.index + 1 < len(scan.paragraphs) else ""
     context_text = "\n\n".join(part for part in [previous_paragraph, paragraph.text, next_paragraph] if part)
-    paragraph_text = paragraph.text
+    paragraph_text = _strip_leading_heading(paragraph.text)
     return {
         "schema_version": "v6.author_proxy_context.v1",
         "scope": "selected_paragraph_plus_neighbors",
@@ -165,6 +165,19 @@ def _dedupe(values: list[str]) -> list[str]:
             out.append(value)
             seen.add(key)
     return out
+
+
+def _strip_leading_heading(text: str) -> str:
+    visible = str(text or "")
+    lines = visible.splitlines()
+    if len(lines) < 2:
+        return visible
+    first = lines[0].strip()
+    if not first or re.search(r"[.!?]$", first):
+        return visible
+    if len(first.split()) <= 8:
+        return "\n".join(lines[1:]).strip() or visible
+    return visible
 
 
 def _ai_safe_route(paragraph: Paragraph, actions: list[PlanAction], context: dict[str, Any]) -> dict[str, Any]:
@@ -303,16 +316,17 @@ def _route_step(action: PlanAction, context: dict[str, Any]) -> dict[str, Any]:
 def _coverage_beats(actions: list[PlanAction]) -> list[dict[str, Any]]:
     beats: list[dict[str, Any]] = []
     for action in actions:
-        phrases = _coverage_phrases(action.source_text) if _should_split_coverage(action) else [_safe_coverage_phrase(action.source_text, action.tags)]
+        source_text = _strip_leading_heading(action.source_text)
+        phrases = _coverage_phrases(source_text) if _should_split_coverage(action) else [_safe_coverage_phrase(source_text, action.tags)]
         if _should_split_coverage(action):
-            for index, phrase in enumerate(phrases or [action.source_text], start=1):
+            for index, phrase in enumerate(phrases or [source_text], start=1):
                 beats.append({
                     "beat_id": f"{action.sentence_id}_b{index:02d}",
                     "source_sentence_id": action.sentence_id,
                     "finding_tags": action.tags,
                     "construction_recipe_id": f"{action.sentence_id}_recipe",
                     "construction_recipe": _beat_construction_recipe(action.tags),
-                    "coverage_terms": source_terms(phrase, limit=12),
+                    "coverage_terms": source_terms(phrase, limit=24),
                     "grouped_relation": " | " in phrase,
                     "polarity_markers": _polarity_markers(phrase),
                     "starter_terms": _starter_terms(phrase, action.tags),
@@ -327,7 +341,7 @@ def _coverage_beats(actions: list[PlanAction]) -> list[dict[str, Any]]:
                 "finding_tags": action.tags,
                 "construction_recipe_id": f"{action.sentence_id}_recipe",
                 "construction_recipe": _beat_construction_recipe(action.tags),
-                "coverage_terms": source_terms(phrase, limit=12),
+                "coverage_terms": source_terms(phrase, limit=24),
                 "grouped_relation": " | " in phrase,
                 "polarity_markers": _polarity_markers(phrase),
                 "starter_terms": _starter_terms(phrase, action.tags),
@@ -570,16 +584,19 @@ def _should_split_coverage(action: PlanAction) -> bool:
 
 def _coverage_phrases(text: str) -> list[str]:
     visible = re.sub(r"\s+", " ", str(text or "")).strip()
-    visible = re.sub(r"^(in|during|after|before|through|at|from|to|for|as|when|while)\s+[^,]{1,80},\s+", "", visible, flags=re.I)
+    visible = re.sub(r"^(in|during|after|before|through|at|from|to|for|when|while)\s+[^,]{1,80},\s+", "", visible, flags=re.I)
     visible = _safe_coverage_phrase(visible, ["predictable_start", "context_anchor_gap"])
     visible = visible.rstrip(".!?;:")
     if not visible:
         return []
-    if re.search(r",\s+(?:not|rather than|instead of)\b", visible, flags=re.I):
+    if re.search(r",\s+not\b", visible, flags=re.I):
         return [visible]
     because_parts = _split_because_parts(visible)
     if len(because_parts) > 1:
         return because_parts
+    relation_parts = _semantic_relation_phrases(visible)
+    if len(relation_parts) > 1:
+        return relation_parts
     visible = re.sub(r",?\s+\bbut\b\s+", ". ", visible, flags=re.I)
     normalized = re.sub(r",\s+(and|or)\s+", ", ", visible, flags=re.I)
     parts = [part.strip(" ,;:") for part in re.split(r"\.\s+|,\s+|;\s+", normalized) if part.strip(" ,;:")]
@@ -590,6 +607,36 @@ def _coverage_phrases(text: str) -> list[str]:
     parts = _propagate_not_always(parts)
     parts = _group_dense_list_parts(parts)
     return parts if len(parts) > 1 else [visible]
+
+
+def _semantic_relation_phrases(text: str) -> list[str]:
+    visible = str(text or "").strip(" ,;:")
+    if not visible:
+        return []
+    parts = _split_before_following_comparative_gerund(visible)
+    if len(parts) == 1:
+        parts = [visible]
+    expanded: list[str] = []
+    for part in parts:
+        expanded.extend(_split_condition_or_consequence(part))
+    return [_safe_coverage_phrase(part, []) for part in expanded if part.strip(" ,;:")]
+
+
+def _split_before_following_comparative_gerund(text: str) -> list[str]:
+    if not re.search(r"\bis\s+(?:far\s+)?more\s+\w+\s+than\b", text, flags=re.I):
+        return [text]
+    parts = re.split(
+        r"\s+(?=[A-Za-z]+ing\b[^.]{0,140}?\bis\s+(?:far\s+)?more\s+\w+\s+than\b)",
+        text,
+        maxsplit=1,
+        flags=re.I,
+    )
+    return [part.strip(" ,;:") for part in parts if part.strip(" ,;:")]
+
+
+def _split_condition_or_consequence(text: str) -> list[str]:
+    parts = re.split(r",\s+(?=(?:only\s+by|when|rather\s+than|instead\s+of)\b)", text, maxsplit=1, flags=re.I)
+    return [part.strip(" ,;:") for part in parts if part.strip(" ,;:")]
 
 
 def _split_because_parts(text: str) -> list[str]:
@@ -638,6 +685,7 @@ def _polarity_markers(text: str) -> list[str]:
         r"\bdo not only\b",
         r"\bnot only\b",
         r"\bnot always\b",
+        r"\bmore\s+\w+\s+than\b",
         r"\brather than\b",
         r"\binstead of\b",
         r"\bwithout\b",

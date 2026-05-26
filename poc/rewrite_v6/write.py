@@ -1,8 +1,5 @@
 from __future__ import annotations
-
-import json
-import os
-import re
+import json, os, re
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
@@ -12,6 +9,7 @@ from .plan import Plan
 from .prompt_shape import paragraph_sentence_plan
 from .review_provenance import annotate_review_items
 from .scan import scan_text
+from .sentence_rows import compile_or_fallback_text
 from .text import Paragraph, source_terms, split_paragraphs, word_count
 
 
@@ -41,9 +39,10 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
         response = client.chat(
             build_prompt(paragraph, plan),
             system=(
-                "Return valid JSON only with a variants array containing exactly v1, v2, and v3. "
+                "Return valid JSON only with a variants array matching the requested variant ids. "
                 "If list_contract_active is true, no final text sentence may contain two or more commas. "
-                "Preserve submitted meaning and coverage, but do not preserve submitted wording, order, "
+                "If paragraph_sentence_plan has required_sentence_groups, write one final sentence per group using only that group's terms; joining groups with because, while, that, or and is invalid. "
+                "Preserve submitted meaning, coverage, and first-person voice when present, but do not preserve submitted wording, order, "
                 "list rhythm, opener, or closure shape."
             ),
             temperature=0.12,
@@ -111,20 +110,18 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "When active_variant is empty, return exactly the ids in hard_generation_requirements.required_variant_ids.",
             "If hard_generation_requirements.list_contract_active is true, no final text sentence may contain two or more commas.",
             "If active_variant is empty, produce materially different variants. If two variants would have the same text, return only the stronger one.",
-            "For a single-call response, complete v1, then v2, then v3 as separate drafts; do not copy coverage_map, route_answer_cards, or sentence-slot route from a previous variant.",
             "Do not create variant difference by simply reversing paragraph order. Keep readable source logic unless a slot explicitly permits movement.",
-            "When v2 or v3 are requested, include route_answer_cards and coverage_map just like v1.",
             "A variant mode is not decorative: its distinctive_obligation must change the paragraph route.",
             "Answer the golden_question through the paragraph route, not as visible notes.",
             "Before writing text, fill route_answer_cards for every author_route_question.",
             "Each route_answer_cards row must include the exact question_id, answer_basis_terms used, bridge_provenance, and draft_sentence.",
-            "Each route_answer_cards.draft_sentence must be a plain sentence under 18 words.",
+            "Each route_answer_cards.draft_sentence is a route sketch, not a coverage limit; final text must carry all slot source_terms_to_carry as meaning.",
             "A route card sentence must not use which, where, especially, because, rather than, vast, complex, critical, digital platform, or landscape.",
             "A route card sentence must not introduce content words outside answer_basis_terms_used unless bridge_provenance is needs_author_confirmation and author_review_items explains them.",
-            "Build final text only from route_answer_cards.draft_sentence plus coverage-only sentences for unflagged beats.",
+            "Do not limit final text to route cards; expand each slot until exact anchors survive and revoiceable source terms are carried as plain meaning.",
             "Do not write a polished paragraph first and backfill cards afterward.",
             "Build the paragraph by answering author_route_questions inside the final prose.",
-            "Do not write meta-prose such as the writer sees, the writer reads, the writer compares, the writer struggles, or the writer decides.",
+            "Do not write meta-prose such as the writer sees, the writer reads, the writer compares, the writer struggles, the writer decides, or the writer began.",
             "Each author_route_question must change the construction of the mapped source beat; do not answer it by copying the original sentence.",
             "For author/context/support gaps, use the question answer as Author-Proxy bridge material and label any inferred bridge in author_review_items.",
             "For packed-list and sentence-overload questions, decompose the relationship before writing; do not preserve submitted facts as written if that carries the unsafe list route forward.",
@@ -141,6 +138,8 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "Before returning, compare final text against planner_decision.contract_gaps and rewrite any sentence that still contains a copied risky phrase or planning label.",
             "If safe_rebuild_shape contains placeholder brackets, instantiate it using the contract coverage_terms before writing.",
             "Do not copy planning labels from safe_rebuild_shape into the paragraph, including relation, beat, anchor, route, contract, source term, or writer.",
+            "Treat paragraph_sentence_plan.revoiceable_source_terms as meaning-only. Do not copy polished or evaluative revoiceable wording when a simpler source relation can carry the same meaning.",
+            "If a source relation needs both an action and a condition, split them into adjacent sentences instead of joining them with while, that, which, or because.",
             "For context_anchor_gap or broad_claim contracts, the final sentence must start from the named antecedent, not this, that, model, result, or a generic claim.",
             "For broad_claim contracts, use a scoped partial-relation sentence such as only part of, one part of, limited to, or explains only part of when supported by the contract.",
             "For closure contracts, split continuity and limitation into separate sentences instead of comma-but, as/which, or broad-summary closure.",
@@ -151,8 +150,9 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "For every coverage beat, apply its construction_recipe before writing the paragraph.",
             "Before final text, make coverage_map show the construction_recipe_id used for each sentence.",
             "Create a coverage_map before the final text. Every coverage beat must appear in the candidate meaning.",
-            "Build from paragraph_sentence_plan before individual coverage beats. A sentence may carry multiple coverage_beat_ids when the slot groups one source relation.",
-            "Do not create one sentence per coverage beat when paragraph_sentence_plan groups those beats into one slot.",
+            "Build from paragraph_sentence_plan. If a slot has required_sentence_groups, write one final sentence per group and one coverage_map row per group; otherwise one sentence may carry multiple coverage_beat_ids.",
+            "The executor compiles final paragraph text from coverage_map sentence rows. The text field must be the same row sequence joined with spaces, not a separate rewritten paragraph.",
+            "When required_sentence_groups exist, create one row per group; otherwise do not create one sentence per coverage beat when paragraph_sentence_plan groups those beats into one slot.",
             "Every final sentence must map to a sentence_slot_id or explain which coverage beat required an extra sentence.",
             "Every source-side contrast must survive. If a beat contains terms from both sides of a contrast, preserve both sides instead of keeping only the first side.",
             "Do not invert source polarity. If the source says not less, no longer, not only, not always, without, or does not, preserve that direction instead of rewriting it as reduction, limitation, or a positive claim.",
@@ -160,7 +160,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "For a not only polarity constraint, write the first side as not enough by itself, then write the second side with also matters or also carries weight.",
             "For a not always polarity constraint, do not repeat not always across a sentence chain. Use one contrast sentence for the positive side and limited side, then one follow-up sentence only if another limited item remains.",
             "Do not write a repair trace. Group related coverage beats into ordinary paragraph sentences when meaning and contrast stay intact.",
-            "Stay near required_shape.preferred_sentence_count unless source coverage truly requires more.",
+            "Do not compress coverage to satisfy preferred_sentence_count; use more sentences when source coverage needs them.",
             "Preserve submitted meaning, factual scope, and coverage. Do not preserve exact source wording, source order, source opener, source list rhythm, or source closure shape.",
             "Preserve every beat's polarity_markers. Do not invert not, no longer, not only, not always, rather than, instead of, or without.",
             "Do not add unsubmitted intensity, speed, frequency, importance, ease, readiness, success, complexity, or benefit claims. If the draft does not say how fast, common, essential, easy, immediate, abundant, effective, successful, ready, or complex something is, do not add that quality.",
@@ -175,7 +175,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "For a final four-item ability, reward, need, or skill list, pair the first two items and the last two items in separate relation clauses or sentences; do not repeat the whole four-item list and do not use a comma list.",
             "When a not only reward beat is followed by ability or skill beats, use this route: the context does not only reward the first side. It also rewards the first pair. The second pair carries the next part. Do not add a success, readiness, or essential-skills ending.",
             "Do not turn grouped coverage terms into repeated one-item sentences. For a grouped beat, write one ordinary relation sentence carrying the group.",
-            "Use plain submitted source terms. Avoid elevated labels, metaphor labels, abstract engagement phrases, polished role labels, and broad capture/reflect phrases unless present in the source.",
+            "Use plain submitted source terms and keep first-person when the source uses I or my. Avoid elevated labels, metaphor labels, abstract engagement phrases, polished role labels, and broad capture/reflect phrases unless present in the source.",
             "Preserve meaning and coverage. Expand when needed for grounding, concrete detail, or reasoning.",
             "Use author_proxy_provenance or author_review_items for inferred bridge wording.",
             "Return JSON only.",
@@ -251,15 +251,20 @@ def _variant_schema(requirement: dict[str, str]) -> dict[str, Any]:
             "source_sentence_id": "source sentence id",
             "answer_basis_terms_used": ["terms from answer_basis_terms or coverage beats"],
             "bridge_provenance": "source_preserved | inferred_from_draft | needs_author_confirmation",
-            "draft_sentence": "one plain sentence under 18 words that answers the route question",
+            "draft_sentence": "plain route sketch; final text may expand it to preserve coverage",
         }],
         "coverage_map": [{
             "sentence_slot_id": "paragraph_sentence_plan slot id used by this sentence",
             "coverage_beat_ids": ["one or more coverage beat ids carried by this sentence"],
-            "coverage_beat_id": "coverage beat id",
+            "coverage_beat_id": "coverage beat id; include required_sentence_group_id when paragraph_sentence_plan requires a group row",
             "construction_recipe_id": "recipe id used for this beat",
             "finding_contract_id": "finding contract id resolved, empty if none",
             "sentence": "candidate sentence carrying this beat",
+        }],
+        "sentence_rows": [{
+            "sentence_slot_id": "same as coverage_map sentence_slot_id",
+            "coverage_beat_ids": ["coverage beats carried by this sentence"],
+            "sentence": "the exact sentence to compile into final paragraph text",
         }],
         "text": "replacement paragraph only",
         "author_proxy_provenance": [],
@@ -458,6 +463,8 @@ def _polarity_instruction(polarity_markers: list[str]) -> str:
         return "Do not state the first side as a positive claim by itself. If this is a reward relation, write the context does not only reward the first side, then pair the next source items without repeating the whole list."
     if "not always" in lowered:
         return "Keep the limitation on the limited side only. Use one contrast sentence, not repeated not-always sentences."
+    if re.search(r"\bmore\s+\w+\s+than\b", lowered):
+        return "Keep the more-than comparison direction; the first side is stronger and the than-side is limited, not endorsed."
     if "rather than" in lowered or "instead of" in lowered:
         return "Keep the contrast direction; do not reverse which side is preferred or criticized."
     if "no longer" in lowered:
@@ -587,7 +594,7 @@ def parse_variants(payload: Any) -> list[Variant]:
     for index, row in enumerate(rows if isinstance(rows, list) else [], start=1):
         if not isinstance(row, dict):
             continue
-        text = str(row.get("text") or "").strip()
+        text = compile_or_fallback_text(row)
         text_key = _normalize_variant_text(text)
         if text_key and text_key in seen_texts:
             continue
@@ -683,9 +690,9 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
         return False
     if finding_drop >= 2 and risk_drop >= -2.0:
         return True
-    if finding_drop >= 1 and risk_drop >= 5.0:
+    if finding_drop >= 1 and risk_drop >= 0.0:
         return True
-    if finding_drop >= 0 and risk_drop >= 12.0:
+    if finding_drop >= 0 and risk_drop >= 8.0:
         return True
     return False
 
@@ -763,17 +770,10 @@ def _compresses_list_repair(text: str, source_paragraph: Paragraph) -> bool:
 
 def _candidate_contract_violation(text: str, source_paragraph: Paragraph) -> bool:
     return (
-        _sentence_count_explodes(text, source_paragraph)
-        or _repeats_sentence_intent(text)
+        _repeats_sentence_intent(text)
         or _keeps_forbidden_list_contract(text, source_paragraph)
         or _adds_unsubmitted_success_close(text, source_paragraph)
     )
-
-
-def _sentence_count_explodes(text: str, source_paragraph: Paragraph) -> bool:
-    source_count = max(1, len(source_paragraph.sentences))
-    candidate_count = sum(1 for paragraph in split_paragraphs(text) for _sentence in paragraph.sentences)
-    return candidate_count > max(source_count + 2, int(source_count * 1.35) + 1)
 
 
 def _repeats_sentence_intent(text: str) -> bool:

@@ -12,15 +12,40 @@ def coverage_ratio(text: str, paragraph: Paragraph) -> float:
 
 
 def missing_required_source_terms(text: str, paragraph: Paragraph) -> bool:
-    candidate_terms = {_word_base(term) for term in source_terms(text, limit=160)}
+    candidate_terms = _term_bases(source_terms(text, limit=160))
+    candidate_numbers = set(_number_anchors(text))
+    if any(anchor not in candidate_numbers for anchor in _number_anchors(paragraph.text)):
+        return True
     for sentence in paragraph.sentences:
-        terms = _required_list_terms(sentence.text)
+        terms = _required_list_terms(_strip_leading_heading(sentence.text))
         if not terms:
             continue
         covered = sum(1 for term in terms if _word_base(term) in candidate_terms)
         if covered / len(terms) < 0.75:
             return True
     return False
+
+
+def _number_anchors(text: str) -> list[str]:
+    words = (
+        "zero", "one", "two", "three", "four", "five", "six", "seven",
+        "eight", "nine", "ten", "eleven", "twelve", "hundred", "thousand",
+    )
+    pattern = r"\b(?:\d+(?:\.\d+)?|" + "|".join(words) + r")\b"
+    return [match.group(0).casefold() for match in re.finditer(pattern, str(text or ""), flags=re.I)]
+
+
+def _term_bases(terms: list[str]) -> set[str]:
+    bases: set[str] = set()
+    for term in terms:
+        base = _word_base(term)
+        if base:
+            bases.add(base)
+        for part in re.split(r"[-/]", str(term or "")):
+            part_base = _word_base(part)
+            if part_base:
+                bases.add(part_base)
+    return bases
 
 
 def _required_list_terms(text: str) -> list[str]:
@@ -40,3 +65,16 @@ def _required_list_terms(text: str) -> list[str]:
 
 def _word_base(word: str) -> str:
     return str(word or "").casefold().removesuffix("'s").rstrip("s")
+
+
+def _strip_leading_heading(text: str) -> str:
+    visible = str(text or "")
+    lines = visible.splitlines()
+    if len(lines) < 2:
+        return visible
+    first = lines[0].strip()
+    if not first or re.search(r"[.!?]$", first):
+        return visible
+    if len(first.split()) <= 8:
+        return "\n".join(lines[1:]).strip() or visible
+    return visible

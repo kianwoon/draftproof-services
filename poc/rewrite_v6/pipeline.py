@@ -118,7 +118,7 @@ def run_v6_rewrite_all(
     initial_scan = scan_text(text)
     current = text
     passes: list[Result] = []
-    limit = max_passes if max_passes is not None else max(1, len(initial_scan.paragraphs) * 3)
+    limit = max_passes if max_passes is not None else max(1, len(initial_scan.paragraphs) * 5)
     attempts: dict[str, int] = {}
     exhausted: set[str] = set()
     for pass_index in range(limit):
@@ -161,7 +161,7 @@ def run_v6_rewrite_all(
         after = scan_text(result.rewritten_text)
         if not _improved(before, after):
             attempts[result.plan.paragraph_id] = attempts.get(result.plan.paragraph_id, 0) + 1
-            if attempts[result.plan.paragraph_id] >= 2:
+            if attempts[result.plan.paragraph_id] >= 4:
                 exhausted.add(result.plan.paragraph_id)
             _emit_progress(progress_callback, end_percent, f"V6 paragraph {result.plan.paragraph_id} did not improve")
             continue

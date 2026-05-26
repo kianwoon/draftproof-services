@@ -8,7 +8,7 @@ from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6.planner_llm import run_planner_llm
 from poc.rewrite_v6 import production as v6_production
 from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
-from poc.rewrite_v6.write import build_prompt
+from poc.rewrite_v6.write import Variant, build_prompt, choose_variant
 from poc.report.render_rewrite import render_rewrite_report
 
 
@@ -270,7 +270,7 @@ def test_v6_planner_turns_findings_into_concrete_safe_route_targets():
     assert "do not preserve exact source wording" in build_prompt(paragraph, plan).casefold()
     assert "Build the paragraph by answering author_route_questions" in build_prompt(paragraph, plan)
     assert "fill route_answer_cards for every author_route_question" in build_prompt(paragraph, plan)
-    assert "route_answer_cards.draft_sentence must be a plain sentence under 18 words" in build_prompt(paragraph, plan)
+    assert "route_answer_cards.draft_sentence is a route sketch, not a coverage limit" in build_prompt(paragraph, plan)
     assert "Do not write meta-prose such as the writer sees" in build_prompt(paragraph, plan)
     assert "do not preserve submitted facts as written" in build_prompt(paragraph, plan)
     assert "Stay inside content_word_boundary.allowed_content_terms" in build_prompt(paragraph, plan)
@@ -307,10 +307,11 @@ def test_v6_downgrades_unsafe_llm_planner_contracts_to_route_questions():
     )
     decision = updated.ai_safe_route["llm_planner_decision"]
     assert decision["status"] == "degraded_contract_gaps"
-    assert decision["finding_contracts"] == []
-    assert decision["paragraph_blueprint"] == []
+    assert decision["finding_contracts"]
+    assert decision["paragraph_blueprint"]
+    assert decision["do_not_copy_phrases"]
     assert "author_route_questions" in build_prompt(paragraph, updated)
-    assert "Ignore unsafe LLM planner shapes" in decision["fallback_instruction"]
+    assert "deterministic fallback finding_contracts" in decision["fallback_instruction"]
 
 
 def test_v6_author_anchor_instruction_reaches_writer_beat():
@@ -1185,6 +1186,29 @@ def test_v6_selection_accepts_material_risk_drop_without_finding_count_drop():
     result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
     assert result.selected is not None
     assert result.selected.source == "llm"
+
+
+def test_v6_selection_accepts_finding_drop_when_risk_not_worse():
+    source = (
+        "Inclusive learning design must move beyond passive accommodation and instead focus on embedding metacognitive strategies. "
+        "Complex spatial tasks such as forms, checks, queues, workflows, reviewers, and decisions strain working memory. "
+        "The process demonstrates the difference between giving a person an answer and teaching them how to work."
+    )
+    candidate = (
+        "Inclusive learning design moves beyond passive accommodation by embedding metacognitive strategies. "
+        "Complex spatial tasks can strain working memory. "
+        "Forms and checks carry one part of the process. "
+        "Queues and reviewer decisions carry the next part. "
+        "The process compares giving a person an answer with teaching them how to work."
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    selected = choose_variant([
+        Variant(id="source_preserved", text=source, source="source_preserved"),
+        Variant(id="v1", text=candidate, source="llm"),
+    ], paragraph)
+
+    assert selected is not None
+    assert selected.id == "v1"
 
 
 def test_v6_selected_bridge_terms_are_marked_for_author_review():

@@ -94,7 +94,7 @@ def source_terms(text: str, *, limit: int = 12) -> list[str]:
         "than", "that", "this", "they", "with", "many", "because", "however", "therefore",
         "does",
     }
-    for token in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", str(text or "")):
+    for token in re.findall(r"\b(?:\d+(?:\.\d+)?|[A-Z][A-Z0-9]{1,}|[A-Za-z][A-Za-z'-]{3,})\b", str(text or "")):
         key = token.strip("'").casefold()
         if key in stop or key in seen:
             continue

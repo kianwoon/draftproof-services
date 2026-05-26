@@ -6,7 +6,9 @@ from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6.pipeline import run_v6_rewrite
 from poc.rewrite_v6.planner_llm import build_planner_prompt
 from poc.rewrite_v6.scan import scan_text
-from poc.rewrite_v6.write import build_prompt
+from poc.rewrite_v6.text import source_terms
+from poc.rewrite_v6.write import build_prompt, parse_variants
+from poc.rewrite_v6.coverage_guard import missing_required_source_terms
 
 
 class StaticJsonResponse:
@@ -74,10 +76,282 @@ def test_v6_coverage_beats_link_to_construction_recipes():
     )
 
 
+def test_v6_source_terms_keep_short_acronym_anchors():
+    terms = source_terms("The team supports API, SSO and MFA issues across 12 sites.", limit=12)
+
+    assert {"API", "SSO", "MFA"}.issubset(set(terms))
+    assert "12" in terms
+
+
+def test_v6_sentence_plan_marks_slot_coverage_loss_as_failure():
+    payload = _payload(
+        "The team combined intake forms, API checks, SSO review, and MFA support."
+    )
+    slots = payload["paragraph_sentence_plan"]
+    slot_text = json.dumps(slots)
+
+    assert "coverage_loss_failure" in slot_text
+    assert "API" in slot_text
+    assert "SSO" in slot_text
+    assert "MFA" in slot_text
+
+
+def test_v6_required_coverage_accepts_hyphenated_carried_terms():
+    paragraph = scan_text(
+        "The support plan used role playing, community based learning, ASD, and social anxieties."
+    ).paragraphs[0]
+    candidate = "The support plan used role-playing and community-based learning. ASD and social anxieties stayed in the support plan."
+
+    assert not missing_required_source_terms(candidate, paragraph)
+
+
+def test_v6_required_coverage_rejects_dropped_numeric_anchors():
+    paragraph = scan_text(
+        "The process uses seven checks while integrating four record structures from 0 to 180 degrees."
+    ).paragraphs[0]
+    candidate = "The process uses seven checks while integrating record structures across degrees."
+
+    assert missing_required_source_terms(candidate, paragraph)
+
+
+def test_v6_required_coverage_ignores_leading_heading_terms():
+    paragraph = scan_text(
+        "Critical Analysis\nThe process uses forms, queues, reviewers, and follow-up checks."
+    ).paragraphs[0]
+    candidate = "The process uses forms and queues. Reviewers handle follow-up checks."
+
+    assert not missing_required_source_terms(candidate, paragraph)
+
+
+def test_v6_overloaded_slots_with_many_terms_are_not_one_sentence_routes():
+    payload = _payload(
+        "The review process requires teams from several backgrounds to master seven intake procedures while integrating four record structures with audit concepts and workplace checks."
+    )
+    slot_text = json.dumps(payload["paragraph_sentence_plan"])
+
+    assert "two connected ordinary sentences" in slot_text
+    assert "required_sentence_groups" in slot_text
+    assert "write one ordinary sentence for this group" in slot_text
+
+
+def test_v6_overloaded_sentence_groups_are_chunked_for_execution():
+    payload = _payload(
+        "The process requires reviewers from several teams to master seven checks while integrating four record structures with audit concepts, workplace constraints, client notes, source documents, queue timing, and follow-up decisions."
+    )
+    groups = [
+        group
+        for slot in payload["paragraph_sentence_plan"]
+        for group in slot.get("required_sentence_groups", [])
+    ]
+
+    assert len(groups) >= 2
+    assert all(len(group["source_terms_to_carry"]) <= 10 for group in groups)
+    assert "seven" in json.dumps(groups)
+    assert "four" in json.dumps(groups)
+
+
+def test_v6_planner_uses_semantic_relation_groups_before_term_chunks():
+    payload = _payload(
+        "Developing review awareness is more valuable than endless help teaching clients how to compare records is more effective than simply giving answers, only by equipping them with the skills to navigate the workflow will they adapt."
+    )
+    beat_ids = [
+        beat["beat_id"]
+        for beat in payload["coverage_beats_must_all_appear"]
+    ]
+    capsules = [
+        beat["coverage_capsule"]
+        for beat in payload["coverage_beats_must_all_appear"]
+    ]
+
+    assert len(beat_ids) >= 3
+    assert any("Developing" in capsule and "valuable" in capsule for capsule in capsules)
+    assert any("Teaching" in capsule and "effective" in capsule for capsule in capsules)
+    assert any("equipping" in capsule and "workflow" in capsule for capsule in capsules)
+
+
+def test_v6_heading_line_is_not_forced_into_coverage_beats():
+    payload = _payload(
+        "Heading\nAs a reviewer, I designed and implemented a support framework for case intake."
+    )
+    prompt_text = json.dumps(payload["coverage_beats_must_all_appear"])
+
+    assert "Heading" not in prompt_text
+    assert "reviewer" in prompt_text
+
+
+def test_v6_required_sentence_group_keeps_all_group_terms():
+    payload = _payload(
+        "This unit requires learners from several backgrounds to master seven procedures while integrating four structures with geometric concepts and workplace checks for assessment."
+    )
+    groups = [
+        group
+        for slot in payload["paragraph_sentence_plan"]
+        for group in slot.get("required_sentence_groups", [])
+    ]
+
+    grouped_terms = {
+        str(term).casefold()
+        for group in groups
+        for term in group.get("source_terms_to_carry", [])
+    }
+    assert "workplace" in grouped_terms
+    assert "checks" in grouped_terms
+
+
+def test_v6_sentence_plan_separates_exact_anchors_from_revoiceable_terms():
+    payload = _payload(
+        "The SHBHCUT006 unit presents significant pedagogical challenges while learners master seven cutting procedures and integrate four haircut structures with geometric concepts."
+    )
+    text = json.dumps(payload["paragraph_sentence_plan"])
+
+    assert "SHBHCUT006" in text
+    assert "seven" in text
+    assert "four" in text
+    assert "revoiceable_source_terms" in text
+    assert "significant" in text
+    assert any(
+        "four" in [str(term).casefold() for term in slot.get("must_cover_terms", [])]
+        for slot in payload["paragraph_sentence_plan"]
+    )
+
+
 def test_v6_writer_schema_requires_recipe_id_in_coverage_map():
     payload = _payload("This process shows a concern because support should improve.")
     schema_text = json.dumps(payload["output_schema"])
     assert "construction_recipe_id" in schema_text
+
+
+def test_v6_writer_compiles_text_from_sentence_rows():
+    variants = parse_variants({
+        "variants": [
+            {
+                "id": "v1",
+                "text": "A polished paragraph recombined the rows.",
+                "sentence_rows": [
+                    {"sentence_slot_id": "s1", "coverage_beat_ids": ["b1"], "sentence": "The first row stays separate"},
+                    {"sentence_slot_id": "s2", "coverage_beat_ids": ["b2"], "sentence": "The second row also stays separate."},
+                ],
+            }
+        ]
+    })
+
+    assert variants[0].text == "The first row stays separate. The second row also stays separate."
+
+
+def test_v6_writer_compiles_text_from_coverage_map_when_rows_missing():
+    variants = parse_variants({
+        "variants": [
+            {
+                "id": "v1",
+                "text": "A fallback paragraph should not win.",
+                "coverage_map": [
+                    {"sentence_slot_id": "s1", "coverage_beat_ids": ["b1"], "sentence": "Coverage row one."},
+                    {"sentence_slot_id": "s2", "coverage_beat_ids": ["b2"], "sentence": "Coverage row two."},
+                ],
+            }
+        ]
+    })
+
+    assert variants[0].text == "Coverage row one. Coverage row two."
+
+
+def test_v6_row_compiler_splits_overloaded_connector_rows():
+    variants = parse_variants({
+        "variants": [
+            {
+                "id": "v1",
+                "coverage_map": [
+                    {
+                        "sentence_slot_id": "s1",
+                        "coverage_beat_ids": ["b1", "b2"],
+                        "sentence": (
+                            "The unit presents significant challenges because it requires learners "
+                            "to master seven procedures while integrating four structures."
+                        ),
+                    }
+                ],
+            }
+        ]
+    })
+
+    assert variants[0].text == (
+        "The unit presents significant challenges. "
+        "The unit requires learners to master seven procedures. "
+        "The unit involves integrating four structures."
+    )
+
+
+def test_v6_row_compiler_splits_first_person_working_to_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1", "b2"],
+                "sentence": "I am a reviewer in the service team working to design and implement a support framework.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "I am a reviewer in the service team. "
+        "I am working to design and implement a support framework."
+    )
+
+
+def test_v6_row_compiler_splits_support_clause_rows():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1", "b2"],
+                "sentence": "I integrated role playing and community learning to support the learner with ASD.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "I integrated role playing and community learning. "
+        "The same support focused on the learner with ASD."
+    )
+
+
+def test_v6_row_compiler_rebuilds_framework_working_row():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1", "b2"],
+                "sentence": "I am a reviewer in the service team working to design and implement an inclusive framework for the audit unit that combines records.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "I am a reviewer in the service team. "
+        "The audit unit uses an inclusive framework. "
+        "The audit unit combines records."
+    )
+
+
+def test_v6_row_compiler_rebuilds_evaluates_between_row():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [{
+                "sentence_slot_id": "s1",
+                "coverage_beat_ids": ["b1", "b2"],
+                "sentence": "The report critically evaluates the tension between support adjustments and competency standards required by the training package.",
+            }],
+        }]
+    })
+
+    assert variants[0].text == (
+        "The report compares support adjustments with competency standards. "
+        "The second side is required by the training package."
+    )
 
 
 def test_v6_llm_planner_prompt_receives_scanner_findings():
