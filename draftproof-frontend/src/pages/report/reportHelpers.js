@@ -1156,6 +1156,73 @@ function normalizeSignal(signal = {}, issue = {}) {
   };
 }
 
+function signalPriority(signal) {
+  const tierRank = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+  return [
+    tierRank[signal.tier] || 0,
+    clampPercent(signal.score) ?? 0,
+    signal.count || 0,
+  ];
+}
+
+function compareSignals(a, b) {
+  const left = signalPriority(a);
+  const right = signalPriority(b);
+  for (let i = 0; i < left.length; i += 1) {
+    if (right[i] !== left[i]) return right[i] - left[i];
+  }
+  return String(a.key).localeCompare(String(b.key));
+}
+
+function uniqueCompact(values) {
+  return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function mergeParagraphSignals(segments) {
+  const grouped = new Map();
+  segments.forEach((segment) => {
+    segment.signals.forEach((signal) => {
+      const current = grouped.get(signal.key) || {
+        ...signal,
+        count: 0,
+        finding_ids: [],
+        sentence_ids: [],
+        descriptions: [],
+        recommendations: [],
+      };
+      current.count += 1;
+      current.score = Math.max(current.score || 0, signal.score || 0);
+      current.finding_ids.push(signal.finding_id);
+      current.sentence_ids.push(segment.sentence_id);
+      current.descriptions.push(signal.description);
+      current.recommendations.push(signal.recommendation);
+      grouped.set(signal.key, current);
+    });
+  });
+
+  return Array.from(grouped.values())
+    .map((signal) => {
+      const descriptions = uniqueCompact(signal.descriptions);
+      const recommendations = uniqueCompact(signal.recommendations);
+      return {
+        ...signal,
+        finding_ids: uniqueCompact(signal.finding_ids),
+        sentence_ids: uniqueCompact(signal.sentence_ids),
+        descriptions,
+        recommendations,
+        description: descriptions[0] || signal.description,
+        recommendation: recommendations.join(' '),
+      };
+    })
+    .sort(compareSignals);
+}
+
+function summarizeSentenceIds(segments) {
+  const ids = uniqueCompact(segments.map((segment) => segment.sentence_id));
+  if (ids.length <= 2) return ids.join(', ');
+  return `${ids[0]}-${ids[ids.length - 1]}`;
+}
+
 function buildSubmittedContentModel(report) {
   const results = report?.results_json || {};
   const intel = results.scan_intelligence || {};
@@ -1225,11 +1292,19 @@ function buildSubmittedContentModel(report) {
 
   paragraphs.forEach((paragraph) => {
     paragraph.segments.sort((a, b) => a.start_char - b.start_char);
+    const text = paragraph.segments.map((segment) => segment.text).join(' ').trim();
+    const signals = mergeParagraphSignals(paragraph.segments);
+    paragraph.text = text;
+    paragraph.signals = signals;
+    paragraph.primarySignal = signals[0] || null;
+    paragraph.sentence_id = summarizeSentenceIds(paragraph.segments);
+    paragraph.sentence_ids = uniqueCompact(paragraph.segments.map((segment) => segment.sentence_id));
+    paragraph.signalCount = paragraph.segments.reduce((count, segment) => count + segment.signals.length, 0);
   });
 
   const signalMap = new Map();
-  segments.forEach((segment) => {
-    segment.signals.forEach((signal) => {
+  paragraphs.forEach((paragraph) => {
+    paragraph.signals.forEach((signal) => {
       const current = signalMap.get(signal.key);
       signalMap.set(signal.key, {
         ...signal,
@@ -1244,7 +1319,7 @@ function buildSubmittedContentModel(report) {
     paragraphs,
     segments,
     legend,
-    highlightedCount: segments.filter((segment) => segment.signals.length > 0).length,
+    highlightedCount: paragraphs.filter((paragraph) => paragraph.signals.length > 0).length,
   };
 }
 

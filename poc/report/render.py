@@ -3,7 +3,7 @@
 Produces a structured report with:
   1. EXECUTIVE SUMMARY — overall tier badge, risk gauge, scanner scores
   2. FINDINGS BY SEVERITY — grouped by tier with collapsible details
-  3. SCANNER BREAKDOWN — per-scanner tables with sentence-level detail
+  3. SCANNER BREAKDOWN — per-scanner tables with paragraph-level detail
   4. REWRITE SUMMARY — before/after comparison (when present)
   5. APPENDIX — full sentence tables in collapsible sections
 """
@@ -888,6 +888,11 @@ def _truncate(text: str, limit: int = 80) -> str:
         return text
     return text[: limit - 1] + "..."
 
+def _table_cell(text) -> str:
+    if not text:
+        return "—"
+    return str(text).replace("|", "·").replace("\n", " ")
+
 def _pct(value) -> str:
     """Format a numeric value as percentage string."""
     try:
@@ -1042,6 +1047,47 @@ def _high_count_by_scanner(findings_by_tier: dict, scanner: str) -> int:
     )
 
 
+def _paragraph_finding_groups(findings: list, data: dict) -> list[dict]:
+    """Group report findings by paragraph while preserving finding metadata."""
+    segments = ((data.get("scan_intelligence") or {}).get("document") or {}).get("segments") or []
+    paragraphs = ((data.get("scan_intelligence") or {}).get("document") or {}).get("paragraphs") or []
+    segment_by_sentence = {
+        str(segment.get("sentence_id") or ""): segment
+        for segment in segments
+        if segment.get("sentence_id")
+    }
+    paragraph_by_id = {
+        str(paragraph.get("paragraph_id") or ""): paragraph
+        for paragraph in paragraphs
+        if paragraph.get("paragraph_id")
+    }
+
+    groups = {}
+    ordered_keys = []
+    for finding in findings:
+        segment = segment_by_sentence.get(str(finding.sentence_id or ""))
+        paragraph_id = str((segment or {}).get("paragraph_id") or "") if segment else ""
+        key = paragraph_id or f"document::{finding.finding_id or len(ordered_keys) + 1}"
+        if key not in groups:
+            paragraph = paragraph_by_id.get(paragraph_id, {})
+            group = {
+                "paragraph_id": paragraph_id,
+                "sentence_ids": list(paragraph.get("sentence_ids") or []),
+                "text": paragraph.get("text") or (segment or {}).get("text") or finding.evidence,
+                "findings": [],
+            }
+            groups[key] = group
+            ordered_keys.append(key)
+        groups[key]["findings"].append(finding)
+
+    def group_start(group: dict) -> int:
+        if group.get("paragraph_id") and group.get("paragraph_id") in paragraph_by_id:
+            return int(paragraph_by_id[group["paragraph_id"]].get("start_char") or 0)
+        return 10**9
+
+    return sorted((groups[key] for key in ordered_keys), key=group_start)
+
+
 # ── Main render function (Markdown) ──────────────────────────────────
 
 def render_report(report: DraftReport, verbose: bool = False) -> str:
@@ -1162,27 +1208,44 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         has_any = True
 
         label = tier_level.value.capitalize()
-        lines.append(f"### {label} ({len(findings)})")
+        paragraph_groups = _paragraph_finding_groups(findings, data)
+        paragraph_count = len(paragraph_groups)
+        group_label = "paragraph" if paragraph_count == 1 else "paragraphs"
+        finding_label = "finding" if len(findings) == 1 else "findings"
+        lines.append(f"### {label} ({paragraph_count} {group_label}, {len(findings)} {finding_label})")
         lines.append("")
 
-        lines.append("| # | Src | Sig | Finding | Sentence | Suggestion |")
-        lines.append("|--:|:---:|:---:|---------|----------|------------|")
+        lines.append("| # | Src | Sig | Findings | Paragraph | Suggestions |")
+        lines.append("|--:|:---:|:---:|----------|-----------|-------------|")
 
-        def _cell(text):
-            if not text:
-                return "—"
-            return text.replace("|", "·").replace("\n", " ")
-
-        for f in findings:
+        for group in paragraph_groups:
             finding_num += 1
-            used_scanners.add(f.scanner)
-            used_signals.add(f.title)
-            scanner = _SCANNER_CODES.get(f.scanner, f.scanner)
-            signal = _SIGNAL_CODES.get(f.title, f.title)
-            detail = _cell(_translate_detail(f.detail))
-            evidence = _cell(f.evidence)
-            action = _cell(_translate_recommendation(f.recommendation))
-            lines.append(f"| {finding_num} | {scanner} | {signal} | {detail} | {evidence} | {action} |")
+            group_findings = group["findings"]
+            for f in group_findings:
+                used_scanners.add(f.scanner)
+                used_signals.add(f.title)
+            scanners = sorted({_SCANNER_CODES.get(f.scanner, f.scanner) for f in group_findings})
+            signals = sorted({_SIGNAL_CODES.get(f.title, f.title) for f in group_findings})
+            details = [
+                _translate_detail(f.detail)
+                for f in group_findings
+                if _translate_detail(f.detail)
+            ]
+            actions = [
+                _translate_recommendation(f.recommendation)
+                for f in group_findings
+                if _translate_recommendation(f.recommendation)
+            ]
+            sentence_ids = group.get("sentence_ids") or []
+            paragraph_label = group.get("paragraph_id") or "Document"
+            sentence_suffix = f" ({sentence_ids[0]}-{sentence_ids[-1]})" if len(sentence_ids) > 1 else (f" ({sentence_ids[0]})" if sentence_ids else "")
+            paragraph = f"**{paragraph_label}{sentence_suffix}:** {_truncate(_table_cell(group.get('text')), 260)}"
+            detail = "<br>".join(f"- {_table_cell(item)}" for item in details[:4]) or "—"
+            action = "<br>".join(f"- {_table_cell(item)}" for item in actions[:4]) or "—"
+            lines.append(
+                f"| {finding_num} | {_table_cell(', '.join(scanners))} | {_table_cell(', '.join(signals))} | "
+                f"{detail} | {paragraph} | {action} |"
+            )
         lines.append("")
 
         # Metadata excluded from reports — available in JSON output

@@ -2755,10 +2755,13 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "sentence_ids": [],
                 "start_char": segment.get("start_char", 0),
                 "end_char": segment.get("end_char", 0),
+                "text_parts": [],
                 "finding_count": 0,
                 "signals": {},
             })
             entry["sentence_ids"].append(segment.get("sentence_id"))
+            if segment.get("text"):
+                entry["text_parts"].append(segment.get("text"))
             entry["start_char"] = min(entry["start_char"], segment.get("start_char", entry["start_char"]))
             entry["end_char"] = max(entry["end_char"], segment.get("end_char", entry["end_char"]))
             entry["finding_count"] += len(segment.get("signals") or [])
@@ -2775,7 +2778,10 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         rows = []
         for entry in paragraphs.values():
             signals = sorted(entry.pop("signals").values(), key=lambda item: item["score"], reverse=True)
+            text_parts = entry.pop("text_parts", [])
+            entry["text"] = " ".join(part.strip() for part in text_parts if part and part.strip())
             entry["top_signals"] = signals[:3]
+            entry["primary_signal"] = signals[0] if signals else None
             rows.append(entry)
         rows.sort(key=lambda item: item["start_char"])
         return rows

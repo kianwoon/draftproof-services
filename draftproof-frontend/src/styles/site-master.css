@@ -6221,6 +6221,13 @@ th {
     inset 0 -1px 0 var(--signal-color);
 }
 
+.submitted-paragraph-highlight {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: .22rem .28rem .26rem;
+}
+
 .submitted-signal-panel {
   display: flex;
   flex-direction: column;
@@ -8312,6 +8319,13 @@ th {
   background: color-mix(in srgb, var(--signal-color) 16%, white) !important;
   border-bottom-width: 2.5px;
   outline: none;
+}
+
+.submitted-paragraph-highlight {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 4px 6px;
 }
 
 /* Floating Sidebar Inspector Look */

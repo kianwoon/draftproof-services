@@ -84,7 +84,7 @@ function addScoreProfileFeature(features, key, value) {
 
 function submittedContentToText(model) {
   return (model?.paragraphs || [])
-    .map((paragraph) => paragraph.segments.map((segment) => segment.text).join(' ').trim())
+    .map((paragraph) => paragraph.text || paragraph.segments.map((segment) => segment.text).join(' ').trim())
     .filter(Boolean)
     .join('\n\n');
 }
@@ -355,7 +355,7 @@ export default function Report() {
   const [rewriteResultSummary, setRewriteResultSummary] = useState(null);
   const [rewriteResultReport, setRewriteResultReport] = useState(null);
   const [rewriteElapsedSeconds, setRewriteElapsedSeconds] = useState(0);
-  const [selectedSegmentId, setSelectedSegmentId] = useState(null);
+  const [selectedParagraphId, setSelectedParagraphId] = useState(null);
   const [activeProfileTab, setActiveProfileTab] = useState(null);
   const [submittedEditorOpen, setSubmittedEditorOpen] = useState(false);
   const [submittedEditorClosing, setSubmittedEditorClosing] = useState(false);
@@ -954,9 +954,9 @@ export default function Report() {
   issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
   const normalizedReport = { ...report, issues };
   const submittedContent = buildSubmittedContentModel(normalizedReport);
-  const selectedSegment = (
-    submittedContent.segments.find((segment) => segment.id === selectedSegmentId) ||
-    submittedContent.segments.find((segment) => segment.signals.length > 0) ||
+  const selectedParagraph = (
+    submittedContent.paragraphs.find((paragraph) => paragraph.id === selectedParagraphId) ||
+    submittedContent.paragraphs.find((paragraph) => paragraph.signals.length > 0) ||
     null
   );
   const originalSubmittedText = submittedContentToText(submittedContent);
@@ -964,44 +964,44 @@ export default function Report() {
   const submittedTrackedDiff = submittedEditorOpen
     ? buildTrackedDiff(originalSubmittedText, submittedDraftText)
     : [];
-  const affectedSegments = submittedContent.segments.filter((segment) => segment.signals.length > 0);
-  const originalAffectedRanges = buildOriginalSegmentRanges(originalSubmittedText, affectedSegments);
-  const selectedSentenceDraftStatus = selectedSegment?.text && submittedDraftText.includes(selectedSegment.text)
-    ? t('report.submitted.editor.sentenceUnchanged')
-    : t('report.submitted.editor.sentenceEdited');
-  const selectedSignalStrength = clampPercent(selectedSegment?.primarySignal?.score);
-  const submittedHighlightRange = selectedSegment?.id ? submittedHighlightRanges[selectedSegment.id] : null;
+  const affectedParagraphs = submittedContent.paragraphs.filter((paragraph) => paragraph.signals.length > 0);
+  const originalAffectedRanges = buildOriginalSegmentRanges(originalSubmittedText, affectedParagraphs);
+  const selectedParagraphDraftStatus = selectedParagraph?.text && submittedDraftText.includes(selectedParagraph.text)
+    ? t('report.submitted.editor.paragraphUnchanged')
+    : t('report.submitted.editor.paragraphEdited');
+  const selectedSignalStrength = clampPercent(selectedParagraph?.primarySignal?.score);
+  const submittedHighlightRange = selectedParagraph?.id ? submittedHighlightRanges[selectedParagraph.id] : null;
   const submittedEditorHighlightParts = highlightedEditorParts(submittedDraftText, submittedHighlightRange);
   const submittedDraftWordCount = countWords(submittedDraftText);
   const submittedDraftTokensRequired = scanTokensRequired(submittedDraftWordCount);
 
-  const resolveSubmittedSegmentRange = (segment, existingRanges = submittedHighlightRanges) => {
-    if (!segment?.id || !segment.text) return null;
+  const resolveSubmittedParagraphRange = (paragraph, existingRanges = submittedHighlightRanges) => {
+    if (!paragraph?.id || !paragraph.text) return null;
     return (
-      findTextRange(submittedDraftText, segment.text) ||
-      existingRanges[segment.id] ||
-      mapOriginalRangeToCurrent(originalSubmittedText, submittedDraftText, originalAffectedRanges[segment.id])
+      findTextRange(submittedDraftText, paragraph.text) ||
+      existingRanges[paragraph.id] ||
+      mapOriginalRangeToCurrent(originalSubmittedText, submittedDraftText, originalAffectedRanges[paragraph.id])
     );
   };
 
   const buildSubmittedHighlightRanges = (existingRanges = submittedHighlightRanges) => {
     const nextRanges = { ...(existingRanges || {}) };
-    affectedSegments.forEach((segment) => {
-      if (nextRanges[segment.id]) return;
-      const range = resolveSubmittedSegmentRange(segment, nextRanges);
-      if (range) nextRanges[segment.id] = { ...range, segmentId: segment.id };
+    affectedParagraphs.forEach((paragraph) => {
+      if (nextRanges[paragraph.id]) return;
+      const range = resolveSubmittedParagraphRange(paragraph, nextRanges);
+      if (range) nextRanges[paragraph.id] = { ...range, segmentId: paragraph.id };
     });
     return nextRanges;
   };
 
   const renderSubmittedSignalGauge = () => {
-    if (selectedSignalStrength == null || !selectedSegment?.primarySignal) return null;
+    if (selectedSignalStrength == null || !selectedParagraph?.primarySignal) return null;
     const value = Math.round(selectedSignalStrength);
     return (
       <div
         className="submitted-signal-gauge"
         style={{
-          '--signal-color': selectedSegment.primarySignal.color || '#b45309',
+          '--signal-color': selectedParagraph.primarySignal.color || '#b45309',
           '--signal-strength': `${value}%`,
         }}
         aria-label={t('report.submitted.signalStrength', { value })}
@@ -1017,13 +1017,13 @@ export default function Report() {
     );
   };
 
-  const focusSentenceInSubmittedEditor = (segment) => {
+  const focusParagraphInSubmittedEditor = (paragraph) => {
     const editor = submittedEditorRef.current;
-    if (!editor || !segment?.text) return;
-    const range = resolveSubmittedSegmentRange(segment);
+    if (!editor || !paragraph?.text) return;
+    const range = resolveSubmittedParagraphRange(paragraph);
     setSubmittedHighlightRanges((current) => {
       if (!range) return current;
-      return { ...current, [segment.id]: { ...range, segmentId: segment.id } };
+      return { ...current, [paragraph.id]: { ...range, segmentId: paragraph.id } };
     });
     editor.focus();
     if (range) {
@@ -1040,9 +1040,9 @@ export default function Report() {
   const resetSubmittedDraft = async () => {
     setSubmittedDraftText(originalSubmittedText);
     setSubmittedHighlightRanges((current) => {
-      if (!selectedSegment?.text || !Object.keys(current || {}).length) return {};
-      const range = findTextRange(originalSubmittedText, selectedSegment.text);
-      return range ? { [selectedSegment.id]: { ...range, segmentId: selectedSegment.id } } : {};
+      if (!selectedParagraph?.text || !Object.keys(current || {}).length) return {};
+      const range = findTextRange(originalSubmittedText, selectedParagraph.text);
+      return range ? { [selectedParagraph.id]: { ...range, segmentId: selectedParagraph.id } } : {};
     });
     setSubmittedDraftStatus('idle');
     setSubmittedDraftUpdatedAt(null);
@@ -1897,7 +1897,7 @@ export default function Report() {
           reportSummaryBar
         )}
 
-        {submittedContent.segments.length > 0 && (
+        {submittedContent.paragraphs.length > 0 && (
           <section className="submitted-content-review" aria-label={t('report.submitted.sectionLabel')}>
             <div className="submitted-content-head">
               <div>
@@ -1941,61 +1941,59 @@ export default function Report() {
             )}
             <div className="submitted-content-grid">
               <div className="submitted-document" aria-label={t('report.submitted.documentText')}>
-                {submittedContent.paragraphs.map((paragraph) => (
-                  <p key={paragraph.id}>
-                    {paragraph.segments.map((segment) => {
-                      const signal = segment.primarySignal;
-                      const isSelected = selectedSegment?.id === segment.id;
-                      if (!signal) {
-                        return <span key={segment.id}>{segment.text} </span>;
-                      }
-                      return (
-                        <button
-                          key={segment.id}
-                          type="button"
-                          className={`submitted-highlight signal-style-${signalClassName(signal.key)}${isSelected ? ' is-selected' : ''}`}
-                          style={{ '--signal-color': signal.color }}
-                          title={signalDescription(signal.key, signal.description, t)}
-                          onMouseEnter={() => setSelectedSegmentId(segment.id)}
-                          onFocus={() => setSelectedSegmentId(segment.id)}
-                          onClick={() => {
-                            setSelectedSegmentId(segment.id);
-                          }}
-                        >
-                          {segment.text}
-                        </button>
-                      );
-                    })}
-                  </p>
-                ))}
+                {submittedContent.paragraphs.map((paragraph) => {
+                  const signal = paragraph.primarySignal;
+                  const isSelected = selectedParagraph?.id === paragraph.id;
+                  if (!signal) {
+                    return <p key={paragraph.id}>{paragraph.text}</p>;
+                  }
+                  return (
+                    <p key={paragraph.id}>
+                      <button
+                        type="button"
+                        className={`submitted-highlight submitted-paragraph-highlight signal-style-${signalClassName(signal.key)}${isSelected ? ' is-selected' : ''}`}
+                        style={{ '--signal-color': signal.color }}
+                        title={signalDescription(signal.key, signal.description, t)}
+                        onMouseEnter={() => setSelectedParagraphId(paragraph.id)}
+                        onFocus={() => setSelectedParagraphId(paragraph.id)}
+                        onClick={() => {
+                          setSelectedParagraphId(paragraph.id);
+                        }}
+                      >
+                        {paragraph.text}
+                      </button>
+                    </p>
+                  );
+                })}
               </div>
               <aside className="submitted-signal-panel" aria-label={t('report.submitted.selectedSignal')}>
-                {selectedSegment?.primarySignal ? (
+                {selectedParagraph?.primarySignal ? (
                   <>
-                    <span className="submitted-panel-kicker">{selectedSegment.sentence_id}</span>
-                    <h3>{signalLabel(selectedSegment.primarySignal.key, selectedSegment.primarySignal.label, t)}</h3>
-                    <p>{signalDescription(selectedSegment.primarySignal.key, selectedSegment.primarySignal.description, t)}</p>
+                    <span className="submitted-panel-kicker">{selectedParagraph.sentence_id}</span>
+                    <h3>{signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t)}</h3>
+                    <p>{signalDescription(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.description, t)}</p>
                     {renderSubmittedSignalGauge()}
                     <div className="submitted-panel-meta">
-                      {selectedSegment.primarySignal.tier && (
-                        <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedSegment.primarySignal.tier}`, { defaultValue: selectedSegment.primarySignal.tier }) })}</span>
+                      <span>{t('report.submitted.paragraphSignals', { count: selectedParagraph.signalCount || selectedParagraph.signals.length })}</span>
+                      {selectedParagraph.primarySignal.tier && (
+                        <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedParagraph.primarySignal.tier}`, { defaultValue: selectedParagraph.primarySignal.tier }) })}</span>
                       )}
-                      {selectedSegment.primarySignal.actionability && (
-                        <span>{selectedSegment.primarySignal.actionability.replaceAll('_', ' ')}</span>
+                      {selectedParagraph.primarySignal.actionability && (
+                        <span>{selectedParagraph.primarySignal.actionability.replaceAll('_', ' ')}</span>
                       )}
                     </div>
-                    {selectedSegment.signals.length > 1 && (
+                    {selectedParagraph.signals.length > 1 && (
                       <div className="submitted-panel-stack">
                         <span>{t('report.submitted.alsoDetected')}</span>
-                        {selectedSegment.signals.slice(1, 4).map((signal) => (
-                          <em key={`${selectedSegment.id}-${signal.key}-${signal.finding_id}`}>{signalLabel(signal.key, signal.label, t)}</em>
+                        {selectedParagraph.signals.slice(1, 4).map((signal) => (
+                          <em key={`${selectedParagraph.id}-${signal.key}-${signal.finding_id}`}>{signalLabel(signal.key, signal.label, t)}</em>
                         ))}
                       </div>
                     )}
-                    {selectedSegment.primarySignal.recommendation && (
+                    {selectedParagraph.primarySignal.recommendation && (
                       <div className="submitted-panel-note">
                         <span>{t('report.submitted.recommendation')}</span>
-                        <p>{selectedSegment.primarySignal.recommendation}</p>
+                        <p>{selectedParagraph.primarySignal.recommendation}</p>
                       </div>
                     )}
                   </>
@@ -2130,57 +2128,58 @@ export default function Report() {
                       </div>
                     </section>
 
-                    <aside className="submitted-affected-panel" aria-label={t('report.submitted.editor.affectedSentences')}>
+                    <aside className="submitted-affected-panel" aria-label={t('report.submitted.editor.affectedParagraphs')}>
                       <div className="submitted-affected-head">
-                        <span>{t('report.submitted.editor.affectedSentences')}</span>
-                        <strong>{affectedSegments.length}</strong>
+                        <span>{t('report.submitted.editor.affectedParagraphs')}</span>
+                        <strong>{affectedParagraphs.length}</strong>
                       </div>
                       <div className="submitted-affected-list">
-                        {affectedSegments.map((segment) => {
-                          const signal = segment.primarySignal || segment.signals[0];
-                          const isSelected = selectedSegment?.id === segment.id;
+                        {affectedParagraphs.map((paragraph) => {
+                          const signal = paragraph.primarySignal || paragraph.signals[0];
+                          const isSelected = selectedParagraph?.id === paragraph.id;
                           return (
                             <button
-                              key={`affected-${segment.id}`}
+                              key={`affected-${paragraph.id}`}
                               type="button"
                               className={`submitted-affected-item${isSelected ? ' is-selected' : ''}`}
                               onClick={() => {
-                                setSelectedSegmentId(segment.id);
-                                focusSentenceInSubmittedEditor(segment);
+                                setSelectedParagraphId(paragraph.id);
+                                focusParagraphInSubmittedEditor(paragraph);
                               }}
                             >
-                              <span>{segment.sentence_id}</span>
+                              <span>{paragraph.sentence_id}</span>
                               <strong>{signalLabel(signal.key, signal.label, t)}</strong>
-                              <em>{segment.text}</em>
+                              <em>{paragraph.text}</em>
                             </button>
                           );
                         })}
                       </div>
 
                       <div className="submitted-editor-detail">
-                        {selectedSegment?.primarySignal ? (
+                        {selectedParagraph?.primarySignal ? (
                           <>
-                            <span className="submitted-panel-kicker">{selectedSegment.sentence_id}</span>
-                            <h3>{signalLabel(selectedSegment.primarySignal.key, selectedSegment.primarySignal.label, t)}</h3>
+                            <span className="submitted-panel-kicker">{selectedParagraph.sentence_id}</span>
+                            <h3>{signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t)}</h3>
                             <div className="submitted-editor-sentence">
-                              <span>{t('report.submitted.editor.affectedSentence')}</span>
-                              <p>{selectedSegment.text}</p>
+                              <span>{t('report.submitted.editor.affectedParagraph')}</span>
+                              <p>{selectedParagraph.text}</p>
                             </div>
                             {renderSubmittedSignalGauge()}
                             <div className="submitted-panel-meta">
-                              <span>{selectedSentenceDraftStatus}</span>
-                              {selectedSegment.primarySignal.tier && (
-                                <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedSegment.primarySignal.tier}`, { defaultValue: selectedSegment.primarySignal.tier }) })}</span>
+                              <span>{selectedParagraphDraftStatus}</span>
+                              <span>{t('report.submitted.paragraphSignals', { count: selectedParagraph.signalCount || selectedParagraph.signals.length })}</span>
+                              {selectedParagraph.primarySignal.tier && (
+                                <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedParagraph.primarySignal.tier}`, { defaultValue: selectedParagraph.primarySignal.tier }) })}</span>
                               )}
                             </div>
                             <div className="submitted-editor-signal">
                               <span>{t('report.submitted.editor.signal')}</span>
-                              <p>{signalDescription(selectedSegment.primarySignal.key, selectedSegment.primarySignal.description, t)}</p>
+                              <p>{signalDescription(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.description, t)}</p>
                             </div>
-                            {selectedSegment.primarySignal.recommendation && (
+                            {selectedParagraph.primarySignal.recommendation && (
                               <div className="submitted-panel-note">
                                 <span>{t('report.submitted.recommendation')}</span>
-                                <p>{selectedSegment.primarySignal.recommendation}</p>
+                                <p>{selectedParagraph.primarySignal.recommendation}</p>
                               </div>
                             )}
                           </>
