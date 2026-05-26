@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from .scan import Finding, Scan, findings_for_paragraph, select_target_paragraph
-from .text import Paragraph, source_terms
+from .text import Paragraph, source_terms, strip_leading_heading as _strip_leading_heading
 
 
 @dataclass(frozen=True)
@@ -45,8 +45,12 @@ class Plan:
         }
 
 
-def build_plan(scan: Scan, excluded_paragraph_ids: set[str] | None = None) -> tuple[Paragraph, Plan]:
-    paragraph = select_target_paragraph(scan, excluded_paragraph_ids)
+def build_plan(
+    scan: Scan,
+    excluded_paragraph_ids: set[str] | None = None,
+    priority_paragraph_ids: set[str] | None = None,
+) -> tuple[Paragraph, Plan]:
+    paragraph = select_target_paragraph(scan, excluded_paragraph_ids, priority_paragraph_ids)
     findings = {finding.sentence_id: finding for finding in findings_for_paragraph(scan, paragraph.id)}
     actions: list[PlanAction] = []
     for sentence in paragraph.sentences:
@@ -165,19 +169,6 @@ def _dedupe(values: list[str]) -> list[str]:
             out.append(value)
             seen.add(key)
     return out
-
-
-def _strip_leading_heading(text: str) -> str:
-    visible = str(text or "")
-    lines = visible.splitlines()
-    if len(lines) < 2:
-        return visible
-    first = lines[0].strip()
-    if not first or re.search(r"[.!?]$", first):
-        return visible
-    if len(first.split()) <= 8:
-        return "\n".join(lines[1:]).strip() or visible
-    return visible
 
 
 def _planning_tags(tags: list[str], source_text: str) -> list[str]:
@@ -548,6 +539,8 @@ def _recipe_route(tags: list[str]) -> str:
         return "replace the vague pointer with the concrete antecedent before continuing the sentence role"
     if "paraphrase_smoothing" in tag_set:
         return "write a plain source-level relation instead of polished explanation"
+    if "citation_anchor" in tag_set:
+        return "keep the source attribution phrase directly before or after the supported claim; do not embed attribution inside another predicate"
     if "sentence_overload" in tag_set:
         return "split the source relationship into short ordered beats"
     if "predictable_start" in tag_set:
@@ -573,6 +566,8 @@ def _recipe_steps(tags: list[str]) -> list[str]:
         ])
     if "paraphrase_smoothing" in tag_set:
         steps.append("remove polished adjectives and keep source-level pressure")
+    if "citation_anchor" in tag_set:
+        steps.append("write attribution as its own source-to-claim relation, not as a middle fragment inside another sentence")
     if "sentence_overload" in tag_set:
         steps.append("split overload into adjacent sentences with different starters")
     return steps

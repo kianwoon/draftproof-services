@@ -51,6 +51,25 @@ def paragraph_sentence_plan(paragraph: Paragraph, beats: list[dict[str, Any]]) -
     return rows
 
 
+def coverage_loss_contract(sentence_plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for slot in sentence_plan:
+        if not isinstance(slot, dict):
+            continue
+        for group in slot.get("required_sentence_groups") or []:
+            if not isinstance(group, dict):
+                continue
+            rows.append({
+                "source_sentence_id": slot.get("source_sentence_id"),
+                "group_id": group.get("group_id"),
+                "coverage_beat_ids": group.get("coverage_beat_ids", []),
+                "must_cover_terms": group.get("must_cover_terms", []),
+                "source_terms_to_carry": group.get("source_terms_to_carry", []),
+                "failure": "candidate is invalid if this group is omitted or only implied by a broad summary",
+            })
+    return rows[:24]
+
+
 def _sentence_slot_goal(tags: set[str], markers: set[str], beats: list[dict[str, Any]]) -> str:
     if "not always" in markers:
         return "carry the positive side and limited side as one contrast route without repeating the limitation"
@@ -111,7 +130,7 @@ def _required_sentence_groups(tags: set[str], beats: list[dict[str, Any]]) -> li
                 "source_terms_to_carry": chunk,
                 "must_cover_terms": _exact_anchor_terms(chunk),
                 "revoiceable_source_terms": _revoiceable_terms(chunk),
-                "instruction": "write one ordinary sentence for this group before moving to the next group; preserve exact anchors, carry revoiceable terms as plain meaning, and do not join the next group with because, while, that, or and",
+                "instruction": "cover this group in coverage_map and sentence_rows; adjacent groups may share one ordinary sentence when exact anchors and plain meaning remain clear",
             })
     return groups
 

@@ -18,6 +18,7 @@ except ModuleNotFoundError:
     from poc.rewrite_v3.pipeline import _scan_report
 
 from .pipeline import run_v6_rewrite_all
+from .report_contracts import extract_report_signal_contracts
 
 
 def run_rewrite_pipeline_v6(
@@ -55,6 +56,7 @@ def run_rewrite_pipeline_v6(
         cancellation_check=raise_if_canceled,
         runtime_budget_seconds=_v6_runtime_budget_seconds(started),
         min_llm_request_seconds=_v6_min_llm_request_seconds(),
+        report_signal_contracts=extract_report_signal_contracts(detect_json),
     )
     final_text = document.rewritten_text
     changed = final_text.strip() != original_text.strip()
@@ -90,8 +92,11 @@ def run_rewrite_pipeline_v6(
         "candidate_generation_status": {
             "accepted_count": len(document.passes),
             "remaining_findings": len(document.final_scan.findings),
+            "remaining_findings_by_paragraph": _findings_by_paragraph(document.final_scan.to_dict()),
+            "pass_trace": document.pass_trace,
             "stop_reason": status,
         },
+        "v6_pass_trace": document.pass_trace,
         "v6_scores": {
             "initial": document.initial_scan.scores,
             "final": document.final_scan.scores,
@@ -148,6 +153,17 @@ def _scan_report_shape(scan: dict[str, Any]) -> dict[str, Any]:
             "writing_quality_score": mean_risk,
         },
     }
+
+
+def _findings_by_paragraph(scan: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for finding in scan.get("findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        paragraph_id = str(finding.get("paragraph_id") or "")
+        if paragraph_id:
+            counts[paragraph_id] = counts.get(paragraph_id, 0) + 1
+    return counts
 
 
 def _scan_report_for_summary(text: str, *, provided: dict[str, Any] | None, fallback_scan: dict[str, Any]) -> dict[str, Any]:

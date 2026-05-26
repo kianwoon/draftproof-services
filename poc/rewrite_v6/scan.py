@@ -122,11 +122,18 @@ def _sentence_frame(text: str) -> str:
     return " ".join(words[:3])
 
 
-def select_target_paragraph(scan: Scan, excluded_ids: set[str] | None = None) -> Paragraph:
+def select_target_paragraph(
+    scan: Scan,
+    excluded_ids: set[str] | None = None,
+    priority_ids: set[str] | None = None,
+) -> Paragraph:
     if not scan.paragraphs:
         raise ValueError("no paragraphs to rewrite")
     excluded = excluded_ids or set()
     scores: dict[str, float] = {}
+    for paragraph_id in priority_ids or set():
+        if paragraph_id not in excluded:
+            scores[paragraph_id] = scores.get(paragraph_id, 0.0) + 1000.0
     for finding in scan.findings:
         if finding.paragraph_id in excluded:
             continue

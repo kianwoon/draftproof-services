@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from .text import Paragraph, source_terms
+from .text import Paragraph, source_terms, strip_leading_heading as _strip_leading_heading
 
 
 def coverage_ratio(text: str, paragraph: Paragraph) -> float:
@@ -65,16 +65,3 @@ def _required_list_terms(text: str) -> list[str]:
 
 def _word_base(word: str) -> str:
     return str(word or "").casefold().removesuffix("'s").rstrip("s")
-
-
-def _strip_leading_heading(text: str) -> str:
-    visible = str(text or "")
-    lines = visible.splitlines()
-    if len(lines) < 2:
-        return visible
-    first = lines[0].strip()
-    if not first or re.search(r"[.!?]$", first):
-        return visible
-    if len(first.split()) <= 8:
-        return "\n".join(lines[1:]).strip() or visible
-    return visible

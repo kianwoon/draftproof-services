@@ -1,0 +1,241 @@
+from __future__ import annotations
+
+import json
+
+from poc.rewrite_v6.plan import build_plan
+from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _report_target_paragraph_ids, _same_text, run_v6_rewrite_all
+from poc.rewrite_v6.planner_llm import build_planner_prompt
+from poc.rewrite_v6.report_contracts import apply_report_signal_contracts, extract_report_signal_contracts
+from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
+from poc.rewrite_v6.write import Variant, build_prompt, choose_variant
+
+
+class EmptyVariantClient:
+    def __init__(self):
+        self.prompts: list[str] = []
+
+    def chat(self, prompt: str, **_kwargs):
+        self.prompts.append(prompt)
+        return type("Response", (), {"content": '{"variants":[]}', "raw_content": '{"variants":[]}'})()
+
+
+def test_v6_extracts_full_report_signal_contracts_without_blocking_author_proxy():
+    report = {
+        "scan_intelligence": {
+            "transformation": {
+                "core_signals": [
+                    {"key": "citation_grounding_risk", "score": 80},
+                    {"key": "topk_pattern_raw", "score": 71},
+                    {"key": "human_anchor_score", "score": 48},
+                    {"key": "rewrite_smoothness", "score": 34},
+                    {"key": "section_style_variance", "score": 45},
+                ]
+            }
+        },
+        "ai_mitigation": {
+            "component_actions": [
+                {"component": "unsupported_claim_risk", "current_score": 90},
+                {"component": "generic_assertion_risk", "current_score": 65},
+            ]
+        },
+    }
+
+    contracts = extract_report_signal_contracts(report)
+    groups = {row["signal_group"] for row in contracts}
+
+    assert {
+        "grounding_route",
+        "predictability_route",
+        "human_anchor_route",
+        "thinking_path_route",
+        "source_coverage_route",
+        "claim_scope_route",
+        "context_specificity_route",
+    } <= groups
+    assert all("do not present unsupported external facts as verified" in row["author_proxy_policy"] for row in contracts)
+
+
+def test_v6_extracts_generic_contracts_from_report_findings_with_fractional_scores():
+    report = {
+        "findings": {
+            "medium": [
+                {"title": "medium_predictability", "category": "predictability", "score": 0.51},
+                {"title": "low_specificity", "signal_category": "genericity", "score": 0.44},
+                {"title": "uniform_paragraph_structure", "category": "ai_generation", "score": 0.48},
+                {"title": "semantic_drift", "category": "semantic_shape", "score": 0.62},
+            ]
+        }
+    }
+
+    groups = {row["signal_group"] for row in extract_report_signal_contracts(report)}
+
+    assert {
+        "predictability_route",
+        "context_specificity_route",
+        "thinking_path_route",
+        "source_coverage_route",
+    } <= groups
+
+
+def test_v6_report_signal_contracts_reach_planner_and_writer_prompts():
+    scan = scan_text("This process uses a form, a queue, and a review because the system should improve.")
+    paragraph, plan = build_plan(scan)
+    plan = apply_report_signal_contracts(
+        plan,
+        [{
+            "signal_group": "grounding_route",
+            "score": 80,
+            "writer_obligation": "keep claims near submitted support",
+            "target_excerpts": ["form queue review"],
+        }],
+    )
+
+    planner_payload = json.loads(build_planner_prompt(paragraph, plan, findings_for_paragraph(scan, paragraph.id)).split("\n", 1)[1])
+    writer_payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+
+    planner_contracts = planner_payload["deterministic_route_skeleton"]["document_signal_contracts"]
+    writer_contracts = writer_payload["planner_decision"]["document_signal_contracts"]
+    direct_writer_contracts = writer_payload["document_signal_contracts"]
+    assert planner_contracts[0]["signal_group"] == "grounding_route"
+    assert planner_contracts[0]["target_excerpts"] == ["form queue review"]
+    assert writer_contracts[0]["writer_obligation"] == "keep claims near submitted support"
+    assert direct_writer_contracts[0]["signal_group"] == "grounding_route"
+    assert "document_signal_contracts as the primary build contract" in " ".join(writer_payload["generation_rules"])
+
+
+def test_v6_report_target_excerpts_map_to_local_paragraph_ids_without_raw_id_coupling():
+    text = (
+        "First paragraph has ordinary setup.\n\n"
+        "The salon paragraph explains haircutting structure, projection angle, working memory, and learner confidence."
+    )
+    report = {
+        "scan_intelligence": {"transformation": {"core_signals": [{"key": "topk_pattern_raw", "score": 70}]}},
+        "rewrite_decision": {"targets": ["f022"]},
+        "findings": {
+            "medium": [{
+                "finding_id": "f022",
+                "rewrite_context": {
+                    "paragraph_id": "p999",
+                    "paragraph_excerpt": "haircutting structure place strain on working memory and learner confidence",
+                },
+            }]
+        },
+    }
+
+    contracts = extract_report_signal_contracts(report)
+    scan = scan_text(text)
+    paragraph, _ = build_plan(scan, priority_paragraph_ids=_report_target_paragraph_ids(scan, contracts))
+
+    assert _report_target_paragraph_ids(scan, contracts) == {"p002"}
+    assert paragraph.id == "p002"
+
+
+def test_v6_report_target_acceptance_does_not_block_non_worse_anchor_repairs():
+    scan = scan_text("The method uses a form and a review.")
+
+    assert _acceptable_progress(scan, scan, report_targeted=True)
+    assert not _acceptable_progress(scan, scan, report_targeted=False)
+
+
+def test_v6_acceptance_rejects_non_target_paragraph_regression():
+    before = scan_text("This is an important process because the team should improve.\n\nPlain stable paragraph.")
+    after = scan_text("This process improved through a team review.\n\nThis is an important issue because the stable paragraph should improve.")
+
+    assert _cross_paragraph_regression(before, after, "p001")
+
+
+def test_v6_pipeline_schedules_report_target_even_without_local_findings():
+    text = (
+        "First paragraph has ordinary setup.\n\n"
+        "The salon paragraph explains haircutting structure, projection angle, working memory, and learner confidence."
+    )
+    contracts = [{
+        "signal_group": "predictability_route",
+        "score": 70,
+        "writer_obligation": "change report-target route",
+        "target_excerpts": ["haircutting structure place strain on working memory and learner confidence"],
+    }]
+    writer = EmptyVariantClient()
+
+    result = run_v6_rewrite_all(text, writer_client=writer, max_passes=2, report_signal_contracts=contracts)
+
+    assert writer.prompts
+    assert "haircutting structure" in writer.prompts[0]
+    assert "ordinary setup" not in writer.prompts[0]
+    assert result.pass_trace[0]["status"] == "no_change"
+    assert result.pass_trace[0]["target_paragraph_id"] == "p002"
+    assert not result.passes
+
+
+def test_v6_no_change_detection_ignores_paragraph_spacing_normalization():
+    assert _same_text("First paragraph.\n\nSecond paragraph.", "First paragraph. Second paragraph.")
+
+
+def test_v6_writer_prompt_surfaces_required_sentence_groups_as_coverage_loss_contract():
+    text = (
+        "Learner performance is assessed against industry benchmarks, in my delivery of SHBHCUT006 I adapted the scaffolding approach with the Octagon method, and salon safety and commercial time constraints remained consistent for learners."
+    )
+    scan = scan_text(text)
+    paragraph, plan = build_plan(scan)
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    groups = payload["coverage_loss_contract"]
+
+    assert groups
+    assert any("salon" in " ".join(row["source_terms_to_carry"]).casefold() for row in groups)
+    assert "sentence_row_id for each covered group" in " ".join(payload["generation_rules"])
+    assert "cover every group in coverage_map" in " ".join(payload["generation_rules"])
+    assert "one final sentence per group" not in build_prompt(paragraph, plan)
+    assert "same row sequence joined" not in build_prompt(paragraph, plan)
+    assert "coverage_map to prove group coverage" in build_prompt(paragraph, plan)
+    assert "Do not write repair-trace labels" in " ".join(payload["generation_rules"])
+
+
+def test_v6_writer_schema_keeps_coverage_map_separate_from_sentence_text():
+    paragraph, plan = build_plan(scan_text("The process uses a form, a queue, and a review."))
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    variant_schema = payload["output_schema"]["variants"][0]
+    coverage_row = variant_schema["coverage_map"][0]
+    sentence_row = variant_schema["sentence_rows"][0]
+
+    assert "sentence" not in coverage_row
+    assert coverage_row["sentence_row_id"]
+    assert "sentence" in sentence_row
+
+
+def test_v6_selected_author_proxy_candidate_labels_short_new_bridge_terms_for_review():
+    paragraph = scan_text("Department guidance says adjustment must not undermine performance standards.").paragraphs[0]
+    variant = Variant(id="v1", source="llm", text="Department guidance oversees adjustment and performance standards.")
+
+    selected = choose_variant([variant], paragraph)
+
+    assert selected and selected.author_review_items
+    assert "oversees" in selected.author_review_items[0]["target_text"]
+
+
+def test_v6_selector_rejects_fragment_and_repair_trace_candidate_even_when_different():
+    paragraph = scan_text(
+        "The method keeps assessment requirements visible. The teacher adapted the task while safety standards remained in place."
+    ).paragraphs[0]
+    candidate = Variant(
+        id="v1",
+        source="llm",
+        text=(
+            "The method keeps assessment requirements visible. "
+            "The includes the requirements. "
+            "A real setting is the context. "
+            "Safety standards remained in place."
+        ),
+    )
+
+    selected = choose_variant([Variant(id="source_preserved", source="source_preserved", text=paragraph.text), candidate], paragraph)
+
+    assert selected and selected.source == "source_preserved"
+
+
+def test_v6_citation_anchor_recipe_keeps_attribution_as_source_to_claim_relation():
+    scan = scan_text("According to cognitive load theory, complex spatial task such as constructing haircutting structure place a significant strain on working memory.")
+    paragraph, plan = build_plan(scan)
+    recipe = plan.ai_safe_route["construction_recipes"][0]
+
+    assert "source attribution phrase" in recipe["build_route"]
+    assert any("attribution" in step for step in recipe["build_steps"])

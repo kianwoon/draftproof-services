@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from poc.rewrite_v6.pipeline import _planner_provider, run_v6_rewrite, run_v6_rewrite_all
+from poc.rewrite_v6 import pipeline as v6_pipeline
+from poc.rewrite_v6.pipeline import _planner_provider, _writer_model, _writer_provider, run_v6_rewrite, run_v6_rewrite_all
 from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6.planner_llm import run_planner_llm
 from poc.rewrite_v6 import production as v6_production
@@ -310,6 +311,9 @@ def test_v6_downgrades_unsafe_llm_planner_contracts_to_route_questions():
     assert decision["finding_contracts"]
     assert decision["paragraph_blueprint"]
     assert decision["do_not_copy_phrases"]
+    assert "exact source anchor first" not in json.dumps(decision)
+    serialized_decision = json.dumps(decision)
+    assert "concrete source anchor" in serialized_decision or "Group related source terms" in serialized_decision
     assert "author_route_questions" in build_prompt(paragraph, updated)
     assert "deterministic fallback finding_contracts" in decision["fallback_instruction"]
 
@@ -747,6 +751,29 @@ def test_v6_document_rewrite_stops_before_llm_when_runtime_budget_is_tight():
     assert result.passes == []
     assert result.rewritten_text == "A process uses a form, a queue, and a review."
     assert any("runtime budget reached" in message for _percent, message in events)
+
+
+def test_v6_document_rewrite_covers_unseen_finding_paragraphs_before_revisiting(monkeypatch):
+    source = (
+        "This process uses a form, a queue, and a review. "
+        "This result shows a problem because the system should improve.\n\n"
+        "This framework uses a policy, a standard, and a benchmark."
+    )
+    seen = []
+
+    def fake_run(current, **kwargs):
+        scan = scan_text(current)
+        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"))
+        seen.append(paragraph.id)
+        replacement = "This result shows a problem because the system should improve." if paragraph.id == "p001" else "The framework uses a policy standard."
+        blocks = [replacement if block.id == paragraph.id else block.text for block in scan.paragraphs]
+        return v6_pipeline.Result(scan=scan, plan=plan, variants=[], selected=None, rewritten_text="\n\n".join(blocks))
+
+    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
+    result = v6_pipeline.run_v6_rewrite_all(source, max_passes=2)
+
+    assert seen == ["p001", "p002"]
+    assert [row["target_paragraph_id"] for row in result.pass_trace] == ["p001", "p002"]
 
 
 def test_v6_document_rewrite_honors_cancellation_before_llm():
@@ -1441,17 +1468,20 @@ def test_v6_document_rewrite_preserves_source_when_writer_has_no_candidates():
 
 
 def test_v6_glm47_planner_prefers_cerebras_provider(monkeypatch):
-    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_PROVIDER_ROUTING_JSON", raising=False)
-    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_PROVIDER_ORDER", raising=False)
-    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_PROVIDER_ONLY", raising=False)
-    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_PROVIDER_IGNORE", raising=False)
-    monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_PROVIDER_SORT", raising=False)
+    for name in ("ROUTING_JSON", "ORDER", "ONLY", "IGNORE", "SORT"):
+        monkeypatch.delenv(f"DRAFTPROOF_V6_PLANNER_PROVIDER_{name}", raising=False)
     monkeypatch.delenv("DRAFTPROOF_V6_PLANNER_ALLOW_FALLBACKS", raising=False)
 
-    assert _planner_provider("z-ai/glm-4.7") == {
-        "order": ["Cerebras"],
-        "allow_fallbacks": True,
-    }
+    assert _planner_provider("z-ai/glm-4.7") == {"order": ["Cerebras"], "allow_fallbacks": True}
+
+
+def test_v6_glm47_writer_is_default_and_prefers_cerebras_provider(monkeypatch):
+    for name in ("MODEL", "PROVIDER_ROUTING_JSON", "PROVIDER_ORDER", "PROVIDER_ONLY", "PROVIDER_IGNORE", "PROVIDER_SORT", "PROVIDER_ALLOW_FALLBACKS"):
+        monkeypatch.delenv(f"DRAFTPROOF_V6_WRITER_{name}", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+    assert _writer_model() == "z-ai/glm-4.7"
+    assert _writer_provider("z-ai/glm-4.7") == {"order": ["Cerebras"], "allow_fallbacks": True}
 
 
 def test_v6_planner_provider_env_overrides_default(monkeypatch):

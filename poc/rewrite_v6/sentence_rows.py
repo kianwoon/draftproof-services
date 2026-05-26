@@ -16,6 +16,13 @@ def compile_sentence_rows(row: dict[str, Any]) -> str:
     seen: set[str] = set()
     for item in rows:
         for sentence in _row_sentences(item):
+            if sentences:
+                merged = _merge_dangling_sentence(sentences[-1], sentence)
+                if merged:
+                    seen.discard(_sentence_key(sentences[-1]))
+                    sentences[-1] = merged
+                    seen.add(_sentence_key(merged))
+                    continue
             sentence = _repair_sentence(sentence, sentences[-1] if sentences else "")
             key = _sentence_key(sentence)
             if key in seen or _near_duplicate_sentence(sentence, sentences):
@@ -159,8 +166,8 @@ def _split_overloaded_sentence(sentence: str, *, force: bool = False) -> list[st
     if len(parts) >= 2:
         return [_clean_sentence(part) for part in parts]
     parts = _split_not_by_expectation_when(text)
-    if len(parts) == 2:
-        return [_clean_sentence(parts[0]), _clean_sentence(parts[1])]
+    if _parts_changed(parts, text):
+        return [_clean_sentence(part) for part in parts]
     parts = _split_in_setting_start(text)
     if len(parts) == 2:
         return [_clean_sentence(parts[0]), _clean_sentence(parts[1])]
@@ -270,7 +277,7 @@ def _split_according_to_start(text: str) -> list[str]:
     if strain:
         category, example, pressure, object_text = strain
         return [f"{example} is part of {category}", f"{source} links that task to {pressure} on {object_text}"]
-    return [f"{source} is the source frame", claim]
+    return [f"{source} supports this point", claim]
 
 
 def _split_distinction_between(text: str) -> list[str]:
@@ -280,7 +287,7 @@ def _split_distinction_between(text: str) -> list[str]:
     subject = match.group(1).strip(" ,;:")
     first = _plain_compare_side(match.group(2))
     second = _plain_compare_side(match.group(3))
-    return [f"{subject} separates {first} from {second}", f"The distinction keeps both sides visible"]
+    return [f"{subject} separates {first} from {second}"]
 
 
 def _split_obligation_provide(text: str) -> list[str]:
@@ -310,7 +317,7 @@ def _split_must_not_undermine(text: str) -> list[str]:
     subject = match.group(1).strip(" ,;:")
     first = match.group(2).strip(" ,;:")
     second = match.group(3).strip(" ,;:")
-    return [f"{subject} must not undermine {first}", f"The same limit also covers {second}"]
+    return [f"{subject} must not undermine {first}", f"{subject} must also preserve {second}"]
 
 
 def _split_such_as_strain(text: str) -> list[str]:
@@ -372,7 +379,7 @@ def _split_context_delivery(text: str) -> list[str]:
     context = match.group(1).strip(" ,;:")
     middle = match.group(2).strip(" ,;:")
     delivery = match.group(3).strip(" ,;:")
-    return [f"{context} is the context", f"{middle[:1].upper()}{middle[1:]} in my delivery {delivery}"]
+    return [f"In {context}, {middle}", f"My delivery {delivery} kept that condition attached to the task"]
 
 
 def _split_and_instead_focus(text: str) -> list[str]:
@@ -520,7 +527,7 @@ def _split_not_by_expectation_when(text: str) -> list[str]:
     expectation = match.group(2).strip(" ,;:")
     condition = match.group(3).strip(" ,;:")
     subject = "The same people" if actor.casefold() == "they" else actor
-    return [f"{subject} cannot rely on {expectation}", f"The same limit applies when {condition}"]
+    return [f"When {condition}, {_lower_start(subject)} cannot rely on {expectation}"]
 
 
 def _split_in_setting_start(text: str) -> list[str]:
@@ -531,8 +538,8 @@ def _split_in_setting_start(text: str) -> list[str]:
     rest = f"{match.group(2)} {match.group(3)}".strip(" ,;:")
     because = _split_once(rest, r"\s+\bbecause\b\s+")
     if len(because) == 2:
-        return [f"{setting[:1].upper()}{setting[1:]} is the setting", because[0].strip(" ,;:")]
-    return [f"{setting[:1].upper()}{setting[1:]} is the setting", f"{rest[:1].upper()}{rest[1:]}"]
+        return [f"In {setting}, {because[0].strip(' ,;:')}"]
+    return [f"In {setting}, {rest[:1].upper()}{rest[1:]}"]
 
 
 def _split_in_context_comma(text: str) -> list[str]:
@@ -541,7 +548,7 @@ def _split_in_context_comma(text: str) -> list[str]:
         return [text]
     context = match.group(1).strip(" ,;:")
     claim = match.group(2).strip(" ,;:")
-    return [f"{context[:1].upper()}{context[1:]} is the context", f"{claim[:1].upper()}{claim[1:]}"]
+    return [f"In {context}, {claim[:1].lower()}{claim[1:]}"]
 
 
 def _split_on_other_hand(text: str) -> list[str]:
@@ -550,7 +557,7 @@ def _split_on_other_hand(text: str) -> list[str]:
         return [text]
     left = parts[0].strip(" ,;:")
     right = parts[1].strip(" ,;:")
-    return [left, f"The other side is {right}"]
+    return [left, f"{right[:1].upper()}{right[1:]}"]
 
 
 def _split_yet_result(text: str) -> list[str]:
@@ -736,6 +743,29 @@ def _repair_sentence(sentence: str, previous: str) -> str:
     return _repair_fragment_start(_repair_context_start(sentence, previous), previous)
 
 
+def _merge_dangling_sentence(previous: str, current: str) -> str:
+    left = str(previous or "").strip()
+    right = str(current or "").strip()
+    if not left or not right:
+        return ""
+    bare_left = left.rstrip(".!?").strip()
+    bare_right = right.rstrip(".!?").strip()
+    lowered_left = bare_left.casefold()
+    if lowered_left.endswith(" simply"):
+        return _clean_sentence(f"{bare_left} because {_lower_start(bare_right)}")
+    if lowered_left.endswith(" on the other hand"):
+        return _clean_sentence(f"{bare_left}, {_lower_start(bare_right)}")
+    if re.search(r"\b(?:with|without|to|by|of|for|from|into|onto|rather than|instead of)$", lowered_left):
+        return _clean_sentence(f"{bare_left} {_lower_start(bare_right)}")
+    if _short_subject_verb_row(bare_left):
+        return _clean_sentence(f"{bare_left} {_lower_start(bare_right)}")
+    return ""
+
+
+def _short_subject_verb_row(text: str) -> bool:
+    return bool(re.match(r"^(?:I|we|they|he|she|it|students?|teachers?|learners?|educators?)\s+[A-Za-z]+(?:ed|s)$", str(text or "").strip(), flags=re.I))
+
+
 def _repair_fragment_start(sentence: str, previous: str) -> str:
     text = str(sentence or "").strip()
     match = re.match(r"^(Rather|Also|Thereby|Furthermore)\s+(.+)$", text, flags=re.I)
@@ -785,9 +815,6 @@ def _repair_context_start(sentence: str, previous: str) -> str:
     match = re.match(r"^It is an?\s+(.+?)\s+that\s+(.+)$", text, flags=re.I)
     if match:
         return _clean_sentence(f"The {match.group(1).strip(' ,;:')} {match.group(2).strip(' ,;:')}")
-    match = re.match(r"^It is an?\s+([A-Za-z][A-Za-z'’-]{3,})(\b.*)$", text, flags=re.I)
-    if match:
-        return _clean_sentence(f"The {match.group(1)}{match.group(2)}")
     match = re.match(r"^This applies\b(.*)$", text, flags=re.I)
     antecedent = _right_to_phrase(previous)
     if match and antecedent:

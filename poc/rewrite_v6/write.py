@@ -6,11 +6,12 @@ from typing import Any, Protocol
 from .coverage_guard import coverage_ratio, missing_required_source_terms
 from .json_io import parse_json
 from .plan import Plan
-from .prompt_shape import paragraph_sentence_plan
+from .prompt_shape import coverage_loss_contract, paragraph_sentence_plan
+from .prose_quality import fragment_trace_penalty, has_fragment_or_trace_sentences
 from .review_provenance import annotate_review_items
 from .scan import scan_text
 from .sentence_rows import compile_or_fallback_text
-from .text import Paragraph, source_terms, split_paragraphs, word_count
+from .text import Paragraph, source_terms, split_paragraphs, strip_leading_heading, word_count
 
 
 class ChatClient(Protocol):
@@ -41,7 +42,7 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
             system=(
                 "Return valid JSON only with a variants array matching the requested variant ids. "
                 "If list_contract_active is true, no final text sentence may contain two or more commas. "
-                "If paragraph_sentence_plan has required_sentence_groups, write one final sentence per group using only that group's terms; joining groups with because, while, that, or and is invalid. "
+                "If paragraph_sentence_plan has required_sentence_groups, cover every group in coverage_map; adjacent groups may share a natural sentence when grammar, coverage, and source order stay clear. "
                 "Write complete grammatical sentences with normal articles, prepositions, and subjects. Preserve submitted meaning, coverage, and first-person voice when present, but do not preserve submitted wording, order, "
                 "list rhythm, opener, or closure shape."
             ),
@@ -60,6 +61,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
     golden_route = plan.ai_safe_route.get("golden_route", {})
     variant_requirements = [variant_focus] if variant_focus else _requested_variant_requirements()
     coverage_beats = _prompt_coverage_beats(plan)
+    sentence_plan = paragraph_sentence_plan(paragraph, coverage_beats)
     payload = {
         "task": "coverage_beat_paragraph_generation",
         "golden_question": golden_route.get(
@@ -89,10 +91,12 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
         },
         "polarity_constraints": _polarity_constraints(paragraph),
         "coverage_beats_must_all_appear": coverage_beats,
-        "paragraph_sentence_plan": paragraph_sentence_plan(paragraph, coverage_beats),
+        "paragraph_sentence_plan": sentence_plan,
+        "coverage_loss_contract": coverage_loss_contract(sentence_plan),
         "author_route_questions": _prompt_author_route_questions(plan),
         "construction_recipes": _prompt_construction_recipes(plan),
         "planner_decision": plan.ai_safe_route.get("llm_planner_decision", {}),
+        "document_signal_contracts": plan.ai_safe_route.get("document_signal_contracts", []),
         "hard_generation_requirements": {
             "required_variant_ids": [row["id"] for row in variant_requirements],
             "exact_variant_count": len(variant_requirements),
@@ -129,15 +133,16 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "Do not add new abstract content words such as critical, overwhelming, central, landscape, nuanced, complex, abundant, unverified, accessibility, importance, or reliability unless that exact idea appears in content_word_boundary.",
             "If a new content word is not in content_word_boundary, either replace it with an allowed source term or include an author_review_items row explaining the bridge.",
             "Use neighboring context only to name the bridge behind a vague source beat. Do not import neighboring examples, platforms, names, or lists into the replacement unless the selected paragraph's own coverage beats contain them.",
-            "Treat planner_decision.finding_contracts as the primary build contract.",
-            "Every scanner finding must be visibly resolved by a final sentence mapped in coverage_map.",
-            "For each finding_contract, execute writer_must_do and avoid writer_must_not_do.",
+            "Treat planner_decision.finding_contracts and document_signal_contracts as the primary build contract.",
+            "Every scanner finding and document signal contract must be visibly resolved by final sentences mapped in coverage_map.",
+            "For each finding_contract, execute writer_must_do and avoid writer_must_not_do; for each document signal contract, execute writer_obligation.",
             "Use safe_rebuild_shape as the sentence construction pattern; do not copy unsafe_original_shape.",
             "If planner_decision.contract_gaps is not empty, repair those gaps in the final paragraph instead of copying the weak planner shape.",
             "If a contract_gap says a risky source phrase was copied, that quoted phrase must not appear in the final text.",
             "Before returning, compare final text against planner_decision.contract_gaps and rewrite any sentence that still contains a copied risky phrase or planning label.",
             "If safe_rebuild_shape contains placeholder brackets, instantiate it using the contract coverage_terms before writing.",
             "Do not copy planning labels from safe_rebuild_shape into the paragraph, including relation, beat, anchor, route, contract, source term, or writer.",
+            "Do not write repair-trace labels such as is the context, same point, same limit, keeps both sides visible, or the other side.",
             "Treat paragraph_sentence_plan.revoiceable_source_terms as meaning-only. Do not copy polished or evaluative revoiceable wording when a simpler source relation can carry the same meaning.",
             "If a source relation needs both an action and a condition, split them into adjacent sentences instead of joining them with while, that, which, or because.",
             "For context_anchor_gap or broad_claim contracts, the final sentence must start from the named antecedent, not this, that, model, result, or a generic claim.",
@@ -148,11 +153,10 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "Each final sentence must map to a planner_decision.paragraph_blueprint step or a coverage beat; do not invent extra route filler.",
             "For each blueprint step, use must_include terms and safe_sentence_shape, while avoiding must_avoid_shape.",
             "For every coverage beat, apply its construction_recipe before writing the paragraph.",
-            "Before final text, make coverage_map show the construction_recipe_id used for each sentence.",
-            "Create a coverage_map before the final text. Every coverage beat must appear in the candidate meaning.",
-            "Build from paragraph_sentence_plan. If a slot has required_sentence_groups, write one final sentence per group and one coverage_map row per group; otherwise one sentence may carry multiple coverage_beat_ids.",
-            "The executor compiles final paragraph text from coverage_map sentence rows. The text field must be the same row sequence joined with spaces, not a separate rewritten paragraph.",
-            "When required_sentence_groups exist, create one row per group; otherwise do not create one sentence per coverage beat when paragraph_sentence_plan groups those beats into one slot.",
+            "Before final text, make coverage_map show construction_recipe_id and sentence_row_id for each covered group.",
+            "Build from paragraph_sentence_plan. If a slot has required_sentence_groups, cover every group in coverage_map; adjacent groups may share a natural sentence when coverage stays explicit.",
+            "The executor compiles final paragraph text from sentence_rows first; use coverage_map to prove group coverage, not as a forced sentence split.",
+            "When required_sentence_groups exist, coverage_map needs one row per group, but sentence_rows may merge adjacent groups into ordinary prose when coverage stays explicit.",
             "Every final sentence must map to a sentence_slot_id or explain which coverage beat required an extra sentence.",
             "Every source-side contrast must survive. If a beat contains terms from both sides of a contrast, preserve both sides instead of keeping only the first side.",
             "Do not invert source polarity. If the source says not less, no longer, not only, not always, without, or does not, preserve that direction instead of rewriting it as reduction, limitation, or a positive claim.",
@@ -230,8 +234,6 @@ def _variant_requirements() -> list[dict[str, str]]:
 
 def _requested_variant_requirements() -> list[dict[str, str]]:
     return _variant_requirements()[:_requested_variant_count()]
-
-
 def _requested_variant_count() -> int:
     raw = os.environ.get("DRAFTPROOF_V6_WRITER_VARIANTS", "1")
     try:
@@ -254,18 +256,14 @@ def _variant_schema(requirement: dict[str, str]) -> dict[str, Any]:
             "draft_sentence": "plain route sketch; final text may expand it to preserve coverage",
         }],
         "coverage_map": [{
-            "sentence_slot_id": "paragraph_sentence_plan slot id used by this sentence",
-            "coverage_beat_ids": ["one or more coverage beat ids carried by this sentence"],
+            "sentence_slot_id": "paragraph_sentence_plan slot id covered by this row",
+            "sentence_row_id": "sentence_rows id where this coverage appears",
+            "coverage_beat_ids": ["one or more coverage beat ids covered by this row"],
             "coverage_beat_id": "coverage beat id; include required_sentence_group_id when paragraph_sentence_plan requires a group row",
             "construction_recipe_id": "recipe id used for this beat",
             "finding_contract_id": "finding contract id resolved, empty if none",
-            "sentence": "candidate sentence carrying this beat",
         }],
-        "sentence_rows": [{
-            "sentence_slot_id": "same as coverage_map sentence_slot_id",
-            "coverage_beat_ids": ["coverage beats carried by this sentence"],
-            "sentence": "the exact sentence to compile into final paragraph text",
-        }],
+        "sentence_rows": [{"sentence_row_id": "srow_001", "sentence_slot_id": "same as coverage_map sentence_slot_id", "coverage_beat_ids": ["coverage beats carried by this sentence"], "sentence": "the exact sentence to compile into final paragraph text"}],
         "text": "replacement paragraph only",
         "author_proxy_provenance": [],
         "author_review_items": [],
@@ -365,7 +363,7 @@ def _polarity_constraints(paragraph: Paragraph) -> list[dict[str, Any]]:
 
 def _allowed_content_terms(paragraph: Paragraph, plan: Plan) -> list[str]:
     terms: list[str] = []
-    terms.extend(source_terms(paragraph.text, limit=80))
+    terms.extend(source_terms(strip_leading_heading(paragraph.text), limit=80))
     for value in _prompt_context_terms(plan)[:5]:
         terms.append(str(value))
     for value in _prompt_named_references(plan)[:16]:
@@ -629,8 +627,6 @@ def _dedupe_variants(variants: list[Variant]) -> list[Variant]:
         rows.append(variant)
         seen.add(key)
     return rows
-
-
 def _coverage_rows(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -688,6 +684,8 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
         return False
     if _candidate_contract_violation(candidate.text, paragraph):
         return False
+    if has_fragment_or_trace_sentences(candidate.text):
+        return False
     if finding_drop >= 2 and risk_drop >= -2.0:
         return True
     if finding_drop >= 1 and risk_drop >= 0.0:
@@ -712,7 +710,7 @@ def _variant_rank(variant: Variant, paragraph: Paragraph, source_words: int) -> 
     return (
         -scan.scores["finding_count"],
         -mean_risk,
-        -(quality_penalty + source_drift_penalty * 0.25 + compression_penalty + extra_beat_penalty + final_beat_penalty + polarity_penalty + bridge_penalty + contract_penalty),
+        -(quality_penalty + fragment_trace_penalty(variant.text) + source_drift_penalty * 0.25 + compression_penalty + extra_beat_penalty + final_beat_penalty + polarity_penalty + bridge_penalty + contract_penalty),
         coverage_ratio(variant.text, paragraph),
         words >= source_words * 0.9,
         -abs(words - source_words),
@@ -942,7 +940,7 @@ def _source_drift_penalty(variant: Variant, paragraph: Paragraph) -> float:
     flagged = {
         word
         for word in new_words
-        if len(word) >= 9 or word.endswith(("tion", "ment", "ity", "ness", "ance", "ence"))
+        if len(word) >= 8 or word.endswith(("tion", "ment", "ity", "ness", "ance", "ence"))
     }
     reviewed_words = _reviewed_word_set(variant)
     unsupported = [word for word in flagged if word not in reviewed_words]
@@ -964,7 +962,7 @@ def _unreviewed_bridge_violation(variant: Variant, paragraph: Paragraph) -> bool
         word
         for word in new_words
         if _word_base(word) not in source_words
-        if len(word) >= 9 or word.endswith(("tion", "ment", "ity", "ness", "ance", "ence", "form"))
+        if len(word) >= 8 or word.endswith(("tion", "ment", "ity", "ness", "ance", "ence", "form"))
     }
     return bool(flagged)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable
@@ -9,6 +10,7 @@ from poc.llm.gateway import LLMConfig, LLMGateway
 
 from .plan import Plan, build_plan
 from .planner_llm import run_planner_llm
+from .report_contracts import apply_report_signal_contracts
 from .scan import Scan, findings_for_paragraph, scan_text
 from .write import Variant, choose_variant, write_variants
 
@@ -40,6 +42,7 @@ class DocumentResult:
     final_scan: Scan
     passes: list[Result]
     rewritten_text: str
+    pass_trace: list[dict[str, Any]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -47,6 +50,7 @@ class DocumentResult:
             "final_scan": self.final_scan.to_dict(),
             "passes": [result.to_dict() for result in self.passes],
             "rewritten_text": self.rewritten_text,
+            "pass_trace": list(self.pass_trace),
         }
 
 
@@ -62,10 +66,13 @@ def run_v6_rewrite(
     progress_callback: Callable[[int, str], None] | None = None,
     progress_percent: int | None = None,
     cancellation_check: Callable[[], None] | None = None,
+    report_signal_contracts: list[dict[str, Any]] | None = None,
+    priority_paragraph_ids: set[str] | None = None,
 ) -> Result:
     _raise_if_canceled(cancellation_check)
     scan = scan_text(text)
-    paragraph, plan = build_plan(scan, excluded_paragraph_ids)
+    paragraph, plan = build_plan(scan, excluded_paragraph_ids, priority_paragraph_ids)
+    plan = apply_report_signal_contracts(plan, report_signal_contracts)
     _emit_progress(progress_callback, progress_percent, f"Planning V6 paragraph {paragraph.id}")
     _raise_if_canceled(cancellation_check)
     if planner_client is not None or writer_client is None:
@@ -89,6 +96,7 @@ def run_v6_rewrite(
             max_tokens=None,
             temperature=0.12,
             top_p=0.75,
+            provider=_writer_provider(model or _writer_model()),
             extra_body=_writer_extra_body(model or _writer_model()),
             cancellation_check=cancellation_check,
         )
@@ -113,21 +121,33 @@ def run_v6_rewrite_all(
     cancellation_check: Callable[[], None] | None = None,
     runtime_budget_seconds: float | None = None,
     min_llm_request_seconds: float = 180.0,
+    report_signal_contracts: list[dict[str, Any]] | None = None,
 ) -> DocumentResult:
     started_at = time.monotonic()
     initial_scan = scan_text(text)
     current = text
     passes: list[Result] = []
+    pass_trace: list[dict[str, Any]] = []
     limit = max_passes if max_passes is not None else max(1, len(initial_scan.paragraphs) * 5)
     attempts: dict[str, int] = {}
     exhausted: set[str] = set()
+    covered: set[str] = set()
     for pass_index in range(limit):
         _raise_if_canceled(cancellation_check)
         before = scan_text(current)
-        if not before.findings:
+        report_target_ids = _report_target_paragraph_ids(before, report_signal_contracts)
+        if not before.findings and not report_target_ids:
             break
-        if len(exhausted) >= len(before.paragraphs):
+        finding_paragraph_ids = _finding_paragraph_ids(before) | report_target_ids
+        if finding_paragraph_ids and len(exhausted & finding_paragraph_ids) >= len(finding_paragraph_ids):
             break
+        excluded_for_pass = _coverage_exclusions(
+            finding_paragraph_ids=finding_paragraph_ids,
+            exhausted=exhausted,
+            covered=covered,
+        )
+        if not (finding_paragraph_ids - exhausted - covered):
+            covered.clear()
         start_percent = _rewrite_progress_percent(pass_index, limit)
         _emit_progress(
             progress_callback,
@@ -140,37 +160,174 @@ def run_v6_rewrite_all(
             min_llm_request_seconds=min_llm_request_seconds,
         ):
             _emit_progress(progress_callback, start_percent, "V6 runtime budget reached before starting another LLM request")
+            pass_trace.append(
+                _pass_trace_row(
+                    pass_index=pass_index,
+                    status="runtime_budget_reached",
+                    before=before,
+                    excluded=excluded_for_pass,
+                )
+            )
             break
         result = run_v6_rewrite(
             current,
             planner_client=planner_client,
             writer_client=writer_client,
-            excluded_paragraph_ids=exhausted,
+            excluded_paragraph_ids=excluded_for_pass,
             model=model,
             api_key=api_key,
             base_url=base_url,
             progress_callback=progress_callback,
             progress_percent=start_percent,
             cancellation_check=cancellation_check,
+            report_signal_contracts=report_signal_contracts,
+            priority_paragraph_ids=finding_paragraph_ids - exhausted,
         )
         end_percent = _rewrite_progress_percent(pass_index + 1, limit)
-        if result.rewritten_text == current:
+        if _same_text(result.rewritten_text, current):
             exhausted.add(result.plan.paragraph_id)
+            pass_trace.append(
+                _pass_trace_row(
+                    pass_index=pass_index,
+                    status="no_change",
+                    before=before,
+                    target_paragraph_id=result.plan.paragraph_id,
+                    excluded=excluded_for_pass,
+                )
+            )
             _emit_progress(progress_callback, end_percent, f"V6 paragraph {result.plan.paragraph_id} made no change")
             continue
         after = scan_text(result.rewritten_text)
-        if not _improved(before, after):
+        if _cross_paragraph_regression(before, after, result.plan.paragraph_id) or not _acceptable_progress(before, after, report_targeted=result.plan.paragraph_id in report_target_ids):
             attempts[result.plan.paragraph_id] = attempts.get(result.plan.paragraph_id, 0) + 1
             if attempts[result.plan.paragraph_id] >= 4:
                 exhausted.add(result.plan.paragraph_id)
+            pass_trace.append(
+                _pass_trace_row(
+                    pass_index=pass_index,
+                    status="not_improved",
+                    before=before,
+                    after=after,
+                    target_paragraph_id=result.plan.paragraph_id,
+                    excluded=excluded_for_pass,
+                )
+            )
             _emit_progress(progress_callback, end_percent, f"V6 paragraph {result.plan.paragraph_id} did not improve")
             continue
         attempts[result.plan.paragraph_id] = 0
         exhausted.discard(result.plan.paragraph_id)
+        covered.add(result.plan.paragraph_id)
         passes.append(result)
         current = result.rewritten_text
+        pass_trace.append(
+            _pass_trace_row(
+                pass_index=pass_index,
+                status="accepted",
+                before=before,
+                after=after,
+                target_paragraph_id=result.plan.paragraph_id,
+                excluded=excluded_for_pass,
+            )
+        )
         _emit_progress(progress_callback, end_percent, f"Accepted V6 paragraph {result.plan.paragraph_id}")
-    return DocumentResult(initial_scan=initial_scan, final_scan=scan_text(current), passes=passes, rewritten_text=current)
+    return DocumentResult(initial_scan=initial_scan, final_scan=scan_text(current), passes=passes, rewritten_text=current, pass_trace=pass_trace)
+
+
+def _finding_paragraph_ids(scan: Scan) -> set[str]:
+    return {finding.paragraph_id for finding in scan.findings}
+
+
+def _report_target_paragraph_ids(scan: Scan, contracts: list[dict[str, Any]] | None) -> set[str]:
+    excerpts = _report_target_excerpts(contracts)
+    if not excerpts:
+        return set()
+    targets: set[str] = set()
+    for paragraph in scan.paragraphs:
+        paragraph_terms = _match_terms(paragraph.text)
+        if not paragraph_terms:
+            continue
+        for excerpt in excerpts:
+            excerpt_terms = _match_terms(excerpt)
+            if not excerpt_terms:
+                continue
+            shared = paragraph_terms & excerpt_terms
+            if len(shared) >= 8 or len(shared) / max(1, min(len(paragraph_terms), len(excerpt_terms))) >= 0.45:
+                targets.add(paragraph.id)
+                break
+    return targets
+
+
+def _report_target_excerpts(contracts: list[dict[str, Any]] | None) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for contract in contracts or []:
+        if not isinstance(contract, dict):
+            continue
+        for excerpt in contract.get("target_excerpts") or []:
+            text = " ".join(str(excerpt).split())
+            key = text.casefold()
+            if text and key not in seen:
+                rows.append(text)
+                seen.add(key)
+    return rows
+
+
+def _match_terms(text: str) -> set[str]:
+    stop = {"about", "after", "again", "because", "between", "could", "every", "from", "have", "into", "more", "only", "should", "their", "there", "these", "those", "through", "which", "while", "would"}
+    return {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", str(text or ""))
+        if len(token) >= 4 and token.casefold() not in stop
+    }
+
+
+def _coverage_exclusions(
+    *,
+    finding_paragraph_ids: set[str],
+    exhausted: set[str],
+    covered: set[str],
+) -> set[str]:
+    eligible_uncovered = finding_paragraph_ids - exhausted - covered
+    excluded = set(exhausted)
+    if eligible_uncovered:
+        excluded.update(finding_paragraph_ids & covered)
+    return excluded
+
+
+def _pass_trace_row(
+    *,
+    pass_index: int,
+    status: str,
+    before: Scan,
+    after: Scan | None = None,
+    target_paragraph_id: str | None = None,
+    excluded: set[str] | None = None,
+) -> dict[str, Any]:
+    row = {
+        "pass_index": pass_index + 1,
+        "status": status,
+        "target_paragraph_id": target_paragraph_id,
+        "excluded_paragraph_ids": sorted(excluded or set()),
+        "before_findings": int(before.scores.get("finding_count") or 0),
+        "before_mean_sentence_shape_risk": before.scores.get("mean_sentence_shape_risk"),
+        "before_findings_by_paragraph": _finding_counts_by_paragraph(before),
+    }
+    if after is not None:
+        row.update(
+            {
+                "after_findings": int(after.scores.get("finding_count") or 0),
+                "after_mean_sentence_shape_risk": after.scores.get("mean_sentence_shape_risk"),
+                "after_findings_by_paragraph": _finding_counts_by_paragraph(after),
+            }
+        )
+    return row
+
+
+def _finding_counts_by_paragraph(scan: Scan) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for finding in scan.findings:
+        counts[finding.paragraph_id] = counts.get(finding.paragraph_id, 0) + 1
+    return counts
 
 
 def _raise_if_canceled(cancellation_check: Callable[[], None] | None) -> None:
@@ -198,11 +355,37 @@ def _compose(scan: Scan, target_paragraph_id: str, selected: Variant | None) -> 
     return "\n\n".join(blocks)
 
 
+def _same_text(left: str, right: str) -> bool:
+    return re.sub(r"\s+", " ", str(left or "").strip()) == re.sub(r"\s+", " ", str(right or "").strip())
+
+
 def _improved(before: Scan, after: Scan) -> bool:
     return (
         after.scores["finding_count"] < before.scores["finding_count"]
         or after.scores["mean_sentence_shape_risk"] < before.scores["mean_sentence_shape_risk"]
     )
+
+
+def _acceptable_progress(before: Scan, after: Scan, *, report_targeted: bool) -> bool:
+    if _improved(before, after):
+        return True
+    return bool(report_targeted) and after.scores["finding_count"] <= before.scores["finding_count"] and after.scores["mean_sentence_shape_risk"] <= before.scores["mean_sentence_shape_risk"]
+
+
+def _cross_paragraph_regression(before: Scan, after: Scan, target_paragraph_id: str) -> bool:
+    before_counts = _paragraph_counts(before)
+    after_counts = _paragraph_counts(after)
+    return any(
+        paragraph_id != target_paragraph_id and count > before_counts.get(paragraph_id, 0)
+        for paragraph_id, count in after_counts.items()
+    )
+
+
+def _paragraph_counts(scan: Scan) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for finding in scan.findings:
+        counts[finding.paragraph_id] = counts.get(finding.paragraph_id, 0) + 1
+    return counts
 
 
 def _rewrite_progress_percent(step: int, limit: int) -> int:
@@ -221,7 +404,7 @@ def _emit_progress(callback: Callable[[int, str], None] | None, percent: int | N
 def _writer_model() -> str:
     import os
 
-    return os.environ.get("DRAFTPROOF_V6_WRITER_MODEL") or os.environ.get("LLM_MODEL") or "qwen/qwen3-30b-a3b-instruct-2507"
+    return os.environ.get("DRAFTPROOF_V6_WRITER_MODEL") or os.environ.get("LLM_MODEL") or "z-ai/glm-4.7"
 
 
 def _planner_model() -> str:
@@ -231,7 +414,7 @@ def _planner_model() -> str:
         os.environ.get("DRAFTPROOF_V6_PLANNER_MODEL")
         or os.environ.get("DRAFTPROOF_PLANNER_MODEL")
         or os.environ.get("DRAFTPROOF_REWRITE_V5_PLANNER_MODEL")
-        or "z-ai/glm-5.1"
+        or "z-ai/glm-4.7"
     )
 
 
@@ -258,19 +441,26 @@ def _planner_gateway(
 
 
 def _planner_provider(model: str) -> dict[str, Any] | None:
-    import os
+    return _provider_from_env("PLANNER", model)
 
-    raw_json = _first_env("DRAFTPROOF_V6_PLANNER_PROVIDER_ROUTING_JSON")
+
+def _writer_provider(model: str) -> dict[str, Any] | None:
+    return _provider_from_env("WRITER", model)
+
+
+def _provider_from_env(role: str, model: str) -> dict[str, Any] | None:
+    prefix = f"DRAFTPROOF_V6_{role}_PROVIDER"
+    raw_json = _first_env(f"{prefix}_ROUTING_JSON")
     if raw_json:
         parsed = json.loads(raw_json)
         if not isinstance(parsed, dict):
-            raise ValueError("V6 planner provider routing JSON must be an object")
+            raise ValueError(f"V6 {role.casefold()} provider routing JSON must be an object")
         return parsed
 
     provider: dict[str, Any] = {}
-    order = _csv_env("DRAFTPROOF_V6_PLANNER_PROVIDER_ORDER")
-    only = _csv_env("DRAFTPROOF_V6_PLANNER_PROVIDER_ONLY")
-    ignore = _csv_env("DRAFTPROOF_V6_PLANNER_PROVIDER_IGNORE")
+    order = _csv_env(f"{prefix}_ORDER")
+    only = _csv_env(f"{prefix}_ONLY")
+    ignore = _csv_env(f"{prefix}_IGNORE")
     if not order and str(model or "").casefold() == "z-ai/glm-4.7":
         order = ["Cerebras"]
     if order:
@@ -280,13 +470,15 @@ def _planner_provider(model: str) -> dict[str, Any] | None:
     if ignore:
         provider["ignore"] = ignore
 
-    allow_fallbacks = _bool_env("DRAFTPROOF_V6_PLANNER_ALLOW_FALLBACKS")
+    allow_fallbacks = _bool_env(f"{prefix}_ALLOW_FALLBACKS")
+    if allow_fallbacks is None:
+        allow_fallbacks = _bool_env(f"DRAFTPROOF_V6_{role}_ALLOW_FALLBACKS")
     if allow_fallbacks is None and order:
         allow_fallbacks = True
     if allow_fallbacks is not None:
         provider["allow_fallbacks"] = allow_fallbacks
 
-    sort = _first_env("DRAFTPROOF_V6_PLANNER_PROVIDER_SORT")
+    sort = _first_env(f"{prefix}_SORT")
     if sort:
         provider["sort"] = sort
     return provider or None

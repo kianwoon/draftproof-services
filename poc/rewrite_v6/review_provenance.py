@@ -15,7 +15,7 @@ def annotate_review_items(variant: Any, source_text: str) -> Any:
     flagged = [
         word for word in sorted(candidate_words - source_words)
         if _word_base(word) not in source_words
-        if len(word) >= 9 or word.endswith(("tion", "ment", "ity", "ness", "ance", "ence", "form"))
+        if len(word) >= 8 or word.endswith(("tion", "ment", "ity", "ness", "ance", "ence", "form"))
     ]
     if not flagged:
         return variant

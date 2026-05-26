@@ -145,7 +145,7 @@ def test_v6_overloaded_slots_with_many_terms_are_not_one_sentence_routes():
 
     assert "two connected ordinary sentences" in slot_text
     assert "required_sentence_groups" in slot_text
-    assert "write one ordinary sentence for this group" in slot_text
+    assert "adjacent groups may share one ordinary sentence" in slot_text
 
 
 def test_v6_overloaded_sentence_groups_are_chunked_for_execution():
@@ -191,6 +191,16 @@ def test_v6_heading_line_is_not_forced_into_coverage_beats():
 
     assert "Heading" not in prompt_text
     assert "reviewer" in prompt_text
+
+
+def test_v6_multiword_section_heading_is_not_forced_into_coverage_beats():
+    payload = _payload(
+        "Critical Analysis: The Trap of Over-Accommodation vs CBT Standard\nAnalysing this situation through the framework of Competency-Based Training reveals a distinction."
+    )
+    prompt_text = json.dumps(payload["coverage_beats_must_all_appear"])
+
+    assert "Over-Accommodation" not in prompt_text
+    assert "Competency-Based" in prompt_text
 
 
 def test_v6_heading_stripped_demonstrative_opener_becomes_route_target():
@@ -438,7 +448,7 @@ def test_v6_row_compiler_splits_common_academic_connectors():
     })
 
     assert variants[0].text == (
-        "Source theory is the source frame. "
+        "Source theory supports this point. "
         "Complex spatial tasks place strain on working memory. "
         "The plan must move beyond passive support. "
         "The plan should focus on practice."
@@ -478,7 +488,7 @@ def test_v6_row_compiler_forces_repair_for_scanner_owned_single_beat_rows():
     })
 
     assert variants[0].text == (
-        "Source theory is the source frame. "
+        "Source theory supports this point. "
         "Complex spatial tasks place strain on working memory."
     )
 
@@ -498,7 +508,7 @@ def test_v6_row_compiler_splits_must_not_undermine_pairs():
 
     assert variants[0].text == (
         "The adjustment must not undermine core requirements. "
-        "The same limit also covers performance standards of the package."
+        "The adjustment must also preserve performance standards of the package."
     )
 
 
@@ -588,10 +598,7 @@ def test_v6_row_compiler_splits_in_context_comma_openers():
         }]
     })
 
-    assert variants[0].text == (
-        "Service training is the context. "
-        "Learner performance is assessed against industry benchmarks."
-    )
+    assert variants[0].text == "In service training, learner performance is assessed against industry benchmarks."
 
 
 def test_v6_row_compiler_splits_more_valuable_and_equipping_rows():
@@ -784,10 +791,43 @@ def test_v6_row_compiler_splits_not_by_expectation_when_rows():
         }]
     })
 
+    assert variants[0].text == "When they enter the role, the same people cannot rely on the workplace to change."
+
+
+def test_v6_row_compiler_merges_dangling_row_endings():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "sentence_rows": [
+                {"sentence": "The teacher replaced dense jargon with."},
+                {"sentence": "The Octagon method."},
+                {"sentence": "The client would not accept the delay simply."},
+                {"sentence": "The service is incomplete."},
+                {"sentence": "Maintaining standards is not unfair on the other hand."},
+                {"sentence": "It protects learners."},
+                {"sentence": "I adapted."},
+                {"sentence": "The scaffolding approach."},
+            ],
+        }]
+    })
+
     assert variants[0].text == (
-        "The same people cannot rely on the workplace to change. "
-        "The same limit applies when they enter the role."
+        "The teacher replaced dense jargon with the Octagon method. "
+        "The client would not accept the delay simply because the service is incomplete. "
+        "Maintaining standards is not unfair on the other hand, it protects learners. "
+        "I adapted the scaffolding approach."
     )
+
+
+def test_v6_row_compiler_keeps_it_is_predicate_complete():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "sentence_rows": [{"sentence": "It is a fundamental ethical obligation towards learners."}],
+        }]
+    })
+
+    assert variants[0].text == "It is a fundamental ethical obligation towards learners."
 
 
 def test_v6_row_compiler_repairs_they_need_after_learner_context():
@@ -1012,7 +1052,7 @@ def test_v6_pipeline_calls_planner_before_writer_when_supplied():
     writer_prompt = writer.calls[0][0][0]
     assert "Use source relation before claim" in writer_prompt
     assert "p001_s001:predictable_start" in writer_prompt
-    assert "Treat planner_decision.finding_contracts as the primary build contract" in writer_prompt
+    assert "finding_contracts and document_signal_contracts as the primary build contract" in writer_prompt
     assert "planner_decision.contract_gaps" in writer_prompt
     assert "quoted phrase must not appear" in writer_prompt
     assert "If safe_rebuild_shape contains placeholder brackets" in writer_prompt

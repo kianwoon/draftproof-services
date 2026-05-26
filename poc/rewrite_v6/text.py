@@ -37,6 +37,19 @@ def word_count(text: str) -> int:
     return len(re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", str(text or "")))
 
 
+def strip_leading_heading(text: str) -> str:
+    visible = str(text or "")
+    lines = visible.splitlines()
+    if len(lines) < 2:
+        return visible
+    first = lines[0].strip()
+    if not first or re.search(r"[.!?]$", first):
+        return visible
+    if len(first.split()) <= 12:
+        return "\n".join(lines[1:]).strip() or visible
+    return visible
+
+
 def split_paragraphs(text: str) -> list[Paragraph]:
     blocks = [block.strip() for block in re.split(r"\n\s*\n+", str(text or "")) if block.strip()]
     paragraphs: list[Paragraph] = []

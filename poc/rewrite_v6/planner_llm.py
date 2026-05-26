@@ -63,6 +63,7 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             "construction_recipes": _compact_rows(plan.ai_safe_route.get("construction_recipes", []), limit=16),
             "author_route_questions": _compact_rows(plan.ai_safe_route.get("author_route_questions", []), limit=16),
             "golden_route": plan.ai_safe_route.get("golden_route", {}),
+            "document_signal_contracts": _compact_rows(plan.ai_safe_route.get("document_signal_contracts", []), limit=8),
         },
         "required_decision": {
             "paragraph_route": "positive route the writer must follow",
@@ -146,6 +147,7 @@ def _merge_decision(plan: Plan, decision: dict[str, Any]) -> Plan:
         "finding_contracts": fallback_contracts if unsafe_contracts else _recipe_rows(decision.get("finding_contracts")),
         "paragraph_blueprint": fallback_blueprint if unsafe_contracts else _recipe_rows(decision.get("paragraph_blueprint")),
         "finding_recipe_overrides": [] if unsafe_contracts else _recipe_rows(decision.get("finding_recipe_overrides")),
+        "document_signal_contracts": _recipe_rows(route.get("document_signal_contracts")),
         "author_proxy_plan": decision.get("author_proxy_plan", ""),
         "do_not_copy_route": _string_rows(decision.get("do_not_copy_route")),
         "do_not_copy_phrases": _do_not_copy_phrases(contract_gaps),
@@ -203,7 +205,7 @@ def _fallback_finding_contracts(plan: Plan, gaps: list[str]) -> list[dict[str, A
             "source_sentence_id": action.sentence_id,
             "finding_tags": list(action.tags),
             "unsafe_original_shape": action.source_text,
-            "safe_rebuild_shape": "Start from exact anchors, then carry revoiceable source terms as plain meaning across ordinary sentence rows.",
+            "safe_rebuild_shape": _fallback_safe_shape(action),
             "writer_must_do": [
                 action.method,
                 "preserve exact anchors and numeric/source-code terms",
@@ -234,9 +236,25 @@ def _fallback_paragraph_blueprint(plan: Plan, gaps: list[str]) -> list[dict[str,
             "source_basis": [action.sentence_id],
             "must_include": list(action.preserve_terms),
             "must_avoid_shape": _dedupe_strings([*action.do_not, *copied]),
-            "safe_sentence_shape": "exact source anchor first; plain source meaning next; separate row when another relation begins",
+            "safe_sentence_shape": _fallback_safe_shape(action),
         })
     return steps
+
+
+def _fallback_safe_shape(action: Any) -> str:
+    tags = set(getattr(action, "tags", []) or [])
+    terms = list(getattr(action, "preserve_terms", []) or [])
+    first = ", ".join(terms[:3])
+    second = ", ".join(terms[3:6])
+    if "citation_anchor" in tags:
+        return f"Put the source attribution near the supported claim: {first}. Then state the limit or support using {second}."
+    if "packed_list" in tags:
+        return f"Group related source terms instead of listing them: {first}. Carry the next relation separately with {second}."
+    if "sentence_overload" in tags:
+        return f"Use one sentence for the first source relation around {first}. Use the next sentence for the next relation around {second}."
+    if "context_anchor_gap" in tags or "predictable_start" in tags:
+        return f"Start with the concrete source anchor {first}, then state the scoped relation using {second}."
+    return f"Write a direct source relation using {first}; keep any next relation separate with {second}."
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:
@@ -272,6 +290,11 @@ def _compact_rows(value: Any, *, limit: int) -> list[dict[str, Any]]:
                 "question",
                 "answer_basis_terms",
                 "writer_duty",
+                "signal_group",
+                "score",
+                "writer_obligation",
+                "author_proxy_policy",
+                "target_excerpts",
                 "build_route",
                 "positive_pattern",
             )
