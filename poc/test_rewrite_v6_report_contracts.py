@@ -23,6 +23,17 @@ class EmptyVariantClient:
         return type("Response", (), {"content": '{"variants":[]}', "raw_content": '{"variants":[]}'})()
 
 
+class SequencedVariantClient:
+    def __init__(self, responses: list[str]):
+        self.responses = list(responses)
+        self.prompts: list[str] = []
+
+    def chat(self, prompt: str, **_kwargs):
+        self.prompts.append(prompt)
+        content = self.responses.pop(0)
+        return type("Response", (), {"content": content, "raw_content": content})()
+
+
 def test_v6_extracts_full_report_signal_contracts_without_blocking_author_proxy():
     report = {
         "scan_intelligence": {
@@ -275,6 +286,29 @@ def test_v6_pipeline_sends_overloaded_paragraph_window_to_writer_not_full_paragr
     assert "A final sentence stays outside the first repair" not in prompt_text
 
 
+def test_v6_trace_records_selector_blockers_when_source_preserved_wins():
+    text = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
+    response = json.dumps({
+        "variants": [{
+            "id": "v1",
+            "text": text + " Today.",
+            "coverage_map": [],
+            "route_answer_cards": [],
+            "author_proxy_provenance": [],
+            "author_review_items": [],
+        }]
+    })
+    client = SequencedVariantClient([response, '{"variants":[]}'])
+
+    result = run_v6_rewrite_all(text, writer_client=client, max_passes=1)
+
+    row = result.pass_trace[0]
+    assert row["status"] == "no_change"
+    assert row["selected_source"] == "source_preserved"
+    assert row["candidate_diagnostics"][0]["variant_id"] == "v1"
+    assert row["candidate_diagnostics"][0]["blockers"]
+
+
 def test_v6_document_rewrite_runs_residual_followup_after_accepted_paragraph(monkeypatch):
     source = "This process uses a form, a queue, and a review. This result shows a problem because the system should improve."
     seen = []
@@ -519,6 +553,43 @@ def test_v6_writer_prompt_blocks_standalone_connector_fragments():
 
     assert "No final sentence may start with And, But, Or, Which, Where, That, or As" in prompt
     assert "Every final sentence must stand alone" in prompt
+
+
+def test_v6_writer_retries_rejected_candidate_with_generic_defect_feedback():
+    source = (
+        "Teams use forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "Teams use forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "Teams use forms, queues, labels, reviews, approvals, and checks because teams should improve."
+    )
+    client = SequencedVariantClient([
+        json.dumps({"variants": [{
+            "id": "v1",
+            "text": (
+                "Teams use forms, queues, labels, reviews, approvals, and checks. "
+                "And need improvement."
+            ),
+        }]}),
+        json.dumps({"variants": [{
+            "id": "retry_v1",
+            "text": (
+                "Teams use forms and queues during intake. "
+                "Labels and reviews support approval checks. "
+                "The checks help teams improve."
+            ),
+        }]}),
+    ])
+
+    result = v6_pipeline.run_v6_rewrite(source, writer_client=client, priority_paragraph_ids={"p001"})
+
+    assert len(client.prompts) == 2
+    assert "Defect feedback from rejected candidates" in client.prompts[1]
+    assert "malformed_fragment_or_trace_sentence" in client.prompts[1]
+    assert result.selected and result.selected.id == "retry_v1"
+    assert result.rewritten_text == (
+        "Teams use forms and queues during intake. "
+        "Labels and reviews support approval checks. "
+        "The checks help teams improve."
+    )
 
 
 def test_v6_citation_anchor_recipe_keeps_attribution_as_source_to_claim_relation():

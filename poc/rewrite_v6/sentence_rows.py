@@ -64,7 +64,7 @@ def _concretize_demonstrative_start(text: str) -> str:
     match = re.match(r"\s*(this|that|these|those)\s+([A-Za-z][A-Za-z'’-]{3,})(\b.*)$", str(text or ""), flags=re.I)
     if not match:
         return text
-    if match.group(2).casefold() in {"applies", "allows", "shows", "means", "creates", "helps", "makes"}:
+    if match.group(2).casefold() in {"applies", "allows", "shows", "means", "creates", "helps", "makes", "links", "relates", "connects", "explains", "supports"}:
         return text
     return f"the {match.group(2)}{match.group(3)}"
 

@@ -337,6 +337,21 @@ def test_v6_row_compiler_repairs_simple_context_starts():
     )
 
 
+def test_v6_row_compiler_does_not_turn_demonstrative_verb_into_bad_noun_phrase():
+    variants = parse_variants({
+        "variants": [{
+            "id": "v1",
+            "coverage_map": [
+                {"sentence_slot_id": "s1", "coverage_beat_ids": ["b1"], "sentence": "The procedure requires working memory."},
+                {"sentence_slot_id": "s2", "coverage_beat_ids": ["b2"], "sentence": "This links to CESE guidance."},
+            ],
+        }]
+    })
+
+    assert "The links to" not in variants[0].text
+    assert "This links to CESE guidance." in variants[0].text
+
+
 def test_v6_row_compiler_splits_regardless_comma_lists():
     variants = parse_variants({
         "variants": [{

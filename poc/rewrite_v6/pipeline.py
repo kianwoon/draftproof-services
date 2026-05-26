@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable
 
 from poc.llm.gateway import LLMConfig, LLMGateway
@@ -13,7 +13,9 @@ from .planner_llm import run_planner_llm
 from .repair_windows import RepairWindow, compose_window_rewrite, select_repair_window
 from .report_contracts import apply_report_signal_contracts
 from .scan import Scan, findings_for_paragraph, scan_text
+from .selector_diagnostics import selection_diagnostics
 from .write import Variant, choose_variant, write_variants
+from .writer_retry import write_retry_variants
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class Result:
     variants: list[Variant]
     selected: Variant | None
     rewritten_text: str
+    candidate_diagnostics: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         generated_variants = [variant for variant in self.variants if variant.source != "source_preserved"]
@@ -33,6 +36,7 @@ class Result:
             "variants": [asdict(variant) for variant in generated_variants],
             "source_preserved": asdict(source_variant) if source_variant else None,
             "selected": asdict(self.selected) if self.selected else None,
+            "candidate_diagnostics": list(self.candidate_diagnostics),
             "rewritten_text": self.rewritten_text,
         }
 
@@ -92,6 +96,36 @@ def run_v6_rewrite(
             cancellation_check=cancellation_check,
             report_signal_contracts=report_signal_contracts,
         )
+    return _run_v6_full_paragraph_rewrite(
+        scan=scan,
+        paragraph=paragraph,
+        plan=plan,
+        planner_client=planner_client,
+        writer_client=writer_client,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        progress_callback=progress_callback,
+        progress_percent=progress_percent,
+        cancellation_check=cancellation_check,
+    )
+
+
+def _run_v6_full_paragraph_rewrite(
+    *,
+    scan: Scan,
+    paragraph: Any,
+    plan: Plan,
+    planner_client: Any | None,
+    writer_client: Any | None,
+    model: str | None,
+    api_key: str | None,
+    base_url: str | None,
+    progress_callback: Callable[[int, str], None] | None,
+    progress_percent: int | None,
+    cancellation_check: Callable[[], None] | None,
+) -> Result:
+    target_findings = findings_for_paragraph(scan, paragraph.id)
     _emit_progress(progress_callback, progress_percent, f"Planning V6 paragraph {paragraph.id}")
     _raise_if_canceled(cancellation_check)
     if planner_client is not None or writer_client is None:
@@ -123,8 +157,15 @@ def run_v6_rewrite(
     variants = write_variants(paragraph, plan, client=client)
     _raise_if_canceled(cancellation_check)
     _emit_progress(progress_callback, progress_percent, f"Scanning V6 paragraph {paragraph.id} candidate")
-    selected = choose_variant(variants, paragraph)
-    return Result(scan=scan, plan=plan, variants=variants, selected=selected, rewritten_text=_compose(scan, paragraph.id, selected))
+    variants, selected = _select_with_retry(
+        paragraph,
+        plan,
+        variants,
+        client=client,
+        cancellation_check=cancellation_check,
+    )
+    diagnostics = selection_diagnostics(variants, paragraph)
+    return Result(scan=scan, plan=plan, variants=variants, selected=selected, rewritten_text=_compose(scan, paragraph.id, selected), candidate_diagnostics=diagnostics)
 
 
 def _run_v6_window_rewrite(
@@ -191,14 +232,59 @@ def _run_v6_window_rewrite(
         progress_percent,
         f"Scanning V6 paragraph {paragraph.id} window candidate",
     )
-    selected = choose_variant(variants, window_paragraph)
+    variants, selected = _select_with_retry(
+        window_paragraph,
+        window_plan,
+        variants,
+        client=client,
+        cancellation_check=cancellation_check,
+    )
+    diagnostics = selection_diagnostics(variants, window_paragraph)
+    has_generated = any(variant.source != "source_preserved" for variant in variants)
+    if has_generated and (selected is None or selected.source == "source_preserved"):
+        return _run_v6_full_paragraph_rewrite(
+            scan=scan,
+            paragraph=paragraph,
+            plan=parent_plan,
+            planner_client=planner_client,
+            writer_client=writer_client,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            progress_callback=progress_callback,
+            progress_percent=progress_percent,
+            cancellation_check=cancellation_check,
+        )
     return Result(
         scan=scan,
         plan=_parent_window_plan(parent_plan, window),
         variants=variants,
         selected=selected,
         rewritten_text=compose_window_rewrite(scan.paragraphs, window, selected),
+        candidate_diagnostics=diagnostics,
     )
+
+
+def _select_with_retry(
+    paragraph: Any,
+    plan: Plan,
+    variants: list[Variant],
+    *,
+    client: Any,
+    cancellation_check: Callable[[], None] | None,
+) -> tuple[list[Variant], Variant | None]:
+    selected = choose_variant(variants, paragraph)
+    if selected is None or selected.source != "source_preserved":
+        return variants, selected
+    rejected = [variant for variant in variants if variant.source != "source_preserved"]
+    if not rejected:
+        return variants, selected
+    _raise_if_canceled(cancellation_check)
+    retry_variants = write_retry_variants(paragraph, plan, client=client, rejected_variants=rejected)
+    if not retry_variants:
+        return variants, selected
+    combined = [*variants, *retry_variants]
+    return combined, choose_variant(combined, paragraph)
 
 
 def run_v6_rewrite_all(
@@ -290,6 +376,9 @@ def run_v6_rewrite_all(
                     before=before,
                     target_paragraph_id=result.plan.paragraph_id,
                     excluded=excluded_for_pass,
+                    candidate_diagnostics=result.candidate_diagnostics,
+                    selected_variant_id=result.selected.id if result.selected else None,
+                    selected_source=result.selected.source if result.selected else None,
                 )
             )
             _emit_progress(progress_callback, end_percent, f"V6 paragraph {result.plan.paragraph_id} made no change")
@@ -307,6 +396,9 @@ def run_v6_rewrite_all(
                     after=after,
                     target_paragraph_id=result.plan.paragraph_id,
                     excluded=excluded_for_pass,
+                    candidate_diagnostics=result.candidate_diagnostics,
+                    selected_variant_id=result.selected.id if result.selected else None,
+                    selected_source=result.selected.source if result.selected else None,
                 )
             )
             _emit_progress(progress_callback, end_percent, f"V6 paragraph {result.plan.paragraph_id} did not improve")
@@ -324,6 +416,9 @@ def run_v6_rewrite_all(
                 after=after,
                 target_paragraph_id=result.plan.paragraph_id,
                 excluded=excluded_for_pass,
+                candidate_diagnostics=result.candidate_diagnostics,
+                selected_variant_id=result.selected.id if result.selected else None,
+                selected_source=result.selected.source if result.selected else None,
             )
         )
         _emit_progress(progress_callback, end_percent, f"Accepted V6 paragraph {result.plan.paragraph_id}")
@@ -402,14 +497,14 @@ def _run_residual_followups(
             priority_paragraph_ids=active_targets,
         )
         if _same_text(result.rewritten_text, current):
-            pass_trace.append(_residual_trace_row(pass_index, residual_index, "no_change_residual", before_residual, None, [result.plan.paragraph_id]))
+            pass_trace.append(_residual_trace_row(pass_index, residual_index, "no_change_residual", before_residual, None, [result.plan.paragraph_id], result))
             break
         after_residual = scan_text(result.rewritten_text)
         if _cross_paragraph_regression(before_residual, after_residual, result.plan.paragraph_id) or not _acceptable_progress(before_residual, after_residual, report_targeted=False):
-            pass_trace.append(_residual_trace_row(pass_index, residual_index, "not_improved_residual", before_residual, after_residual, [result.plan.paragraph_id]))
+            pass_trace.append(_residual_trace_row(pass_index, residual_index, "not_improved_residual", before_residual, after_residual, [result.plan.paragraph_id], result))
             break
         passes.append(result)
-        pass_trace.append(_residual_trace_row(pass_index, residual_index, "accepted_residual", before_residual, after_residual, [result.plan.paragraph_id]))
+        pass_trace.append(_residual_trace_row(pass_index, residual_index, "accepted_residual", before_residual, after_residual, [result.plan.paragraph_id], result))
         current = result.rewritten_text
         target_ids = _target_paragraph_ids_after_rewrite(before_residual, after_residual, result.plan.paragraph_id)
     return current
@@ -451,6 +546,7 @@ def _residual_trace_row(
     before: Scan,
     after: Scan | None,
     target_ids: list[str],
+    result: Result | None = None,
 ) -> dict[str, Any]:
     row = _pass_trace_row(
         pass_index=pass_index,
@@ -459,6 +555,9 @@ def _residual_trace_row(
         after=after,
         target_paragraph_id=",".join(target_ids),
         excluded=set(),
+        candidate_diagnostics=result.candidate_diagnostics if result else None,
+        selected_variant_id=result.selected.id if result and result.selected else None,
+        selected_source=result.selected.source if result and result.selected else None,
     )
     row["residual_followup"] = True
     row["residual_index"] = residual_index + 1
@@ -530,6 +629,9 @@ def _pass_trace_row(
     after: Scan | None = None,
     target_paragraph_id: str | None = None,
     excluded: set[str] | None = None,
+    candidate_diagnostics: list[dict[str, Any]] | None = None,
+    selected_variant_id: str | None = None,
+    selected_source: str | None = None,
 ) -> dict[str, Any]:
     row = {
         "pass_index": pass_index + 1,
@@ -540,6 +642,11 @@ def _pass_trace_row(
         "before_mean_sentence_shape_risk": before.scores.get("mean_sentence_shape_risk"),
         "before_findings_by_paragraph": _finding_counts_by_paragraph(before),
     }
+    if selected_variant_id or selected_source:
+        row["selected_variant_id"] = selected_variant_id
+        row["selected_source"] = selected_source
+    if candidate_diagnostics:
+        row["candidate_diagnostics"] = candidate_diagnostics[:5]
     if after is not None:
         row.update(
             {
