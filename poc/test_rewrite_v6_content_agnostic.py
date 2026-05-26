@@ -770,7 +770,7 @@ def test_v6_document_rewrite_covers_unseen_finding_paragraphs_before_revisiting(
         return v6_pipeline.Result(scan=scan, plan=plan, variants=[], selected=None, rewritten_text="\n\n".join(blocks))
 
     monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
-    result = v6_pipeline.run_v6_rewrite_all(source, max_passes=2)
+    result = v6_pipeline.run_v6_rewrite_all(source, max_passes=2, residual_followup_passes=0)
 
     assert seen == ["p001", "p002"]
     assert [row["target_paragraph_id"] for row in result.pass_trace] == ["p001", "p002"]

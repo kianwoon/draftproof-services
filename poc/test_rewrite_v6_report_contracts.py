@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from poc.rewrite_v6.plan import build_plan
+from poc.rewrite_v6 import pipeline as v6_pipeline
 from poc.rewrite_v6.paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _report_target_paragraph_ids, _same_text, run_v6_rewrite_all
 from poc.rewrite_v6.planner_llm import build_planner_prompt
@@ -192,6 +193,27 @@ def test_v6_pipeline_schedules_report_target_even_without_local_findings():
     assert result.pass_trace[0]["status"] == "no_change"
     assert result.pass_trace[0]["target_paragraph_id"] == "p002"
     assert not result.passes
+
+
+def test_v6_document_rewrite_runs_residual_followup_after_accepted_paragraph(monkeypatch):
+    source = "This process uses a form, a queue, and a review. This result shows a problem because the system should improve."
+    seen = []
+
+    def fake_run(current, **kwargs):
+        scan = scan_text(current)
+        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"), kwargs.get("priority_paragraph_ids"))
+        seen.append(paragraph.id)
+        replacement = "The process uses a form queue. This result shows a problem because the system should improve."
+        if len(seen) > 1:
+            replacement = "The process uses a form queue."
+        return v6_pipeline.Result(scan=scan, plan=plan, variants=[], selected=None, rewritten_text=replacement)
+
+    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
+    result = v6_pipeline.run_v6_rewrite_all(source, max_passes=1, residual_followup_passes=1)
+
+    assert seen == ["p001", "p001"]
+    assert [row["status"] for row in result.pass_trace] == ["accepted", "accepted_residual"]
+    assert result.final_scan.scores["finding_count"] == 0
 
 
 def test_v6_no_change_detection_ignores_paragraph_spacing_normalization():

@@ -122,6 +122,7 @@ def run_v6_rewrite_all(
     runtime_budget_seconds: float | None = None,
     min_llm_request_seconds: float = 180.0,
     report_signal_contracts: list[dict[str, Any]] | None = None,
+    residual_followup_passes: int | None = None,
 ) -> DocumentResult:
     started_at = time.monotonic()
     initial_scan = scan_text(text)
@@ -132,6 +133,7 @@ def run_v6_rewrite_all(
     attempts: dict[str, int] = {}
     exhausted: set[str] = set()
     covered: set[str] = set()
+    residual_limit = _residual_followup_limit(residual_followup_passes)
     for pass_index in range(limit):
         _raise_if_canceled(cancellation_check)
         before = scan_text(current)
@@ -232,11 +234,142 @@ def run_v6_rewrite_all(
             )
         )
         _emit_progress(progress_callback, end_percent, f"Accepted V6 paragraph {result.plan.paragraph_id}")
+        if residual_limit > 0:
+            current = _run_residual_followups(
+                current=current,
+                before=before,
+                after=after,
+                accepted_result=result,
+                passes=passes,
+                pass_trace=pass_trace,
+                pass_index=pass_index,
+                residual_limit=residual_limit,
+                planner_client=planner_client,
+                writer_client=writer_client,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                progress_callback=progress_callback,
+                progress_percent=end_percent,
+                cancellation_check=cancellation_check,
+                report_signal_contracts=report_signal_contracts,
+                started_at=started_at,
+                runtime_budget_seconds=runtime_budget_seconds,
+                min_llm_request_seconds=min_llm_request_seconds,
+            )
     return DocumentResult(initial_scan=initial_scan, final_scan=scan_text(current), passes=passes, rewritten_text=current, pass_trace=pass_trace)
+
+
+def _run_residual_followups(
+    *,
+    current: str,
+    before: Scan,
+    after: Scan,
+    accepted_result: Result,
+    passes: list[Result],
+    pass_trace: list[dict[str, Any]],
+    pass_index: int,
+    residual_limit: int,
+    planner_client: Any | None,
+    writer_client: Any | None,
+    model: str | None,
+    api_key: str | None,
+    base_url: str | None,
+    progress_callback: Callable[[int, str], None] | None,
+    progress_percent: int,
+    cancellation_check: Callable[[], None] | None,
+    report_signal_contracts: list[dict[str, Any]] | None,
+    started_at: float,
+    runtime_budget_seconds: float | None,
+    min_llm_request_seconds: float,
+) -> str:
+    target_ids = _target_paragraph_ids_after_rewrite(before, after, accepted_result.plan.paragraph_id)
+    for residual_index in range(residual_limit):
+        _raise_if_canceled(cancellation_check)
+        before_residual = scan_text(current)
+        active_targets = target_ids & _finding_paragraph_ids(before_residual)
+        if not active_targets:
+            break
+        if not _has_runtime_for_llm(started_at=started_at, runtime_budget_seconds=runtime_budget_seconds, min_llm_request_seconds=min_llm_request_seconds):
+            pass_trace.append(_residual_trace_row(pass_index, residual_index, "runtime_budget_reached_residual", before_residual, None, sorted(active_targets)))
+            break
+        _emit_progress(progress_callback, progress_percent, f"V6 residual pass for {', '.join(sorted(active_targets))}")
+        result = run_v6_rewrite(
+            current,
+            planner_client=planner_client,
+            writer_client=writer_client,
+            excluded_paragraph_ids={paragraph.id for paragraph in before_residual.paragraphs if paragraph.id not in active_targets},
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            progress_callback=progress_callback,
+            progress_percent=progress_percent,
+            cancellation_check=cancellation_check,
+            report_signal_contracts=report_signal_contracts,
+            priority_paragraph_ids=active_targets,
+        )
+        if _same_text(result.rewritten_text, current):
+            pass_trace.append(_residual_trace_row(pass_index, residual_index, "no_change_residual", before_residual, None, [result.plan.paragraph_id]))
+            break
+        after_residual = scan_text(result.rewritten_text)
+        if _cross_paragraph_regression(before_residual, after_residual, result.plan.paragraph_id) or not _acceptable_progress(before_residual, after_residual, report_targeted=False):
+            pass_trace.append(_residual_trace_row(pass_index, residual_index, "not_improved_residual", before_residual, after_residual, [result.plan.paragraph_id]))
+            break
+        passes.append(result)
+        pass_trace.append(_residual_trace_row(pass_index, residual_index, "accepted_residual", before_residual, after_residual, [result.plan.paragraph_id]))
+        current = result.rewritten_text
+        target_ids = _target_paragraph_ids_after_rewrite(before_residual, after_residual, result.plan.paragraph_id)
+    return current
 
 
 def _finding_paragraph_ids(scan: Scan) -> set[str]:
     return {finding.paragraph_id for finding in scan.findings}
+
+
+def _residual_followup_limit(value: int | None) -> int:
+    if value is not None:
+        return max(0, min(3, int(value)))
+    import os
+
+    raw = os.environ.get("DRAFTPROOF_V6_RESIDUAL_FOLLOWUP_PASSES", "1")
+    try:
+        return max(0, min(3, int(raw)))
+    except ValueError:
+        return 1
+
+
+def _target_paragraph_ids_after_rewrite(before: Scan, after: Scan, target_paragraph_id: str) -> set[str]:
+    target = next((paragraph for paragraph in before.paragraphs if paragraph.id == target_paragraph_id), None)
+    if target is None:
+        return {target_paragraph_id}
+    delta = len(after.paragraphs) - len(before.paragraphs)
+    start = target.index
+    end = target.index + max(0, delta)
+    return {
+        after.paragraphs[index].id
+        for index in range(start, min(len(after.paragraphs), end + 1))
+    } or {target_paragraph_id}
+
+
+def _residual_trace_row(
+    pass_index: int,
+    residual_index: int,
+    status: str,
+    before: Scan,
+    after: Scan | None,
+    target_ids: list[str],
+) -> dict[str, Any]:
+    row = _pass_trace_row(
+        pass_index=pass_index,
+        status=status,
+        before=before,
+        after=after,
+        target_paragraph_id=",".join(target_ids),
+        excluded=set(),
+    )
+    row["residual_followup"] = True
+    row["residual_index"] = residual_index + 1
+    return row
 
 
 def _report_target_paragraph_ids(scan: Scan, contracts: list[dict[str, Any]] | None) -> set[str]:
