@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import re
 
 from poc.rewrite_v6 import pipeline as v6_pipeline
 from poc.rewrite_v6.plan import build_plan
@@ -8,6 +9,10 @@ from poc.rewrite_v6.paragraph_layout import restore_original_paragraph_layout
 from poc.rewrite_v6.quality_repair import QualityRepairOperation, QualityRepairResult
 from poc.rewrite_v6.scan import scan_text
 from poc.rewrite_v6.write import Variant
+
+
+def _raw_paragraph_count(text: str) -> int:
+    return len([block for block in re.split(r"\n\s*\n+", text.strip()) if block.strip()])
 
 
 def test_v6_layout_restores_split_rewrite_to_original_paragraph_slot():
@@ -134,3 +139,56 @@ def test_v6_document_result_restores_layout_after_grammer_layer(monkeypatch):
         "Stable paragraph stays here."
     )
     assert result.final_scan.scores["paragraph_count"] == result.initial_scan.scores["paragraph_count"]
+
+
+def test_v6_layout_uses_normalized_scan_paragraphs_for_heading_like_blocks():
+    original = (
+        "Opening section title\n"
+        "Opening sentence one. Opening sentence two.\n\n"
+        "Body section title\n"
+        "Body sentence one. Body sentence two.\n\n"
+        "Closing section title\n"
+        "Closing sentence one. Closing sentence two."
+    )
+    rewritten = (
+        "Opening section title\n"
+        "Opening sentence one.\n\n"
+        "Opening sentence two.\n\n"
+        "Body section title\n"
+        "Body sentence one.\n\n"
+        "Body sentence two.\n\n"
+        "Closing section title\n"
+        "Closing sentence one.\n\n"
+        "Closing sentence two."
+    )
+
+    restored = restore_original_paragraph_layout(original, rewritten, [])
+
+    assert scan_text(original).scores["paragraph_count"] == 3
+    assert scan_text(rewritten).scores["paragraph_count"] == 6
+    assert scan_text(restored).scores["paragraph_count"] == 3
+
+
+def test_v6_layout_folds_raw_blocks_when_scan_normalization_changed_boundaries():
+    original = (
+        "Education systems change quickly. Older classroom models still shape learning. "
+        "Students now learn through more sources. Teachers need to help students judge information.\n\n"
+        "Technology creates opportunities. AI tools can support brainstorming. "
+        "Digital access can also widen inequality. Assessment needs to track the learning process."
+    )
+    rewritten = (
+        "Education systems change quickly.\n\n"
+        "Older classroom models still shape learning.\n\n"
+        "Students now learn through more sources.\n\n"
+        "Teachers need to help students judge information.\n\n"
+        "Technology creates opportunities.\n\n"
+        "AI tools can support brainstorming.\n\n"
+        "Digital access can also widen inequality.\n\n"
+        "Assessment needs to track the learning process."
+    )
+
+    restored = restore_original_paragraph_layout(original, rewritten, [])
+
+    assert _raw_paragraph_count(original) == 2
+    assert _raw_paragraph_count(rewritten) == 8
+    assert _raw_paragraph_count(restored) == 2

@@ -4,7 +4,7 @@ import re
 from typing import Protocol
 
 from .scan import scan_text
-from .text import Paragraph, split_paragraphs
+from .text import Paragraph
 
 
 class ParagraphRewriteResult(Protocol):
@@ -19,8 +19,8 @@ def restore_original_paragraph_layout(
     rewritten_text: str,
     passes: list[ParagraphRewriteResult],
 ) -> str:
-    original_paragraphs = split_paragraphs(original_text)
-    rewritten_paragraphs = split_paragraphs(rewritten_text)
+    original_paragraphs = scan_text(original_text).paragraphs
+    rewritten_paragraphs = scan_text(rewritten_text).paragraphs
     if not original_paragraphs or not rewritten_paragraphs:
         return rewritten_text
     if len(original_paragraphs) == len(rewritten_paragraphs):

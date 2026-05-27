@@ -61,21 +61,45 @@ def run_rewrite_pipeline_v6(
         min_llm_request_seconds=_v6_min_llm_request_seconds(),
         report_signal_contracts=extract_report_signal_contracts(detect_json),
     )
+    stage_timings: list[dict[str, Any]] = []
+
+    def timed_stage(name: str, percent: int, message: str, fn):
+        progress(percent, message)
+        t0 = time.time()
+        value = fn()
+        stage_timings.append({"stage": name, "seconds": round(time.time() - t0, 3)})
+        return value
+
     final_text = document.rewritten_text
     changed = final_text.strip() != original_text.strip()
     cleared = not document.final_scan.findings
     status = "ai_mitigated" if changed and cleared else "partial_candidate_not_strict_safe" if changed else "original_preserved"
     elapsed = time.time() - started
-    sentence_comparison = _sentence_comparison(original_text, final_text)
-    original_scan_report = _scan_report_for_summary(
-        original_text,
-        provided=detect_json,
-        fallback_scan=document.initial_scan.to_dict(),
+    sentence_comparison = timed_stage(
+        "sentence_comparison",
+        80,
+        "Comparing original and rewritten sentences",
+        lambda: _sentence_comparison(original_text, final_text),
     )
-    rewritten_scan_report = _scan_report_for_summary(
-        final_text,
-        provided=None,
-        fallback_scan=document.final_scan.to_dict(),
+    original_scan_report = timed_stage(
+        "original_scan_summary",
+        81,
+        "Preparing original scan summary",
+        lambda: _scan_report_for_summary(
+            original_text,
+            provided=detect_json,
+            fallback_scan=document.initial_scan.to_dict(),
+        ),
+    )
+    rewritten_scan_report = timed_stage(
+        "rewritten_scan_summary",
+        83,
+        "Scanning rewritten candidate summary",
+        lambda: _scan_report_for_summary(
+            final_text,
+            provided=None,
+            fallback_scan=document.final_scan.to_dict(),
+        ),
     )
     detect_scores = _detect_scores_for_summary(original_scan_report, rewritten_scan_report)
     summary = {
@@ -101,7 +125,9 @@ def run_rewrite_pipeline_v6(
             "remaining_findings_by_paragraph": _findings_by_paragraph(document.final_scan.to_dict()),
             "pass_trace": document.pass_trace,
             "stop_reason": status,
+            "stage_timings": stage_timings,
         },
+        "stage_timings": stage_timings,
         "v6_pass_trace": document.pass_trace,
         "v6_scores": {
             "initial": document.initial_scan.scores,
@@ -135,9 +161,21 @@ def run_rewrite_pipeline_v6(
     md_path = out_dir / f"draftproof_rewrite_v6_{ts}.md"
     pdf_path = out_dir / f"draftproof_rewrite_v6_{ts}.pdf"
     json_path = out_dir / f"draftproof_rewrite_v6_{ts}.json"
-    md_text = render_rewrite_report(summary=summary, sentence_comparison=sentence_comparison, ai_findings=[], verbose=False)
+    md_text = timed_stage(
+        "render_markdown",
+        85,
+        "Rendering rewrite report",
+        lambda: render_rewrite_report(summary=summary, sentence_comparison=sentence_comparison, ai_findings=[], verbose=False),
+    )
     md_path.write_text(md_text, encoding="utf-8")
-    render_pdf(md_text, str(pdf_path))
+    timed_stage(
+        "render_pdf",
+        87,
+        "Rendering rewrite PDF",
+        lambda: render_pdf(md_text, str(pdf_path)),
+    )
+    summary["candidate_generation_status"]["stage_timings"] = stage_timings
+    summary["stage_timings"] = stage_timings
     json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     progress(88, "V6 scanner-planner-writer rewrite complete")
     return {

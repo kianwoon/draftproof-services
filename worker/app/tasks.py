@@ -621,6 +621,8 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
             continue
         if key == "candidate_ledger":
             compact_summary[key] = _compact_rewrite_candidate_ledger(summary.get(key))
+        elif key == "candidate_generation_status":
+            compact_summary[key] = _compact_candidate_generation_status(summary.get(key))
         elif key in {"detect_scan_original_saved", "detect_scan_original", "detect_scan_rewritten"}:
             compact_summary[key] = compact_rewrite_scan_summary(summary.get(key))
         else:
@@ -734,6 +736,59 @@ def _compact_rewrite_candidate_ledger(value, *, limit: int = 5, max_text_chars: 
             "goal": entry.get("goal") if isinstance(entry.get("goal"), dict) else {},
             "text": _truncate_debug_value(text, max_text_chars),
         })
+    return compact
+
+
+def _compact_candidate_generation_status(value):
+    if not isinstance(value, dict):
+        return _compact_debug_value(value)
+    out = {
+        "accepted_count": value.get("accepted_count"),
+        "remaining_findings": value.get("remaining_findings"),
+        "remaining_findings_by_paragraph": value.get("remaining_findings_by_paragraph"),
+        "stop_reason": value.get("stop_reason"),
+        "reason": value.get("reason"),
+        "blocked_findings": value.get("blocked_findings"),
+        "stage_timings": value.get("stage_timings"),
+    }
+    trace = value.get("pass_trace")
+    if isinstance(trace, list):
+        out["pass_trace_count"] = len(trace)
+        out["pass_trace"] = [_compact_v6_pass_trace_row(row) for row in trace[:120]]
+        if len(trace) > 120:
+            out["pass_trace_omitted"] = len(trace) - 120
+    return {key: val for key, val in out.items() if val not in (None, [], {})}
+
+
+def _compact_v6_pass_trace_row(row):
+    if not isinstance(row, dict):
+        return _compact_debug_value(row)
+    keys = (
+        "pass_index",
+        "status",
+        "target_paragraph_id",
+        "excluded_paragraph_ids",
+        "selected_variant_id",
+        "selected_source",
+        "before_finding_count",
+        "after_finding_count",
+        "before_mean_sentence_shape_risk",
+        "after_mean_sentence_shape_risk",
+        "residual_followup",
+        "residual_index",
+    )
+    compact = {key: row.get(key) for key in keys if key in row}
+    diagnostics = row.get("candidate_diagnostics")
+    if isinstance(diagnostics, list):
+        compact["candidate_diagnostics"] = [
+            _compact_debug_mapping(item, max_items=10) if isinstance(item, dict) else _compact_debug_value(item)
+            for item in diagnostics[:4]
+        ]
+        if len(diagnostics) > 4:
+            compact["candidate_diagnostics_omitted"] = len(diagnostics) - 4
+    for key in ("before_findings_by_paragraph", "after_findings_by_paragraph"):
+        if isinstance(row.get(key), dict):
+            compact[key] = row.get(key)
     return compact
 
 
