@@ -112,7 +112,8 @@ def test_v6_report_signal_contracts_reach_planner_and_writer_prompts():
     planner_contracts = planner_payload["deterministic_route_skeleton"]["document_signal_contracts"]
     direct_writer_contracts = writer_payload["document_signal_contracts"]
     assert planner_contracts[0]["signal_group"] == "grounding_route"
-    assert planner_contracts[0]["target_excerpts"] == ["form queue review"]
+    assert planner_contracts[0]["target_excerpt_count"] == 1
+    assert planner_contracts[0]["target_excerpt_samples"] == ["form queue review"]
     assert direct_writer_contracts[0]["signal_group"] == "grounding_route"
     assert direct_writer_contracts[0]["writer_obligation"] == "keep claims near submitted support"
     assert direct_writer_contracts[0]["target_excerpt_count"] == 1

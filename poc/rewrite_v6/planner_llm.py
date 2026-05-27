@@ -9,6 +9,7 @@ from .json_io import parse_json
 from .plan import Plan
 from .scan import Finding
 from .text import Paragraph
+from .writer_prompt_compact import compact_document_signal_contracts
 
 
 class PlannerClient(Protocol):
@@ -64,7 +65,7 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             "construction_recipes": _compact_rows(plan.ai_safe_route.get("construction_recipes", []), limit=16),
             "author_route_questions": _compact_rows(plan.ai_safe_route.get("author_route_questions", []), limit=16),
             "golden_route": plan.ai_safe_route.get("golden_route", {}),
-            "document_signal_contracts": _compact_rows(plan.ai_safe_route.get("document_signal_contracts", []), limit=8),
+            "document_signal_contracts": compact_document_signal_contracts(plan.ai_safe_route.get("document_signal_contracts", [])),
         },
         "required_decision": {
             "paragraph_route": "positive route the writer must follow",
@@ -334,7 +335,6 @@ def _compact_rows(value: Any, *, limit: int) -> list[dict[str, Any]]:
                 "score",
                 "writer_obligation",
                 "author_proxy_policy",
-                "target_excerpts",
                 "build_route",
                 "positive_pattern",
             )
