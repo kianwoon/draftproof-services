@@ -8,7 +8,7 @@ from poc.rewrite_v6.planner_llm import build_planner_prompt
 from poc.rewrite_v6.scan import scan_text
 from poc.rewrite_v6.text import source_terms
 from poc.rewrite_v6.write import build_prompt, parse_variants
-from poc.rewrite_v6.coverage_guard import missing_required_source_terms
+from poc.rewrite_v6.coverage_guard import missing_required_source_term_details, missing_required_source_terms
 
 
 class StaticJsonResponse:
@@ -126,6 +126,7 @@ def test_v6_required_coverage_rejects_dropped_numeric_anchors():
     candidate = "The process uses seven checks while integrating record structures across degrees."
 
     assert missing_required_source_terms(candidate, paragraph)
+    assert missing_required_source_term_details(candidate, paragraph)
 
 
 def test_v6_required_coverage_ignores_leading_heading_terms():

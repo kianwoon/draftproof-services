@@ -5,6 +5,7 @@ from typing import Any
 
 from .json_io import parse_json
 from .plan import Plan
+from .integrity_guard import candidate_integrity_blockers
 from .prose_quality import has_fragment_or_trace_sentences
 from .scan import scan_text
 from .selector_diagnostics import selection_diagnostics
@@ -60,6 +61,7 @@ def _retry_feedback(paragraph: Paragraph, variants: list[Variant]) -> dict[str, 
         defects: list[str] = []
         if has_fragment_or_trace_sentences(variant.text):
             defects.append("malformed_fragment_or_trace_sentence")
+        defects.extend(candidate_integrity_blockers(variant.text))
         if candidate_scan.scores["finding_count"] >= source_scan.scores["finding_count"]:
             defects.append("no_finding_count_drop")
         if candidate_scan.scores["mean_sentence_shape_risk"] >= source_scan.scores["mean_sentence_shape_risk"]:
@@ -75,6 +77,8 @@ def _retry_feedback(paragraph: Paragraph, variants: list[Variant]) -> dict[str, 
             "source_findings": int(source_scan.scores["finding_count"]),
             "candidate_mean_risk": candidate_scan.scores["mean_sentence_shape_risk"],
             "source_mean_risk": source_scan.scores["mean_sentence_shape_risk"],
+            "missing_required_terms": diagnostics.get(variant.id, {}).get("missing_required_terms", []),
+            "integrity_blockers": diagnostics.get(variant.id, {}).get("integrity_blockers", []),
             "rejected_text_excerpt": variant.text[:700],
             "repair_instruction": (
                 "Generate a new candidate from source meaning. Do not lightly edit this rejected text. "

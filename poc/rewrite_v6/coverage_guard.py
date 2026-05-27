@@ -12,18 +12,22 @@ def coverage_ratio(text: str, paragraph: Paragraph) -> float:
 
 
 def missing_required_source_terms(text: str, paragraph: Paragraph) -> bool:
+    return bool(missing_required_source_term_details(text, paragraph))
+
+
+def missing_required_source_term_details(text: str, paragraph: Paragraph) -> list[str]:
     candidate_terms = _term_bases(source_terms(text, limit=160))
     candidate_numbers = set(_number_anchors(text))
-    if any(anchor not in candidate_numbers for anchor in _number_anchors(paragraph.text)):
-        return True
+    missing: list[str] = []
+    missing.extend(anchor for anchor in _number_anchors(paragraph.text) if anchor not in candidate_numbers)
     for sentence in paragraph.sentences:
         terms = _required_list_terms(_strip_leading_heading(sentence.text))
         if not terms:
             continue
         covered = sum(1 for term in terms if _word_base(term) in candidate_terms)
         if covered / len(terms) < 0.75:
-            return True
-    return False
+            missing.extend(term for term in terms if _word_base(term) not in candidate_terms)
+    return list(dict.fromkeys(missing))
 
 
 def _number_anchors(text: str) -> list[str]:

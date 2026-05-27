@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any, Protocol
 
 from .coverage_guard import coverage_ratio, missing_required_source_terms
+from .integrity_guard import candidate_integrity_blockers
 from .json_io import parse_json
 from .paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from .plan import Plan
@@ -686,7 +687,7 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
         return False
     if _candidate_contract_violation(candidate.text, paragraph):
         return False
-    if has_fragment_or_trace_sentences(candidate.text):
+    if has_fragment_or_trace_sentences(candidate.text) or candidate_integrity_blockers(candidate.text):
         return False
     if finding_drop >= 2 and risk_drop >= -2.0:
         return True

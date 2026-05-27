@@ -8,6 +8,7 @@ from poc.rewrite_v6.paragraph_architecture import apply_architecture_split_text,
 from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _report_target_paragraph_ids, _same_text, run_v6_rewrite_all
 from poc.rewrite_v6.planner_llm import build_planner_prompt
 from poc.rewrite_v6.prose_quality import drop_redundant_adjacent_sentence_intent, has_fragment_or_trace_sentences, repair_generated_prose
+from poc.rewrite_v6.integrity_guard import candidate_integrity_blockers
 from poc.rewrite_v6.repair_windows import RepairWindow, compose_window_rewrite, select_repair_window
 from poc.rewrite_v6.report_contracts import apply_report_signal_contracts, extract_report_signal_contracts
 from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
@@ -590,6 +591,60 @@ def test_v6_writer_retries_rejected_candidate_with_generic_defect_feedback():
         "Labels and reviews support approval checks. "
         "The checks help teams improve."
     )
+
+
+def test_v6_integrity_guard_rejects_broken_citation_and_grammar_shapes():
+    text = (
+        "The method uses source support (Smith. They also carries 2024). "
+        "The involves explaining the process. "
+        "Learners learned accepting feedback."
+    )
+
+    blockers = candidate_integrity_blockers(text)
+
+    assert "broken_citation_shape" in blockers
+    assert "malformed_subject_verb_agreement" in blockers
+    assert "dangling_article_predicate" in blockers
+    assert "malformed_verb_complement" in blockers
+
+
+def test_v6_selector_keeps_source_when_candidate_has_integrity_defect():
+    source = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
+    paragraph = scan_text(source).paragraphs[0]
+    candidate = Variant(
+        id="v1",
+        source="writer",
+        text=(
+            "The process uses forms and queues. "
+            "Labels and reviews support approval checks (Smith. They also carries 2024). "
+            "The checks help teams improve."
+        ),
+    )
+
+    selected = choose_variant([Variant(id="source_preserved", source="source_preserved", text=source), candidate], paragraph)
+
+    assert selected and selected.source == "source_preserved"
+
+
+def test_v6_candidate_diagnostics_include_missing_terms_for_retry_feedback():
+    source = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
+    response = json.dumps({
+        "variants": [{
+            "id": "v1",
+            "text": "The process uses forms and queues because teams should improve.",
+            "coverage_map": [],
+            "route_answer_cards": [],
+            "author_proxy_provenance": [],
+            "author_review_items": [],
+        }]
+    })
+    client = SequencedVariantClient([response, '{"variants":[]}'])
+
+    result = run_v6_rewrite_all(source, writer_client=client, max_passes=1)
+    diagnostic = result.pass_trace[0]["candidate_diagnostics"][0]
+
+    assert "required_source_terms_missing" in diagnostic["blockers"]
+    assert set(diagnostic["missing_required_terms"]) & {"labels", "reviews", "approvals", "checks"}
 
 
 def test_v6_citation_anchor_recipe_keeps_attribution_as_source_to_claim_relation():

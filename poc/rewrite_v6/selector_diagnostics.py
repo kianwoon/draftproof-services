@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .coverage_guard import missing_required_source_terms
+from .coverage_guard import missing_required_source_term_details
+from .integrity_guard import candidate_integrity_blockers
 from .prose_quality import has_fragment_or_trace_sentences
 from .scan import scan_text
 from .text import Paragraph
@@ -43,7 +44,9 @@ def _variant_diagnostics(
     source_scan = scan_text(source.text) if source is not None else scan_text(paragraph.text)
     finding_drop = source_scan.scores["finding_count"] - candidate_scan.scores["finding_count"]
     risk_drop = source_scan.scores["mean_sentence_shape_risk"] - candidate_scan.scores["mean_sentence_shape_risk"]
-    blockers = _blockers(variant, source, paragraph, finding_drop, risk_drop)
+    missing_terms = missing_required_source_term_details(variant.text, paragraph)
+    integrity_blockers = candidate_integrity_blockers(variant.text)
+    blockers = _blockers(variant, source, paragraph, finding_drop, risk_drop, missing_terms, integrity_blockers)
     return {
         "variant_id": variant.id,
         "source": variant.source,
@@ -54,6 +57,8 @@ def _variant_diagnostics(
         "source_mean_risk": source_scan.scores["mean_sentence_shape_risk"],
         "risk_drop": round(float(risk_drop), 3),
         "blockers": blockers,
+        "missing_required_terms": missing_terms[:20],
+        "integrity_blockers": integrity_blockers,
         "accepted_by_selector": not blockers and source is not None and _has_meaningful_movement(variant, source, paragraph),
     }
 
@@ -64,6 +69,8 @@ def _blockers(
     paragraph: Paragraph,
     finding_drop: float,
     risk_drop: float,
+    missing_terms: list[str],
+    integrity_blockers: list[str],
 ) -> list[str]:
     blockers: list[str] = []
     if _compresses_list_repair(variant.text, paragraph):
@@ -72,8 +79,9 @@ def _blockers(
         blockers.append("final_source_beat_replaced")
     if _polarity_violation(variant.text, paragraph):
         blockers.append("source_polarity_changed")
-    if missing_required_source_terms(variant.text, paragraph):
+    if missing_terms:
         blockers.append("required_source_terms_missing")
+    blockers.extend(integrity_blockers)
     if _candidate_contract_violation(variant.text, paragraph):
         blockers.append("candidate_contract_violation")
     if has_fragment_or_trace_sentences(variant.text):
