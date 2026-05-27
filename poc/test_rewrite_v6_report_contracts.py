@@ -204,7 +204,7 @@ def test_v6_pipeline_schedules_report_target_even_without_local_findings():
 
     result = run_v6_rewrite_all(text, writer_client=writer, max_passes=2, report_signal_contracts=contracts)
 
-    assert writer.prompts
+    assert len(writer.prompts) == 1
     assert "haircutting structure" in writer.prompts[0]
     assert "ordinary setup" not in writer.prompts[0]
     assert result.pass_trace[0]["status"] == "no_change"

@@ -525,8 +525,7 @@ def run_v6_rewrite_all(
         end_percent = _rewrite_progress_percent(pass_index + 1, limit)
         if _same_text(result.rewritten_text, current):
             attempts[result.plan.paragraph_id] = attempts.get(result.plan.paragraph_id, 0) + 1
-            if attempts[result.plan.paragraph_id] >= 2:
-                exhausted.add(result.plan.paragraph_id)
+            exhausted.add(result.plan.paragraph_id)
             pass_trace.append(
                 _pass_trace_row(
                     pass_index=pass_index,
