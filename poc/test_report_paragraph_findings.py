@@ -127,9 +127,11 @@ def test_paragraph_explainer_generates_once_from_grouped_findings():
                 "content": (
                     '{"paragraphs":[{"paragraph_id":"p001",'
                     '"source_finding_ids":["f001","f002"],'
-                    '"summary":"This paragraph is broad and reads more like a general explanation than a specific teaching reflection.",'
-                    '"why_flagged":["Several findings point to the same paragraph.","The fix should happen at paragraph level."],'
+                    '"reader_summary":"A reader may understand the general topic, but may not see how the teaching reflection connects to the unit example.",'
+                    '"main_issue":"Connect the broad learning-design claim to one specific classroom or assessment problem.",'
+                    '"why_flagged":["The paragraph moves from a general claim to a unit example without enough linking explanation.","The source references are present, but the student voice needs to explain how they support the point."],'
                     '"recommendation":"Add one concrete teaching or assessment detail already supported by the draft.",'
+                    '"rewrite_hint":"For example, add a sentence explaining what learners struggle with before naming the unit.",'
                     '"confidence":"medium"}]}'
                 )
             })()
@@ -160,14 +162,19 @@ def test_paragraph_explainer_generates_once_from_grouped_findings():
     explanations = generate_paragraph_explanations(payload, gateway=gateway, model="planner-test")
 
     assert gateway.calls == 1
-    assert explanations["schema_version"] == "paragraph_explanations.v1"
+    assert explanations["schema_version"] == "paragraph_explanations.v2"
     assert explanations["paragraphs"][0]["paragraph_id"] == "p001"
+    assert explanations["paragraphs"][0]["reader_summary"].startswith("A reader may understand")
+    assert explanations["paragraphs"][0]["main_issue"].startswith("Connect the broad")
     assert explanations["paragraphs"][0]["recommendation"].startswith("Add one concrete")
+    assert explanations["paragraphs"][0]["rewrite_hint"].startswith("For example")
 
     report.paragraph_explanations = explanations
     markdown = render_markdown(report)
-    assert "This paragraph is broad" in markdown
+    assert "A reader may understand" in markdown
+    assert "Main fix: Connect the broad" in markdown
     assert "Add one concrete teaching" in markdown
+    assert "For example, add a sentence" in markdown
 
 
 def test_paragraph_explainer_uses_worker_supplied_llm_settings(monkeypatch):
@@ -186,9 +193,11 @@ def test_paragraph_explainer_uses_worker_supplied_llm_settings(monkeypatch):
             return type("Response", (), {
                 "content": (
                     '{"paragraphs":[{"paragraph_id":"p001",'
-                    '"summary":"This paragraph needs a clearer student-facing fix.",'
-                    '"why_flagged":["The scanner found a repeated issue in this paragraph."],'
+                    '"reader_summary":"A reader may need a clearer link between the paragraph claim and the teaching example.",'
+                    '"main_issue":"Make the teaching example do more work.",'
+                    '"why_flagged":["The paragraph names a concern but does not yet show how it appears in practice."],'
                     '"recommendation":"Rewrite the paragraph with one concrete detail.",'
+                    '"rewrite_hint":"Add one sentence that points to the exact classroom issue.",'
                     '"confidence":"medium"}]}'
                 )
             })()

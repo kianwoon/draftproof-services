@@ -1244,14 +1244,25 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             sentence_suffix = f" ({sentence_ids[0]}-{sentence_ids[-1]})" if len(sentence_ids) > 1 else (f" ({sentence_ids[0]})" if sentence_ids else "")
             paragraph = f"**{paragraph_label}{sentence_suffix}:** {_truncate(_table_cell(group.get('text')), 260)}"
             explanation = group.get("explanation") or {}
-            summary = explanation.get("summary") if isinstance(explanation, dict) else ""
+            summary = (
+                explanation.get("reader_summary")
+                or explanation.get("summary")
+            ) if isinstance(explanation, dict) else ""
+            main_issue = explanation.get("main_issue") if isinstance(explanation, dict) else ""
             why_flagged = explanation.get("why_flagged") if isinstance(explanation, dict) else []
             recommendation = explanation.get("recommendation") if isinstance(explanation, dict) else ""
+            rewrite_hint = explanation.get("rewrite_hint") if isinstance(explanation, dict) else ""
             if summary:
-                detail_items = [summary, *([str(item) for item in why_flagged[:3]] if isinstance(why_flagged, list) else [])]
+                detail_items = [
+                    summary,
+                    *([f"Main fix: {main_issue}"] if main_issue else []),
+                    *([str(item) for item in why_flagged[:2]] if isinstance(why_flagged, list) else []),
+                ]
             else:
                 detail_items = details[:4]
-            action_items = [recommendation] if recommendation else actions[:4]
+            action_items = [
+                item for item in (recommendation, rewrite_hint) if item
+            ] or actions[:4]
             detail = "<br>".join(f"- {_table_cell(item)}" for item in detail_items if item) or "—"
             action = "<br>".join(f"- {_table_cell(item)}" for item in action_items if item) or "—"
             lines.append(

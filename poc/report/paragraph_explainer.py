@@ -100,7 +100,7 @@ def generate_paragraph_explanations(
     paragraph_rows = explainer_input.get("paragraphs") or []
     if not paragraph_rows:
         return {
-            "schema_version": "paragraph_explanations.v1",
+            "schema_version": "paragraph_explanations.v2",
             "source_report_hash": report_explanation_hash(explainer_input),
             "generated_at": int(time.time()),
             "model": model or planner_model_from_env(),
@@ -143,7 +143,7 @@ def generate_paragraph_explanations(
     parsed = _parse_json(getattr(response, "raw_content", "") or response.content)
     paragraphs = _normalize_explanations(parsed, paragraph_rows)
     return {
-        "schema_version": "paragraph_explanations.v1",
+        "schema_version": "paragraph_explanations.v2",
         "source_report_hash": report_explanation_hash(explainer_input),
         "generated_at": int(time.time()),
         "model": getattr(gateway, "model", model),
@@ -184,12 +184,17 @@ def _bounded_explainer_input(explainer_input: dict[str, Any]) -> dict[str, Any]:
 
 def _prompt(payload: dict[str, Any]) -> str:
     return (
-        "Create layman paragraph explanations for the scan findings below.\n"
+        "Create student-facing paragraph guidance for the scan findings below.\n"
         "Rules:\n"
-        "- Explain what a student should actually fix, not detector internals.\n"
-        "- Mention uncertainty; do not say the student used AI.\n"
-        "- Recommendation must be concrete and paragraph-specific.\n"
+        "- Write for a student, tutor, or non-technical reviewer. Do not expose detector labels as advice.\n"
+        "- Every field must refer to this paragraph's actual subject matter, wording, or argument path.\n"
+        "- Explain what a reader may notice, not what the detector calculated.\n"
+        "- Mention uncertainty where needed; do not say the student used AI or committed misconduct.\n"
+        "- Pick one main issue. Do not list every signal mechanically.\n"
+        "- Recommendation must be a concrete edit for this paragraph, not generic advice.\n"
+        "- Rewrite hint may show the type of sentence to add, but must not invent new facts.\n"
         "- Do not add facts, examples, citations, or course details not present in the paragraph.\n"
+        "- Avoid phrases such as predictable phrasing, semantic drift, low originality, signal, detector, score, or flagged unless explaining uncertainty.\n"
         "- Keep each field short enough for a report side panel.\n\n"
         "Return JSON with this shape:\n"
         "{\n"
@@ -197,9 +202,11 @@ def _prompt(payload: dict[str, Any]) -> str:
         "    {\n"
         '      "paragraph_id": "p001",\n'
         '      "source_finding_ids": ["f001"],\n'
-        '      "summary": "plain-language reason this paragraph was flagged",\n'
-        '      "why_flagged": ["short reason", "short reason"],\n'
-        '      "recommendation": "specific next edit",\n'
+        '      "reader_summary": "what a normal reader may notice in this paragraph",\n'
+        '      "main_issue": "the single most important fix",\n'
+        '      "why_flagged": ["plain reason tied to the paragraph", "plain reason tied to the paragraph"],\n'
+        '      "recommendation": "specific paragraph-level edit instruction",\n'
+        '      "rewrite_hint": "optional one-sentence example of the kind of edit to make",\n'
         '      "confidence": "low|medium|high"\n'
         "    }\n"
         "  ]\n"
@@ -226,9 +233,13 @@ def _normalize_explanations(parsed: Any, source_rows: list[dict[str, Any]]) -> l
             "paragraph_id": paragraph_id,
             "sentence_ids": list(source.get("sentence_ids") or []),
             "source_finding_ids": _string_list(row.get("source_finding_ids")) or finding_ids,
-            "summary": _clean_text(row.get("summary"), 420),
+            "schema_version": "paragraph_explanation.v2",
+            "summary": _clean_text(row.get("reader_summary") or row.get("summary"), 520),
+            "reader_summary": _clean_text(row.get("reader_summary") or row.get("summary"), 520),
+            "main_issue": _clean_text(row.get("main_issue"), 260),
             "why_flagged": _string_list(row.get("why_flagged"), limit=4, item_limit=180),
             "recommendation": _clean_text(row.get("recommendation"), 360),
+            "rewrite_hint": _clean_text(row.get("rewrite_hint"), 300),
             "confidence": _confidence(row.get("confidence")),
         })
     return normalized
