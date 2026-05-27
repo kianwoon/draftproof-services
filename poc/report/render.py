@@ -15,6 +15,7 @@ from detect.transformation import TRANSFORMATION_SIGNAL_METADATA, transformation
 from detect.turnitin_like import turnitin_like_ai_profile
 
 from .report import DraftReport, Tier, TIER_ICON, report_to_dict
+from .paragraph_explainer import explanations_by_paragraph
 
 # ── Scanner & Signal legend codes ──────────────────────────────────────
 _SCANNER_CODES = {
@@ -1049,6 +1050,7 @@ def _high_count_by_scanner(findings_by_tier: dict, scanner: str) -> int:
 
 def _paragraph_finding_groups(findings: list, data: dict) -> list[dict]:
     """Group report findings by paragraph while preserving finding metadata."""
+    explanation_map = explanations_by_paragraph(data.get("paragraph_explanations"))
     segments = ((data.get("scan_intelligence") or {}).get("document") or {}).get("segments") or []
     paragraphs = ((data.get("scan_intelligence") or {}).get("document") or {}).get("paragraphs") or []
     segment_by_sentence = {
@@ -1075,6 +1077,7 @@ def _paragraph_finding_groups(findings: list, data: dict) -> list[dict]:
                 "sentence_ids": list(paragraph.get("sentence_ids") or []),
                 "text": paragraph.get("text") or (segment or {}).get("text") or finding.evidence,
                 "findings": [],
+                "explanation": explanation_map.get(paragraph_id),
             }
             groups[key] = group
             ordered_keys.append(key)
@@ -1240,8 +1243,17 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             paragraph_label = group.get("paragraph_id") or "Document"
             sentence_suffix = f" ({sentence_ids[0]}-{sentence_ids[-1]})" if len(sentence_ids) > 1 else (f" ({sentence_ids[0]})" if sentence_ids else "")
             paragraph = f"**{paragraph_label}{sentence_suffix}:** {_truncate(_table_cell(group.get('text')), 260)}"
-            detail = "<br>".join(f"- {_table_cell(item)}" for item in details[:4]) or "—"
-            action = "<br>".join(f"- {_table_cell(item)}" for item in actions[:4]) or "—"
+            explanation = group.get("explanation") or {}
+            summary = explanation.get("summary") if isinstance(explanation, dict) else ""
+            why_flagged = explanation.get("why_flagged") if isinstance(explanation, dict) else []
+            recommendation = explanation.get("recommendation") if isinstance(explanation, dict) else ""
+            if summary:
+                detail_items = [summary, *([str(item) for item in why_flagged[:3]] if isinstance(why_flagged, list) else [])]
+            else:
+                detail_items = details[:4]
+            action_items = [recommendation] if recommendation else actions[:4]
+            detail = "<br>".join(f"- {_table_cell(item)}" for item in detail_items if item) or "—"
+            action = "<br>".join(f"- {_table_cell(item)}" for item in action_items if item) or "—"
             lines.append(
                 f"| {finding_num} | {_table_cell(', '.join(scanners))} | {_table_cell(', '.join(signals))} | "
                 f"{detail} | {paragraph} | {action} |"

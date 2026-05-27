@@ -1223,10 +1223,21 @@ function summarizeSentenceIds(segments) {
   return `${ids[0]}-${ids[ids.length - 1]}`;
 }
 
+function paragraphExplanationsById(results) {
+  const rows = results?.paragraph_explanations?.paragraphs;
+  if (!Array.isArray(rows)) return new Map();
+  return new Map(
+    rows
+      .filter((row) => row && row.paragraph_id)
+      .map((row) => [String(row.paragraph_id), row])
+  );
+}
+
 function buildSubmittedContentModel(report) {
   const results = report?.results_json || {};
   const intel = results.scan_intelligence || {};
   const rawSegments = intel.document?.segments || results.highlight_segments || [];
+  const explanationByParagraph = paragraphExplanationsById(results);
   const issueById = new Map((report?.issues || []).map((issue) => [String(issue.id), issue]));
   const issuesBySentence = new Map();
 
@@ -1300,6 +1311,7 @@ function buildSubmittedContentModel(report) {
     paragraph.sentence_id = summarizeSentenceIds(paragraph.segments);
     paragraph.sentence_ids = uniqueCompact(paragraph.segments.map((segment) => segment.sentence_id));
     paragraph.signalCount = paragraph.segments.reduce((count, segment) => count + segment.signals.length, 0);
+    paragraph.explanation = explanationByParagraph.get(String(paragraph.id)) || null;
   });
 
   const signalMap = new Map();

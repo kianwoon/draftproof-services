@@ -1971,7 +1971,10 @@ export default function Report() {
                   <>
                     <span className="submitted-panel-kicker">{selectedParagraph.sentence_id}</span>
                     <h3>{signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t)}</h3>
-                    <p>{signalDescription(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.description, t)}</p>
+                    <p>
+                      {selectedParagraph.explanation?.summary ||
+                        signalDescription(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.description, t)}
+                    </p>
                     {renderSubmittedSignalGauge()}
                     <div className="submitted-panel-meta">
                       <span>{t('report.submitted.paragraphSignals', { count: selectedParagraph.signalCount || selectedParagraph.signals.length })}</span>
@@ -1990,10 +1993,20 @@ export default function Report() {
                         ))}
                       </div>
                     )}
-                    {selectedParagraph.primarySignal.recommendation && (
+                    {Array.isArray(selectedParagraph.explanation?.why_flagged) && selectedParagraph.explanation.why_flagged.length > 0 && (
+                      <div className="submitted-panel-note">
+                        <span>{t('report.submitted.whyFlagged')}</span>
+                        <ul>
+                          {selectedParagraph.explanation.why_flagged.slice(0, 4).map((reason) => (
+                            <li key={reason}>{reason}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {(selectedParagraph.explanation?.recommendation || selectedParagraph.primarySignal.recommendation) && (
                       <div className="submitted-panel-note">
                         <span>{t('report.submitted.recommendation')}</span>
-                        <p>{selectedParagraph.primarySignal.recommendation}</p>
+                        <p>{selectedParagraph.explanation?.recommendation || selectedParagraph.primarySignal.recommendation}</p>
                       </div>
                     )}
                   </>
@@ -2174,12 +2187,15 @@ export default function Report() {
                             </div>
                             <div className="submitted-editor-signal">
                               <span>{t('report.submitted.editor.signal')}</span>
-                              <p>{signalDescription(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.description, t)}</p>
+                              <p>
+                                {selectedParagraph.explanation?.summary ||
+                                  signalDescription(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.description, t)}
+                              </p>
                             </div>
-                            {selectedParagraph.primarySignal.recommendation && (
+                            {(selectedParagraph.explanation?.recommendation || selectedParagraph.primarySignal.recommendation) && (
                               <div className="submitted-panel-note">
                                 <span>{t('report.submitted.recommendation')}</span>
-                                <p>{selectedParagraph.primarySignal.recommendation}</p>
+                                <p>{selectedParagraph.explanation?.recommendation || selectedParagraph.primarySignal.recommendation}</p>
                               </div>
                             )}
                           </>

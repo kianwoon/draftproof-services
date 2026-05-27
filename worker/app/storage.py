@@ -28,26 +28,36 @@ def _client():
     )
 
 
-def upload_report_files(job_id: str, md_text: str, pdf_bytes: bytes, result_dict: dict) -> Dict[str, str]:
-    """Upload MD, PDF, and JSON reports to R2. Returns {type: url}."""
+def upload_report_files(
+    job_id: str,
+    md_text: str,
+    pdf_bytes: bytes,
+    result_dict: dict,
+    paragraph_explanations: dict | None = None,
+) -> Dict[str, str]:
+    """Upload MD, PDF, JSON, and optional explanation sidecar to R2."""
     s3 = _client()
     bucket = settings.R2_BUCKET_NAME
     prefix = f"reports/{job_id}"
     urls = {}
 
-    for ext, data in [
-        ("json", json.dumps(result_dict, indent=2, ensure_ascii=False).encode()),
-        ("md", md_text.encode()),
-        ("pdf", pdf_bytes),
-    ]:
-        key = f"{prefix}/report.{ext}"
-        content_type = {
-            "json": "application/json",
-            "md": "text/markdown",
-            "pdf": "application/pdf",
-        }[ext]
+    uploads = [
+        ("report.json", json.dumps(result_dict, indent=2, ensure_ascii=False).encode(), "application/json", "json"),
+        ("report.md", md_text.encode(), "text/markdown", "md"),
+        ("report.pdf", pdf_bytes, "application/pdf", "pdf"),
+    ]
+    if paragraph_explanations is not None:
+        uploads.append((
+            "paragraph_explanations.json",
+            json.dumps(paragraph_explanations, indent=2, ensure_ascii=False).encode(),
+            "application/json",
+            "paragraph_explanations",
+        ))
+
+    for filename, data, content_type, url_key in uploads:
+        key = f"{prefix}/{filename}"
         s3.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
-        urls[ext] = _presign(s3, bucket, key)
+        urls[url_key] = _presign(s3, bucket, key)
 
     return urls
 

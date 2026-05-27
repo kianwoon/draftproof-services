@@ -1620,13 +1620,35 @@ def scan_document(self, job_id: str, text: str) -> dict:
             with open(result["json_path"]) as f:
                 results_json = json.load(f)
 
+            paragraph_explanations = None
+            try:
+                report_progress(96, "Explaining paragraph findings")
+                from poc.report.paragraph_explainer import generate_paragraph_explanations
+                from poc.report.render import render_report
+                from poc.report.pdf import render_pdf
+
+                paragraph_explanations = generate_paragraph_explanations(results_json)
+                if paragraph_explanations is not None:
+                    results_json["paragraph_explanations"] = paragraph_explanations
+                    draft_report = result.get("report")
+                    if draft_report is not None:
+                        draft_report.paragraph_explanations = paragraph_explanations
+                        md_text = render_report(draft_report, verbose=True)
+                        explained_pdf_path = os.path.join(tmpdir, "draftproof_explained.pdf")
+                        render_pdf(md_text, explained_pdf_path)
+                        with open(explained_pdf_path, "rb") as f:
+                            pdf_bytes = f.read()
+            except Exception:
+                logger.warning("Paragraph explanation generation failed for %s", job_id, exc_info=True)
+
             report_progress(97, "Uploading report files")
-            urls = upload_report_files(job_id, md_text, pdf_bytes, results_json)
+            urls = upload_report_files(job_id, md_text, pdf_bytes, results_json, paragraph_explanations)
 
             report_urls = {
                 "md": urls.get("md"),
                 "pdf": urls.get("pdf"),
                 "json": urls.get("json"),
+                "paragraph_explanations": urls.get("paragraph_explanations"),
             }
 
 

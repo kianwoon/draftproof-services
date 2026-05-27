@@ -230,6 +230,7 @@ class DraftReport:
     authorship_concern_confidence: str = "low"
     authorship_concern_signals: Optional[Dict[str, Any]] = None
     ai_risk_badge: Optional[Dict[str, Any]] = None
+    paragraph_explanations: Optional[Dict[str, Any]] = None
     def to_dict(self) -> dict:
         """Serialize the report to a JSON-ready dict."""
         import json
@@ -4174,6 +4175,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "total_signal_count": len(report.authorship_concern_signals or {}),
         },
         "ai_risk_badge": report.ai_risk_badge,
+        "paragraph_explanations": report.paragraph_explanations,
         "integrity_layers": _integrity_layers(
             report.ai_risk_badge or {},
             ((report.ai_risk_badge or {}).get("transformation_classification") or {}),

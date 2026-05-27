@@ -6298,6 +6298,18 @@ th {
   background: #fff;
 }
 
+.submitted-panel-note ul {
+  margin: 0;
+  padding-left: 1.05rem;
+  color: #334155;
+  font-size: .86rem;
+  line-height: 1.5;
+}
+
+.submitted-panel-note li + li {
+  margin-top: .25rem;
+}
+
 .submitted-content-actions {
   display: flex;
   align-items: center;

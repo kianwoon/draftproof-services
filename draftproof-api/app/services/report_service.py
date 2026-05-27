@@ -48,6 +48,13 @@ def _fetch_report_json_sync(r2_key: str) -> dict | None:
     return json.loads(obj["Body"].read(_MAX_REPORT_BYTES))
 
 
+def _fetch_optional_report_json_sync(r2_key: str) -> dict | None:
+    try:
+        return _fetch_report_json_sync(r2_key)
+    except Exception:
+        return None
+
+
 def _flatten_findings(results_json: dict) -> list[dict]:
     """Convert tiered findings dict into flat issues list for the frontend."""
     # Build sentence_id -> full sentence text lookup
@@ -142,6 +149,12 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
         if _r2:
             try:
                 results_json = await asyncio.to_thread(_fetch_report_json_sync, r2_key)
+                paragraph_explanations = await asyncio.to_thread(
+                    _fetch_optional_report_json_sync,
+                    f"reports/{report_id}/paragraph_explanations.json",
+                )
+                if paragraph_explanations:
+                    results_json["paragraph_explanations"] = paragraph_explanations
                 issues = _flatten_findings(results_json)
             except Exception as e:
                 logger.warning("Failed to fetch report JSON from R2 for %s: %s", report_id, e)
