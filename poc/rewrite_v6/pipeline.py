@@ -15,6 +15,7 @@ from .report_contracts import apply_report_signal_contracts
 from .scan import Scan, findings_for_paragraph, scan_text
 from .json_io import parse_json
 from .paragraph_architecture import apply_architecture_split_text, architecture_split_contract
+from .paragraph_layout import restore_original_paragraph_layout
 from .quality_repair import QualityRepairResult, _grammer_extra_body, _grammer_model, run_quality_repair_once
 from .selector_diagnostics import rejected_variant_feedback, selection_diagnostics
 from .prose_quality import repair_generated_prose
@@ -234,7 +235,8 @@ def run_v6_rewrite_with_residuals(
         progress_callback=progress_callback,
     )
     repair = _risk_safe_quality_repair(current, repair)
-    final_text = repair.repaired_text if repair else current
+    post_quality_text = repair.repaired_text if repair else current
+    final_text = restore_original_paragraph_layout(text, post_quality_text, passes)
     return DocumentResult(
         initial_scan=initial_scan,
         final_scan=scan_text(final_text),
@@ -639,7 +641,8 @@ def run_v6_rewrite_all(
         progress_callback=progress_callback,
     )
     repair = _risk_safe_quality_repair(current, repair)
-    final_text = repair.repaired_text if repair else current
+    post_quality_text = repair.repaired_text if repair else current
+    final_text = restore_original_paragraph_layout(text, post_quality_text, passes)
     return DocumentResult(
         initial_scan=initial_scan,
         final_scan=scan_text(final_text),
