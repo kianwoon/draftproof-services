@@ -16,6 +16,9 @@ def normalize_paragraph_blocks(text: str) -> str:
 def _split_oversized_block(block: str) -> list[str]:
     heading, body = _split_heading(block)
     sentences = split_sentences(body, paragraph_id="p000")
+    body_words = word_count(body)
+    if body_words < 120:
+        return [block.strip()]
     if len(sentences) < 9 and word_count(body) < 220:
         return [block.strip()]
     chunks: list[list[str]] = []
@@ -44,6 +47,8 @@ def _split_heading(block: str) -> tuple[str, str]:
 
 def _should_start_new_chunk(current: list[str], next_sentence: str, index: int) -> bool:
     current_words = word_count(" ".join(current))
+    if current_words < 120 and len(current) < 10:
+        return False
     if len(current) >= 6:
         return True
     if current_words >= 150 and len(current) >= 3:

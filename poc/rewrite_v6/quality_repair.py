@@ -258,7 +258,7 @@ def _same_text(left: str, right: str) -> bool:
 
 def _quality_repair_enabled() -> bool:
     value = _bool_env("DRAFTPROOF_V6_GRAMMER_REPAIR_ENABLED")
-    return True if value is None else value
+    return False if value is None else value
 
 
 def _has_llm_api_key(api_key: str | None) -> bool:

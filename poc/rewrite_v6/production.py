@@ -7,11 +7,13 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 try:
+    from detect.document_structure import normalize_submitted_text
     from report.pdf import render_pdf
     from report.render_rewrite import render_rewrite_report
     from rewrite_v2.pipeline import _extract_original_text, _sentence_comparison
     from rewrite_v3.pipeline import _scan_report
 except ModuleNotFoundError:
+    from poc.detect.document_structure import normalize_submitted_text
     from poc.report.pdf import render_pdf
     from poc.report.render_rewrite import render_rewrite_report
     from poc.rewrite_v2.pipeline import _extract_original_text, _sentence_comparison
@@ -43,7 +45,10 @@ def run_rewrite_pipeline_v6(
             progress_callback(percent, message)
 
     progress(62, "Starting V6 scanner-planner-writer rewrite")
-    original_text = _extract_original_text(detect_json)
+    original_text, rewrite_source = _rewrite_source_text(detect_json)
+    effective_detect_json = dict(detect_json)
+    effective_detect_json["input_text"] = original_text
+    effective_detect_json["rewrite_source"] = rewrite_source
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     requested_writer_model = model
@@ -59,7 +64,7 @@ def run_rewrite_pipeline_v6(
         cancellation_check=raise_if_canceled,
         runtime_budget_seconds=_v6_runtime_budget_seconds(started),
         min_llm_request_seconds=_v6_min_llm_request_seconds(),
-        report_signal_contracts=extract_report_signal_contracts(detect_json),
+        report_signal_contracts=extract_report_signal_contracts(effective_detect_json),
     )
     stage_timings: list[dict[str, Any]] = []
 
@@ -87,7 +92,7 @@ def run_rewrite_pipeline_v6(
         "Preparing original scan summary",
         lambda: _scan_report_for_summary(
             original_text,
-            provided=detect_json,
+            provided=effective_detect_json,
             fallback_scan=document.initial_scan.to_dict(),
         ),
     )
@@ -119,6 +124,7 @@ def run_rewrite_pipeline_v6(
             "pipeline": "v6",
             "passes": len(document.passes),
         },
+        "rewrite_source": rewrite_source,
         "candidate_generation_status": {
             "accepted_count": len(document.passes),
             "remaining_findings": len(document.final_scan.findings),
@@ -186,6 +192,57 @@ def run_rewrite_pipeline_v6(
         "result": result_obj,
         "elapsed": elapsed,
     }
+
+
+def _rewrite_source_text(detect_json: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    scan_text = str(detect_json.get("input_text") or "").strip()
+    raw_text = str(detect_json.get("raw_input_text") or "").strip()
+    if scan_text:
+        return scan_text, _rewrite_source_meta(
+            source="scan_input_text",
+            text=scan_text,
+            raw_text=raw_text,
+            already_normalized=bool(
+                detect_json.get("input_text_normalized")
+                or (raw_text and raw_text != scan_text)
+            ),
+        )
+
+    extracted = _extract_original_text(detect_json)
+    normalized = normalize_submitted_text(extracted) or extracted
+    return normalized, _rewrite_source_meta(
+        source="fallback_normalized_original_text",
+        text=normalized,
+        raw_text=extracted,
+        already_normalized=False,
+    )
+
+
+def _rewrite_source_meta(
+    *,
+    source: str,
+    text: str,
+    raw_text: str,
+    already_normalized: bool,
+) -> dict[str, Any]:
+    raw = str(raw_text or "")
+    normalized = str(text or "")
+    return {
+        "source": source,
+        "uses_scan_normalized_input": source == "scan_input_text",
+        "input_text_normalized": bool(
+            already_normalized
+            or (raw.strip() and raw.strip() != normalized.strip())
+        ),
+        "raw_input_text_available": bool(raw.strip()),
+        "raw_paragraph_count": _paragraph_count(raw),
+        "rewrite_paragraph_count": _paragraph_count(normalized),
+        "normalization_changed_text": bool(raw.strip() and raw.strip() != normalized.strip()),
+    }
+
+
+def _paragraph_count(text: str) -> int:
+    return len([part for part in str(text or "").split("\n\n") if part.strip()])
 
 
 def _scan_report_shape(scan: dict[str, Any]) -> dict[str, Any]:

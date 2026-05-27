@@ -291,7 +291,7 @@ def test_v6_pipeline_sends_semantic_paragraph_to_writer_before_window_fallback()
     assert "A final sentence stays outside the first repair" in prompt_text
 
 
-def test_v6_trace_records_selector_blockers_when_source_preserved_wins():
+def test_v6_trace_records_review_warnings_when_risk_mitigating_candidate_wins():
     text = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
     response = json.dumps({
         "variants": [{
@@ -308,10 +308,10 @@ def test_v6_trace_records_selector_blockers_when_source_preserved_wins():
     result = run_v6_rewrite_all(text, writer_client=client, max_passes=1)
 
     row = result.pass_trace[0]
-    assert row["status"] == "no_change"
-    assert row["selected_source"] == "source_preserved"
+    assert row["status"] == "accepted"
+    assert row["selected_source"] == "llm"
     assert row["candidate_diagnostics"][0]["variant_id"] == "v1"
-    assert row["candidate_diagnostics"][0]["blockers"]
+    assert row["candidate_diagnostics"][0]["quality_warnings"]
 
 
 def test_v6_document_rewrite_runs_residual_followup_after_accepted_paragraph(monkeypatch):
@@ -697,46 +697,45 @@ def test_v6_writer_prompt_blocks_standalone_connector_fragments():
     assert "Every final sentence must stand alone" in prompt
 
 
-def test_v6_writer_retries_rejected_candidate_with_generic_defect_feedback():
+def test_v6_writer_accepts_risk_mitigating_candidate_with_review_warning():
     source = (
-        "Teams use forms, queues, labels, reviews, approvals, and checks because teams should improve. "
-        "Teams use forms, queues, labels, reviews, approvals, and checks because teams should improve. "
-        "Teams use forms, queues, labels, reviews, approvals, and checks because teams should improve."
+        "However, the current education system still carries many old habits. "
+        "Many schools continue to place heavy pressure on grades, exams, and standard answers. "
+        "This can encourage memorisation rather than understanding. "
+        "Students may learn how to pass, but not always how to think deeply, solve problems, or connect ideas across subjects. "
+        "This is a serious concern because the modern world does not only reward people who can remember facts. "
+        "It rewards people who can analyse, adapt, communicate, and create."
     )
     client = SequencedVariantClient([
         json.dumps({"variants": [{
             "id": "v1",
             "text": (
-                "Teams use forms, queues, labels, reviews, approvals, and checks. "
-                "And need improvement."
-            ),
-        }]}),
-        json.dumps({"variants": [{
-            "id": "retry_v1",
-            "text": (
-                "Teams use forms and queues during intake. "
-                "Labels and reviews support approval checks. "
-                "The checks help teams improve."
+                "Many schools still place pressure on grades, exams, and standard answers. "
+                "That pressure can encourage memorisation rather than understanding. "
+                "Students may learn how to pass without always learning to think deeply or connect ideas across subjects. "
+                "The modern world rewards people who analyse, adapt, communicate, and create."
             ),
         }]}),
     ])
 
     result = v6_pipeline.run_v6_rewrite(source, writer_client=client, priority_paragraph_ids={"p001"})
 
-    assert len(client.prompts) == 2
-    assert "Defect feedback from rejected candidates" in client.prompts[1]
-    assert "malformed_fragment_or_trace_sentence" in client.prompts[1]
-    assert "base_writer_prompt" not in client.prompts[1]
-    assert "target_excerpts" not in client.prompts[1]
-    assert result.selected and result.selected.id == "retry_v1"
-    assert result.rewritten_text == (
-        "Teams use forms and queues during intake. "
-        "Labels and reviews support approval checks. "
-        "The checks help teams improve."
+    assert len(client.prompts) == 1
+    assert result.selected and result.selected.id == "v1"
+    assert result.selected.author_review_items
+    assert any(
+        "polarity_or_contrast_changed" in item.get("target_text", "")
+        for item in result.selected.author_review_items
+    )
+    assert result.rewritten_text.startswith(
+        "Many schools still place pressure on grades, exams, and standard answers. "
+        "That pressure can encourage memorisation rather than understanding. "
+        "Students may learn how to pass without always learning to think deeply or connect ideas across subjects. "
+        "The modern world rewards people who analyse."
     )
 
 
-def test_v6_writer_retry_candidates_receive_same_prose_repair_as_first_pass():
+def test_v6_writer_accepts_risk_mitigating_first_pass_with_review_items():
     source = (
         "This also aligns with CAST’s (2024) principle of multiple means of representation by simplifying abstract technical concepts into more familiar visual references. "
         "For example, when I guide them to 12 o’clock projection, they can easily understand where to project the hair straightaway. "
@@ -766,11 +765,14 @@ def test_v6_writer_retry_candidates_receive_same_prose_repair_as_first_pass():
 
     result = v6_pipeline.run_v6_rewrite(source, writer_client=client, priority_paragraph_ids={"p001"})
 
-    assert len(client.prompts) == 2
-    assert result.selected and result.selected.id == "retry_v1"
-    assert "For example, when" not in result.selected.text
-    assert "as an example" not in result.selected.text
-    assert "The 12-o’clock projection shows where to project the hair." in result.selected.text
+    assert len(client.prompts) == 1
+    assert result.selected and result.selected.id == "v1"
+    assert result.selected.author_review_items
+    assert "And needs improvement." in result.selected.text
+    assert any(
+        "source_terms_missing" in item.get("target_text", "")
+        for item in result.selected.author_review_items
+    )
 
 
 def test_v6_retry_prompt_does_not_duplicate_full_document_signal_excerpts():
@@ -844,7 +846,7 @@ def test_v6_integrity_guard_rejects_remaining_production_bad_shapes():
     assert "citation_report_sentence" in blockers
 
 
-def test_v6_selector_keeps_source_when_candidate_has_integrity_defect():
+def test_v6_selector_accepts_risk_mitigating_integrity_warning_for_review():
     source = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
     paragraph = scan_text(source).paragraphs[0]
     candidate = Variant(
@@ -859,7 +861,12 @@ def test_v6_selector_keeps_source_when_candidate_has_integrity_defect():
 
     selected = choose_variant([Variant(id="source_preserved", source="source_preserved", text=source), candidate], paragraph)
 
-    assert selected and selected.source == "source_preserved"
+    assert selected and selected.source == "writer"
+    assert selected.author_review_items
+    assert any(
+        "broken_citation_shape" in item.get("target_text", "")
+        for item in selected.author_review_items
+    )
 
 
 def test_v6_candidate_diagnostics_include_missing_terms_for_retry_feedback():
@@ -879,7 +886,7 @@ def test_v6_candidate_diagnostics_include_missing_terms_for_retry_feedback():
     result = run_v6_rewrite_all(source, writer_client=client, max_passes=1)
     diagnostic = result.pass_trace[0]["candidate_diagnostics"][0]
 
-    assert "required_source_terms_missing" in diagnostic["blockers"]
+    assert "required_source_terms_missing_review_required" in diagnostic["quality_warnings"]
     assert set(diagnostic["missing_required_terms"]) & {"labels", "reviews", "approvals", "checks"}
 
 

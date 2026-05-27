@@ -134,9 +134,12 @@ def choose_variant(variants: list[Variant], paragraph: Paragraph) -> Variant | N
             and _has_meaningful_movement(variant, source_variant, paragraph)
         ]
         if improved:
-            return annotate_review_items(max(improved, key=lambda variant: _variant_rank(variant, paragraph, source_words)), paragraph.text)
+            return _annotate_selected_variant(
+                max(improved, key=lambda variant: _variant_rank(variant, paragraph, source_words)),
+                paragraph,
+            )
         return source_variant
-    return annotate_review_items(max(variants, key=lambda variant: _variant_rank(variant, paragraph, source_words)), paragraph.text)
+    return _annotate_selected_variant(max(variants, key=lambda variant: _variant_rank(variant, paragraph, source_words)), paragraph)
 
 
 def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragraph: Paragraph) -> bool:
@@ -144,17 +147,7 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
     after = scan_text(candidate.text)
     finding_drop = before.scores["finding_count"] - after.scores["finding_count"]
     risk_drop = before.scores["mean_sentence_shape_risk"] - after.scores["mean_sentence_shape_risk"]
-    if _compresses_list_repair(candidate.text, paragraph):
-        return False
-    if _replaces_final_source_beat_with_conclusion(candidate.text, paragraph):
-        return False
-    if _polarity_violation(candidate.text, paragraph):
-        return False
-    if missing_required_source_terms(candidate.text, paragraph):
-        return False
-    if _hard_candidate_contract_violation(candidate.text, paragraph):
-        return False
-    if has_fragment_or_trace_sentences(candidate.text) or candidate_integrity_blockers(candidate.text):
+    if word_count(candidate.text) < max(8, int(word_count(paragraph.text) * 0.35)):
         return False
     if finding_drop >= 2 and risk_drop >= -2.0:
         return True
@@ -163,6 +156,32 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
     if finding_drop >= 0 and risk_drop >= 8.0:
         return True
     return False
+
+
+def _annotate_selected_variant(variant: Variant, paragraph: Paragraph) -> Variant:
+    annotated = annotate_review_items(variant, paragraph.text)
+    review_items = list(annotated.author_review_items or [])
+    review_reasons: list[str] = []
+    if _polarity_violation(annotated.text, paragraph):
+        review_reasons.append("polarity_or_contrast_changed")
+    if missing_required_source_terms(annotated.text, paragraph):
+        review_reasons.append("source_terms_missing")
+    if _hard_candidate_contract_violation(annotated.text, paragraph):
+        review_reasons.append("hard_contract_warning")
+    if has_fragment_or_trace_sentences(annotated.text):
+        review_reasons.append("sentence_quality_warning")
+    review_reasons.extend(candidate_integrity_blockers(annotated.text))
+    if not review_reasons:
+        return annotated
+    review_items.append({
+        "item_id": "auto_review_risk_mitigation_001",
+        "provenance": "needs_author_confirmation",
+        "target_text": " ".join(sorted(set(review_reasons))),
+        "generated_text": "The rewrite reduced scanner risk but changed or weakened a guarded source constraint.",
+        "user_input_needed": "Review the rewritten paragraph and keep, edit, or reject this mitigation before final use.",
+        "author_task": "Confirm that meaning, contrast, source terms, and sentence quality still match the submitted draft.",
+    })
+    return replace(annotated, author_review_items=review_items)
 def _variant_rank(variant: Variant, paragraph: Paragraph, source_words: int) -> tuple[float, float, float, float, bool, int]:
     scan = scan_text(variant.text)
     words = word_count(variant.text)
@@ -171,7 +190,7 @@ def _variant_rank(variant: Variant, paragraph: Paragraph, source_words: int) -> 
     compression_penalty = 2.0 if _compresses_list_repair(variant.text, paragraph) else 0.0
     extra_beat_penalty = 2.0 if _adds_extra_conclusion_beat(variant.text, paragraph) else 0.0
     final_beat_penalty = 2.0 if _replaces_final_source_beat_with_conclusion(variant.text, paragraph) else 0.0
-    polarity_penalty = 4.0 if _polarity_violation(variant.text, paragraph) else 0.0
+    polarity_penalty = 1.0 if _polarity_violation(variant.text, paragraph) else 0.0
     bridge_penalty = 4.0 if _unreviewed_bridge_violation(variant, paragraph) else 0.0
     contract_penalty = 4.0 if _candidate_contract_violation(variant.text, paragraph) else 0.0
     mean_risk = scan.scores["mean_sentence_shape_risk"]

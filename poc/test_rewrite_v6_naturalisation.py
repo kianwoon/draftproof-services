@@ -8,6 +8,7 @@ from poc.rewrite_v6.naturalisation import (
     _naturalisation_candidates,
     apply_naturalisation_operations,
     run_naturalisation_repair,
+    run_naturalisation_repair_once,
 )
 from poc.rewrite_v6.pipeline import run_v6_rewrite_all
 from poc.rewrite_v6.plan import build_plan
@@ -336,6 +337,8 @@ def test_naturalisation_allows_awkward_passive_repair_without_general_polish():
 
 
 def test_v6_runs_naturalisation_after_grammer_and_before_layout_restore(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_GRAMMER_REPAIR_ENABLED", "1")
+    monkeypatch.setenv("DRAFTPROOF_V6_NATURALISATION_ENABLED", "1")
     source = "This process uses a form, a queue, and a review."
     rewritten = (
         "Teachers guide students to question sources. "
@@ -371,3 +374,21 @@ def test_v6_runs_naturalisation_after_grammer_and_before_layout_restore(monkeypa
     assert result.quality_repair.status == "no_changes"
     assert result.naturalisation_repair is not None
     assert result.naturalisation_repair.status == "applied"
+
+
+def test_v6_naturalisation_layer_defaults_off(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_V6_NATURALISATION_ENABLED", raising=False)
+    client = SequencedQualityClient([{"operations": []}])
+
+    result = run_naturalisation_repair_once(
+        "Teachers guide students. Teachers compare viewpoints.",
+        original_text="Teachers guide students and compare viewpoints.",
+        quality_client=client,
+        api_key=None,
+        base_url=None,
+        cancellation_check=None,
+        progress_callback=None,
+    )
+
+    assert result is None
+    assert client.calls == 0

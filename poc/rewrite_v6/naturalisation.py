@@ -610,7 +610,7 @@ def _sentence_start_key(sentence: str) -> str:
 
 def _naturalisation_enabled() -> bool:
     value = _bool_env("DRAFTPROOF_V6_NATURALISATION_ENABLED")
-    return True if value is None else value
+    return False if value is None else value
 
 
 def _bool_env(name: str) -> bool | None:

@@ -7,7 +7,7 @@ from poc.rewrite_v6 import pipeline as v6_pipeline
 from poc.rewrite_v6.pipeline import _planner_provider, _writer_model, _writer_provider, run_v6_rewrite, run_v6_rewrite_all
 from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6.planner_llm import run_planner_llm
-from poc.rewrite_v6.quality_repair import QualityRepairOperation, apply_quality_repair_operations
+from poc.rewrite_v6.quality_repair import QualityRepairOperation, apply_quality_repair_operations, run_quality_repair_once
 from poc.rewrite_v6 import production as v6_production
 from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
 from poc.rewrite_v6.write import Variant, build_prompt, choose_variant
@@ -802,6 +802,7 @@ def test_v6_quality_repair_skips_expansive_or_protected_changes():
 
 
 def test_v6_quality_repair_runs_once_after_selected_rewrite(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_GRAMMER_REPAIR_ENABLED", "1")
     monkeypatch.setenv("DRAFTPROOF_V6_NATURALISATION_ENABLED", "0")
     source = "This process uses a form, a queue, and a review."
     rewritten = "I am an educator who need to listen."
@@ -845,6 +846,7 @@ def test_v6_quality_repair_runs_once_after_selected_rewrite(monkeypatch):
 
 
 def test_v6_quality_repair_reverts_one_pass_scan_regression(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_GRAMMER_REPAIR_ENABLED", "1")
     monkeypatch.setenv("DRAFTPROOF_V6_NATURALISATION_ENABLED", "0")
     source = "This process uses a form, a queue, and a review."
     rewritten = "Approach increases student motivation."
@@ -878,6 +880,24 @@ def test_v6_quality_repair_reverts_one_pass_scan_regression(monkeypatch):
     assert result.quality_repair is not None
     assert result.quality_repair.status == "reverted_scan_regression"
     assert result.quality_repair.skipped_operations[-1]["skip_reason"] == "scan_regression"
+
+
+def test_v6_quality_repair_layer_defaults_off(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_V6_GRAMMER_REPAIR_ENABLED", raising=False)
+    client = FakeClient()
+
+    result = run_quality_repair_once(
+        "I am an educator who need to listen.",
+        original_text="I am an educator who needed to listen.",
+        quality_client=client,
+        api_key=None,
+        base_url=None,
+        cancellation_check=None,
+        progress_callback=None,
+    )
+
+    assert result is None
+    assert client.calls == 0
 
 
 def test_v6_quality_repair_allows_minor_shape_risk_increase(monkeypatch):
@@ -1235,7 +1255,7 @@ def test_v6_selection_rejects_polished_lexical_inflation_without_provenance():
     assert result.rewritten_text == source
 
 
-def test_v6_selection_rejects_polarity_inversion_even_when_scanner_improves():
+def test_v6_selection_marks_polarity_inversion_for_review_when_scanner_improves():
     source = (
         "This shift has made the role of reviewers more important, not less important. "
         "Reviewers guide clients to question sources, compare notes, develop judgment, and apply decisions."
@@ -1254,10 +1274,11 @@ def test_v6_selection_rejects_polarity_inversion_even_when_scanner_improves():
     })
     result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
     assert result.selected is not None
-    assert result.selected.source == "source_preserved"
+    assert result.selected.source == "llm"
+    assert "source_polarity_changed_review_required" in result.candidate_diagnostics[0]["quality_warnings"]
 
 
-def test_v6_selection_rejects_polarity_omission_even_when_scanner_improves():
+def test_v6_selection_marks_polarity_omission_for_review_when_scanner_improves():
     source = (
         "This shift has made the role of reviewers more important, not less important. "
         "Reviewers guide clients to question sources, compare notes, develop judgment, and apply decisions."
@@ -1276,7 +1297,8 @@ def test_v6_selection_rejects_polarity_omission_even_when_scanner_improves():
     })
     result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
     assert result.selected is not None
-    assert result.selected.source == "source_preserved"
+    assert result.selected.source == "llm"
+    assert "source_polarity_changed_review_required" in result.candidate_diagnostics[0]["quality_warnings"]
 
 
 def test_v6_selection_accepts_negated_reduction_for_not_less_polarity():

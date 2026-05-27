@@ -27,26 +27,46 @@ def test_v6_pre_scan_normalizer_splits_large_functional_paragraph_without_rewrit
 
     normalized = normalize_paragraph_blocks(source)
 
-    assert len(normalized.split("\n\n")) >= 3
+    assert len(normalized.split("\n\n")) >= 2
     assert _squash(normalized) == _squash(source)
     assert normalized.split("\n", 1)[0] == "Case Evidence"
 
 
 def test_v6_scan_uses_normalized_paragraphs_before_planning():
     source = (
-        "The first sentence gives context for the work. "
-        "The second sentence adds a learner detail. "
-        "The third sentence explains the initial condition. "
-        "The fourth sentence gives a classroom behavior. "
-        "During the activity, the learner tried a role. "
-        "The group responded to the role. "
-        "Later, the class moved into a community task. "
-        "The learner adjusted communication during the task. "
-        "After that, the learner became more independent. "
-        "In my view, the case connected classroom participation with confidence."
+        "The first sentence gives context for the work and the class setting. "
+        "The second sentence adds a learner detail and explains why support mattered. "
+        "The third sentence explains the initial condition before the activity started. "
+        "The fourth sentence gives a classroom behavior that shaped the response. "
+        "During the activity, the learner tried a role with visible responsibility. "
+        "The group responded to the role and gave practical feedback. "
+        "Later, the class moved into a community task with a different audience. "
+        "The learner adjusted communication during the task and handled the exchange. "
+        "After that, the learner became more independent in the classroom. "
+        "In my view, the case connected classroom participation with confidence. "
+        "The final observation links the sequence back to the classroom support plan and learner participation."
     )
 
     scan = scan_text(source)
 
     assert scan.scores["paragraph_count"] > 1
     assert _squash(scan.source_text) == _squash(source)
+
+
+def test_v6_pre_scan_normalizer_keeps_short_many_sentence_paragraph_together():
+    source = (
+        "The shift changed the teacher role. "
+        "Teachers still explain information. "
+        "They also guide source checks. "
+        "Students compare viewpoints. "
+        "They develop judgment. "
+        "They apply ideas. "
+        "Knowledge still matters. "
+        "Thinking also matters. "
+        "The paragraph remains one short section."
+    )
+
+    normalized = normalize_paragraph_blocks(source)
+
+    assert normalized == source
+    assert scan_text(source).scores["paragraph_count"] == 1

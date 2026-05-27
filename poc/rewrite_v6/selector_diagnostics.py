@@ -77,19 +77,6 @@ def _blockers(
     integrity_blockers: list[str],
 ) -> list[str]:
     blockers: list[str] = []
-    if _compresses_list_repair(variant.text, paragraph):
-        blockers.append("compressed_list_repair")
-    if _replaces_final_source_beat_with_conclusion(variant.text, paragraph):
-        blockers.append("final_source_beat_replaced")
-    if _polarity_violation(variant.text, paragraph):
-        blockers.append("source_polarity_changed")
-    if missing_terms:
-        blockers.append("required_source_terms_missing")
-    blockers.extend(integrity_blockers)
-    if _hard_candidate_contract_violation(variant.text, paragraph):
-        blockers.append("candidate_contract_violation")
-    if has_fragment_or_trace_sentences(variant.text):
-        blockers.append("fragment_or_trace_sentence")
     if source is not None and finding_drop < 1 and risk_drop < 8.0:
         blockers.append("insufficient_scanner_movement")
     if source is not None and finding_drop == 0 and risk_drop < 0:
@@ -99,8 +86,23 @@ def _blockers(
 
 def _quality_warnings(variant: Variant, paragraph: Paragraph) -> list[str]:
     warnings: list[str] = []
+    if _compresses_list_repair(variant.text, paragraph):
+        warnings.append("compressed_list_repair_review_required")
+    if _replaces_final_source_beat_with_conclusion(variant.text, paragraph):
+        warnings.append("final_source_beat_replaced_review_required")
+    missing_terms = missing_required_source_term_details(variant.text, paragraph)
+    if missing_terms:
+        warnings.append("required_source_terms_missing_review_required")
+    integrity_blockers = candidate_integrity_blockers(variant.text)
+    warnings.extend(f"{blocker}_review_required" for blocker in integrity_blockers)
+    if _hard_candidate_contract_violation(variant.text, paragraph):
+        warnings.append("candidate_contract_violation_review_required")
+    if has_fragment_or_trace_sentences(variant.text):
+        warnings.append("fragment_or_trace_sentence_review_required")
     if not _hard_candidate_contract_violation(variant.text, paragraph) and _candidate_contract_violation(variant.text, paragraph):
         warnings.append("candidate_contract_warning")
     if robotic_sentence_chain(variant.text):
         warnings.append("mechanical_sentence_chain")
+    if _polarity_violation(variant.text, paragraph):
+        warnings.append("source_polarity_changed_review_required")
     return warnings
