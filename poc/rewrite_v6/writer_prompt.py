@@ -11,6 +11,7 @@ from .prompt_shape import coverage_loss_contract, paragraph_sentence_plan
 from .text import Paragraph, source_terms, strip_leading_heading
 from .writer_generation_rules import writer_generation_rules
 from .writer_prompt_compact import (
+    compact_document_signal_contracts,
     compact_planner_decision,
     source_units,
     writer_execution_contract,
@@ -123,10 +124,13 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
         "output_schema": {"variants": [_variant_schema(requirement) for requirement in variant_requirements]},
     }
     if planner_decision:
-        payload["planner_decision"] = planner_decision
         signal_contracts = planner_decision.get("document_signal_contracts", []) if isinstance(planner_decision, dict) else []
+        planner_decision_payload = dict(planner_decision)
+        planner_decision_payload.pop("document_signal_contracts", None)
+        if planner_decision_payload:
+            payload["planner_decision"] = planner_decision_payload
         if signal_contracts:
-            payload["document_signal_contracts"] = signal_contracts
+            payload["document_signal_contracts"] = compact_document_signal_contracts(signal_contracts)
     if coverage_groups:
         payload["coverage_loss_contract"] = coverage_groups
     prefix = (

@@ -110,12 +110,15 @@ def test_v6_report_signal_contracts_reach_planner_and_writer_prompts():
     writer_payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
 
     planner_contracts = planner_payload["deterministic_route_skeleton"]["document_signal_contracts"]
-    writer_contracts = writer_payload["planner_decision"]["document_signal_contracts"]
     direct_writer_contracts = writer_payload["document_signal_contracts"]
     assert planner_contracts[0]["signal_group"] == "grounding_route"
     assert planner_contracts[0]["target_excerpts"] == ["form queue review"]
-    assert writer_contracts[0]["writer_obligation"] == "keep claims near submitted support"
     assert direct_writer_contracts[0]["signal_group"] == "grounding_route"
+    assert direct_writer_contracts[0]["writer_obligation"] == "keep claims near submitted support"
+    assert direct_writer_contracts[0]["target_excerpt_count"] == 1
+    assert direct_writer_contracts[0]["target_excerpt_samples"] == ["form queue review"]
+    assert "document_signal_contracts" not in writer_payload.get("planner_decision", {})
+    assert "document_signal_contracts" not in writer_payload["writer_execution_contract"]
     assert "document_signal_contracts as the primary build contract" in " ".join(writer_payload["generation_rules"])
 
 
@@ -765,6 +768,38 @@ def test_v6_writer_retry_candidates_receive_same_prose_repair_as_first_pass():
     assert "For example, when" not in result.selected.text
     assert "as an example" not in result.selected.text
     assert "The 12-o’clock projection shows where to project the hair." in result.selected.text
+
+
+def test_v6_retry_prompt_does_not_duplicate_full_document_signal_excerpts():
+    source = "Students use cutting videos during class. The videos need practice links and teacher explanation."
+    scan = scan_text(source)
+    paragraph, plan = build_plan(scan)
+    long_excerpt = " ".join(["full-document-target-excerpt"] * 80)
+    contracts = [
+        {
+            "signal_group": f"signal_{index}",
+            "score": 80 - index,
+            "writer_obligation": "keep the rewrite grounded in the submitted paragraph",
+            "target_excerpts": [long_excerpt, long_excerpt + f" extra {index}"],
+        }
+        for index in range(6)
+    ]
+    plan = apply_report_signal_contracts(plan, contracts)
+
+    retry_prompt = v6_pipeline._retry_prompt(
+        paragraph,
+        plan,
+        [{"variant_id": "v1", "blockers": ["insufficient_scanner_movement"], "candidate_findings": 1}],
+    )
+    payload = json.loads(retry_prompt.split("\n", 1)[1])
+    base_prompt = payload["base_writer_prompt"]
+
+    assert "document_signal_contracts" not in base_prompt["writer_execution_contract"]
+    assert "document_signal_contracts" not in base_prompt.get("planner_decision", {})
+    assert "target_excerpts" not in retry_prompt
+    assert long_excerpt not in retry_prompt
+    assert len(base_prompt["document_signal_contracts"]) == 6
+    assert sum(len(row.get("target_excerpt_samples", [])) for row in base_prompt["document_signal_contracts"]) <= 2
 
 
 def test_v6_integrity_guard_rejects_broken_citation_and_grammar_shapes():

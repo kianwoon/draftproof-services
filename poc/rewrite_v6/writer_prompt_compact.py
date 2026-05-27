@@ -99,7 +99,6 @@ def writer_execution_contract(
         "rows": [_drop_empty(row) for row in rows],
         "planner_gaps": _strings(planner_decision.get("contract_gaps"), 8) if isinstance(planner_decision, dict) else [],
         "do_not_copy_phrases": _strings(planner_decision.get("do_not_copy_phrases"), 8) if isinstance(planner_decision, dict) else [],
-        "document_signal_contracts": planner_decision.get("document_signal_contracts", []) if isinstance(planner_decision, dict) else [],
     }
 
 
@@ -115,9 +114,44 @@ def compact_planner_decision(value: Any) -> dict[str, Any]:
         "do_not_copy_phrases": _strings(value.get("do_not_copy_phrases"), 8),
         "finding_contracts": rows[:8],
         "paragraph_blueprint": blueprint[:8],
-        "document_signal_contracts": value.get("document_signal_contracts", []),
+        "document_signal_contracts": compact_document_signal_contracts(value.get("document_signal_contracts")),
     }
     return {key: val for key, val in decision.items() if val not in (None, [], "")}
+
+
+def compact_document_signal_contracts(rows: Any) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    compact: list[dict[str, Any]] = []
+    sampled_excerpts: set[str] = set()
+    for row in rows[:8]:
+        if not isinstance(row, dict):
+            continue
+        out = {
+            "signal_group": row.get("signal_group"),
+            "score": row.get("score"),
+            "writer_obligation": row.get("writer_obligation"),
+            "author_proxy_policy": row.get("author_proxy_policy"),
+        }
+        excerpts = _dedupe(_strings(row.get("target_excerpts"), 12))
+        if excerpts:
+            out["target_excerpt_count"] = len(excerpts)
+            samples: list[str] = []
+            for excerpt in excerpts:
+                if len(sampled_excerpts) >= 2:
+                    break
+                key = excerpt.casefold()
+                if key in sampled_excerpts:
+                    continue
+                samples.append(_clip_text(excerpt, 180))
+                sampled_excerpts.add(key)
+            if samples:
+                out["target_excerpt_samples"] = samples
+        elif row.get("target_excerpt_count") is not None:
+            out["target_excerpt_count"] = row.get("target_excerpt_count")
+            out["target_excerpt_samples"] = _strings(row.get("target_excerpt_samples"), 2)
+        compact.append(_drop_empty(out))
+    return compact
 
 
 def compact_sentence_plan(rows: Any) -> list[dict[str, Any]]:
@@ -247,6 +281,13 @@ def _dedupe(values: list[str]) -> list[str]:
             rows.append(text)
             seen.add(key)
     return rows
+
+
+def _clip_text(value: str, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
 
 
 def _drop_empty(row: dict[str, Any]) -> dict[str, Any]:
