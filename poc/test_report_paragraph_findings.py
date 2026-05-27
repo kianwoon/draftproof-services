@@ -168,3 +168,64 @@ def test_paragraph_explainer_generates_once_from_grouped_findings():
     markdown = render_markdown(report)
     assert "This paragraph is broad" in markdown
     assert "Add one concrete teaching" in markdown
+
+
+def test_paragraph_explainer_uses_worker_supplied_llm_settings(monkeypatch):
+    from llm import gateway as gateway_module
+
+    captured = {}
+
+    class Gateway:
+        model = "planner-test"
+
+        def __init__(self, config):
+            captured["api_key"] = config.api_key
+            captured["base_url"] = config.base_url
+
+        def chat(self, *_args, **kwargs):
+            return type("Response", (), {
+                "content": (
+                    '{"paragraphs":[{"paragraph_id":"p001",'
+                    '"summary":"This paragraph needs a clearer student-facing fix.",'
+                    '"why_flagged":["The scanner found a repeated issue in this paragraph."],'
+                    '"recommendation":"Rewrite the paragraph with one concrete detail.",'
+                    '"confidence":"medium"}]}'
+                )
+            })()
+
+    monkeypatch.setattr(gateway_module, "LLMGateway", Gateway)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "wrong-env-key")
+
+    sentences = [
+        _sentence("s001", "p001", "This paragraph opens with a very general claim.", 0.7, "high", 0, 47),
+    ]
+    report = DraftReport(
+        overall_tier=Tier.HIGH,
+        finding_count=1,
+        findings_by_tier={
+            "critical": [],
+            "high": [
+                Finding(Tier.HIGH, "predictability", "predictability", "high_predictability", "Predictable", "Evidence", "Revise.", sentence_id="s001", finding_id="f001"),
+            ],
+            "medium": [],
+            "low": [],
+            "clean": [],
+        },
+        predictability=PredictabilitySummary(0.7, {"high": 1}, sentences, [], []),
+        original_text="This paragraph opens with a very general claim.",
+    )
+
+    explanations = generate_paragraph_explanations(
+        report_to_dict(report),
+        api_key="settings-key",
+        base_url="https://settings-base.example/v1",
+        model="planner-test",
+    )
+
+    assert captured == {
+        "api_key": "settings-key",
+        "base_url": "https://settings-base.example/v1",
+    }
+    assert explanations["paragraphs"][0]["recommendation"].startswith("Rewrite the paragraph")

@@ -93,6 +93,8 @@ def generate_paragraph_explanations(
     *,
     gateway: Any | None = None,
     model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Any] | None:
     explainer_input = build_paragraph_explanation_input(report_json)
     paragraph_rows = explainer_input.get("paragraphs") or []
@@ -107,14 +109,18 @@ def generate_paragraph_explanations(
 
     model = model or planner_model_from_env()
     if gateway is None:
-        api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY")
-        if not api_key:
+        resolved_api_key = (
+            (api_key or "").strip()
+            or os.environ.get("OPENROUTER_API_KEY", "").strip()
+            or os.environ.get("LLM_API_KEY", "").strip()
+        )
+        if not resolved_api_key:
             return None
         from llm.gateway import LLMConfig, LLMGateway
 
         gateway = LLMGateway(LLMConfig(
-            api_key=api_key,
-            base_url=os.environ.get("LLM_BASE_URL") or None,
+            api_key=resolved_api_key,
+            base_url=base_url or os.environ.get("LLM_BASE_URL") or None,
             model=model,
             temperature=0.15,
             max_tokens=_int_env("DRAFTPROOF_PARAGRAPH_EXPLAINER_MAX_TOKENS", 5000),

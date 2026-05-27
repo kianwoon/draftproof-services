@@ -1627,7 +1627,18 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 from poc.report.render import render_report
                 from poc.report.pdf import render_pdf
 
-                paragraph_explanations = generate_paragraph_explanations(results_json)
+                paragraph_explanations = generate_paragraph_explanations(
+                    results_json,
+                    api_key=(settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or None),
+                    base_url=(settings.LLM_BASE_URL or None),
+                    model=(
+                        settings.DRAFTPROOF_V6_PLANNER_MODEL
+                        or settings.DRAFTPROOF_PLANNER_MODEL
+                        or settings.DRAFTPROOF_REWRITE_V5_PLANNER_MODEL
+                        or settings.LLM_MODEL
+                        or None
+                    ),
+                )
                 if paragraph_explanations is not None:
                     results_json["paragraph_explanations"] = paragraph_explanations
                     draft_report = result.get("report")
@@ -1638,8 +1649,17 @@ def scan_document(self, job_id: str, text: str) -> dict:
                         render_pdf(md_text, explained_pdf_path)
                         with open(explained_pdf_path, "rb") as f:
                             pdf_bytes = f.read()
-            except Exception:
-                logger.warning("Paragraph explanation generation failed for %s", job_id, exc_info=True)
+            except Exception as exc:
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if status_code in {401, 403}:
+                    logger.warning(
+                        "Paragraph explanation skipped for %s: LLM provider rejected credentials "
+                        "(status=%s). Check OPENROUTER_API_KEY, LLM_BASE_URL, and planner model settings.",
+                        job_id,
+                        status_code,
+                    )
+                else:
+                    logger.warning("Paragraph explanation generation failed for %s", job_id, exc_info=True)
 
             report_progress(97, "Uploading report files")
             urls = upload_report_files(job_id, md_text, pdf_bytes, results_json, paragraph_explanations)
