@@ -125,6 +125,47 @@ def test_llm_gateway_builds_openrouter_provider_routing_from_env(monkeypatch):
     }
 
 
+def test_llm_gateway_adds_default_openrouter_app_attribution_headers(monkeypatch):
+    monkeypatch.delenv("LLM_SITE_URL", raising=False)
+    monkeypatch.delenv("LLM_SITE_NAME", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_OPENROUTER_SITE_URL", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_OPENROUTER_SITE_NAME", raising=False)
+    gateway = LLMGateway(LLMConfig(
+        api_key="test",
+        base_url="https://openrouter.ai/api/v1",
+        model="test/model",
+        max_retries=1,
+    ))
+    fake_session = _FakeSession()
+    gateway._session_local.session = fake_session
+
+    gateway.chat("planner route", app_label="planner")
+
+    headers = fake_session.calls[0]["headers"]
+    assert headers["HTTP-Referer"] == "https://draftproof.app/openrouter/planner"
+    assert headers["X-OpenRouter-Title"] == "DraftProof Planner"
+    assert headers["X-Title"] == "DraftProof Planner"
+
+
+def test_llm_gateway_uses_configured_openrouter_app_attribution_base():
+    gateway = LLMGateway(LLMConfig(
+        api_key="test",
+        base_url="https://openrouter.ai/api/v1",
+        model="test/model",
+        site_url="https://example.com/product",
+        site_name="Example App",
+        max_retries=1,
+    ))
+    fake_session = _FakeSession()
+    gateway._session_local.session = fake_session
+
+    gateway.chat("writer route", app_label="writer")
+
+    headers = fake_session.calls[0]["headers"]
+    assert headers["HTTP-Referer"] == "https://example.com/product/openrouter/writer"
+    assert headers["X-OpenRouter-Title"] == "Example App Writer"
+
+
 def test_llm_gateway_bounds_mandatory_qwen_reasoning_when_effort_none(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_OPENROUTER_REASONING_EFFORT", "none")
     gateway = LLMGateway(LLMConfig(

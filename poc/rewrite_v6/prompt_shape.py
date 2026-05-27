@@ -130,7 +130,7 @@ def _required_sentence_groups(tags: set[str], beats: list[dict[str, Any]]) -> li
                 "source_terms_to_carry": chunk,
                 "must_cover_terms": _exact_anchor_terms(chunk),
                 "revoiceable_source_terms": _revoiceable_terms(chunk),
-                "instruction": "cover this group in coverage_map and sentence_rows; adjacent groups may share one ordinary sentence when exact anchors and plain meaning remain clear",
+                "instruction": "cover this group in the final text; adjacent groups may share one ordinary sentence when exact anchors and plain meaning remain clear",
             })
     return groups
 

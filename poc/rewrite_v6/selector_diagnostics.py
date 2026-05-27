@@ -5,12 +5,14 @@ from typing import Any
 from .coverage_guard import missing_required_source_term_details
 from .integrity_guard import candidate_integrity_blockers
 from .prose_quality import has_fragment_or_trace_sentences
+from .prose_quality import robotic_sentence_chain
 from .scan import scan_text
 from .text import Paragraph
 from .write import (
     Variant,
     _candidate_contract_violation,
     _compresses_list_repair,
+    _hard_candidate_contract_violation,
     _has_meaningful_movement,
     _polarity_violation,
     _replaces_final_source_beat_with_conclusion,
@@ -47,6 +49,7 @@ def _variant_diagnostics(
     missing_terms = missing_required_source_term_details(variant.text, paragraph)
     integrity_blockers = candidate_integrity_blockers(variant.text)
     blockers = _blockers(variant, source, paragraph, finding_drop, risk_drop, missing_terms, integrity_blockers)
+    quality_warnings = _quality_warnings(variant, paragraph)
     return {
         "variant_id": variant.id,
         "source": variant.source,
@@ -57,6 +60,7 @@ def _variant_diagnostics(
         "source_mean_risk": source_scan.scores["mean_sentence_shape_risk"],
         "risk_drop": round(float(risk_drop), 3),
         "blockers": blockers,
+        "quality_warnings": quality_warnings,
         "missing_required_terms": missing_terms[:20],
         "integrity_blockers": integrity_blockers,
         "accepted_by_selector": not blockers and source is not None and _has_meaningful_movement(variant, source, paragraph),
@@ -82,7 +86,7 @@ def _blockers(
     if missing_terms:
         blockers.append("required_source_terms_missing")
     blockers.extend(integrity_blockers)
-    if _candidate_contract_violation(variant.text, paragraph):
+    if _hard_candidate_contract_violation(variant.text, paragraph):
         blockers.append("candidate_contract_violation")
     if has_fragment_or_trace_sentences(variant.text):
         blockers.append("fragment_or_trace_sentence")
@@ -91,3 +95,12 @@ def _blockers(
     if source is not None and finding_drop == 0 and risk_drop < 0:
         blockers.append("sentence_shape_risk_regression")
     return blockers
+
+
+def _quality_warnings(variant: Variant, paragraph: Paragraph) -> list[str]:
+    warnings: list[str] = []
+    if not _hard_candidate_contract_violation(variant.text, paragraph) and _candidate_contract_violation(variant.text, paragraph):
+        warnings.append("candidate_contract_warning")
+    if robotic_sentence_chain(variant.text):
+        warnings.append("mechanical_sentence_chain")
+    return warnings

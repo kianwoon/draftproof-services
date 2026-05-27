@@ -31,11 +31,7 @@ def missing_required_source_term_details(text: str, paragraph: Paragraph) -> lis
 
 
 def _number_anchors(text: str) -> list[str]:
-    words = (
-        "zero", "one", "two", "three", "four", "five", "six", "seven",
-        "eight", "nine", "ten", "eleven", "twelve", "hundred", "thousand",
-    )
-    pattern = r"\b(?:\d+(?:\.\d+)?|" + "|".join(words) + r")\b"
+    pattern = r"\b\d+(?:\.\d+)?\b"
     return [match.group(0).casefold() for match in re.finditer(pattern, str(text or ""), flags=re.I)]
 
 
@@ -45,7 +41,7 @@ def _term_bases(terms: list[str]) -> set[str]:
         base = _word_base(term)
         if base:
             bases.add(base)
-        for part in re.split(r"[-/]", str(term or "")):
+        for part in re.split(r"[-/]", _normalize_hyphen(str(term or ""))):
             part_base = _word_base(part)
             if part_base:
                 bases.add(part_base)
@@ -65,7 +61,42 @@ def _required_list_terms(text: str) -> list[str]:
         part_terms[0] = part_terms[0][-1:]
     if len(parts) < 4 and not all(len(terms) == 1 for terms in part_terms):
         return []
-    return [term for terms in part_terms for term in terms]
+    return [term for terms in part_terms for term in terms if not _low_value_required_term(term)]
+
+
+def _low_value_required_term(term: str) -> bool:
+    return _word_base(term) in {
+        "also",
+        "another",
+        "beginning",
+        "call",
+        "each",
+        "know",
+        "later",
+        "one",
+        "quite",
+        "some",
+        "still",
+        "will",
+    }
 
 def _word_base(word: str) -> str:
-    return str(word or "").casefold().removesuffix("'s").rstrip("s")
+    value = _normalize_hyphen(str(word or "")).casefold().removesuffix("'s").strip("-")
+    irregular = {
+        "found": "find",
+        "learnt": "learn",
+        "learned": "learn",
+    }
+    if value in irregular:
+        return irregular[value]
+    if len(value) > 5 and value.endswith("ing"):
+        value = value[:-3]
+    elif len(value) > 4 and value.endswith("ied"):
+        value = value[:-3] + "y"
+    elif len(value) > 4 and value.endswith("ed"):
+        value = value[:-2]
+    return value.rstrip("s")
+
+
+def _normalize_hyphen(text: str) -> str:
+    return re.sub(r"[\u2010-\u2015\u2212]", "-", str(text or ""))

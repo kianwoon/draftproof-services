@@ -44,4 +44,4 @@ def _split_negation_fragment(text: str) -> bool:
 
 
 def _malformed_verb_complement(text: str) -> bool:
-    return bool(re.search(r"\b(?:learned|learn|guide|guides|guided|question)\s+(?:accepting|compare|develop|apply)\b", text, flags=re.I))
+    return bool(re.search(r"\b(?:learned|learn|guide|guides|guided|question)\s+(?:accepting|compare|develop|apply|create|created|creating)\b", text, flags=re.I))

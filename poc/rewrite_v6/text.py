@@ -100,12 +100,13 @@ def source_terms(text: str, *, limit: int = 12) -> list[str]:
     terms: list[str] = []
     seen: set[str] = set()
     stop = {
-        "about", "above", "after", "again", "against", "being", "between", "could",
-        "every", "from", "have", "into", "more", "most", "only", "other", "over",
-        "should", "still", "their", "there", "these", "those", "through", "under",
-        "where", "which", "while", "would",
+        "about", "above", "after", "again", "against", "also", "being", "between", "could",
+        "during", "each", "every", "from", "have", "into", "just", "know", "more", "most",
+        "only", "other", "over", "quite", "rather", "should", "some", "still", "their",
+        "there", "these", "those", "through", "under", "where", "which", "while", "will",
+        "would",
         "than", "that", "this", "they", "with", "many", "because", "however", "therefore",
-        "does",
+        "does", "what",
     }
     for token in re.findall(r"\b(?:\d+(?:\.\d+)?|[A-Z][A-Z0-9]{1,}|[A-Za-z][A-Za-z'-]{3,})\b", str(text or "")):
         key = token.strip("'").casefold()
@@ -116,3 +117,48 @@ def source_terms(text: str, *, limit: int = 12) -> list[str]:
         if len(terms) >= limit:
             break
     return terms
+
+
+def source_anchor_phrases(text: str, *, limit: int = 6) -> list[str]:
+    visible = re.sub(r"\s+", " ", str(text or "")).strip()
+    anchors: list[str] = []
+    patterns = [
+        (r"\b(?:a|an|the)\s+[^.!?,;:]{0,50}?\bI\s+will\s+call\s+[A-Z][A-Za-z'’-]{2,}\b", re.I),
+        (r"\bunit\s+[A-Z]{2,}[A-Z0-9]*\s+[^.!?,;:]{1,80}", 0),
+        (r"\b[A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+){1,6}\s+(?:Act|Standards?|Regulations?)\s+(?:19|20)\d{2}(?:\s*\([A-Za-z]+\))?", 0),
+        (r"\bDuring\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+[^.!?,;:]{1,80}", re.I),
+    ]
+    for pattern, flags in patterns:
+        for match in re.finditer(pattern, visible, flags=flags):
+            value = match.group(0).strip(" .")
+            if value:
+                anchors.append(value)
+            if len(anchors) >= limit:
+                return _dedupe_text(anchors)
+    return _dedupe_text(anchors)[:limit]
+
+
+def source_anchor_terms(text: str, *, term_limit: int = 24, phrase_limit: int = 6) -> list[str]:
+    anchors = source_anchor_phrases(text, limit=phrase_limit)
+    anchor_words = {
+        word.casefold()
+        for phrase in anchors
+        for word in re.findall(r"[A-Za-z][A-Za-z'’-]*", phrase)
+    }
+    terms = [
+        term for term in source_terms(text, limit=term_limit)
+        if term.casefold() not in anchor_words
+    ]
+    return _dedupe_text([*anchors, *terms])[:term_limit]
+
+
+def _dedupe_text(values: list[str]) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        key = text.casefold()
+        if text and key not in seen:
+            rows.append(text)
+            seen.add(key)
+    return rows

@@ -13,6 +13,7 @@ import logging
 import threading
 import unicodedata
 import copy
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Optional
@@ -52,6 +53,7 @@ class LLMConfig:
     timeout: int = 120
     site_url: Optional[str] = None       # OpenRouter optional headers
     site_name: Optional[str] = None
+    app_label: Optional[str] = None      # Per-role OpenRouter attribution suffix/title
     reuse_http_connections: bool = True
     cancellation_check: Optional[Callable[[], None]] = None
 
@@ -221,6 +223,17 @@ _MODEL_CAPABILITIES = {
         "reasoning_required": True,
         "reasoning_token_control": "max_tokens",
     },
+    "openai/gpt-oss-120b": {
+        "top_k": False,
+        "presence_penalty": True,
+        "frequency_penalty": True,
+        "repetition_penalty": False,
+        "structured_outputs": True,
+        "json_object_response_format": True,
+        "reasoning": True,
+        "reasoning_required": True,
+        "reasoning_token_control": "max_tokens",
+    },
 }
 
 
@@ -228,6 +241,18 @@ def _model_capabilities(model: str) -> dict:
     normalized = str(model or "").strip().lower()
     if normalized in _MODEL_CAPABILITIES:
         return dict(_MODEL_CAPABILITIES[normalized])
+    if normalized.startswith("openai/gpt-oss") or normalized.startswith("gpt-oss"):
+        return {
+            "top_k": False,
+            "presence_penalty": True,
+            "frequency_penalty": True,
+            "repetition_penalty": False,
+            "structured_outputs": True,
+            "json_object_response_format": True,
+            "reasoning": True,
+            "reasoning_required": True,
+            "reasoning_token_control": "max_tokens",
+        }
     if normalized.startswith("openai/") or normalized.startswith("gpt-"):
         return {
             "top_k": False,
@@ -312,6 +337,18 @@ def _bool_env(*names: str) -> bool | None:
 def _bool_env_default(name: str, default: bool) -> bool:
     value = _bool_env(name)
     return default if value is None else value
+
+
+def _slugify_app_label(value: str | None) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().casefold())
+    return normalized.strip("-")
+
+
+def _display_app_label(value: str | None) -> str:
+    slug = _slugify_app_label(value)
+    if not slug:
+        return ""
+    return " ".join(part.capitalize() for part in slug.split("-") if part)
 
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
@@ -461,8 +498,12 @@ class LLMGateway:
         self.extra_body = _safe_extra_body(cfg.extra_body if cfg.extra_body is not None else _extra_body_from_env())
         self.max_retries = cfg.max_retries
         self.timeout = cfg.timeout
-        self.site_url = cfg.site_url or os.environ.get("LLM_SITE_URL")
-        self.site_name = cfg.site_name or os.environ.get("LLM_SITE_NAME")
+        self.site_url = cfg.site_url or _first_env("LLM_SITE_URL", "DRAFTPROOF_OPENROUTER_SITE_URL")
+        self.site_name = cfg.site_name or _first_env("LLM_SITE_NAME", "DRAFTPROOF_OPENROUTER_SITE_NAME")
+        if self._is_openrouter_base_url():
+            self.site_url = self.site_url or "https://draftproof.app"
+            self.site_name = self.site_name or "DraftProof"
+        self.app_label = cfg.app_label
         self.reuse_http_connections = cfg.reuse_http_connections and _bool_env_default(
             "DRAFTPROOF_LLM_REUSE_HTTP_CONNECTIONS",
             True,
@@ -492,6 +533,7 @@ class LLMGateway:
         seed: Optional[int] = None,
         response_format: Optional[dict[str, Any]] = None,
         provider: Optional[dict[str, Any]] = None,
+        app_label: Optional[str] = None,
     ) -> LLMResponse:
         """Send a single-turn chat completion request."""
         messages = []
@@ -510,6 +552,7 @@ class LLMGateway:
             seed=seed,
             response_format=response_format,
             provider=provider,
+            app_label=app_label,
         )
 
     def chat_multi(
@@ -526,6 +569,7 @@ class LLMGateway:
         seed: Optional[int] = None,
         response_format: Optional[dict[str, Any]] = None,
         provider: Optional[dict[str, Any]] = None,
+        app_label: Optional[str] = None,
     ) -> LLMResponse:
         """Send a multi-turn chat completion request with full message history."""
         return self._complete(
@@ -540,20 +584,44 @@ class LLMGateway:
             seed=seed,
             response_format=response_format,
             provider=provider,
+            app_label=app_label,
         )
 
     # --- Internal ---
 
-    def _build_headers(self) -> dict:
+    def _build_headers(self, *, app_label: str | None = None) -> dict:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        if self.site_url:
-            headers["HTTP-Referer"] = self.site_url
-        if self.site_name:
-            headers["X-OpenRouter-Title"] = self.site_name
+        attribution_label = app_label or self.app_label
+        site_url = self._attribution_site_url(attribution_label)
+        site_name = self._attribution_site_name(attribution_label)
+        if site_url:
+            headers["HTTP-Referer"] = site_url
+        if site_name:
+            headers["X-OpenRouter-Title"] = site_name
+            headers["X-Title"] = site_name
         return headers
+
+    def _is_openrouter_base_url(self) -> bool:
+        return "openrouter.ai" in str(self.base_url or "").casefold()
+
+    def _attribution_site_url(self, app_label: str | None) -> str | None:
+        if not self.site_url:
+            return None
+        label = _slugify_app_label(app_label)
+        if not label:
+            return self.site_url
+        if not _bool_env_default("DRAFTPROOF_OPENROUTER_ROLE_ATTRIBUTION", True):
+            return self.site_url
+        return f"{self.site_url.rstrip('/')}/openrouter/{label}"
+
+    def _attribution_site_name(self, app_label: str | None) -> str | None:
+        if not self.site_name:
+            return None
+        label = _display_app_label(app_label)
+        return f"{self.site_name} {label}" if label else self.site_name
 
     def _complete(
         self,
@@ -569,6 +637,7 @@ class LLMGateway:
         seed: Optional[int] = None,
         response_format: Optional[dict[str, Any]] = None,
         provider: Optional[dict[str, Any]] = None,
+        app_label: Optional[str] = None,
     ) -> LLMResponse:
         url = f"{self.base_url}/chat/completions"
         effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
@@ -676,12 +745,14 @@ class LLMGateway:
             if key in payload
         }
 
-        headers = self._build_headers()
+        effective_app_label = app_label or self.app_label
+        headers = self._build_headers(app_label=effective_app_label)
         prompt_chars = sum(len(m.get("content", "")) for m in messages)
         logger.info(
-            "LLM request: url=%s, model=%s, messages=%d, prompt_chars=%d, max_tokens=%s, requested_sampling=%s, effective_sampling=%s, provider=%s, extra_body_keys=%s",
+            "LLM request: url=%s, model=%s, app_label=%s, messages=%d, prompt_chars=%d, max_tokens=%s, requested_sampling=%s, effective_sampling=%s, provider=%s, extra_body_keys=%s",
             url,
             self.model,
+            effective_app_label,
             len(messages),
             prompt_chars,
             payload.get("max_tokens"),

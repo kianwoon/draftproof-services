@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from .scan import Finding, Scan, findings_for_paragraph, select_target_paragraph
-from .text import Paragraph, source_terms, strip_leading_heading as _strip_leading_heading
+from .text import Paragraph, source_anchor_terms, source_terms, strip_leading_heading as _strip_leading_heading
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ def build_plan(
                 tags=tags,
                 operation=_operation(tags),
                 method=_method(tags),
-                preserve_terms=source_terms(_strip_leading_heading(sentence.text), limit=24),
+                preserve_terms=source_anchor_terms(_strip_leading_heading(sentence.text), term_limit=24),
                 do_not=_do_not(tags),
             )
         )
@@ -71,7 +71,11 @@ def build_plan(
     plan = Plan(
         paragraph_id=paragraph.id,
         route_goal="change sentence route while preserving source meaning and reducing packed or predictable shape",
-        opening_terms=source_terms(_strip_leading_heading(paragraph.sentences[0].text if paragraph.sentences else paragraph.text), limit=6),
+        opening_terms=source_anchor_terms(
+            _strip_leading_heading(paragraph.sentences[0].text if paragraph.sentences else paragraph.text),
+            term_limit=12,
+            phrase_limit=4,
+        )[:6],
         actions=actions,
         paragraph_strategy=_paragraph_strategy(paragraph, actions),
         author_proxy_context=author_proxy_context,
@@ -91,9 +95,9 @@ def _author_proxy_context(scan: Scan, paragraph: Paragraph) -> dict[str, Any]:
         "selected_paragraph_id": paragraph.id,
         "before_context": previous_paragraph[:600],
         "after_context": next_paragraph[:600],
-        "source_terms": source_terms(paragraph_text, limit=32),
-        "context_terms": source_terms(paragraph_text, limit=40),
-        "neighbor_context_terms": source_terms(previous_paragraph + "\n" + next_paragraph, limit=40),
+        "source_terms": source_anchor_terms(paragraph_text, term_limit=32),
+        "context_terms": source_anchor_terms(paragraph_text, term_limit=40),
+        "neighbor_context_terms": source_anchor_terms(previous_paragraph + "\n" + next_paragraph, term_limit=40),
         "named_references": _named_references(context_text),
         "years": _years(context_text),
         "citation_spans": _citation_spans(context_text),
@@ -328,7 +332,7 @@ def _coverage_beats(actions: list[PlanAction]) -> list[dict[str, Any]]:
                     "finding_tags": action.tags,
                     "construction_recipe_id": f"{action.sentence_id}_recipe",
                     "construction_recipe": _beat_construction_recipe(action.tags),
-                    "coverage_terms": source_terms(phrase, limit=24),
+                    "coverage_terms": source_anchor_terms(phrase, term_limit=24),
                     "grouped_relation": " | " in phrase,
                     "polarity_markers": _polarity_markers(phrase),
                     "starter_terms": _starter_terms(phrase, action.tags),
@@ -343,7 +347,7 @@ def _coverage_beats(actions: list[PlanAction]) -> list[dict[str, Any]]:
                 "finding_tags": action.tags,
                 "construction_recipe_id": f"{action.sentence_id}_recipe",
                 "construction_recipe": _beat_construction_recipe(action.tags),
-                "coverage_terms": source_terms(phrase, limit=24),
+                "coverage_terms": source_anchor_terms(phrase, term_limit=24),
                 "grouped_relation": " | " in phrase,
                 "polarity_markers": _polarity_markers(phrase),
                 "starter_terms": _starter_terms(phrase, action.tags),
@@ -540,7 +544,7 @@ def _recipe_route(tags: list[str]) -> str:
     if "paraphrase_smoothing" in tag_set:
         return "write a plain source-level relation instead of polished explanation"
     if "citation_anchor" in tag_set:
-        return "keep the source attribution phrase directly before or after the supported claim; do not embed attribution inside another predicate"
+        return "keep the source attribution phrase or submitted parenthetical citation span next to the supported claim; do not convert citations into new reporting verbs"
     if "sentence_overload" in tag_set:
         return "split the source relationship into short ordered beats"
     if "predictable_start" in tag_set:
@@ -554,7 +558,7 @@ def _recipe_steps(tags: list[str]) -> list[str]:
     if "packed_list" in tag_set:
         steps.extend([
             "write one sentence for this grouped beat",
-            "keep later grouped beats as separate coverage_map entries",
+            "keep later grouped beats visible in the final text",
             "connect grouped beats through ordinary source relations, not a comma list",
         ])
     if "context_anchor_gap" in tag_set:
@@ -567,7 +571,7 @@ def _recipe_steps(tags: list[str]) -> list[str]:
     if "paraphrase_smoothing" in tag_set:
         steps.append("remove polished adjectives and keep source-level pressure")
     if "citation_anchor" in tag_set:
-        steps.append("write attribution as its own source-to-claim relation, not as a middle fragment inside another sentence")
+        steps.append("keep the source attribution or citation parenthetical with the supported claim and do not write reports, observed, documented, confirms, or proves")
     if "sentence_overload" in tag_set:
         steps.append("split overload into adjacent sentences with different starters")
     return steps
@@ -576,14 +580,14 @@ def _recipe_steps(tags: list[str]) -> list[str]:
 def _positive_pattern(tags: list[str]) -> str:
     tag_set = set(tags)
     if "packed_list" in tag_set:
-        return "<anchor A> and <anchor B> carry one relation. <anchor C> and <anchor D> carry the next relation."
+        return "Pair related anchors in one relation sentence. Put the next related pair in a separate relation sentence."
     if tag_set & {"author_anchor_gap", "unsupported_claim_gap", "broad_claim"}:
-        return "<source anchor> creates/shows/limits <specific relation>; any wider bridge is marked for author review."
+        return "Start with the submitted source anchor, then state only the specific relation it supports. Mark any wider bridge for author review."
     if "context_anchor_gap" in tag_set:
-        return "<concrete antecedent> creates/continues/changes <local relation>."
+        return "Name the concrete antecedent first, then continue the local relation."
     if "paraphrase_smoothing" in tag_set:
-        return "<source actor/object> does <plain action> in <local condition>."
-    return "<source anchor> + <plain relation> + <scoped continuation>."
+        return "Use the submitted actor or object with a plain local action."
+    return "Use a submitted source anchor, a plain relation, and a scoped continuation."
 
 
 def _author_proxy_move(tags: list[str], context: dict[str, Any]) -> str:
@@ -630,7 +634,8 @@ def _coverage_phrases(text: str) -> list[str]:
     if len(parts) <= 1:
         parts = [part.strip(" ,;:") for part in re.split(r"\s+\band\b\s+", visible, flags=re.I) if part.strip(" ,;:")]
     parts = [_safe_coverage_phrase(part, ["predictable_start", "context_anchor_gap"]) for part in parts]
-    parts = [part for part in parts if part]
+    parts = [part for part in parts if part and source_anchor_terms(part, term_limit=4)]
+    parts = _merge_singleton_relation_parts(parts)
     parts = _propagate_not_always(parts)
     parts = _group_dense_list_parts(parts)
     return parts if len(parts) > 1 else [visible]
@@ -687,6 +692,21 @@ def _group_dense_list_parts(parts: list[str]) -> list[str]:
     return groups
 
 
+def _merge_singleton_relation_parts(parts: list[str]) -> list[str]:
+    rows: list[str] = []
+    for part in parts:
+        terms = source_terms(part, limit=4)
+        if (
+            rows
+            and len(terms) == 1
+            and (re.fullmatch(r"[A-Z][A-Z0-9]{1,}", terms[0]) or re.fullmatch(r"\d+(?:\.\d+)?", terms[0]))
+        ):
+            rows[-1] = f"{rows[-1]} | {part}"
+            continue
+        rows.append(part)
+    return rows
+
+
 def _propagate_not_always(parts: list[str]) -> list[str]:
     rows: list[str] = []
     limited: list[str] = []
@@ -728,6 +748,9 @@ def _polarity_markers(text: str) -> list[str]:
 
 
 def _starter_terms(phrase: str, tags: list[str]) -> list[str]:
+    anchor_terms = source_anchor_terms(phrase, term_limit=8)
+    if anchor_terms and " " in anchor_terms[0]:
+        return [anchor_terms[0]]
     terms = source_terms(phrase, limit=8)
     contrast_left_terms = _left_side_contrast_terms(phrase)
     risky_route = bool({"predictable_start", "broad_claim", "context_anchor_gap", "paragraph_rhythm"} & set(tags))
@@ -736,7 +759,8 @@ def _starter_terms(phrase: str, tags: list[str]) -> list[str]:
         "today", "that", "this", "they", "these", "those", "overall", "however", "therefore",
         "model", "result", "thing", "issue", "longer", "fully", "reflects", "exists",
         "mostly", "around", "faster", "comfortably", "rather", "because", "does",
-        "also", "learn", "what",
+        "also", "beginning", "call", "during", "each", "know", "learn", "one", "quite",
+        "some", "what", "will",
     }
     candidates = [
         term for term in terms
@@ -847,9 +871,9 @@ def _finding_resolution_target(tag: str) -> dict[str, str] | None:
             "proof_of_execution": "The transition is carried by source content rather than discourse markers.",
         },
         "citation_anchor": {
-            "safe_route": "Keep the source/citation relation close to the exact claim while avoiding citation-led wrapping.",
-            "unsafe_shape": "citation opener followed by a clean explanatory list.",
-            "proof_of_execution": "The cited/source idea explains a specific source relation, not the whole paragraph.",
+            "safe_route": "Keep submitted parenthetical citations close to the exact claim while avoiding citation-led wrapping.",
+            "unsafe_shape": "citation opener or standalone citation sentence with new reporting verbs.",
+            "proof_of_execution": "The citation remains parenthetical and attached to a specific supported source relation.",
         },
         "paraphrase_smoothing": {
             "safe_route": "Use source-level phrasing with uneven sentence pressure rather than cleaner academic paraphrase.",
@@ -912,7 +936,7 @@ def _operation(tags: list[str]) -> str:
     if "semantic_bridge_gap" in tags:
         return "make the missing source-to-claim reasoning bridge explicit"
     if "citation_anchor" in tags:
-        return "keep source or citation relation close to the claim while reducing packed shape"
+        return "keep parenthetical citation spans close to the claim while reducing packed shape"
     if "broad_claim" in tags:
         return "narrow broad claim using source terms or mark reviewable bridge provenance"
     if "transition_stack" in tags:

@@ -26,6 +26,7 @@ def run_planner_llm(paragraph: Paragraph, plan: Plan, findings: list[Finding], *
             top_p=0.75,
             max_tokens=None,
             response_format={"type": "json_object"},
+            app_label="planner",
         )
         raw = getattr(response, "raw_content", "") or response.content
         decision = _planner_decision(parse_json(raw))
@@ -180,9 +181,13 @@ def _string_rows(value: Any) -> list[str]:
 
 def _unsafe_contract_gaps(gaps: list[str]) -> bool:
     unsafe_markers = (
+        "comma-list route",
         "copies risky source phrase",
         "contains planning label",
+        "forbidden sentence opener",
         "placeholder brackets",
+        "semicolon punctuation",
+        "unsubmitted bridge term",
     )
     return any(any(marker in gap for marker in unsafe_markers) for gap in gaps)
 
@@ -244,17 +249,52 @@ def _fallback_paragraph_blueprint(plan: Plan, gaps: list[str]) -> list[dict[str,
 def _fallback_safe_shape(action: Any) -> str:
     tags = set(getattr(action, "tags", []) or [])
     terms = list(getattr(action, "preserve_terms", []) or [])
-    first = ", ".join(terms[:3])
-    second = ", ".join(terms[3:6])
+    first, second = _shape_term_pairs(terms)
     if "citation_anchor" in tags:
-        return f"Put the source attribution near the supported claim: {first}. Then state the limit or support using {second}."
+        return f"Keep the submitted citation parenthetical near the supported claim using {first}. Carry the next relation with {second} without adding citation report verbs."
     if "packed_list" in tags:
-        return f"Group related source terms instead of listing them: {first}. Carry the next relation separately with {second}."
+        return f"Group the first relation around {first}. Carry the next relation separately with {second}."
     if "sentence_overload" in tags:
         return f"Use one sentence for the first source relation around {first}. Use the next sentence for the next relation around {second}."
     if "context_anchor_gap" in tags or "predictable_start" in tags:
         return f"Start with the concrete source anchor {first}, then state the scoped relation using {second}."
     return f"Write a direct source relation using {first}; keep any next relation separate with {second}."
+
+
+def _term_pair(terms: list[str]) -> str:
+    rows = [str(term).strip() for term in terms if str(term).strip()]
+    if not rows:
+        return "the submitted anchor"
+    if len(rows) == 1:
+        return rows[0]
+    return " and ".join(rows[:2])
+
+
+def _shape_term_pairs(terms: list[str]) -> tuple[str, str]:
+    rows = _dedupe_strings([str(term).strip() for term in terms if str(term).strip()])
+    if not rows:
+        return "the submitted anchor", "the next submitted detail"
+    weak = {
+        "actually", "another", "carry", "complete", "creating", "demonstrates",
+        "example", "found", "helping", "made", "shows", "thereby", "them", "view",
+    }
+    phrase_primary = next((term for term in rows if " " in term), "")
+    primary = phrase_primary or next((term for term in rows if term.casefold() not in weak), rows[0])
+    unused = [term for term in rows if term != primary]
+    strong = [
+        term for term in unused
+        if any(ch.isdigit() for ch in term) or term.isupper() or " " in term
+    ]
+    details = [term for term in unused if term not in strong and term.casefold() not in weak and len(term) >= 5]
+    pool = [*strong, *details, *unused] if phrase_primary else [*details, *strong, *unused]
+    first_detail = (pool or ["the submitted detail"])[0]
+    used = {primary, first_detail}
+    tail = rows[rows.index(first_detail) + 1:] if first_detail in rows else []
+    second_rows = [
+        term for term in [*tail, *strong, *details, *unused]
+        if term not in used
+    ]
+    return _term_pair([primary, first_detail]), _term_pair(second_rows[:2])
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:
@@ -316,6 +356,16 @@ def _planner_contract_gaps(decision: dict[str, Any], findings: list[Finding]) ->
         safe = str(contract.get("safe_rebuild_shape") or "")
         if "<" in safe or ">" in safe:
             reasons.append(f"{sentence_id or 'unknown'} safe_rebuild_shape uses placeholder brackets")
+        if ";" in safe:
+            reasons.append(f"{sentence_id or 'unknown'} safe_rebuild_shape uses semicolon punctuation that the writer contract forbids")
+        if safe.count(",") >= 2:
+            reasons.append(f"{sentence_id or 'unknown'} safe_rebuild_shape keeps a comma-list route instead of a safer construction route")
+        opener = _forbidden_sentence_opener(safe)
+        if opener:
+            reasons.append(f"{sentence_id or 'unknown'} safe_rebuild_shape uses forbidden sentence opener '{opener}'")
+        bridge_term = _unsubmitted_bridge_term(safe, contract)
+        if bridge_term:
+            reasons.append(f"{sentence_id or 'unknown'} safe_rebuild_shape introduces unsubmitted bridge term '{bridge_term}'")
         planning_label = _planning_label(safe)
         if planning_label:
             reasons.append(f"{sentence_id or 'unknown'} safe_rebuild_shape contains planning label '{planning_label}'")
@@ -354,6 +404,28 @@ def _plain_words(text: str) -> list[str]:
         for token in re.findall(r"[A-Za-z][A-Za-z'’-]{2,}", str(text or ""))
         if token.casefold() not in {"the", "and", "that", "this", "with", "from", "through"}
     ]
+
+
+def _forbidden_sentence_opener(text: str) -> str:
+    for sentence in re.split(r"(?<=[.!?])\s+", str(text or "").strip()):
+        match = re.match(r"^[\"'“”‘’]*([A-Za-z]+)\b", sentence.strip())
+        if match and match.group(1).casefold() in {"and", "but", "or", "which", "where", "that", "as", "this", "these", "those"}:
+            return match.group(1)
+    return ""
+
+
+def _unsubmitted_bridge_term(text: str, contract: dict[str, Any]) -> str:
+    allowed = {
+        token.casefold()
+        for term in contract.get("coverage_terms", [])
+        for token in re.findall(r"[A-Za-z][A-Za-z'’-]{2,}", str(term))
+    }
+    risky = {"other", "various", "broader", "critical", "complex", "significant", "important"}
+    for token in re.findall(r"[A-Za-z][A-Za-z'’-]{2,}", str(text or "")):
+        key = token.casefold()
+        if key in risky and key not in allowed:
+            return token
+    return ""
 
 
 def _planning_label(text: str) -> str:

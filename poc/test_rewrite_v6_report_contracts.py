@@ -331,6 +331,51 @@ def test_v6_document_rewrite_runs_residual_followup_after_accepted_paragraph(mon
     assert result.final_scan.scores["finding_count"] == 0
 
 
+def test_v6_residual_followup_continues_across_split_child_targets(monkeypatch):
+    source = "This method uses forms, queues, labels, reviews, approvals, and checks because students should improve."
+    split_candidate = (
+        "This method uses forms, queues, labels, reviews, approvals, and checks.\n\n"
+        "This result shows a problem because students should improve."
+    )
+    final_replacement = "Students improve after checking the result."
+    final_candidate = (
+        "This method uses forms, queues, labels, reviews, approvals, and checks.\n\n"
+        f"{final_replacement}"
+    )
+    seen: list[tuple[str, set[str] | None]] = []
+
+    def fake_run(current, **kwargs):
+        scan = scan_text(current)
+        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"), kwargs.get("priority_paragraph_ids"))
+        seen.append((paragraph.id, kwargs.get("priority_paragraph_ids")))
+        if len(seen) == 1:
+            return v6_pipeline.Result(
+                scan=scan,
+                plan=plan,
+                variants=[],
+                selected=Variant(id="v1", text=split_candidate, source="llm"),
+                rewritten_text=split_candidate,
+            )
+        if paragraph.id == "p001":
+            return v6_pipeline.Result(scan=scan, plan=plan, variants=[], selected=None, rewritten_text=current)
+        return v6_pipeline.Result(
+            scan=scan,
+            plan=plan,
+            variants=[],
+            selected=Variant(id="v2", text=final_replacement, source="llm"),
+            rewritten_text=final_candidate,
+        )
+
+    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
+    result = v6_pipeline.run_v6_rewrite_all(source, max_passes=1, residual_followup_passes=1)
+
+    assert [row["status"] for row in result.pass_trace] == ["accepted", "no_change_residual", "accepted_residual"]
+    assert result.pass_trace[0]["target_paragraph_id"] == "p001,p002"
+    assert result.pass_trace[1]["target_paragraph_id"] == "p001,p002"
+    assert result.pass_trace[2]["target_paragraph_id"] == "p002"
+    assert [paragraph_id for paragraph_id, _ in seen] == ["p001", "p001", "p002"]
+
+
 def test_v6_no_change_detection_ignores_paragraph_spacing_normalization():
     assert _same_text("First paragraph.\n\nSecond paragraph.", "First paragraph. Second paragraph.")
 
@@ -346,11 +391,11 @@ def test_v6_writer_prompt_surfaces_required_sentence_groups_as_coverage_loss_con
 
     assert groups
     assert any("salon" in " ".join(row["source_terms_to_carry"]).casefold() for row in groups)
-    assert "sentence_row_id for each covered group" in " ".join(payload["generation_rules"])
-    assert "cover every group in coverage_map" in " ".join(payload["generation_rules"])
+    assert "cover every group in the final text" in " ".join(payload["generation_rules"])
     assert "one final sentence per group" not in build_prompt(paragraph, plan)
     assert "same row sequence joined" not in build_prompt(paragraph, plan)
-    assert "coverage_map to prove group coverage" in build_prompt(paragraph, plan)
+    assert "coverage_map to prove group coverage" not in build_prompt(paragraph, plan)
+    assert "do not output route_fragments, route_answer_cards, coverage_map, sentence_rows" in build_prompt(paragraph, plan)
     assert "Do not write repair-trace labels" in " ".join(payload["generation_rules"])
 
 
@@ -477,16 +522,14 @@ def test_v6_generated_prose_repair_revoices_displayed_quality_evidence():
     assert repaired == "Voluntary haircutting work with socially vulnerable groups showed his empathy and professional patience."
 
 
-def test_v6_writer_schema_keeps_coverage_map_separate_from_sentence_text():
+def test_v6_writer_schema_keeps_trace_objects_out_of_model_output():
     paragraph, plan = build_plan(scan_text("The process uses a form, a queue, and a review."))
     payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
     variant_schema = payload["output_schema"]["variants"][0]
-    coverage_row = variant_schema["coverage_map"][0]
-    sentence_row = variant_schema["sentence_rows"][0]
 
-    assert "sentence" not in coverage_row
-    assert coverage_row["sentence_row_id"]
-    assert "sentence" in sentence_row
+    assert "text" in variant_schema
+    assert "coverage_map" not in variant_schema
+    assert "sentence_rows" not in variant_schema
 
 
 def test_v6_selected_author_proxy_candidate_labels_short_new_bridge_terms_for_review():
@@ -548,6 +591,100 @@ def test_v6_fragment_detector_rejects_single_hard_subordinate_fragment():
     assert has_fragment_or_trace_sentences(text)
 
 
+def test_v6_fragment_detector_allows_subordinate_opener_with_main_clause():
+    text = (
+        "At the beginning he was quite reserved. "
+        "As we got to know each other through casual conversation I learned about some of his past learning experiences. "
+        "With guidance and role-playing activities he gradually became more confident."
+    )
+
+    assert not has_fragment_or_trace_sentences(text)
+
+
+def test_v6_generated_prose_repair_merges_example_when_fragment():
+    candidate = (
+        "The approach uses visual references. "
+        "For example, when I guide them to the 12-o’clock projection. "
+        "They can understand where to project the hair."
+    )
+
+    repaired = repair_generated_prose(candidate, candidate)
+
+    assert repaired == (
+        "The approach uses visual references. "
+        "When I guide them to the 12-o’clock projection, they can understand where to project the hair."
+    )
+    assert not has_fragment_or_trace_sentences(repaired)
+
+
+def test_v6_generated_prose_repair_revoices_broad_belief_to_teaching_method_anchor():
+    candidate = "I believe educators should use clearer and more accessible approaches to support student understanding, in practice."
+    source = "Practical learning is not only demonstration, and this aligns with my teaching method."
+
+    repaired = repair_generated_prose(candidate, source)
+
+    assert repaired == "My teaching method uses clearer and more accessible approaches to support student understanding."
+    assert not findings_for_paragraph(scan_text(repaired), "p001")
+
+
+def test_v6_generated_prose_repair_revoices_guidance_understanding_sentence():
+    candidate = "When I guide them to a 12-o’clock projection, they readily understand where to project the hair directly."
+
+    repaired = repair_generated_prose(candidate, candidate)
+
+    assert repaired == "The 12-o’clock projection shows where to project the hair."
+
+
+def test_v6_generated_prose_repair_revoices_no_comma_guidance_example_sentence():
+    candidate = "For example, when I guide them to the 12-o’clock projection they can easily understand where to project the hair straightaway as an example."
+
+    repaired = repair_generated_prose(candidate, candidate)
+
+    assert repaired == "The 12-o’clock projection shows where to project the hair."
+
+
+def test_v6_generated_prose_repair_revoices_lowercase_guidance_seeing_sentence():
+    candidate = "when I guide them to a 12-o’clock projection, they can easily see where to project the hair straightaway."
+
+    repaired = repair_generated_prose(candidate, candidate)
+
+    assert repaired == "The 12-o’clock projection shows where to project the hair."
+    assert not findings_for_paragraph(scan_text(repaired), "p001")
+
+
+def test_v6_generated_prose_repair_tolerates_example_marker_punctuation():
+    expected = "The 12-o’clock projection shows where to project the hair."
+    candidates = [
+        "For example when I guide them to the 12-o’clock projection they can easily understand where to project the hair.",
+        "For example: when I guide them to the 12-o’clock projection they can easily understand where to project the hair.",
+        "For example - when I guide them to the 12-o’clock projection they can easily understand where to project the hair.",
+    ]
+
+    assert [repair_generated_prose(candidate, candidate) for candidate in candidates] == [expected, expected, expected]
+
+
+def test_v6_generated_prose_repair_revoices_example_shows_guidance_sentence():
+    candidate = "An example shows that when I guide them to the 12-o’clock projection they can easily understand the task."
+
+    repaired = repair_generated_prose(candidate, candidate)
+
+    assert repaired == "The 12-o’clock projection shows the task."
+
+
+def test_v6_generated_prose_repair_revoices_pronoun_simplification():
+    candidate = (
+        "The approach aligns with CAST’s principle. "
+        "It applies a simplification of abstract technical concepts, turning them into familiar visual references."
+    )
+
+    repaired = repair_generated_prose(candidate, candidate)
+
+    assert repaired == (
+        "The approach aligns with CAST’s principle. "
+        "The approach simplifies abstract technical concepts into familiar visual references."
+    )
+
+
 def test_v6_writer_prompt_blocks_standalone_connector_fragments():
     paragraph, plan = build_plan(scan_text("The process uses forms, queues, and reviews because teams should improve."))
     prompt = build_prompt(paragraph, plan)
@@ -591,6 +728,43 @@ def test_v6_writer_retries_rejected_candidate_with_generic_defect_feedback():
         "Labels and reviews support approval checks. "
         "The checks help teams improve."
     )
+
+
+def test_v6_writer_retry_candidates_receive_same_prose_repair_as_first_pass():
+    source = (
+        "This also aligns with CAST’s (2024) principle of multiple means of representation by simplifying abstract technical concepts into more familiar visual references. "
+        "For example, when I guide them to 12 o’clock projection, they can easily understand where to project the hair straightaway. "
+        "Compared to the existing resource, it is usually called perpendicular distribution and projected to 90 degrees from baseline (head shape). "
+        "This makes technical terminology easier for diverse learners to understand. "
+        "I believe educators should use clearer and more accessible approaches to support student understanding. "
+        "Practical learning is not only demonstration, but it also needs listening, understanding, proper guidance and scaffolding (Billett, 2013), and this aligns with my teaching method."
+    )
+    client = SequencedVariantClient([
+        json.dumps({"variants": [{
+            "id": "v1",
+            "text": "This also aligns with CAST’s (2024) principle. And needs improvement.",
+        }]}),
+        json.dumps({"variants": [{
+            "id": "retry_v1",
+            "text": (
+                "CAST’s (2024) principle supports multiple means of representation. "
+                "The approach simplifies abstract technical concepts into familiar visual references. "
+                "For example, when I guide them to the 12-o’clock projection they can easily understand where to project the hair straightaway as an example. "
+                "Compared to the existing resource, the method is usually called perpendicular distribution and projected to 90 degrees from baseline head shape. "
+                "The approach makes technical terminology easier for diverse learners. "
+                "My teaching method uses clearer and more accessible approaches to support student understanding. "
+                "Practical learning is not only demonstration. Listening and understanding are also needed. Proper guidance and scaffolding are required (Billett, 2013)."
+            ),
+        }]}),
+    ])
+
+    result = v6_pipeline.run_v6_rewrite(source, writer_client=client, priority_paragraph_ids={"p001"})
+
+    assert len(client.prompts) == 2
+    assert result.selected and result.selected.id == "retry_v1"
+    assert "For example, when" not in result.selected.text
+    assert "as an example" not in result.selected.text
+    assert "The 12-o’clock projection shows where to project the hair." in result.selected.text
 
 
 def test_v6_integrity_guard_rejects_broken_citation_and_grammar_shapes():

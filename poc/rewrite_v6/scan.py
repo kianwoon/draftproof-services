@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from statistics import mean
 from typing import Any
 
+from .paragraph_normalizer import normalize_paragraph_blocks
 from .text import Paragraph, Sentence, split_paragraphs
 
 
@@ -37,6 +38,7 @@ class Scan:
 
 
 def scan_text(text: str) -> Scan:
+    text = normalize_paragraph_blocks(text)
     paragraphs = split_paragraphs(text)
     sentences = [sentence for paragraph in paragraphs for sentence in paragraph.sentences]
     risks = [_risk(sentence) for sentence in sentences]
