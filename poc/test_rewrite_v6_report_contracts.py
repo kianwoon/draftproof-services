@@ -825,6 +825,25 @@ def test_v6_integrity_guard_rejects_broken_citation_and_grammar_shapes():
     assert "malformed_verb_complement" in blockers
 
 
+def test_v6_integrity_guard_rejects_remaining_production_bad_shapes():
+    text = (
+        "Without Inclusive Learning Design and UDL support many learners become difficult. "
+        "Learners are unwilling to learn because the task requires technical understanding and repeated practice. "
+        "Help them build self-confidence and develop critical thinking. "
+        "Promote inclusive learning by incorporating role-playing activities. "
+        "Such actions created an inclusive learning environment thereby (CAST, 2024). "
+        "The same outcome was observed in later studies (Jwad et al., 2022). "
+        "Further evidence supports this finding (Lawrie et al., 2017)."
+    )
+
+    blockers = candidate_integrity_blockers(text)
+
+    assert "unsupported_learner_blame_shape" in blockers
+    assert "bare_instruction_fragment" in blockers
+    assert "stranded_thereby_citation" in blockers
+    assert "citation_report_sentence" in blockers
+
+
 def test_v6_selector_keeps_source_when_candidate_has_integrity_defect():
     source = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
     paragraph = scan_text(source).paragraphs[0]

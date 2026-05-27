@@ -18,6 +18,14 @@ def candidate_integrity_blockers(text: str) -> list[str]:
         blockers.append("split_negation_fragment")
     if _malformed_verb_complement(visible):
         blockers.append("malformed_verb_complement")
+    if _unsupported_learner_blame_shape(visible):
+        blockers.append("unsupported_learner_blame_shape")
+    if _bare_instruction_fragment(visible):
+        blockers.append("bare_instruction_fragment")
+    if _citation_report_sentence(visible):
+        blockers.append("citation_report_sentence")
+    if _stranded_thereby_citation(visible):
+        blockers.append("stranded_thereby_citation")
     return blockers
 
 
@@ -60,3 +68,32 @@ def _split_negation_fragment(text: str) -> bool:
 
 def _malformed_verb_complement(text: str) -> bool:
     return bool(re.search(r"\b(?:learned|learn|guide|guides|guided|question)\s+(?:accepting|compare|develop|apply|create|created|creating)\b", text, flags=re.I))
+
+
+def _unsupported_learner_blame_shape(text: str) -> bool:
+    human_group = r"(?:learners|students|clients|people|participants)"
+    return bool(
+        re.search(rf"\b{human_group}\s+(?:become|became|are|were)\s+difficult\b", text, flags=re.I)
+        or re.search(rf"\b{human_group}\s+are\s+unwilling\s+to\s+learn\s+because\b", text, flags=re.I)
+    )
+
+
+def _bare_instruction_fragment(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:^|[.!?]\s+)(?:Help|Promote|Enable|Teach|Apply|Use|Encourage)\s+"
+            r"(?:them|students|learners|clients|inclusive|practical|the)\b",
+            text,
+        )
+    )
+
+
+def _citation_report_sentence(text: str) -> bool:
+    return bool(
+        re.search(r"(?:^|[.!?]\s+)The same outcome was observed in later studies\s*\([^)]+\)\.?", text)
+        or re.search(r"(?:^|[.!?]\s+)Further evidence supports this finding\s*\([^)]+\)\.?", text)
+    )
+
+
+def _stranded_thereby_citation(text: str) -> bool:
+    return bool(re.search(r"\bthereby\s*\([^)]+\)", text, flags=re.I))

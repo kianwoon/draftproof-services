@@ -17,7 +17,7 @@ except ModuleNotFoundError:
     from poc.rewrite_v2.pipeline import _extract_original_text, _sentence_comparison
     from poc.rewrite_v3.pipeline import _scan_report
 
-from .pipeline import run_v6_rewrite_all
+from .pipeline import _planner_model, _writer_model, run_v6_rewrite_all
 from .report_contracts import extract_report_signal_contracts
 
 
@@ -46,6 +46,9 @@ def run_rewrite_pipeline_v6(
     original_text = _extract_original_text(detect_json)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    requested_writer_model = model
+    resolved_writer_model = model or _writer_model()
+    resolved_planner_model = _planner_model()
 
     document = run_v6_rewrite_all(
         original_text,
@@ -85,7 +88,10 @@ def run_rewrite_pipeline_v6(
         "strict_safe_band_achieved": cleared and changed,
         "kpi_finalization_status": "strict_safe_auto_finalized" if cleared and changed else status,
         "rewrite_effective_config": {
-            "model": model,
+            "model": resolved_writer_model,
+            "requested_writer_model": requested_writer_model,
+            "writer_model": resolved_writer_model,
+            "planner_model": resolved_planner_model,
             "pipeline": "v6",
             "passes": len(document.passes),
         },
