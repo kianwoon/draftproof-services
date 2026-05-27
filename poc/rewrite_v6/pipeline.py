@@ -14,6 +14,7 @@ from .repair_windows import RepairWindow, compose_window_rewrite, select_repair_
 from .report_contracts import apply_report_signal_contracts
 from .scan import Scan, findings_for_paragraph, scan_text
 from .json_io import parse_json
+from .naturalisation import NaturalisationResult, run_naturalisation_repair_once
 from .paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from .paragraph_layout import restore_original_paragraph_layout
 from .quality_repair import QualityRepairResult, _grammer_extra_body, _grammer_model, run_quality_repair_once
@@ -55,6 +56,7 @@ class DocumentResult:
     pass_trace: list[dict[str, Any]]
     final_text_before_quality_repair: str | None = None
     quality_repair: QualityRepairResult | None = None
+    naturalisation_repair: NaturalisationResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,6 +67,7 @@ class DocumentResult:
             "pass_trace": list(self.pass_trace),
             "final_text_before_quality_repair": self.final_text_before_quality_repair,
             "quality_repair": self.quality_repair.to_dict() if self.quality_repair else None,
+            "naturalisation_repair": self.naturalisation_repair.to_dict() if self.naturalisation_repair else None,
         }
 
 
@@ -225,18 +228,16 @@ def run_v6_rewrite_with_residuals(
             runtime_budget_seconds=runtime_budget_seconds,
             min_llm_request_seconds=min_llm_request_seconds,
         )
-    repair = run_quality_repair_once(
-        current,
+    final_text, repair, naturalisation = _run_final_repair_layers(
+        current=current,
         original_text=text,
+        passes=passes,
         quality_client=quality_client,
         api_key=api_key,
         base_url=base_url,
         cancellation_check=cancellation_check,
         progress_callback=progress_callback,
     )
-    repair = _risk_safe_quality_repair(current, repair)
-    post_quality_text = repair.repaired_text if repair else current
-    final_text = restore_original_paragraph_layout(text, post_quality_text, passes)
     return DocumentResult(
         initial_scan=initial_scan,
         final_scan=scan_text(final_text),
@@ -245,6 +246,7 @@ def run_v6_rewrite_with_residuals(
         pass_trace=pass_trace,
         final_text_before_quality_repair=current if repair and repair.changed else None,
         quality_repair=repair,
+        naturalisation_repair=naturalisation,
     )
 
 
@@ -631,18 +633,16 @@ def run_v6_rewrite_all(
                 runtime_budget_seconds=runtime_budget_seconds,
                 min_llm_request_seconds=min_llm_request_seconds,
             )
-    repair = run_quality_repair_once(
-        current,
+    final_text, repair, naturalisation = _run_final_repair_layers(
+        current=current,
         original_text=text,
+        passes=passes,
         quality_client=quality_client,
         api_key=api_key,
         base_url=base_url,
         cancellation_check=cancellation_check,
         progress_callback=progress_callback,
     )
-    repair = _risk_safe_quality_repair(current, repair)
-    post_quality_text = repair.repaired_text if repair else current
-    final_text = restore_original_paragraph_layout(text, post_quality_text, passes)
     return DocumentResult(
         initial_scan=initial_scan,
         final_scan=scan_text(final_text),
@@ -651,6 +651,7 @@ def run_v6_rewrite_all(
         pass_trace=pass_trace,
         final_text_before_quality_repair=current if repair and repair.changed else None,
         quality_repair=repair,
+        naturalisation_repair=naturalisation,
     )
 
 
@@ -726,10 +727,78 @@ def _run_residual_followups(
     return current
 
 
+def _run_final_repair_layers(
+    *,
+    current: str,
+    original_text: str,
+    passes: list[Result],
+    quality_client: Any | None,
+    api_key: str | None,
+    base_url: str | None,
+    cancellation_check: Callable[[], None] | None,
+    progress_callback: Callable[[int, str], None] | None,
+) -> tuple[str, QualityRepairResult | None, NaturalisationResult | None]:
+    repair = run_quality_repair_once(
+        current,
+        original_text=original_text,
+        quality_client=quality_client,
+        api_key=api_key,
+        base_url=base_url,
+        cancellation_check=cancellation_check,
+        progress_callback=progress_callback,
+    )
+    repair = _risk_safe_quality_repair(current, repair)
+    post_quality_text = repair.repaired_text if repair else current
+    naturalisation = run_naturalisation_repair_once(
+        post_quality_text,
+        original_text=original_text,
+        quality_client=quality_client,
+        api_key=api_key,
+        base_url=base_url,
+        cancellation_check=cancellation_check,
+        progress_callback=progress_callback,
+    )
+    naturalisation = _risk_safe_naturalisation_repair(post_quality_text, naturalisation)
+    post_naturalisation_text = naturalisation.repaired_text if naturalisation else post_quality_text
+    final_text = restore_original_paragraph_layout(original_text, post_naturalisation_text, passes)
+    return final_text, repair, naturalisation
+
+
 def _risk_safe_quality_repair(
     original: str,
     repair: QualityRepairResult | None,
 ) -> QualityRepairResult | None:
+    if repair is None or not repair.changed:
+        return repair
+    before = scan_text(original)
+    after = scan_text(repair.repaired_text)
+    before_count = float(before.scores.get("finding_count") or 0.0)
+    after_count = float(after.scores.get("finding_count") or 0.0)
+    before_risk = float(before.scores.get("mean_sentence_shape_risk") or 0.0)
+    after_risk = float(after.scores.get("mean_sentence_shape_risk") or 0.0)
+    if after_count > before_count or after_risk > before_risk + _quality_repair_risk_tolerance():
+        return replace(
+            repair,
+            repaired_text=original,
+            status="reverted_scan_regression",
+            skipped_operations=[
+                *repair.skipped_operations,
+                {
+                    "skip_reason": "scan_regression",
+                    "before_findings": before_count,
+                    "after_findings": after_count,
+                    "before_mean_sentence_shape_risk": before_risk,
+                    "after_mean_sentence_shape_risk": after_risk,
+                },
+            ],
+        )
+    return repair
+
+
+def _risk_safe_naturalisation_repair(
+    original: str,
+    repair: NaturalisationResult | None,
+) -> NaturalisationResult | None:
     if repair is None or not repair.changed:
         return repair
     before = scan_text(original)

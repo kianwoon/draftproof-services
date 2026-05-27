@@ -802,6 +802,7 @@ def test_v6_quality_repair_skips_expansive_or_protected_changes():
 
 
 def test_v6_quality_repair_runs_once_after_selected_rewrite(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_NATURALISATION_ENABLED", "0")
     source = "This process uses a form, a queue, and a review."
     rewritten = "I am an educator who need to listen."
     seen = {}
@@ -844,6 +845,7 @@ def test_v6_quality_repair_runs_once_after_selected_rewrite(monkeypatch):
 
 
 def test_v6_quality_repair_reverts_one_pass_scan_regression(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_NATURALISATION_ENABLED", "0")
     source = "This process uses a form, a queue, and a review."
     rewritten = "Approach increases student motivation."
 
