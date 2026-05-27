@@ -13,7 +13,7 @@ import time
 from typing import Any
 
 
-_DEFAULT_MODEL = "z-ai/glm-4.7"
+_DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 
 def planner_model_from_env() -> str:

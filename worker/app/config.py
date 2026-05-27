@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     DRAFTPROOF_REWRITE_V5_PLANNER_MODEL: str = ""
     DRAFTPROOF_REWRITE_V4_MODEL: str = ""
     DRAFTPROOF_V6_PLANNER_MODEL: str = ""
-    DRAFTPROOF_V6_WRITER_MODEL: str = "qwen/qwen3-30b-a3b-instruct-2507"
+    DRAFTPROOF_V6_WRITER_MODEL: str = ""
     LLM_BASE_URL: str = ""
     SCAN_SOFT_TIME_LIMIT_SECONDS: int = 300
     SCAN_TIME_LIMIT_SECONDS: int = 330

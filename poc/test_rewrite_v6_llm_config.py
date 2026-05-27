@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from poc.rewrite_v6.pipeline import (
+    _planner_model,
     _planner_extra_body,
     _planner_llm_profile,
+    _writer_model,
     _writer_extra_body,
     _writer_llm_profile,
 )
@@ -29,6 +31,20 @@ def test_v6_gpt_oss_role_profiles_use_reasoning_and_bounded_sampling():
         "frequency_penalty": 0,
         "repetition_penalty": 1.0,
     }
+
+
+def test_v6_roles_default_to_gpt_oss_when_env_is_absent(monkeypatch):
+    for name in (
+        "DRAFTPROOF_V6_PLANNER_MODEL",
+        "DRAFTPROOF_PLANNER_MODEL",
+        "DRAFTPROOF_REWRITE_V5_PLANNER_MODEL",
+        "DRAFTPROOF_V6_WRITER_MODEL",
+        "LLM_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    assert _planner_model() == "openai/gpt-oss-120b"
+    assert _writer_model() == "openai/gpt-oss-120b"
 
 
 def test_v6_gpt_oss_writer_uses_source_sensitive_profile_for_citations():

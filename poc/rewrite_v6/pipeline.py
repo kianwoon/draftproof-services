@@ -984,10 +984,13 @@ def _emit_progress(callback: Callable[[int, str], None] | None, percent: int | N
         callback(percent, message)
 
 
+DEFAULT_V6_MODEL = "openai/gpt-oss-120b"
+
+
 def _writer_model() -> str:
     import os
 
-    return os.environ.get("DRAFTPROOF_V6_WRITER_MODEL") or os.environ.get("LLM_MODEL") or "z-ai/glm-4.7"
+    return os.environ.get("DRAFTPROOF_V6_WRITER_MODEL") or os.environ.get("LLM_MODEL") or DEFAULT_V6_MODEL
 
 
 def _planner_model() -> str:
@@ -997,7 +1000,8 @@ def _planner_model() -> str:
         os.environ.get("DRAFTPROOF_V6_PLANNER_MODEL")
         or os.environ.get("DRAFTPROOF_PLANNER_MODEL")
         or os.environ.get("DRAFTPROOF_REWRITE_V5_PLANNER_MODEL")
-        or "z-ai/glm-4.7"
+        or os.environ.get("LLM_MODEL")
+        or DEFAULT_V6_MODEL
     )
 
 

@@ -1475,12 +1475,10 @@ def test_v6_glm47_planner_prefers_cerebras_provider(monkeypatch):
     assert _planner_provider("z-ai/glm-4.7") == {"order": ["Cerebras"], "allow_fallbacks": True}
 
 
-def test_v6_glm47_writer_is_default_and_prefers_cerebras_provider(monkeypatch):
-    for name in ("MODEL", "PROVIDER_ROUTING_JSON", "PROVIDER_ORDER", "PROVIDER_ONLY", "PROVIDER_IGNORE", "PROVIDER_SORT", "PROVIDER_ALLOW_FALLBACKS"):
+def test_v6_glm47_provider_compatibility_prefers_cerebras(monkeypatch):
+    for name in ("PROVIDER_ROUTING_JSON", "PROVIDER_ORDER", "PROVIDER_ONLY", "PROVIDER_IGNORE", "PROVIDER_SORT", "PROVIDER_ALLOW_FALLBACKS"):
         monkeypatch.delenv(f"DRAFTPROOF_V6_WRITER_{name}", raising=False)
-    monkeypatch.delenv("LLM_MODEL", raising=False)
 
-    assert _writer_model() == "z-ai/glm-4.7"
     assert _writer_provider("z-ai/glm-4.7") == {"order": ["Cerebras"], "allow_fallbacks": True}
 
 
