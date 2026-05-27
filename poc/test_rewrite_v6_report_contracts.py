@@ -725,6 +725,8 @@ def test_v6_writer_retries_rejected_candidate_with_generic_defect_feedback():
     assert len(client.prompts) == 2
     assert "Defect feedback from rejected candidates" in client.prompts[1]
     assert "malformed_fragment_or_trace_sentence" in client.prompts[1]
+    assert "base_writer_prompt" not in client.prompts[1]
+    assert "target_excerpts" not in client.prompts[1]
     assert result.selected and result.selected.id == "retry_v1"
     assert result.rewritten_text == (
         "Teams use forms and queues during intake. "
@@ -792,14 +794,16 @@ def test_v6_retry_prompt_does_not_duplicate_full_document_signal_excerpts():
         [{"variant_id": "v1", "blockers": ["insufficient_scanner_movement"], "candidate_findings": 1}],
     )
     payload = json.loads(retry_prompt.split("\n", 1)[1])
-    base_prompt = payload["base_writer_prompt"]
+    retry_contract = payload["retry_writer_contract"]
 
-    assert "document_signal_contracts" not in base_prompt["writer_execution_contract"]
-    assert "document_signal_contracts" not in base_prompt.get("planner_decision", {})
+    assert "base_writer_prompt" not in payload
+    assert "document_signal_contracts" not in retry_contract["writer_execution_contract"]
+    assert "document_signal_contracts" not in retry_contract.get("planner_decision", {})
     assert "target_excerpts" not in retry_prompt
     assert long_excerpt not in retry_prompt
-    assert len(base_prompt["document_signal_contracts"]) == 6
-    assert sum(len(row.get("target_excerpt_samples", [])) for row in base_prompt["document_signal_contracts"]) <= 2
+    assert retry_contract["source_units"]
+    assert retry_contract["writer_execution_contract"]["rows"]
+    assert len(retry_prompt) < 12000
 
 
 def test_v6_integrity_guard_rejects_broken_citation_and_grammar_shapes():

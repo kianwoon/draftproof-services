@@ -18,7 +18,7 @@ from .paragraph_architecture import apply_architecture_split_text, architecture_
 from .selector_diagnostics import rejected_variant_feedback, selection_diagnostics
 from .prose_quality import repair_generated_prose
 from .write import Variant, choose_variant, parse_variants, write_variants
-from .writer_prompt import build_prompt
+from .writer_prompt import build_retry_contract
 
 
 @dataclass(frozen=True)
@@ -430,7 +430,16 @@ def _retry_prompt(paragraph: Any, plan: Plan, feedback: list[dict[str, Any]]) ->
         "instruction": "Generate one corrected replacement that fixes every listed defect while preserving submitted meaning and source coverage.",
         "defect_feedback_label": "Defect feedback from rejected candidates",
         "defect_feedback": normalized_feedback,
-        "base_writer_prompt": json.loads(build_prompt(paragraph, plan, variant_focus={"id": "retry_v1", "mode": "defect_feedback_retry"}).split("\n", 1)[1]),
+        "retry_writer_contract": build_retry_contract(paragraph, plan),
+        "retry_rules": [
+            "Fix the listed blockers directly; do not repeat the rejected sentence route.",
+            "Use source_units as the only source text and keep coverage in the selected paragraph.",
+            "Use writer_execution_contract rows as the build order.",
+            "Do not output route fragments, coverage maps, sentence rows, analysis notes, or repair traces.",
+            "Do not add external facts, new citations, new named references, new years, or stronger claims.",
+            "Keep submitted citations inside their original parenthetical span when cited.",
+            "Every final sentence must be a complete ordinary sentence with its own subject and predicate.",
+        ],
         "output_schema": {"variants": [{"id": "retry_v1", "text": "corrected replacement text only", "author_proxy_provenance": [], "author_review_items": []}]},
     }
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)

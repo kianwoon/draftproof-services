@@ -139,6 +139,71 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
         + ".\n"
     )
     return prefix + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
+    coverage_beats = _prompt_coverage_beats(plan)
+    sentence_plan = paragraph_sentence_plan(paragraph, coverage_beats)
+    planner_decision = compact_planner_decision(plan.ai_safe_route.get("llm_planner_decision", {}))
+    planner_decision.pop("document_signal_contracts", None)
+    construction_recipes = _prompt_construction_recipes(plan)
+    author_route_questions = _prompt_author_route_questions(plan)
+    contract = {
+        "context_anchors": {
+            "context_terms": _prompt_context_terms(plan)[:5],
+            "named_references": _prompt_named_references(plan),
+            "years": plan.author_proxy_context.get("years", []),
+            "citation_spans": plan.author_proxy_context.get("citation_spans", []),
+            "quoted_terms": plan.author_proxy_context.get("quoted_terms", []),
+        },
+        "content_word_boundary": {
+            "allowed_content_terms": _allowed_content_terms(paragraph, plan),
+            "rule": "Stay inside these submitted terms unless bridge wording is necessary and listed in author_review_items.",
+        },
+        "polarity_constraints": _polarity_constraints(paragraph),
+        "source_units": source_units(paragraph),
+        "writer_execution_contract": writer_execution_contract(
+            paragraph,
+            coverage_beats=coverage_beats,
+            sentence_plan=sentence_plan,
+            construction_recipes=construction_recipes,
+            author_route_questions=author_route_questions,
+            planner_decision=planner_decision,
+        ),
+        "architecture_split_contract": architecture_split_contract(paragraph, plan),
+        "hard_generation_requirements": {
+            "required_variant_ids": ["retry_v1"],
+            "exact_variant_count": 1,
+            "list_contract_active": _list_contract_active(plan),
+            "forbidden_sentence_starts": [
+                "And",
+                "But",
+                "Or",
+                "Which",
+                "Where",
+                "In",
+                "Through",
+                "During",
+                "From",
+                "This",
+                "That",
+                "These",
+                "Those",
+                "As",
+                "Thereby",
+            ],
+            "source_preserved_shape_is_failure": "Do not return the original sentence route with synonyms. Change clause route and sentence grouping.",
+        },
+        "active_variant": {"id": "retry_v1", "mode": "defect_feedback_retry"},
+    }
+    if planner_decision:
+        contract["planner_decision"] = planner_decision
+    coverage_groups = coverage_loss_contract(sentence_plan)
+    if coverage_groups:
+        contract["coverage_loss_contract"] = coverage_groups
+    return contract
+
+
 def _variant_requirements() -> list[dict[str, str]]:
     return [
         {
