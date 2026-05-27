@@ -811,12 +811,15 @@ def test_v6_integrity_guard_rejects_broken_citation_and_grammar_shapes():
     text = (
         "The method uses source support (Smith. They also carries 2024). "
         "The involves explaining the process. "
-        "Learners learned accepting feedback."
+        "Learners learned accepting feedback. "
+        "The created an inclusive learning environment (CAST 2024; Jwad 2022). "
+        "Proper guidance and scaffolding from Billett (2013) aligns with this teaching method."
     )
 
     blockers = candidate_integrity_blockers(text)
 
     assert "broken_citation_shape" in blockers
+    assert "citation_name_wrapper" in blockers
     assert "malformed_subject_verb_agreement" in blockers
     assert "dangling_article_predicate" in blockers
     assert "malformed_verb_complement" in blockers

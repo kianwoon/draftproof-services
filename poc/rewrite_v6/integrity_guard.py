@@ -8,6 +8,8 @@ def candidate_integrity_blockers(text: str) -> list[str]:
     visible = _normalize(text)
     if _broken_citation_shape(visible):
         blockers.append("broken_citation_shape")
+    if _citation_name_wrapper(visible):
+        blockers.append("citation_name_wrapper")
     if _dangling_article_predicate(visible):
         blockers.append("dangling_article_predicate")
     if _subject_verb_agreement_error(visible):
@@ -26,7 +28,20 @@ def _normalize(text: str) -> str:
 def _broken_citation_shape(text: str) -> bool:
     if text.count("(") != text.count(")"):
         return True
-    return bool(re.search(r"\([A-Z][A-Za-z]+(?:\s+et\s+al)?\.\s+[A-Z]|\([A-Z][A-Za-z]+(?:\s+et\s+al)?\.\s+(?:They|It|This|The)\b", text))
+    return bool(
+        re.search(r"\([A-Z][A-Za-z]+(?:\s+et\s+al)?\.\s+[A-Z]|\([A-Z][A-Za-z]+(?:\s+et\s+al)?\.\s+(?:They|It|This|The)\b", text)
+        or re.search(r"\([A-Z][A-Za-z'’-]+(?:\s+et\s+al\.)?\s+(?:19|20)\d{2}[a-z]?(?:\s*[;)])", text)
+    )
+
+
+def _citation_name_wrapper(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:from|by|with|according to)\s+[A-Z][A-Za-z'’-]+(?:\s+et\s+al\.)?\s*\((?:19|20)\d{2}[a-z]?\)\s+"
+            r"(?:aligns?|supports?|shows?|confirms?|proves?|highlights?|explains?)\b",
+            text,
+        )
+    )
 
 
 def _dangling_article_predicate(text: str) -> bool:
