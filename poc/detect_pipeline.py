@@ -21,6 +21,7 @@ import argparse
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from poc.detect.run import DetectionRunner
+from poc.detect.document_structure import normalize_submitted_text
 from poc.report.report import ReportBuilder, report_to_dict
 from poc.report.render import render_report
 from poc.report.pdf import render_pdf
@@ -45,6 +46,8 @@ def run_detect(
     model_name: str | None = None,
     progress_callback=None,
 ) -> dict:
+    raw_text = str(text or "")
+    text = normalize_submitted_text(raw_text)
     t0 = time.time()
     runner = DetectionRunner()
     kwargs = {}
@@ -82,6 +85,9 @@ def run_detect(
         progress_callback(95, "Writing scan results")
     json_data = report_to_dict(draft_report)
     json_data["input_text"] = text
+    if raw_text.strip() and raw_text.strip() != text:
+        json_data["raw_input_text"] = raw_text
+        json_data["input_text_normalized"] = True
     with open(json_path, "w") as f:
         json.dump(json_data, f, indent=2, default=str)
 

@@ -265,7 +265,7 @@ def test_v6_composes_window_rewrite_without_replacing_whole_paragraph():
     assert "queues, labels, reviews, approvals, and checks" in scan.source_text
 
 
-def test_v6_pipeline_sends_overloaded_paragraph_window_to_writer_not_full_paragraph():
+def test_v6_pipeline_sends_semantic_paragraph_to_writer_before_window_fallback():
     text = (
         "Opening setup stays outside the repair. "
         "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
@@ -280,15 +280,15 @@ def test_v6_pipeline_sends_overloaded_paragraph_window_to_writer_not_full_paragr
     result = v6_pipeline.run_v6_rewrite(text, writer_client=client, priority_paragraph_ids={"p001"})
 
     assert result.plan.paragraph_id == "p001"
-    assert "repair_window" in result.plan.ai_safe_route
+    assert "repair_window" not in result.plan.ai_safe_route
     assert client.prompts
     prompt_payload = json.loads(client.prompts[0].split("\n", 1)[1])
     prompt_text = json.dumps(prompt_payload)
     assert "forms" in prompt_text
     assert "queues" in prompt_text
     assert "labels" in prompt_text
-    assert "Opening setup stays outside the repair" not in prompt_text
-    assert "A final sentence stays outside the first repair" not in prompt_text
+    assert "Opening setup stays outside the repair" in prompt_text
+    assert "A final sentence stays outside the first repair" in prompt_text
 
 
 def test_v6_trace_records_selector_blockers_when_source_preserved_wins():

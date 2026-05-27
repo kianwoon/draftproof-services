@@ -1,6 +1,6 @@
 import importlib
 
-from detect.document_structure import structured_paragraph_texts, structured_sentence_segments
+from detect.document_structure import normalize_submitted_text, structured_paragraph_texts, structured_sentence_segments
 from report.report import DraftReport, PredictabilitySummary, Tier, report_to_dict
 
 
@@ -27,6 +27,50 @@ def test_structure_divides_long_single_block_into_virtual_paragraphs():
     assert len(unique_paragraph_ids) > 1
     assert max(paragraph_ids.count(pid) for pid in unique_paragraph_ids) <= 8
     assert {segment["source_paragraph_id"] for segment in segments} == {"src_p001"}
+
+
+def test_normalize_submitted_text_organises_long_single_block_before_scan():
+    sentences = [
+        f"Sentence {index} explains one practical step with enough detail for segmentation."
+        for index in range(1, 25)
+    ]
+    normalized = normalize_submitted_text(" ".join(sentences))
+
+    paragraphs = [part for part in normalized.split("\n\n") if part.strip()]
+
+    assert len(paragraphs) > 1
+    assert sum(paragraph.count("Sentence ") for paragraph in paragraphs) == 24
+    assert all(len(paragraph.split()) <= 190 for paragraph in paragraphs)
+
+
+def test_normalize_submitted_text_keeps_independent_short_paragraphs_apart():
+    text = (
+        "First paragraph has ordinary setup.\n\n"
+        "The next paragraph explains a separate point with its own focus."
+    )
+
+    normalized = normalize_submitted_text(text)
+
+    assert normalized.split("\n\n") == [
+        "First paragraph has ordinary setup.",
+        "The next paragraph explains a separate point with its own focus.",
+    ]
+
+
+def test_normalize_submitted_text_groups_short_continuation_fragments():
+    text = (
+        "The first point introduces the issue.\n\n"
+        "This also explains why the detail matters.\n\n"
+        "However, the next sentence qualifies the point."
+    )
+
+    normalized = normalize_submitted_text(text)
+
+    assert normalized == (
+        "The first point introduces the issue. "
+        "This also explains why the detail matters. "
+        "However, the next sentence qualifies the point."
+    )
 
 
 def test_structure_preserves_explicit_paragraph_boundaries_for_short_blocks():

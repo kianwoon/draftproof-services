@@ -38,6 +38,20 @@ def structured_sentence_segments(text: str) -> list[dict[str, Any]]:
     return [row.to_dict() for row in structured_sentences(text)]
 
 
+def normalize_submitted_text(text: str) -> str:
+    """Return the scan-facing text with stable semantic paragraph breaks.
+
+    The normalizer changes only paragraph boundaries. It preserves sentence text
+    and order so scanner evidence, report highlights, and rewrite references use
+    the same submitted wording.
+    """
+    source = str(text or "")
+    if not source.strip():
+        return ""
+    blocks = _semantic_blocks(source)
+    return "\n\n".join(block.strip() for block in blocks if block.strip()).strip()
+
+
 def structured_paragraph_texts(text: str) -> list[str]:
     segments = structured_sentences(text)
     paragraphs: dict[str, list[StructuredSentence]] = {}
@@ -193,6 +207,138 @@ def _virtual_paragraph_groups(rows: list[dict[str, Any]]) -> list[list[dict[str,
         else:
             groups.append(current)
     return groups
+
+
+def _semantic_blocks(text: str) -> list[str]:
+    raw_blocks = _physical_blocks(text)
+    blocks: list[str] = []
+    pending: list[str] = []
+    pending_words = 0
+    max_words = _int_env("DRAFTPROOF_STRUCTURE_MAX_PARAGRAPH_WORDS", 170, minimum=60, maximum=320)
+    min_words = _int_env("DRAFTPROOF_STRUCTURE_MIN_PARAGRAPH_WORDS", 70, minimum=20, maximum=max_words)
+    max_sentences = _int_env("DRAFTPROOF_STRUCTURE_MAX_PARAGRAPH_SENTENCES", 8, minimum=3, maximum=16)
+
+    def flush_pending() -> None:
+        nonlocal pending, pending_words
+        if pending:
+            blocks.append(" ".join(part.strip() for part in pending if part.strip()).strip())
+            pending = []
+            pending_words = 0
+
+    for block in raw_blocks:
+        block_text = str(block.get("text") or "").strip()
+        if not block_text:
+            continue
+        if _looks_like_heading(block_text):
+            flush_pending()
+            blocks.append(block_text)
+            continue
+
+        sentence_rows = _sentence_rows_for_block(text, block)
+        if not sentence_rows:
+            continue
+        groups = _semantic_sentence_groups(sentence_rows)
+        for group in groups:
+            paragraph_text = " ".join(
+                str(row.get("sentence") or "").strip()
+                for row in group
+                if str(row.get("sentence") or "").strip()
+            ).strip()
+            if not paragraph_text:
+                continue
+            group_words = sum(int(row.get("word_count") or 0) for row in group)
+            group_sentences = len(group)
+            if (
+                pending
+                and pending_words + group_words <= max_words
+                and len(_split_pending_sentences(pending)) + group_sentences <= max_sentences
+                and _looks_like_continuation(paragraph_text)
+            ):
+                pending.append(paragraph_text)
+                pending_words += group_words
+                continue
+            flush_pending()
+            if group_words < min_words and group_sentences <= 2:
+                pending.append(paragraph_text)
+                pending_words = group_words
+            else:
+                blocks.append(paragraph_text)
+    flush_pending()
+    return blocks
+
+
+def _semantic_sentence_groups(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    if not rows:
+        return []
+    max_words = _int_env("DRAFTPROOF_STRUCTURE_MAX_PARAGRAPH_WORDS", 170, minimum=60, maximum=320)
+    max_sentences = _int_env("DRAFTPROOF_STRUCTURE_MAX_PARAGRAPH_SENTENCES", 8, minimum=3, maximum=16)
+    min_words = _int_env("DRAFTPROOF_STRUCTURE_MIN_PARAGRAPH_WORDS", 70, minimum=20, maximum=max_words)
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_words = 0
+    for index, row in enumerate(rows):
+        row_words = int(row.get("word_count") or 0)
+        should_break = bool(current) and (
+            len(current) >= max_sentences
+            or current_words + row_words > max_words
+            or (
+                current_words >= min_words
+                and len(current) >= 3
+                and _semantic_boundary_score(current[-1], row, index) >= 2
+            )
+        )
+        if should_break and current_words < min_words and len(current) < max_sentences + 2:
+            should_break = False
+        if should_break:
+            groups.append(current)
+            current = []
+            current_words = 0
+        current.append(row)
+        current_words += row_words
+    if current:
+        if groups and current_words < min_words:
+            groups[-1].extend(current)
+        else:
+            groups.append(current)
+    return groups
+
+
+def _semantic_boundary_score(previous: dict[str, Any], current: dict[str, Any], index: int) -> int:
+    previous_text = str(previous.get("sentence") or "").strip()
+    current_text = str(current.get("sentence") or "").strip()
+    score = 0
+    if re.match(
+        r"^(however|therefore|nevertheless|instead|in contrast|by contrast|on the other hand|another|finally|overall|in conclusion|as a result)\b",
+        current_text,
+        flags=re.I,
+    ):
+        score += 2
+    if re.match(
+        r"^(first|second|third|next|then|also|in addition|for example|for instance)\b",
+        current_text,
+        flags=re.I,
+    ):
+        score += 1
+    if re.search(r"\([A-Z][^)]*(?:19|20)\d{2}[^)]*\)\.?$", previous_text):
+        score += 1
+    if index >= 5 and re.match(r"^(this|that|these|those|it)\b", current_text, flags=re.I):
+        score += 1
+    return score
+
+
+def _looks_like_continuation(text: str) -> bool:
+    value = str(text or "").strip()
+    return bool(
+        re.match(
+            r"^(this|that|these|those|it|they|such|however|therefore|also|in addition|for example|for instance|because|when|while)\b",
+            value,
+            flags=re.I,
+        )
+    )
+
+
+def _split_pending_sentences(parts: list[str]) -> list[str]:
+    return split_sentences(" ".join(parts))
 
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:

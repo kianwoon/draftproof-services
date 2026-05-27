@@ -25,7 +25,7 @@ def select_repair_window(
     max_sentences: int = 7,
     max_words: int = 190,
 ) -> RepairWindow | None:
-    if not _needs_window(paragraph, findings):
+    if not _needs_window(paragraph, findings, max_sentences=max_sentences, max_words=max_words):
         return None
     sentence_count = len(paragraph.sentences)
     if sentence_count <= 1:
@@ -83,12 +83,18 @@ def compose_window_rewrite(
     return "\n\n".join(blocks)
 
 
-def _needs_window(paragraph: Paragraph, findings: list[Finding]) -> bool:
+def _needs_window(
+    paragraph: Paragraph,
+    findings: list[Finding],
+    *,
+    max_sentences: int,
+    max_words: int,
+) -> bool:
     if len(findings) < 6:
         return False
-    if len(paragraph.sentences) >= 7:
+    if len(paragraph.sentences) > max_sentences * 2:
         return True
-    if word_count(paragraph.text) >= 180:
+    if word_count(paragraph.text) > max_words * 2:
         return True
     return False
 
