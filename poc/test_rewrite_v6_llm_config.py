@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from poc.rewrite_v6.pipeline import (
+    _grammer_extra_body,
+    _grammer_model,
     _planner_model,
     _planner_extra_body,
     _planner_llm_profile,
@@ -20,6 +22,10 @@ def test_v6_gpt_oss_role_profiles_use_reasoning_and_bounded_sampling():
     }
     assert _writer_extra_body("openai/gpt-oss-120b") == {
         "reasoning": {"effort": "medium", "exclude": True},
+        "include_reasoning": False,
+    }
+    assert _grammer_extra_body("openai/gpt-oss-120b") == {
+        "reasoning": {"effort": "low", "exclude": True},
         "include_reasoning": False,
     }
     assert _planner_llm_profile("openai/gpt-oss-120b") == {
@@ -45,6 +51,7 @@ def test_v6_roles_default_to_gpt_oss_when_env_is_absent(monkeypatch):
 
     assert _planner_model() == "openai/gpt-oss-120b"
     assert _writer_model() == "openai/gpt-oss-120b"
+    assert _grammer_model() == "openai/gpt-oss-120b"
 
 
 def test_v6_gpt_oss_writer_uses_source_sensitive_profile_for_citations():

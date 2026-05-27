@@ -15,6 +15,7 @@ from .report_contracts import apply_report_signal_contracts
 from .scan import Scan, findings_for_paragraph, scan_text
 from .json_io import parse_json
 from .paragraph_architecture import apply_architecture_split_text, architecture_split_contract
+from .quality_repair import QualityRepairResult, _grammer_extra_body, _grammer_model, run_quality_repair_once
 from .selector_diagnostics import rejected_variant_feedback, selection_diagnostics
 from .prose_quality import repair_generated_prose
 from .write import Variant, choose_variant, parse_variants, write_variants
@@ -51,6 +52,8 @@ class DocumentResult:
     passes: list[Result]
     rewritten_text: str
     pass_trace: list[dict[str, Any]]
+    final_text_before_quality_repair: str | None = None
+    quality_repair: QualityRepairResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +62,8 @@ class DocumentResult:
             "passes": [result.to_dict() for result in self.passes],
             "rewritten_text": self.rewritten_text,
             "pass_trace": list(self.pass_trace),
+            "final_text_before_quality_repair": self.final_text_before_quality_repair,
+            "quality_repair": self.quality_repair.to_dict() if self.quality_repair else None,
         }
 
 
@@ -121,6 +126,7 @@ def run_v6_rewrite_with_residuals(
     residual_followup_passes: int | None = None,
     planner_client: Any | None = None,
     writer_client: Any | None = None,
+    quality_client: Any | None = None,
     excluded_paragraph_ids: set[str] | None = None,
     model: str | None = None,
     api_key: str | None = None,
@@ -218,7 +224,26 @@ def run_v6_rewrite_with_residuals(
             runtime_budget_seconds=runtime_budget_seconds,
             min_llm_request_seconds=min_llm_request_seconds,
         )
-    return DocumentResult(initial_scan=initial_scan, final_scan=scan_text(current), passes=passes, rewritten_text=current, pass_trace=pass_trace)
+    repair = run_quality_repair_once(
+        current,
+        original_text=text,
+        quality_client=quality_client,
+        api_key=api_key,
+        base_url=base_url,
+        cancellation_check=cancellation_check,
+        progress_callback=progress_callback,
+    )
+    repair = _risk_safe_quality_repair(current, repair)
+    final_text = repair.repaired_text if repair else current
+    return DocumentResult(
+        initial_scan=initial_scan,
+        final_scan=scan_text(final_text),
+        passes=passes,
+        rewritten_text=final_text,
+        pass_trace=pass_trace,
+        final_text_before_quality_repair=current if repair and repair.changed else None,
+        quality_repair=repair,
+    )
 
 
 def _run_v6_full_paragraph_rewrite(
@@ -450,6 +475,7 @@ def run_v6_rewrite_all(
     *,
     planner_client: Any | None = None,
     writer_client: Any | None = None,
+    quality_client: Any | None = None,
     max_passes: int | None = None,
     model: str | None = None,
     api_key: str | None = None,
@@ -603,7 +629,26 @@ def run_v6_rewrite_all(
                 runtime_budget_seconds=runtime_budget_seconds,
                 min_llm_request_seconds=min_llm_request_seconds,
             )
-    return DocumentResult(initial_scan=initial_scan, final_scan=scan_text(current), passes=passes, rewritten_text=current, pass_trace=pass_trace)
+    repair = run_quality_repair_once(
+        current,
+        original_text=text,
+        quality_client=quality_client,
+        api_key=api_key,
+        base_url=base_url,
+        cancellation_check=cancellation_check,
+        progress_callback=progress_callback,
+    )
+    repair = _risk_safe_quality_repair(current, repair)
+    final_text = repair.repaired_text if repair else current
+    return DocumentResult(
+        initial_scan=initial_scan,
+        final_scan=scan_text(final_text),
+        passes=passes,
+        rewritten_text=final_text,
+        pass_trace=pass_trace,
+        final_text_before_quality_repair=current if repair and repair.changed else None,
+        quality_repair=repair,
+    )
 
 
 def _run_residual_followups(
@@ -676,6 +721,47 @@ def _run_residual_followups(
         exhausted_targets.clear()
         residual_index += 1
     return current
+
+
+def _risk_safe_quality_repair(
+    original: str,
+    repair: QualityRepairResult | None,
+) -> QualityRepairResult | None:
+    if repair is None or not repair.changed:
+        return repair
+    before = scan_text(original)
+    after = scan_text(repair.repaired_text)
+    before_count = float(before.scores.get("finding_count") or 0.0)
+    after_count = float(after.scores.get("finding_count") or 0.0)
+    before_risk = float(before.scores.get("mean_sentence_shape_risk") or 0.0)
+    after_risk = float(after.scores.get("mean_sentence_shape_risk") or 0.0)
+    if after_count > before_count or after_risk > before_risk + _quality_repair_risk_tolerance():
+        return replace(
+            repair,
+            repaired_text=original,
+            status="reverted_scan_regression",
+            skipped_operations=[
+                *repair.skipped_operations,
+                {
+                    "skip_reason": "scan_regression",
+                    "before_findings": before_count,
+                    "after_findings": after_count,
+                    "before_mean_sentence_shape_risk": before_risk,
+                    "after_mean_sentence_shape_risk": after_risk,
+                },
+            ],
+        )
+    return repair
+
+
+def _quality_repair_risk_tolerance() -> float:
+    import os
+
+    try:
+        value = float(os.environ.get("DRAFTPROOF_V6_GRAMMER_RISK_TOLERANCE", "1.0"))
+    except (TypeError, ValueError):
+        value = 1.0
+    return max(0.0, min(5.0, value))
 
 
 def _finding_paragraph_ids(scan: Scan) -> set[str]:

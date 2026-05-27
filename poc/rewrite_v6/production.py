@@ -113,6 +113,8 @@ def run_rewrite_pipeline_v6(
         "detect_scan_original_saved": original_scan_report,
         "detect_scan_original": original_scan_report,
         "detect_scan_rewritten": rewritten_scan_report,
+        "final_text_before_quality_repair": document.final_text_before_quality_repair,
+        "quality_repair": document.quality_repair.to_dict() if document.quality_repair else None,
         "final_text": final_text,
         "no_text_change": not changed,
     }

@@ -7,6 +7,7 @@ from poc.rewrite_v6 import pipeline as v6_pipeline
 from poc.rewrite_v6.pipeline import _planner_provider, _writer_model, _writer_provider, run_v6_rewrite, run_v6_rewrite_all
 from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6.planner_llm import run_planner_llm
+from poc.rewrite_v6.quality_repair import QualityRepairOperation, apply_quality_repair_operations
 from poc.rewrite_v6 import production as v6_production
 from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
 from poc.rewrite_v6.write import Variant, build_prompt, choose_variant
@@ -774,6 +775,138 @@ def test_v6_document_rewrite_covers_unseen_finding_paragraphs_before_revisiting(
 
     assert seen == ["p001", "p002"]
     assert [row["target_paragraph_id"] for row in result.pass_trace] == ["p001", "p002"]
+
+
+def test_v6_quality_repair_applies_minimal_exact_operations():
+    text = "Approach increases student motivation. I am an educator who need to listen."
+    repaired, applied, skipped = apply_quality_repair_operations(text, [
+        QualityRepairOperation("Approach increases", "This approach increases", "fragment"),
+        QualityRepairOperation("who need", "who needs", "agreement"),
+    ])
+
+    assert repaired == "This approach increases student motivation. I am an educator who needs to listen."
+    assert [operation.reason for operation in applied] == ["fragment", "agreement"]
+    assert skipped == []
+
+
+def test_v6_quality_repair_skips_expansive_or_protected_changes():
+    text = "The unit SHBHCUT006 requires six assessments."
+    repaired, applied, skipped = apply_quality_repair_operations(text, [
+        QualityRepairOperation("SHBHCUT006", "SHBHCUT007", "typo"),
+        QualityRepairOperation("The unit", "The practical unit that I use with learners in the classroom", "style"),
+    ])
+
+    assert repaired == text
+    assert applied == []
+    assert {row["skip_reason"] for row in skipped} == {"protected_token_changed", "replacement_too_expansive"}
+
+
+def test_v6_quality_repair_runs_once_after_selected_rewrite(monkeypatch):
+    source = "This process uses a form, a queue, and a review."
+    rewritten = "I am an educator who need to listen."
+    seen = {}
+
+    class QualityClient:
+        model = "grammer-test"
+
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, _prompt, **kwargs):
+            self.calls += 1
+            seen["app_label"] = kwargs.get("app_label")
+            return StaticJsonResponse(json.dumps({
+                    "operations": [{
+                    "find": "who need",
+                    "replace": "who needs",
+                    "reason": "agreement",
+                }]
+            }))
+
+    def fake_run(current, **_kwargs):
+        scan = scan_text(current)
+        paragraph, plan = build_plan(scan)
+        return v6_pipeline.Result(scan=scan, plan=plan, variants=[], selected=None, rewritten_text=rewritten)
+
+    quality = QualityClient()
+    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
+    monkeypatch.setattr(v6_pipeline, "_acceptable_progress", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(v6_pipeline, "_cross_paragraph_regression", lambda *_args, **_kwargs: False)
+
+    result = run_v6_rewrite_all(source, quality_client=quality, max_passes=1, residual_followup_passes=0)
+
+    assert quality.calls == 1
+    assert seen["app_label"] == "Grammer"
+    assert result.final_text_before_quality_repair == rewritten
+    assert result.rewritten_text == "I am an educator who needs to listen."
+    assert result.quality_repair is not None
+    assert result.quality_repair.status == "applied"
+
+
+def test_v6_quality_repair_reverts_one_pass_scan_regression(monkeypatch):
+    source = "This process uses a form, a queue, and a review."
+    rewritten = "Approach increases student motivation."
+
+    class QualityClient:
+        model = "grammer-test"
+
+        def chat(self, _prompt, **kwargs):
+            return StaticJsonResponse(json.dumps({
+                "operations": [{
+                    "find": "Approach increases",
+                    "replace": "This approach increases",
+                    "reason": "fragment",
+                }]
+            }))
+
+    def fake_run(current, **_kwargs):
+        scan = scan_text(current)
+        paragraph, plan = build_plan(scan)
+        return v6_pipeline.Result(scan=scan, plan=plan, variants=[], selected=None, rewritten_text=rewritten)
+
+    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
+    monkeypatch.setattr(v6_pipeline, "_acceptable_progress", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(v6_pipeline, "_cross_paragraph_regression", lambda *_args, **_kwargs: False)
+
+    monkeypatch.setenv("DRAFTPROOF_V6_GRAMMER_RISK_TOLERANCE", "0")
+
+    result = run_v6_rewrite_all(source, quality_client=QualityClient(), max_passes=1, residual_followup_passes=0)
+
+    assert result.rewritten_text == rewritten
+    assert result.quality_repair is not None
+    assert result.quality_repair.status == "reverted_scan_regression"
+    assert result.quality_repair.skipped_operations[-1]["skip_reason"] == "scan_regression"
+
+
+def test_v6_quality_repair_allows_minor_shape_risk_increase(monkeypatch):
+    from poc.rewrite_v6.quality_repair import QualityRepairResult
+
+    original = "Original text."
+    repaired = "Repaired text."
+
+    def fake_scan(text):
+        scan = scan_text("The process uses a form.")
+        scores = dict(scan.scores)
+        scores["finding_count"] = 3.0
+        scores["mean_sentence_shape_risk"] = 5.0 if text == original else 6.0
+        return scan.__class__(
+            source_text=scan.source_text,
+            paragraphs=scan.paragraphs,
+            findings=scan.findings,
+            scores=scores,
+        )
+
+    monkeypatch.setattr(v6_pipeline, "scan_text", fake_scan)
+    monkeypatch.setenv("DRAFTPROOF_V6_GRAMMER_RISK_TOLERANCE", "1")
+
+    result = v6_pipeline._risk_safe_quality_repair(
+        original,
+        QualityRepairResult(original_text=original, repaired_text=repaired, status="applied"),
+    )
+
+    assert result is not None
+    assert result.repaired_text == repaired
+    assert result.status == "applied"
 
 
 def test_v6_document_rewrite_honors_cancellation_before_llm():
