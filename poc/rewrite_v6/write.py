@@ -150,6 +150,10 @@ def choose_variant(variants: list[Variant], paragraph: Paragraph) -> Variant | N
 
 
 def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragraph: Paragraph) -> bool:
+    if _hard_integrity_blockers(candidate.text):
+        return False
+    if has_fragment_or_trace_sentences(candidate.text):
+        return False
     before = scan_text(source_variant.text)
     after = scan_text(candidate.text)
     finding_drop = before.scores["finding_count"] - after.scores["finding_count"]
@@ -161,7 +165,7 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
     if finding_drop >= 1 and risk_drop >= 0.0:
         return True
     if finding_drop >= 0 and risk_drop >= 8.0:
-        return True
+        return not _candidate_contract_violation(candidate.text, paragraph) and not _over_decomposition_review_reasons(candidate.text, paragraph)
     return False
 
 
@@ -194,6 +198,7 @@ def _variant_rank(variant: Variant, paragraph: Paragraph, source_words: int) -> 
     scan = scan_text(variant.text)
     words = word_count(variant.text)
     quality_penalty = _mechanical_quality_penalty(variant.text, paragraph)
+    virtual_findings = _virtual_quality_findings(quality_penalty)
     source_drift_penalty = _source_drift_penalty(variant, paragraph)
     compression_penalty = 2.0 if _compresses_list_repair(variant.text, paragraph) else 0.0
     extra_beat_penalty = 2.0 if _adds_extra_conclusion_beat(variant.text, paragraph) else 0.0
@@ -201,15 +206,26 @@ def _variant_rank(variant: Variant, paragraph: Paragraph, source_words: int) -> 
     polarity_penalty = 1.0 if _polarity_violation(variant.text, paragraph) else 0.0
     bridge_penalty = 4.0 if _unreviewed_bridge_violation(variant, paragraph) else 0.0
     contract_penalty = 4.0 if _candidate_contract_violation(variant.text, paragraph) else 0.0
+    hard_integrity_penalty = 12.0 if _hard_integrity_blockers(variant.text) else 0.0
     mean_risk = scan.scores["mean_sentence_shape_risk"]
     return (
-        -scan.scores["finding_count"],
+        -(scan.scores["finding_count"] + virtual_findings),
         -mean_risk,
-        -(quality_penalty + fragment_trace_penalty(variant.text) + source_drift_penalty * 0.25 + compression_penalty + extra_beat_penalty + final_beat_penalty + polarity_penalty + bridge_penalty + contract_penalty),
+        -(quality_penalty + fragment_trace_penalty(variant.text) + source_drift_penalty * 0.25 + compression_penalty + extra_beat_penalty + final_beat_penalty + polarity_penalty + bridge_penalty + contract_penalty + hard_integrity_penalty),
         coverage_ratio(variant.text, paragraph),
         words >= source_words * 0.9,
         -abs(words - source_words),
     )
+
+
+def _virtual_quality_findings(quality_penalty: float) -> int:
+    if quality_penalty >= 9.0:
+        return 3
+    if quality_penalty >= 6.0:
+        return 2
+    if quality_penalty >= 3.0:
+        return 1
+    return 0
 
 
 def _mechanical_quality_penalty(text: str, source_paragraph: Paragraph) -> float:
@@ -282,6 +298,8 @@ def _candidate_sentence_stats(text: str, source_paragraph: Paragraph) -> dict[st
             if part.strip(".,:;!?\"'“”’")
         ]
         first = parts[0] if parts else ""
+        if first in {"a", "an", "the"} and len(parts) > 1:
+            first = parts[1]
         if first:
             first_words[first] = first_words.get(first, 0) + 1
             if first in transition_tokens:
@@ -295,8 +313,8 @@ def _candidate_sentence_stats(text: str, source_paragraph: Paragraph) -> dict[st
         "expansion_ratio": sentence_count / source_sentence_count,
         "avg_words": sum(sentence.word_count for sentence in sentences) / max(1, sentence_count),
         "short_ratio": sum(1 for sentence in sentences if sentence.word_count <= _SHORT_SENTENCE_WORD_LIMIT) / max(1, sentence_count),
-        "repeated_first_ratio": max(first_words.values(), default=0) / max(1, sentence_count),
-        "repeated_frame_ratio": max(first_frames.values(), default=0) / max(1, sentence_count),
+        "repeated_first_ratio": max(first_words.values(), default=0) / max(1, sentence_count) if sentence_count >= 4 else 0.0,
+        "repeated_frame_ratio": max(first_frames.values(), default=0) / max(1, sentence_count) if sentence_count >= 4 else 0.0,
         "transition_start_ratio": transition_starts / max(1, sentence_count),
     }
 
@@ -317,6 +335,7 @@ def _candidate_contract_violation(text: str, source_paragraph: Paragraph) -> boo
     return (
         _repeats_sentence_intent(text)
         or robotic_sentence_chain(text)
+        or bool(_hard_integrity_blockers(text))
         or _hard_candidate_contract_violation(text, source_paragraph)
     )
 
@@ -571,6 +590,13 @@ def _unreviewed_bridge_violation(variant: Variant, paragraph: Paragraph) -> bool
         if len(word) >= 8 or word.endswith(("tion", "ment", "ity", "ness", "ance", "ence", "form"))
     }
     return bool(flagged)
+
+
+def _hard_integrity_blockers(text: str) -> list[str]:
+    return [
+        blocker for blocker in candidate_integrity_blockers(text)
+        if blocker in {"planner_language_leakage", "malformed_serial_verb_chain", "malformed_nominal_stack"}
+    ]
 
 
 def _word_base(word: str) -> str:

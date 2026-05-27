@@ -98,6 +98,12 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
                 "Do not route through repeated summary nouns such as example, result, or experience when source activities or actors are available."
             ),
             "source_preserved_shape_is_failure": "Do not return the original sentence route with synonyms. Change clause route and sentence grouping.",
+            "internal_language_ban": (
+                "Final text must be normal prose only. Never expose internal labels or phrases such as coverage beat, "
+                "source slot, route question, relationship sees, writer_execution_contract, construction recipe, "
+                "planner decision, source sentence, active variant, beat plan, or coverage capsule. Do not turn route verbs into "
+                "sentence subjects, such as Guide prompts, Compare prompts, Apply knowledge occurs, or Focus expands."
+            ),
         },
         "active_variant": variant_focus or {},
         "variant_requirements": variant_requirements,
@@ -193,6 +199,12 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
                 "Thereby",
             ],
             "source_preserved_shape_is_failure": "Do not return the original sentence route with synonyms. Change clause route and sentence grouping.",
+            "internal_language_ban": (
+                "Final text must be normal prose only. Never expose internal labels or phrases such as coverage beat, "
+                "source slot, route question, relationship sees, writer_execution_contract, construction recipe, "
+                "planner decision, source sentence, active variant, beat plan, or coverage capsule. Do not turn route verbs into "
+                "sentence subjects, such as Guide prompts, Compare prompts, Apply knowledge occurs, or Focus expands."
+            ),
         },
         "active_variant": {"id": "retry_v1", "mode": "defect_feedback_retry"},
     }

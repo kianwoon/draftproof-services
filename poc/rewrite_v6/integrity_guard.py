@@ -26,6 +26,12 @@ def candidate_integrity_blockers(text: str) -> list[str]:
         blockers.append("citation_report_sentence")
     if _stranded_thereby_citation(visible):
         blockers.append("stranded_thereby_citation")
+    if _planner_language_leakage(visible):
+        blockers.append("planner_language_leakage")
+    if _malformed_serial_verb_chain(visible):
+        blockers.append("malformed_serial_verb_chain")
+    if _malformed_nominal_stack(visible):
+        blockers.append("malformed_nominal_stack")
     return blockers
 
 
@@ -97,3 +103,39 @@ def _citation_report_sentence(text: str) -> bool:
 
 def _stranded_thereby_citation(text: str) -> bool:
     return bool(re.search(r"\bthereby\s*\([^)]+\)", text, flags=re.I))
+
+
+def _planner_language_leakage(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:coverage\s+beat|source\s+slot|source_sentence_id|writer_execution_contract|"
+            r"construction\s+recipe|route\s+question|active\s+variant|planner\s+decision|"
+            r"relationship\s+sees|beat\s+plan|coverage\s+capsule|source\s+sentence)\b",
+            text,
+            flags=re.I,
+        )
+        or re.search(
+            r"(?:^|[.!?]\s+)(?:guide|compare|develop|apply|focus|think|words)\s+"
+            r"(?:prompts?|occurs?|expands?|shapes?|relationship|route|function)\b",
+            text,
+            flags=re.I,
+        )
+        or re.search(
+            r"(?:^|[.!?]\s+)(?:shift|teacher|good\s+teacher)\s+"
+            r"(?:has|is|helps?)\b",
+            text,
+            flags=re.I,
+        )
+        or re.search(r"\b(?:source\s+groups|education\s+today\s+emphasizes\s+the\s+words|words\s+students\s+learn)\b", text, flags=re.I)
+    )
+
+
+def _malformed_serial_verb_chain(text: str) -> bool:
+    return bool(
+        re.search(r"\bthink\s+deeply\s+solve\s+problems\b", text, flags=re.I)
+        or re.search(r"\b(?:analyse|analyze)\s+adapt\s+communicate\b", text, flags=re.I)
+    )
+
+
+def _malformed_nominal_stack(text: str) -> bool:
+    return bool(re.search(r"\busefulness\s+ethics\s+trustworthiness\b", text, flags=re.I))

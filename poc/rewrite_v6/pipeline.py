@@ -23,6 +23,18 @@ from .prose_quality import repair_generated_prose
 from .write import Variant, choose_variant, parse_variants, write_variants
 from .writer_prompt import build_retry_contract
 
+_RETRY_QUALITY_WARNINGS = {
+    "sentence_count_expansion_review_required",
+    "short_sentence_chain_review_required",
+    "repeated_sentence_start_review_required",
+    "mechanical_transition_stack_review_required",
+    "planner_language_leakage_review_required",
+    "candidate_contract_warning",
+    "candidate_contract_violation_review_required",
+    "fragment_or_trace_sentence_review_required",
+    "mechanical_sentence_chain",
+}
+
 
 @dataclass(frozen=True)
 class Result:
@@ -410,9 +422,7 @@ def _select_with_retry(
 ) -> tuple[list[Variant], Variant | None]:
     _raise_if_canceled(cancellation_check)
     selected = choose_variant(variants, paragraph)
-    if selected is None or selected.source != "source_preserved":
-        return variants, selected
-    feedback = rejected_variant_feedback(variants, paragraph)
+    feedback = _retry_feedback_for_selection(variants, selected, paragraph)
     if not feedback:
         return variants, selected
     _raise_if_canceled(cancellation_check)
@@ -437,6 +447,26 @@ def _select_with_retry(
         return variants, selected
     combined = [*variants, *retry_variants]
     return combined, choose_variant(combined, paragraph)
+
+
+def _retry_feedback_for_selection(
+    variants: list[Variant],
+    selected: Variant | None,
+    paragraph: Any,
+) -> list[dict[str, Any]]:
+    if selected is None:
+        return rejected_variant_feedback(variants, paragraph)
+    if selected.source == "source_preserved":
+        return rejected_variant_feedback(variants, paragraph)
+    diagnostics = selection_diagnostics(variants, paragraph)
+    selected_row = next((row for row in diagnostics if row.get("variant_id") == selected.id), None)
+    if not selected_row:
+        return []
+    blockers = set(selected_row.get("blockers") or [])
+    warnings = set(selected_row.get("quality_warnings") or [])
+    if blockers or (warnings & _RETRY_QUALITY_WARNINGS):
+        return [selected_row]
+    return []
 
 
 def _retry_prompt(paragraph: Any, plan: Plan, feedback: list[dict[str, Any]]) -> str:
@@ -465,6 +495,8 @@ def _retry_prompt(paragraph: Any, plan: Plan, feedback: list[dict[str, Any]]) ->
             "Use source_units as the only source text and keep coverage in the selected paragraph.",
             "Use writer_execution_contract rows as the build order.",
             "Do not output route fragments, coverage maps, sentence rows, analysis notes, or repair traces.",
+            "Do not expose internal planning labels or phrases such as coverage beat, source slot, route question, relationship sees, writer_execution_contract, construction recipe, planner decision, or coverage capsule.",
+            "If the defect feedback mentions sentence expansion or short sentence chain, merge only semantically dependent short sentences and keep source meaning intact.",
             "Do not add external facts, new citations, new named references, new years, or stronger claims.",
             "Keep submitted citations inside their original parenthetical span when cited.",
             "Every final sentence must be a complete ordinary sentence with its own subject and predicate.",

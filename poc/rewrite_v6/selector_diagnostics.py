@@ -78,10 +78,16 @@ def _blockers(
     integrity_blockers: list[str],
 ) -> list[str]:
     blockers: list[str] = []
+    blockers.extend(
+        blocker for blocker in integrity_blockers
+        if blocker in {"planner_language_leakage", "malformed_serial_verb_chain", "malformed_nominal_stack"}
+    )
     if source is not None and finding_drop < 1 and risk_drop < 8.0:
         blockers.append("insufficient_scanner_movement")
     if source is not None and finding_drop == 0 and risk_drop < 0:
         blockers.append("sentence_shape_risk_regression")
+    if has_fragment_or_trace_sentences(variant.text):
+        blockers.append("fragment_or_trace_sentence")
     return blockers
 
 

@@ -847,6 +847,77 @@ def test_v6_integrity_guard_rejects_remaining_production_bad_shapes():
     assert "citation_report_sentence" in blockers
 
 
+def test_v6_integrity_guard_rejects_planner_language_leakage():
+    text = (
+        "Coverage beat uses forms and queues. "
+        "Guide relationship sees labels and reviews. "
+        "The writer_execution_contract keeps the source slot visible. "
+        "Guide prompts students to compare sources. "
+        "Guide function directs students toward sources. "
+        "Apply knowledge occurs in real situations. "
+        "In the second source sentence, schools continue their work. "
+        "The source groups schools with their continuation. "
+        "Teacher is no longer just someone who delivers information."
+    )
+
+    blockers = candidate_integrity_blockers(text)
+
+    assert "planner_language_leakage" in blockers
+
+
+def test_v6_integrity_guard_rejects_malformed_serial_verb_chain():
+    text = "Students learn to pass but not always to think deeply solve problems. People analyse adapt communicate and create."
+
+    blockers = candidate_integrity_blockers(text)
+
+    assert "malformed_serial_verb_chain" in blockers
+
+
+def test_v6_integrity_guard_rejects_malformed_nominal_stack():
+    text = "Beyond accuracy students must evaluate usefulness ethics trustworthiness."
+
+    blockers = candidate_integrity_blockers(text)
+
+    assert "malformed_nominal_stack" in blockers
+
+
+def test_v6_selector_retries_planner_language_leakage_before_accepting():
+    source = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
+    first_response = json.dumps({
+        "variants": [{
+            "id": "v1",
+            "text": (
+                "Coverage beat uses forms and queues. "
+                "Guide relationship sees labels and reviews. "
+                "Approval relationship sees checks helping teams improve."
+            ),
+            "author_proxy_provenance": [],
+            "author_review_items": [],
+        }]
+    })
+    retry_response = json.dumps({
+        "variants": [{
+            "id": "retry_v1",
+            "text": (
+                "The process uses forms and queues. "
+                "Labels and reviews support approval checks. "
+                "Teams use the checks to improve."
+            ),
+            "author_proxy_provenance": [],
+            "author_review_items": [],
+        }]
+    })
+    client = SequencedVariantClient([first_response, retry_response])
+
+    result = run_v6_rewrite_all(source, writer_client=client, max_passes=1, residual_followup_passes=0)
+
+    assert len(client.prompts) == 2
+    assert result.passes
+    assert result.passes[0].selected
+    assert result.passes[0].selected.id == "retry_v1"
+    assert "relationship sees" not in result.rewritten_text
+
+
 def test_v6_selector_accepts_risk_mitigating_integrity_warning_for_review():
     source = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
     paragraph = scan_text(source).paragraphs[0]
@@ -896,6 +967,39 @@ def test_v6_selector_flags_over_decomposed_risk_mitigation_for_review():
     )
     assert "sentence_count_expansion_review_required" in diagnostics[0]["quality_warnings"]
     assert "short_sentence_chain_review_required" in diagnostics[0]["quality_warnings"]
+
+
+def test_v6_selector_prefers_less_mechanical_retry_over_zero_finding_short_chain():
+    source = (
+        "The process uses forms, queues, labels, and reviews because teams should improve. "
+        "The team records updates, notes, and approvals because communication should improve."
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    over_cut = Variant(
+        id="v1",
+        source="writer",
+        text=(
+            "The process uses forms. "
+            "Queues support the work. "
+            "Labels support the work. "
+            "Reviews support improvement. "
+            "The team records updates. "
+            "Notes support communication. "
+            "Approvals support communication."
+        ),
+    )
+    cleaner = Variant(
+        id="retry_v1",
+        source="writer",
+        text=(
+            "The process uses forms and queues while labels and reviews support team improvement. "
+            "The team records updates and notes while approvals support communication."
+        ),
+    )
+
+    selected = choose_variant([Variant(id="source_preserved", source="source_preserved", text=source), over_cut, cleaner], paragraph)
+
+    assert selected and selected.id == "retry_v1"
 
 
 def test_v6_candidate_diagnostics_include_missing_terms_for_retry_feedback():
