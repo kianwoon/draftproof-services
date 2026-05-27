@@ -14,6 +14,13 @@ from .scan import scan_text
 from .text import Paragraph, source_terms, split_paragraphs, word_count
 from .writer_prompt import build_prompt
 
+_SENTENCE_EXPANSION_REVIEW_RATIO = 1.5
+_SHORT_SENTENCE_CHAIN_RATIO = 0.35
+_SHORT_SENTENCE_WORD_LIMIT = 10
+_REPEATED_START_REVIEW_RATIO = 0.25
+_REPEATED_FRAME_REVIEW_RATIO = 0.20
+_TRANSITION_STACK_REVIEW_RATIO = 0.25
+
 
 class ChatClient(Protocol):
     def chat(self, prompt: str, *, system: str | None = None, **kwargs: Any) -> Any:
@@ -166,6 +173,7 @@ def _annotate_selected_variant(variant: Variant, paragraph: Paragraph) -> Varian
         review_reasons.append("polarity_or_contrast_changed")
     if missing_required_source_terms(annotated.text, paragraph):
         review_reasons.append("source_terms_missing")
+    review_reasons.extend(_over_decomposition_review_reasons(annotated.text, paragraph))
     if _hard_candidate_contract_violation(annotated.text, paragraph):
         review_reasons.append("hard_contract_warning")
     if has_fragment_or_trace_sentences(annotated.text):
@@ -205,16 +213,68 @@ def _variant_rank(variant: Variant, paragraph: Paragraph, source_words: int) -> 
 
 
 def _mechanical_quality_penalty(text: str, source_paragraph: Paragraph) -> float:
+    stats = _candidate_sentence_stats(text, source_paragraph)
+    if stats["sentence_count"] <= 0:
+        return 8.0
+    penalty = 0.0
+    if stats["expansion_ratio"] >= _SENTENCE_EXPANSION_REVIEW_RATIO:
+        penalty += min(6.0, (stats["expansion_ratio"] - 1.0) * 3.0)
+    if stats["short_ratio"] >= _SHORT_SENTENCE_CHAIN_RATIO and stats["avg_words"] <= _SHORT_SENTENCE_WORD_LIMIT:
+        penalty += stats["short_ratio"] * 5.0
+    if stats["repeated_first_ratio"] >= _REPEATED_START_REVIEW_RATIO:
+        penalty += stats["repeated_first_ratio"] * 4.0
+    if stats["repeated_frame_ratio"] >= _REPEATED_FRAME_REVIEW_RATIO:
+        penalty += stats["repeated_frame_ratio"] * 5.0
+    if stats["transition_start_ratio"] >= _TRANSITION_STACK_REVIEW_RATIO:
+        penalty += stats["transition_start_ratio"] * 3.0
+    return round(penalty, 3)
+
+
+def _over_decomposition_review_reasons(text: str, source_paragraph: Paragraph) -> list[str]:
+    stats = _candidate_sentence_stats(text, source_paragraph)
+    if stats["sentence_count"] <= 0:
+        return []
+    reasons: list[str] = []
+    if (
+        stats["expansion_ratio"] >= _SENTENCE_EXPANSION_REVIEW_RATIO
+        and stats["sentence_count"] - stats["source_sentence_count"] >= 3
+    ):
+        reasons.append("sentence_count_expansion")
+    if stats["short_ratio"] >= _SHORT_SENTENCE_CHAIN_RATIO and stats["avg_words"] <= _SHORT_SENTENCE_WORD_LIMIT:
+        reasons.append("short_sentence_chain")
+    if (
+        stats["repeated_first_ratio"] >= _REPEATED_START_REVIEW_RATIO
+        or stats["repeated_frame_ratio"] >= _REPEATED_FRAME_REVIEW_RATIO
+    ):
+        reasons.append("repeated_sentence_start")
+    if stats["transition_start_ratio"] >= _TRANSITION_STACK_REVIEW_RATIO:
+        reasons.append("mechanical_transition_stack")
+    return reasons
+
+
+def _candidate_sentence_stats(text: str, source_paragraph: Paragraph) -> dict[str, float]:
     paragraphs = split_paragraphs(text)
     sentences = [sentence for paragraph in paragraphs for sentence in paragraph.sentences]
-    if not sentences:
-        return 8.0
-    source_sentence_count = max(1, len(source_paragraph.sentences))
     sentence_count = len(sentences)
-    avg_words = sum(sentence.word_count for sentence in sentences) / max(1, sentence_count)
-    short_ratio = sum(1 for sentence in sentences if sentence.word_count <= 7) / max(1, sentence_count)
+    source_sentence_count = max(1, len(source_paragraph.sentences))
+    if not sentences:
+        return {
+            "sentence_count": 0.0,
+            "source_sentence_count": float(source_sentence_count),
+            "expansion_ratio": 0.0,
+            "avg_words": 0.0,
+            "short_ratio": 0.0,
+            "repeated_first_ratio": 0.0,
+            "repeated_frame_ratio": 0.0,
+            "transition_start_ratio": 0.0,
+        }
     first_words: dict[str, int] = {}
     first_frames: dict[str, int] = {}
+    transition_starts = 0
+    transition_tokens = {
+        "also", "additionally", "again", "another", "finally", "further", "furthermore",
+        "however", "instead", "moreover", "therefore", "these", "this", "those", "it", "they",
+    }
     for sentence in sentences:
         parts = [
             part.strip(".,:;!?\"'“”’").casefold()
@@ -224,21 +284,21 @@ def _mechanical_quality_penalty(text: str, source_paragraph: Paragraph) -> float
         first = parts[0] if parts else ""
         if first:
             first_words[first] = first_words.get(first, 0) + 1
+            if first in transition_tokens:
+                transition_starts += 1
         if len(parts) >= 3:
             frame = " ".join(parts[:3])
             first_frames[frame] = first_frames.get(frame, 0) + 1
-    repeated_first_ratio = max(first_words.values(), default=0) / max(1, sentence_count)
-    repeated_frame_ratio = max(first_frames.values(), default=0) / max(1, sentence_count)
-    penalty = 0.0
-    if sentence_count > source_sentence_count * 1.8:
-        penalty += min(4.0, (sentence_count / source_sentence_count) - 1.0)
-    if short_ratio >= 0.45 and avg_words <= 9.0:
-        penalty += short_ratio * 4.0
-    if repeated_first_ratio >= 0.35:
-        penalty += repeated_first_ratio * 3.0
-    if repeated_frame_ratio >= 0.30:
-        penalty += repeated_frame_ratio * 4.0
-    return round(penalty, 3)
+    return {
+        "sentence_count": float(sentence_count),
+        "source_sentence_count": float(source_sentence_count),
+        "expansion_ratio": sentence_count / source_sentence_count,
+        "avg_words": sum(sentence.word_count for sentence in sentences) / max(1, sentence_count),
+        "short_ratio": sum(1 for sentence in sentences if sentence.word_count <= _SHORT_SENTENCE_WORD_LIMIT) / max(1, sentence_count),
+        "repeated_first_ratio": max(first_words.values(), default=0) / max(1, sentence_count),
+        "repeated_frame_ratio": max(first_frames.values(), default=0) / max(1, sentence_count),
+        "transition_start_ratio": transition_starts / max(1, sentence_count),
+    }
 
 
 def _compresses_list_repair(text: str, source_paragraph: Paragraph) -> bool:

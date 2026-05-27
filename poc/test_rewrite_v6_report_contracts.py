@@ -12,6 +12,7 @@ from poc.rewrite_v6.integrity_guard import candidate_integrity_blockers
 from poc.rewrite_v6.repair_windows import RepairWindow, compose_window_rewrite, select_repair_window
 from poc.rewrite_v6.report_contracts import apply_report_signal_contracts, extract_report_signal_contracts
 from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
+from poc.rewrite_v6.selector_diagnostics import selection_diagnostics
 from poc.rewrite_v6.write import Variant, build_prompt, choose_variant
 
 
@@ -867,6 +868,34 @@ def test_v6_selector_accepts_risk_mitigating_integrity_warning_for_review():
         "broken_citation_shape" in item.get("target_text", "")
         for item in selected.author_review_items
     )
+
+
+def test_v6_selector_flags_over_decomposed_risk_mitigation_for_review():
+    source = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
+    paragraph = scan_text(source).paragraphs[0]
+    candidate = Variant(
+        id="v1",
+        source="writer",
+        text=(
+            "The process uses forms. "
+            "Queues support the work. "
+            "Labels support the work. "
+            "Reviews support the work. "
+            "Approvals support the work. "
+            "Checks help teams improve."
+        ),
+    )
+
+    selected = choose_variant([Variant(id="source_preserved", source="source_preserved", text=source), candidate], paragraph)
+    diagnostics = selection_diagnostics([Variant(id="source_preserved", source="source_preserved", text=source), candidate], paragraph)
+
+    assert selected and selected.source == "writer"
+    assert any(
+        "sentence_count_expansion" in item.get("target_text", "")
+        for item in selected.author_review_items or []
+    )
+    assert "sentence_count_expansion_review_required" in diagnostics[0]["quality_warnings"]
+    assert "short_sentence_chain_review_required" in diagnostics[0]["quality_warnings"]
 
 
 def test_v6_candidate_diagnostics_include_missing_terms_for_retry_feedback():

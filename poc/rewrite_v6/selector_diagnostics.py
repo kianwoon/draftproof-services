@@ -14,6 +14,7 @@ from .write import (
     _compresses_list_repair,
     _hard_candidate_contract_violation,
     _has_meaningful_movement,
+    _over_decomposition_review_reasons,
     _polarity_violation,
     _replaces_final_source_beat_with_conclusion,
 )
@@ -99,6 +100,10 @@ def _quality_warnings(variant: Variant, paragraph: Paragraph) -> list[str]:
         warnings.append("candidate_contract_violation_review_required")
     if has_fragment_or_trace_sentences(variant.text):
         warnings.append("fragment_or_trace_sentence_review_required")
+    warnings.extend(
+        f"{reason}_review_required"
+        for reason in _over_decomposition_review_reasons(variant.text, paragraph)
+    )
     if not _hard_candidate_contract_violation(variant.text, paragraph) and _candidate_contract_violation(variant.text, paragraph):
         warnings.append("candidate_contract_warning")
     if robotic_sentence_chain(variant.text):

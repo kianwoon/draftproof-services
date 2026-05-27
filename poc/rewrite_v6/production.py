@@ -54,9 +54,11 @@ def run_rewrite_pipeline_v6(
     requested_writer_model = model
     resolved_writer_model = model or _writer_model()
     resolved_planner_model = _planner_model()
+    max_passes = _v6_max_passes()
 
     document = run_v6_rewrite_all(
         original_text,
+        max_passes=max_passes,
         model=model,
         api_key=api_key,
         base_url=base_url,
@@ -122,6 +124,7 @@ def run_rewrite_pipeline_v6(
             "writer_model": resolved_writer_model,
             "planner_model": resolved_planner_model,
             "pipeline": "v6",
+            "max_passes": max_passes,
             "passes": len(document.passes),
         },
         "rewrite_source": rewrite_source,
@@ -300,6 +303,10 @@ def _v6_min_llm_request_seconds() -> int:
         minimum=30,
         maximum=900,
     )
+
+
+def _v6_max_passes() -> int:
+    return _int_env("DRAFTPROOF_V6_MAX_PASSES", 3, minimum=1, maximum=20)
 
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
