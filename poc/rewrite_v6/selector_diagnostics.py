@@ -234,6 +234,15 @@ def _not_only_source_sides(source: str) -> tuple[str, str]:
         return tail.split("but also", 1)
     if "also" in tail:
         return tail.split("also", 1)
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", tail, maxsplit=1) if part.strip()]
+    if len(sentences) >= 2:
+        second = re.sub(
+            r"^(?:it|this|that|these|those|they|he|she|we)\s+",
+            "",
+            sentences[1],
+            flags=re.I,
+        ).strip()
+        return sentences[0], second
     return tail, ""
 
 
@@ -278,9 +287,13 @@ def _side_term_key(term: str) -> str:
 
 
 def _not_only_side_contrast_sentence(candidate: str, first_side: str, second_side: str) -> str:
+    first_terms = _side_terms(first_side)
+    second_terms = _side_terms(second_side)
     for sentence in re.findall(r"[^.!?]+[.!?]?", str(candidate or "")):
         lowered = sentence.casefold()
-        if _side_term_present(first_side, lowered) or _side_term_present(second_side, lowered):
+        first_present = _side_term_present(first_side, lowered) if first_terms else False
+        second_present = _side_term_present(second_side, lowered) if second_terms else False
+        if first_present or second_present:
             return lowered
     return ""
 

@@ -26,6 +26,8 @@ def unsupported_semantic_padding(candidate_text: str, paragraph: Paragraph) -> b
         candidate_tokens = _content_tokens(sentence)
         if len(candidate_tokens) < 8:
             continue
+        if _max_unsupported_run(candidate_tokens, source_bases) >= 5:
+            return True
         matched_source = _best_source_sentence(candidate_tokens, source_sentences)
         if not matched_source:
             continue
@@ -35,25 +37,53 @@ def unsupported_semantic_padding(candidate_text: str, paragraph: Paragraph) -> b
         overlap = sum(1 for token in candidate_tokens if _token_base(token) in matched_bases)
         if overlap < 5:
             continue
-        unsupported_run = 0
-        for token in candidate_tokens:
-            base = _token_base(token)
-            if base not in source_bases:
-                unsupported_run += 1
-                if unsupported_run >= 2:
-                    return True
-            else:
-                unsupported_run = 0
+        if _max_unsupported_run(candidate_tokens, source_bases) >= 5:
+            return True
     return False
+
+
+def _max_unsupported_run(tokens: list[str], source_bases: set[str]) -> int:
+    unsupported_run = 0
+    max_run = 0
+    for token in tokens:
+        base = _token_base(token)
+        if base not in source_bases:
+            unsupported_run += 1
+            max_run = max(max_run, unsupported_run)
+        else:
+            unsupported_run = 0
+    return max_run
 
 
 def source_quality_blockers(candidate_text: str, paragraph: Paragraph) -> list[str]:
     blockers: list[str] = []
     if scope_marker_reused_as_content(candidate_text, paragraph):
         blockers.append("source_scope_marker_reused_as_content")
+    if unsupported_source_channel_list(candidate_text, paragraph):
+        blockers.append("unsupported_semantic_padding")
     if source_contrast_reframed(candidate_text, paragraph):
         blockers.append("source_contrast_reframed")
     return blockers
+
+
+def unsupported_source_channel_list(candidate_text: str, paragraph: Paragraph) -> bool:
+    source_bases = _content_bases(paragraph.text)
+    if not source_bases:
+        return False
+    for sentence in _candidate_sentences(candidate_text):
+        lowered = sentence.casefold()
+        marker = re.search(r"\b(?:include|includes|including|such\s+as|range\s+from|ranges\s+from|from)\b", lowered)
+        if not marker:
+            continue
+        tail = sentence[marker.end():]
+        tokens = _content_tokens(tail)
+        if len(tokens) < 5:
+            continue
+        unsupported = [token for token in tokens if _token_base(token) not in source_bases]
+        supported = [token for token in tokens if _token_base(token) in source_bases]
+        if len(unsupported) >= 4 and len(unsupported) > len(supported):
+            return True
+    return False
 
 
 def source_contrast_reframed(candidate_text: str, paragraph: Paragraph) -> bool:

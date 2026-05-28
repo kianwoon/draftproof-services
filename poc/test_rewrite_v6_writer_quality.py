@@ -59,6 +59,55 @@ def test_v6_writer_quality_blocks_external_narrator_reporting_chains():
     assert choose_variant(variants, paragraph).source == "source_preserved"
 
 
+def test_v6_writer_quality_blocks_unsupported_semantic_padding():
+    source = (
+        "Now, students are surrounded by information. They learn from teachers, but also from YouTube, "
+        "TikTok, online courses, AI tools, search engines, social media, and peer communities. "
+        "This has created a new kind of learning environment. Knowledge is no longer scarce. "
+        "Access is no longer the biggest problem. The real challenge is knowing what is accurate, useful, ethical, and worth trusting."
+    )
+    candidate = (
+        "Students are surrounded by a flood of information from digital feeds, news outlets, and other media. "
+        "These sources include textbooks and news outlets as well as online feeds. "
+        "They also learn from teachers, YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities."
+    )
+    paragraph = scan_text(source).paragraphs[0]
+
+    row = selection_diagnostics(
+        [
+            Variant(id="source_preserved", text=source, source="source_preserved"),
+            Variant(id="v1", text=candidate, source="llm"),
+        ],
+        paragraph,
+    )[0]
+
+    assert "unsupported_semantic_padding" in row["blockers"]
+    assert row["accepted_by_selector"] is False
+
+
+def test_v6_writer_quality_blocks_multisentence_not_only_inversion():
+    source = (
+        "The assessment does not only reward learners who remember facts. "
+        "It rewards learners who analyse, adapt, communicate, and create."
+    )
+    candidate = (
+        "The assessment rewards learners who remember facts rather than those who analyse, "
+        "adapt, communicate, and create."
+    )
+    paragraph = scan_text(source).paragraphs[0]
+
+    row = selection_diagnostics(
+        [
+            Variant(id="source_preserved", text=source, source="source_preserved"),
+            Variant(id="v1", text=candidate, source="llm"),
+        ],
+        paragraph,
+    )[0]
+
+    assert "source_polarity_inversion" in row["blockers"]
+    assert row["accepted_by_selector"] is False
+
+
 def test_v6_writer_quality_blocks_narrator_route_with_varied_reporting_verbs():
     candidate = (
         "The writer sees that students are immersed in a flood of information while still relying on teachers. "
