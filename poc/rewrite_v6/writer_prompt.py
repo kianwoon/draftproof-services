@@ -439,7 +439,7 @@ def _polarity_constraints(paragraph: Paragraph) -> list[dict[str, Any]]:
             "source_marker": "not only",
             "required_direction": "preserve that the first side is insufficient by itself and the second side also matters",
             "required_shapes": ["both sides matter", "also", "the first side remains present plus the second side matters"],
-            "forbidden_shapes": ["only", "rather than", "not enough by itself", "rewards people who remember facts, not only", "not only a concern", "not only a serious concern"],
+            "forbidden_shapes": ["only", "rather than", "not enough by itself", "first side as a contrast against the second side", "not only a concern", "not only a serious concern"],
         })
     if "rather than" in lowered or "instead of" in lowered:
         rows.append({
@@ -453,7 +453,7 @@ def _polarity_constraints(paragraph: Paragraph) -> list[dict[str, Any]]:
             "source_marker": "not always",
             "required_direction": "preserve the limited side of the contrast without moving the limitation onto the positive side",
             "required_shapes": ["not always", "does not always", "do not always"],
-            "forbidden_shapes": ["not always learn to pass", "not always pass"],
+            "forbidden_shapes": ["not always before the positive-side action", "limited-side marker moved onto the positive side"],
         })
     return rows
 
@@ -576,20 +576,20 @@ def _polarity_instruction(polarity_markers: list[str]) -> str:
 
 def _resolved_capsule_terms(terms: list[str], recent_concrete_terms: list[str]) -> list[str]:
     lowered = {term.casefold() for term in terms}
-    if lowered and lowered <= {"model", "exists"} and recent_concrete_terms:
-        return [*recent_concrete_terms[-4:], "still exists"]
-    if {"fully", "reflects"} & lowered:
+    if lowered and _only_vague_continuity_terms(lowered) and recent_concrete_terms:
+        return [*recent_concrete_terms[-4:], "continuity remains"]
+    if _has_vague_mismatch_terms(lowered):
         anchor = recent_concrete_terms[-3:] if recent_concrete_terms else ["previous route"]
-        return [*anchor, "does not fully fit", "young people learn"]
+        return [*anchor, "does not fully fit the current context"]
     return terms
 
 
 def _coverage_intent(terms: list[str], recent_concrete_terms: list[str]) -> str:
     lowered = {term.casefold() for term in terms}
-    if lowered and lowered <= {"model", "exists"}:
+    if lowered and _only_vague_continuity_terms(lowered):
         return "continuity beat: name the previous concrete route instead of writing a vague model sentence"
-    if {"fully", "reflects"} & lowered:
-        return "contrast beat: explain that the previous concrete route does not fully fit how young people learn now"
+    if _has_vague_mismatch_terms(lowered):
+        return "contrast beat: explain that the previous concrete route does not fully fit the current context"
     return "source coverage beat"
 
 
@@ -604,6 +604,14 @@ def _remember_concrete_terms(existing: list[str], terms: list[str]) -> list[str]
         rows.append(term)
         seen.add(key)
     return rows[-12:]
+
+
+def _only_vague_continuity_terms(terms: set[str]) -> bool:
+    return terms <= {"model", "exists", "continues", "remains", "still"}
+
+
+def _has_vague_mismatch_terms(terms: set[str]) -> bool:
+    return bool({"fully", "reflects", "reflect", "fit", "fits"} & terms)
 
 
 def _prompt_context_terms(plan: Plan) -> list[str]:

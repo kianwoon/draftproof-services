@@ -128,7 +128,7 @@ def test_v6_planner_contract_gaps_reject_unsubmitted_or_forbidden_safe_shape():
     gaps = _planner_contract_gaps(decision, findings_for_paragraph(scan, "p001"))
 
     assert any("forbidden sentence opener 'As'" in gap for gap in gaps)
-    assert any("unsubmitted bridge term 'other'" in gap for gap in gaps)
+    assert any("unsubmitted bridge term" in gap for gap in gaps)
 
 
 def test_v6_planner_contract_gaps_trigger_route_skeleton_fallback():

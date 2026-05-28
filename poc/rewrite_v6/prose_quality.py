@@ -5,46 +5,34 @@ from typing import Callable
 
 
 def repair_generated_prose(text: str, source_text: str = "") -> str:
-    return drop_redundant_adjacent_sentence_intent(
-        _repair_parenthetical_citation_wrappers(
-            _remove_meta_reference_padding(
-                _repair_pronoun_simplification(
-                    _merge_example_when_fragments(
-                        _split_thereby_consequence(
-                            _split_not_only_sentences(
-                                _split_help_and_consequence(
-                                    _split_identify_address_needs(
-                                        _revoice_displayed_quality(
-                                            _revoice_guidance_understanding(
-                                                _revoice_broad_belief_recommendations(
-                                            _repair_quoted_concept_literalization(
-                                                _restore_not_only_polarity(_merge_source_term_fragments(_repair_malformed_not_always_order(_repair_gerund_evidence_fragments(text))), source_text)
-                                            ),
-                                            source_text,
-                                        )
-                                    )
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            ),
-            source_text,
-        )
-    )
+    value = _repair_gerund_evidence_fragments(text)
+    value = _repair_malformed_not_always_order(value)
+    value = _repair_missing_verb_after_not_always(value)
+    value = _repair_repeated_auxiliary_negation(value)
+    value = _merge_source_term_fragments(value)
+    value = _restore_not_only_polarity(value, source_text)
+    value = _repair_quoted_concept_literalization(value)
+    value = _revoice_displayed_quality(value)
+    value = _split_identify_address_needs(value)
+    value = _split_help_and_consequence(value)
+    value = _split_not_only_sentences(value)
+    value = _split_thereby_consequence(value)
+    value = _merge_example_when_fragments(value)
+    value = _repair_pronoun_simplification(value)
+    value = _remove_meta_reference_padding(value)
+    value = _repair_parenthetical_citation_wrappers(value, source_text)
+    return drop_redundant_adjacent_sentence_intent(value)
 
 
 def _repair_quoted_concept_literalization(text: str) -> str:
     repaired = re.sub(
-        r"\b(?:the\s+)?words?\s+([\"“'](?:what\s+students\s+know|how\s+students\s+think)[.,]?\s*[\"”'])",
+        r"\b(?:the\s+)?words?\s+([\"“'][^\"”']{3,100}[\"”'])",
         r"\1",
         str(text or ""),
         flags=re.I,
     )
     return re.sub(
-        r"\bthe\s+words\s+that\s+represent\s+(what\s+students\s+know|how\s+students\s+think)\b",
+        r"\bthe\s+words\s+that\s+represent\s+([a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){1,8})\b",
         r"\1",
         repaired,
         flags=re.I,
@@ -77,9 +65,34 @@ def _merge_source_term_fragments(text: str) -> str:
 
 
 def _repair_malformed_not_always_order(text: str) -> str:
+    repaired = re.sub(
+        r"\b(they|[A-Za-z][A-Za-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2})\s+not\s+always\b",
+        _repair_not_always_match,
+        str(text or ""),
+        flags=re.I,
+    )
+    return _repair_repeated_auxiliary_negation(repaired)
+
+
+def _repair_not_always_match(match: re.Match[str]) -> str:
+    subject = re.sub(r"\s+", " ", match.group(1)).strip()
+    subject = re.sub(r"\s+(?:do|does|did)$", "", subject, flags=re.I).strip()
+    return f"{subject} do not always"
+
+
+def _repair_repeated_auxiliary_negation(text: str) -> str:
     return re.sub(
-        r"\b(they|students|learners|people|users)\s+not\s+always\b",
-        lambda match: f"{match.group(1)} do not always",
+        r"\b(am|are|be|been|being|can|could|did|do|does|had|has|have|is|may|might|must|shall|should|was|were|will|would)\s+\1\s+(not|never|no)\b",
+        r"\1 \2",
+        str(text or ""),
+        flags=re.I,
+    )
+
+
+def _repair_missing_verb_after_not_always(text: str) -> str:
+    return re.sub(
+        r"\b(do|does|did)\s+not\s+always\s+(how|what|when|where|why|whether)\b",
+        r"\1 not always know \2",
         str(text or ""),
         flags=re.I,
     )
@@ -205,43 +218,6 @@ def _repair_pronoun_simplification_sentence(sentence: str, previous: str) -> str
 def _simple_sentence_subject(sentence: str) -> str:
     match = re.match(r"^((?:The|A|An|My|Our|His|Her|Their)\s+[A-Za-z][A-Za-z'’-]*)\b", sentence.strip(), flags=re.I)
     return match.group(1) if match else ""
-
-
-def _revoice_broad_belief_recommendations(text: str, source_text: str) -> str:
-    if not re.search(r"\bmy\s+teaching\s+method\b", str(source_text or ""), flags=re.I):
-        return text
-    return _map_sentences(text, _revoice_broad_belief_sentence)
-
-
-def _revoice_broad_belief_sentence(sentence: str) -> str:
-    match = re.match(
-        r"^I\s+believe\s+(?:that\s+)?educators\s+should\s+(?:use|adopt)\s+(.+?)\s+to\s+support\s+(.+?)(?:,\s*in\s+practice)?\.?$",
-        sentence.strip(),
-        flags=re.I,
-    )
-    if not match:
-        return sentence
-    approach, target = match.groups()
-    approach = approach.strip(" .")
-    target = target.strip(" .")
-    return f"My teaching method uses {approach} to support {target}."
-
-def _revoice_guidance_understanding(text: str) -> str:
-    return _map_sentences(text, _revoice_guidance_understanding_sentence)
-
-
-def _revoice_guidance_understanding_sentence(sentence: str) -> str:
-    sentence = _normalize_example_prefix(sentence)
-    match = re.match(
-        r"^(?:An\s+example\s+shows\s+that\s+)?When\s+I\s+guide\s+them\s+to\s+(?:a|the)?\s*(.+?)(?:,)?\s+they\s+(?:can\s+)?(?:readily\s+|easily\s+)?(?:understand|see)\s+(?:(where\s+to)\s+)?(.+?)(?:\s+(?:directly|straightaway))?(?:\s+as\s+an\s+example)?\.?$",
-        sentence.strip(),
-        flags=re.I,
-    )
-    if not match:
-        return sentence
-    anchor, where_to, action = match.groups()
-    relation = "where to " if where_to else ""
-    return f"The {anchor.strip()} shows {relation}{action.strip()}."
 
 
 def _normalize_example_prefix(sentence: str) -> str:
@@ -488,19 +464,33 @@ def _map_sentences(text: str, mapper: Callable[[str], str]) -> str:
 
 def _subject_pronoun(subject: str) -> str:
     lowered = subject.casefold()
-    if re.search(r"\b(?:cards|they|learners|students|clients|teachers|educators|groups)\b", lowered):
+    if re.search(r"\b(?:they|people|[a-z][a-z'’-]*s)\b", lowered):
         return "They"
     if re.search(r"\b(?:she|her)\b", lowered):
         return "She"
-    if re.search(r"\b(?:he|his|him|johnny|learner|student|teacher|educator)\b", lowered):
+    if re.search(r"\b(?:he|his|him)\b", lowered):
         return "He"
+    if re.search(r"\b[a-z][a-z'’-]*(?:er|or|ist|ian|ant|ent)\b", lowered):
+        return "They"
     return "It"
 
 
 def _followup_subject(subject: str) -> str:
-    if re.search(r"\b(?:cards|they|learners|students|clients|teachers|educators|groups)\b", subject, flags=re.I):
-        return "The same " + (re.findall(r"\b(cards|learners|students|clients|teachers|educators|groups)\b", subject, flags=re.I)[-1].casefold())
+    plural_head = _plural_head(subject)
+    if plural_head:
+        return "The same " + plural_head
     return _subject_pronoun(subject)
+
+
+def _plural_head(subject: str) -> str:
+    words = re.findall(r"[A-Za-z][A-Za-z'’-]*", str(subject or ""))
+    for word in reversed(words):
+        lowered = word.casefold()
+        if lowered in {"they", "people"}:
+            return lowered
+        if len(lowered) > 3 and lowered.endswith("s") and lowered not in {"this", "his"}:
+            return lowered
+    return ""
 
 
 def _possessive(actor: str) -> str:
@@ -575,12 +565,16 @@ def _catalogue_sentence(sentence: str) -> bool:
     if not (4 <= len(words) <= 10):
         return False
     lowered = value.casefold()
-    if re.match(r"^(?:knowledge|access|the\s+real\s+challenge|the\s+harder\s+task)\b", lowered):
+    if re.match(r"^(?:the\s+)?(?:real|main|central|harder|next)\s+(?:challenge|task|issue|problem)\b", lowered):
         return True
-    if re.match(r"^(?:online\s+courses|ai\s+tools|search\s+engines|social\s+media|peer\s+communities|youtube|tiktok)\b", lowered):
+    if re.match(r"^[a-z][a-z'’-]*\s+(?:is|are|was|were)\s+no\s+longer\b", lowered):
         return True
     return bool(
-        re.match(r"^[A-Z][A-Za-z'’-]+(?:\s+(?:and|or)\s+[A-Z]?[A-Za-z'’-]+)?\s+(?:add|adds|aid|aids|broaden|broadens|complete|completes|enrich|enriches|expand|expands|further|help|helps|locate|offer|offers|provide|provides|support|supports)\b", value)
+        re.match(
+            r"^[A-Z][A-Za-z'’-]*(?:\s+(?:and|or)?\s*[A-Z]?[A-Za-z'’-]+){0,5}\s+"
+            r"(?:add|adds|aid|aids|broaden|broadens|complete|completes|enrich|enriches|expand|expands|further|help|helps|locate|offer|offers|provide|provides|support|supports)\b",
+            value,
+        )
     )
 
 
@@ -639,9 +633,9 @@ def _fragment_like(sentence: str) -> bool:
         return True
     if re.match(r"^(?:but\s+)?not\s+always\b", lowered):
         return True
-    if re.match(r"^(?:and|but|or)\s+(?:solve|connect|analyse|analyze|adapt|communicate|create)\b", lowered):
+    if _starts_with_short_action_fragment(value, allow_connector=True):
         return True
-    if re.match(r"^(?:solve|connect|analyse|analyze|adapt|communicate|create)\b", lowered) and len(words) <= 8:
+    if _starts_with_short_action_fragment(value):
         return True
     if re.match(r"^(?:when|while|whilst|although|though|because|if|since)\b", lowered) and "," not in value and not _has_late_main_clause(lowered):
         return True
@@ -667,11 +661,28 @@ def _hard_fragment_like(sentence: str) -> bool:
         return True
     if re.match(r"^(?:but\s+)?not\s+always\b", lowered):
         return True
-    if re.match(r"^(?:and|but|or)\s+(?:solve|connect|analyse|analyze|adapt|communicate|create)\b", lowered):
+    if _starts_with_short_action_fragment(value, allow_connector=True):
         return True
-    if re.match(r"^(?:solve|connect|analyse|analyze|adapt|communicate|create)\b", lowered) and len(re.findall(r"[A-Za-z][A-Za-z'’-]*", value)) <= 8:
+    if _starts_with_short_action_fragment(value):
         return True
     return bool(re.match(r"^(?:as|since)\b", lowered) and "," not in value and not _has_late_main_clause(lowered))
+
+
+def _starts_with_short_action_fragment(sentence: str, *, allow_connector: bool = False) -> bool:
+    value = sentence.strip(" .!?")
+    if allow_connector:
+        value = re.sub(r"^(?:and|but|or)\s+", "", value, flags=re.I)
+    elif re.match(r"^(?:and|but|or)\s+", value, flags=re.I):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z'’-]*", value)
+    if not 1 <= len(words) <= 8:
+        return False
+    first = words[0].casefold()
+    if first in {"am", "are", "is", "was", "were", "have", "has", "had", "do", "does", "did", "can", "could", "may", "might", "must", "shall", "should", "will", "would"}:
+        return False
+    if first.endswith(("ed", "ing", "s")):
+        return False
+    return not _has_finite_verb(value)
 
 
 def _repair_trace_like(sentence: str) -> bool:
@@ -687,7 +698,7 @@ def _has_late_main_clause(text: str) -> bool:
     words = re.findall(r"[a-z][a-z'’-]*", text.casefold())
     if len(words) < 8:
         return False
-    subject_pattern = r"\b(?:i|we|you|he|she|they|it|students?|learners?|teachers?|educators?|clients?|teams?|groups?|class|course|activity|experience|process|method|support|guidance|conversation)\s+(?:also\s+)?"
+    subject_pattern = r"\b(?:i|we|you|he|she|they|it|[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2})\s+(?:also\s+)?"
     verb_pattern = r"(?:am|are|is|was|were|have|has|had|do|does|did|must|should|would|could|can|will|may|might|got|became|came|made|took|gave|received|led|saw|knew|felt|[a-z]+ed|[a-z]+s)\b"
     matches = list(re.finditer(subject_pattern + verb_pattern, text))
     return len(matches) >= 2 and matches[-1].start() > max(10, len(text) // 3)

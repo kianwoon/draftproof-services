@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from .text import Paragraph, source_terms, strip_leading_heading as _strip_leading_heading
+from .prose_repair_rules import risky_source_copy_phrases
 
 
 def coverage_ratio(text: str, paragraph: Paragraph) -> float:
@@ -62,7 +63,13 @@ def _required_list_terms(text: str) -> list[str]:
         part_terms[0] = part_terms[0][-1:]
     if len(parts) < 4 and not all(len(terms) == 1 for terms in part_terms):
         return []
-    return [term for terms in part_terms for term in terms if not _low_value_required_term(term)]
+    return [
+        term
+        for terms in part_terms
+        for term in terms
+        if not _low_value_required_term(term)
+        and not _term_only_inside_copy_blocked_phrase(term, visible)
+    ]
 
 
 def _low_value_required_term(term: str) -> bool:
@@ -80,6 +87,24 @@ def _low_value_required_term(term: str) -> bool:
         "still",
         "will",
     }
+
+
+def _term_only_inside_copy_blocked_phrase(term: str, source_text: str) -> bool:
+    key = _word_base(term)
+    if len(key) <= 3:
+        return False
+    blocked = risky_source_copy_phrases(source_text)
+    matches = [
+        phrase
+        for phrase in blocked
+        if key in {_word_base(token) for token in source_terms(phrase, limit=24)}
+    ]
+    if not matches:
+        return False
+    visible = str(source_text or "")
+    for phrase in matches:
+        visible = re.sub(re.escape(phrase), " ", visible, flags=re.I)
+    return key not in {_word_base(token) for token in source_terms(visible, limit=160)}
 
 def _word_base(word: str) -> str:
     value = _normalize_hyphen(str(word or "")).casefold().removesuffix("'s").strip("-")

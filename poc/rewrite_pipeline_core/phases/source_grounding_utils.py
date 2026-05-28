@@ -35,7 +35,7 @@ def source_search_keywords(text: str, limit: int = 10) -> list[str]:
         key = raw.strip("-'").lower()
         if not key or key in SOURCE_SEARCH_STOPWORDS:
             continue
-        if len(key) < 4 and not re.match(r"^[a-z]{2,}\d", key):
+        if len(key) < 4 and not (raw.isupper() and len(raw) >= 2) and not re.match(r"^[a-z]{2,}\d", key):
             continue
         scored[key] = scored.get(key, 0) + (2 if raw[:1].isupper() or any(ch.isdigit() for ch in raw) else 1)
     ordered = sorted(scored.items(), key=lambda item: (-item[1], item[0]))
@@ -44,36 +44,43 @@ def source_search_keywords(text: str, limit: int = 10) -> list[str]:
 
 def source_grounding_query(claim: str) -> str:
     claim_text = re.sub(r"\s+", " ", str(claim or "").strip())
-    lower = claim_text.lower()
-    themes: list[str] = []
-
-    def add_theme(*items: str) -> None:
-        for item in items:
-            if item and item not in themes:
-                themes.append(item)
-
-    if any(term in lower for term in ("youtube", "tiktok", "social media", "online course", "ai tool", "search engine")):
-        add_theme("social media", "online platforms", "AI tools")
-    if any(term in lower for term in ("trust", "accurate", "misleading", "sources", "information")):
-        add_theme("information literacy", "evaluating online sources")
-    if any(term in lower for term in ("feedback", "discussion", "reflection", "improvement", "process")):
-        add_theme("feedback", "reflection", "process improvement")
-    if any(term in lower for term in ("guide", "questions", "viewpoints", "judgment", "judgement")):
-        add_theme("critical thinking", "judgement", "source evaluation")
-    if any(term in lower for term in ("assessment", "understanding", "measurement", "evaluation")):
-        add_theme("assessment", "understanding", "evaluation")
-
     keywords = source_search_keywords(claim_text, limit=8)
-    for keyword in keywords:
-        if len(themes) >= 8:
+    phrase_terms = _source_search_phrases(claim_text, limit=4)
+    base_terms = []
+    for item in [*phrase_terms, *keywords]:
+        if item and item not in base_terms:
+            base_terms.append(item)
+        if len(base_terms) >= 8:
             break
-        if keyword not in themes:
-            themes.append(keyword)
-
-    base = " ".join(themes[:8]).strip()
+    base = " ".join(base_terms[:8]).strip()
     if not base:
         base = " ".join(keywords[:6]).strip() or claim_text[:120].rstrip(" ,.;:")
     return f"{base} {SOURCE_SEARCH_CREDIBLE_TERMS}".strip()[:260]
+
+
+def _source_search_phrases(text: str, limit: int = 4) -> list[str]:
+    phrases: list[str] = []
+    for match in re.finditer(r"\b([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){1,3})\b", str(text or "")):
+        phrase = _trim_phrase_stopwords(match.group(1).strip())
+        words = [word.lower().strip("-'") for word in re.findall(r"[A-Za-z][A-Za-z'-]{2,}|\b[A-Z]{2,}\b", phrase)]
+        if len(words) < 2:
+            continue
+        if all(word in SOURCE_SEARCH_STOPWORDS or word in SOURCE_SEARCH_LOW_VALUE_OVERLAP_TERMS for word in words):
+            continue
+        if phrase.lower() not in {item.lower() for item in phrases}:
+            phrases.append(phrase)
+        if len(phrases) >= limit:
+            break
+    return phrases
+
+
+def _trim_phrase_stopwords(phrase: str) -> str:
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", str(phrase or ""))
+    while words and words[0].lower().strip("-'") in SOURCE_SEARCH_STOPWORDS:
+        words.pop(0)
+    while words and words[-1].lower().strip("-'") in SOURCE_SEARCH_STOPWORDS:
+        words.pop()
+    return " ".join(words)
 
 
 def source_search_domain_list(name: str, default: set[str] | None = None) -> list[str]:

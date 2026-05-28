@@ -39,14 +39,14 @@ def _pattern_id(text: str, tags: dict[str, int]) -> str:
 
 def _has_benefit_risk_shape(text: str) -> bool:
     positive = r"\b(?:opportunit(?:y|ies)|benefits?|support|help|useful|used\s+well)\b"
-    negative = r"\b(?:risks?|danger|dependent|overly|without\s+understanding|difficult|fairness|integrity|concerns?)\b"
+    negative = r"\b(?:risks?|danger|dependent|overly|without\s+understanding|difficult|concerns?)\b"
     return bool(re.search(positive, text) and re.search(negative, text))
 
 
 def _has_old_new_mismatch_shape(text: str) -> bool:
     old_side = r"\b(?:in\s+the\s+past|old|traditional|used\s+to|still\s+exists)\b"
     mismatch = r"\b(?:no\s+longer|not\s+fully|does\s+not\s+reflect|mismatch|changing\s+faster)\b"
-    habits_mismatch = r"\b(?:old\s+habits?|current\s+\w+\s+system)\b[\s\S]{0,600}\b(?:modern\s+world|today|current|now)\b"
+    habits_mismatch = r"\b(?:old\s+habits?|current\s+\w+\s+system)\b[\s\S]{0,600}\b(?:today|current|now|new|changing)\b"
     return bool(
         re.search(old_side, text) and re.search(mismatch, text)
         or re.search(habits_mismatch, text)
@@ -82,7 +82,7 @@ def _route(pattern_id: str) -> dict[str, Any]:
             "avoid": [
                 "balanced essay template",
                 "turning possible risk into certain harm",
-                "awkward double hedge such as a danger arises if students may",
+                "awkward double hedge where a danger/risk clause also uses a may/might/could hedge",
                 "one long benefits sentence followed by one long risks sentence",
                 "generic concern tail",
             ],

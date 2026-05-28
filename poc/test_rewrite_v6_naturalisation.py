@@ -13,6 +13,7 @@ from poc.rewrite_v6.naturalisation import (
 from poc.rewrite_v6.pipeline import run_v6_rewrite_all
 from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6.scan import scan_text
+from poc.rewrite_v6.write import Variant
 
 
 class StaticJsonResponse:
@@ -350,7 +351,8 @@ def test_v6_runs_naturalisation_after_grammer_and_before_layout_restore(monkeypa
     def fake_run(current, **_kwargs):
         scan = scan_text(current)
         paragraph, plan = build_plan(scan)
-        return v6_pipeline.Result(scan=scan, plan=plan, variants=[], selected=None, rewritten_text=rewritten)
+        selected = Variant(id="v1", source="test", text=rewritten)
+        return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=rewritten)
 
     client = SequencedQualityClient([
         {"operations": []},

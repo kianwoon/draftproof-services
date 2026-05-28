@@ -5,7 +5,13 @@ from dataclasses import replace
 
 from poc.rewrite_v6.author_proxy import attach_author_proxy_pack, author_proxy_required
 from poc.rewrite_v6.finding_pattern import classify_finding_pattern
-from poc.rewrite_v6.pipeline import _select_variant, _selector_prompt, run_v6_rewrite
+from poc.rewrite_v6.pipeline import (
+    _needs_writer_feedback_round,
+    _select_variant,
+    _selector_prompt,
+    _writer_feedback_rounds,
+    run_v6_rewrite,
+)
 from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6.prose_repair_rules import consolidated_prose_repair_rules
 from poc.rewrite_v6.planner_llm import run_planner_llm
@@ -14,7 +20,7 @@ from poc.rewrite_v6.scan import scan_text
 from poc.rewrite_v6.selector_diagnostics import selection_diagnostics
 from poc.rewrite_v6.write import build_prompt, write_variants
 from poc.rewrite_v6.write import Variant
-from poc.rewrite_v6.writer_feedback import plan_with_writer_feedback
+from poc.rewrite_v6.writer_feedback import needs_writer_feedback_retry, plan_with_writer_feedback
 
 
 class EmptyVariantClient:
@@ -485,6 +491,61 @@ def test_v6_selector_prompt_carries_consolidated_prose_rules():
     assert "polished_work_claim" in rule_text
 
 
+def test_v6_writer_feedback_stops_after_material_progress_candidate():
+    diagnostics = [
+        {
+            "variant_id": "v1",
+            "source": "llm",
+            "accepted_by_selector": True,
+            "blockers": [],
+            "quality_warnings": [],
+            "candidate_findings": 1,
+            "source_findings": 3,
+            "candidate_mean_risk": 21.0,
+            "source_mean_risk": 28.0,
+            "risk_drop": 7.0,
+        },
+        {
+            "variant_id": "v2",
+            "source": "llm",
+            "accepted_by_selector": False,
+            "blockers": ["compressed_final_consequence_list"],
+            "candidate_findings": 2,
+            "source_findings": 3,
+            "risk_drop": 2.0,
+        },
+    ]
+
+    assert needs_writer_feedback_retry(diagnostics) is False
+    assert _needs_writer_feedback_round(diagnostics, feedback_round=0) is True
+    assert _needs_writer_feedback_round(diagnostics, feedback_round=1) is False
+
+
+def test_v6_writer_feedback_stops_after_material_progress_even_with_residual_findings():
+    diagnostics = [
+        {
+            "variant_id": "v1",
+            "source": "llm",
+            "accepted_by_selector": True,
+            "blockers": [],
+            "quality_warnings": [],
+            "candidate_findings": 3,
+            "source_findings": 5,
+            "candidate_mean_risk": 24.0,
+            "source_mean_risk": 38.0,
+            "risk_drop": 14.0,
+        }
+    ]
+
+    assert needs_writer_feedback_retry(diagnostics) is False
+
+
+def test_v6_writer_feedback_default_budget_is_small(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_V6_WRITER_FEEDBACK_ROUNDS", raising=False)
+
+    assert _writer_feedback_rounds() == 1
+
+
 def test_v6_planner_source_contract_preserves_negation_scope_markers():
     source = (
         "Students may learn how to pass, but not always how to think deeply, "
@@ -506,11 +567,11 @@ def test_v6_full_orchestration_selects_valid_rewrite_across_generic_patterns():
             "The system is changing faster than many teams can manage. In the past, the model was built around paper forms, manager approval, and weekly reports. That model still exists, but it no longer reflects how people work today.",
             "The system is changing faster than many teams can manage. In the past, work was built around paper forms and manager approval. Weekly reports were part of that model too. That model still exists, but it no longer reflects how people work today.",
         ),
-        (
-            "benefit_risk_contrast",
-            "The tool creates opportunities and risks. It can help teams plan, review, and improve work. Used well, it supports people who need help. The danger is that users may depend on generated answers without checking the work. This makes review difficult and raises questions about fairness, originality, and trust.",
-            "Technology creates opportunities and risks for teams. Teams can use the tool to plan and review work, then improve it when used well. The risk comes when users depend on generated answers without checking the work behind them. That dependence makes review difficult. It also raises concerns about fairness, originality, and trust.",
-        ),
+            (
+                "benefit_risk_contrast",
+                "The tool creates opportunities and risks. It can help teams plan, review, and improve work. Used well, it supports people who need help. The danger is that users may depend on generated answers without checking the work. This makes review difficult and raises questions about fairness, originality, and trust.",
+                "Technology creates opportunities and risks for teams. Teams can use the tool to plan and review work, then improve it when used well. The risk comes when users depend on generated answers without checking the work behind them. That dependence makes review difficult. Reviewers must judge whether the work is fair and original, and whether it can be trusted.",
+            ),
         (
             "turning_point_conclusion",
             "The organisation stands at a turning point. It can either keep old methods in a new workplace, or it can redesign work for the reality teams now face. The goal should not be to protect the past. The goal should be to help people work responsibly.",
@@ -593,6 +654,145 @@ def test_v6_author_proxy_feeds_planner_before_writer_handoff():
     planner_decision = replanned.ai_safe_route["llm_planner_decision"]
     assert "queue delays and unclear ownership" in planner_decision["coverage_terms"]
     assert "author_proxy_plan" not in planner_decision
+
+
+def test_v6_author_proxy_promotes_grounded_review_bridge_to_usable_bridge():
+    source = "This result creates a serious concern because the review process should improve."
+    scan = scan_text(source)
+    paragraph, plan = build_plan(scan)
+    decision = _planner_decision(
+        author_proxy_request={
+            "required": True,
+            "reason": "anchor gap requires submitted context",
+            "target_sentence_ids": ["p001_s001"],
+            "finding_basis": ["author_anchor_gap"],
+        }
+    )
+    planned = run_planner_llm(
+        paragraph,
+        plan,
+        scan.findings,
+        client=StaticJsonClient(json.dumps({"planner_decision": decision})),
+    )
+    strategy = dict(planned.paragraph_strategy)
+    strategy["author_proxy_grounding"] = {
+        "required": True,
+        "bridge_anchors": [
+            "The review queue had delayed handoffs before the process changed.",
+            "Teams needed clearer ownership when checking submitted work.",
+        ],
+    }
+    planned = replace(planned, paragraph_strategy=strategy)
+    proxy = StaticJsonClient(json.dumps({
+        "proxy_pack": {
+            "usable_bridges": [],
+            "author_review_items": [
+                {
+                    "provenance": "inferred_from_draft",
+                    "target_text": "delayed handoffs and unclear ownership made review harder",
+                    "user_input_needed": "Confirm, replace, or remove before final submission.",
+                }
+            ],
+        }
+    }))
+
+    packed = attach_author_proxy_pack(paragraph, planned, scan.findings, client=proxy)
+    bridges = packed.paragraph_strategy["author_proxy_pack"]["usable_bridges"]
+
+    assert bridges
+    assert bridges[0]["usable_bridge"] == "delayed handoffs and unclear ownership made review harder"
+    assert bridges[0]["anchor_text"]
+
+
+def test_v6_author_proxy_compacts_example_lists_before_bridge_validation():
+    source = "This change made the review role more important."
+    scan = scan_text(source)
+    paragraph, plan = build_plan(scan)
+    decision = _planner_decision(
+        author_proxy_request={
+            "required": True,
+            "reason": "anchor gap requires submitted context",
+            "target_sentence_ids": ["p001_s001"],
+            "finding_basis": ["author_anchor_gap"],
+        }
+    )
+    planned = run_planner_llm(
+        paragraph,
+        plan,
+        scan.findings,
+        client=StaticJsonClient(json.dumps({"planner_decision": decision})),
+    )
+    strategy = dict(planned.paragraph_strategy)
+    strategy["author_proxy_grounding"] = {
+        "required": True,
+        "bridge_anchors": [
+            "Teams now receive requests from forms, calls, chat, and shared queues.",
+            "Reviewers must judge which requests are complete and reliable.",
+        ],
+    }
+    planned = replace(planned, paragraph_strategy=strategy)
+    proxy = StaticJsonClient(json.dumps({
+        "proxy_pack": {
+            "usable_bridges": [],
+            "author_review_items": [
+                {
+                    "target_text": "Because teams now receive requests from channels such as forms, calls, chat, and shared queues, reviewers must judge whether requests are reliable",
+                    "user_input_needed": "Confirm, replace, or remove before final submission.",
+                }
+            ],
+        }
+    }))
+
+    packed = attach_author_proxy_pack(paragraph, planned, scan.findings, client=proxy)
+    bridge = packed.paragraph_strategy["author_proxy_pack"]["usable_bridges"][0]["usable_bridge"]
+
+    assert "forms, calls, chat" not in bridge
+    assert "submitted examples" in bridge
+
+
+def test_v6_author_proxy_compacts_dash_example_lists_before_validation():
+    source = "This change made the review role more important."
+    scan = scan_text(source)
+    paragraph, plan = build_plan(scan)
+    decision = _planner_decision(
+        author_proxy_request={
+            "required": True,
+            "reason": "anchor gap requires submitted context",
+            "target_sentence_ids": ["p001_s001"],
+            "finding_basis": ["author_anchor_gap"],
+        }
+    )
+    planned = run_planner_llm(
+        paragraph,
+        plan,
+        scan.findings,
+        client=StaticJsonClient(json.dumps({"planner_decision": decision})),
+    )
+    strategy = dict(planned.paragraph_strategy)
+    strategy["author_proxy_grounding"] = {
+        "required": True,
+        "bridge_anchors": [
+            "Teams now receive requests from forms, calls, chat, and shared queues.",
+            "Reviewers must judge which requests are complete and reliable.",
+        ],
+    }
+    planned = replace(planned, paragraph_strategy=strategy)
+    proxy = StaticJsonClient(json.dumps({
+        "proxy_pack": {
+            "author_review_items": [
+                {
+                    "target_text": "request channels - forms, calls, chat, shared queues - mean reviewers must judge which requests are reliable",
+                    "user_input_needed": "Confirm, replace, or remove before final submission.",
+                }
+            ],
+        }
+    }))
+
+    packed = attach_author_proxy_pack(paragraph, planned, scan.findings, client=proxy)
+    bridge = packed.paragraph_strategy["author_proxy_pack"]["usable_bridges"][0]["usable_bridge"]
+
+    assert "forms, calls" not in bridge
+    assert "submitted examples" in bridge
 
 
 def test_v6_author_proxy_prompt_profiles_from_paragraph_and_context():
@@ -842,8 +1042,8 @@ def test_v6_writer_retry_feedback_prioritizes_scope_marker_reuse():
 
     feedback = plan_with_writer_feedback(plan, diagnostics).ai_safe_route["writer_retry_feedback"][0]
 
-    assert "no longer" in feedback["required_fix"]
-    assert "longer role" in feedback["required_fix"]
+    assert "guarded scope-marker" in feedback["required_fix"]
+    assert "source relation" in feedback["required_fix"]
 
 
 def test_v6_writer_call_keeps_writer_role_when_proxy_request_exists_without_pack():
@@ -903,6 +1103,31 @@ def test_v6_multi_finding_paragraph_does_not_accept_risk_only_without_finding_dr
     assert row["risk_drop"] > 0
     assert row["accepted_by_selector"] is False
     assert "insufficient_scanner_movement" in row["blockers"]
+
+
+def test_v6_selector_keeps_missing_terms_as_review_warning_after_material_progress():
+    source = (
+        "The process creates opportunities and risks. "
+        "Tools help teams plan, review, improve work, practise skills, and support people who need help. "
+        "This makes review difficult and raises questions about fairness, originality, and trust."
+    )
+    candidate = (
+        "The process gives teams practical support. "
+        "Tools help teams plan and review work while practising skills. "
+        "Review still becomes difficult when polished work hides ability."
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    row = selection_diagnostics(
+        [
+            Variant(id="source_preserved", text=source, source="source_preserved"),
+            Variant(id="v1", text=candidate, source="llm"),
+        ],
+        paragraph,
+    )[0]
+
+    assert row["candidate_findings"] < row["source_findings"]
+    assert "required_source_terms_missing_review_required" in row["quality_warnings"]
+    assert "required_source_terms_missing" not in row["blockers"]
 
 
 def test_v6_selector_metric_contract_overrides_worse_llm_choice():
@@ -991,6 +1216,117 @@ def test_v6_writer_retry_feedback_targets_repeated_proxy_sentence_intent():
     assert "standalone proxy/context sentence" in feedback["required_fix"]
     assert "same source beat" in feedback["failed_sentences"][0]["repair_instruction"]
     assert any("the words" in item for item in feedback["do_not_repeat"])
+
+
+def test_v6_writer_retry_feedback_names_malformed_verb_chain():
+    source = (
+        "A team may complete the task, but not always how to explain the reasoning, "
+        "check the result, or connect the steps."
+    )
+    _paragraph, plan = build_plan(scan_text(source))
+    diagnostics = [
+        {
+            "variant_id": "v1",
+            "source": "llm",
+            "blockers": ["malformed_serial_verb_chain", "malformed_negation_order"],
+            "integrity_blockers": ["malformed_serial_verb_chain", "malformed_negation_order"],
+            "quality_warnings": ["malformed_serial_verb_chain_review_required"],
+            "missing_required_terms": [],
+            "candidate_findings": 2,
+            "source_findings": 3,
+            "candidate_mean_risk": 20.0,
+            "source_mean_risk": 34.0,
+            "candidate_text": (
+                "A team may complete the task, but they can can not always explain the reasoning, "
+                "check the result or connect the steps."
+            ),
+            "candidate_finding_details": [
+                {
+                    "text": (
+                        "A team may complete the task, but they can can not always explain the reasoning, "
+                        "check the result or connect the steps."
+                    ),
+                    "tags": ["packed_list", "sentence_overload"],
+                }
+            ],
+        }
+    ]
+
+    feedback = plan_with_writer_feedback(plan, diagnostics).ai_safe_route["writer_retry_feedback"][0]
+
+    assert "same auxiliary" in feedback["required_fix"]
+    assert "negation scope" in feedback["required_fix"]
+    assert "verb chain first" in feedback["failed_sentences"][0]["repair_instruction"]
+
+
+def test_v6_writer_retry_feedback_names_local_negation_order_defect():
+    source = "A team may complete the task, but not always how to explain the result."
+    _paragraph, plan = build_plan(scan_text(source))
+    diagnostics = [
+        {
+            "variant_id": "v1",
+            "source": "llm",
+            "blockers": ["malformed_negation_order"],
+            "integrity_blockers": ["malformed_negation_order"],
+            "quality_warnings": ["malformed_negation_order_review_required"],
+            "candidate_findings": 1,
+            "source_findings": 2,
+            "candidate_mean_risk": 20.0,
+            "source_mean_risk": 34.0,
+            "candidate_text": "A team may complete the task, but they are do not always able to explain the result.",
+            "candidate_finding_details": [
+                {
+                    "text": "A team may complete the task, but they are do not always able to explain the result.",
+                    "tags": ["sentence_overload"],
+                }
+            ],
+        }
+    ]
+
+    feedback = plan_with_writer_feedback(plan, diagnostics).ai_safe_route["writer_retry_feedback"][0]
+
+    assert "negation scope" in feedback["required_fix"]
+    assert "negation scope first" in feedback["failed_sentences"][0]["repair_instruction"]
+
+
+def test_v6_writer_retry_feedback_adds_residual_obligations_for_anchor_and_overload():
+    source = "A process has pressure. It creates a problem. Teams may pass, but not always know how to explain, check, or improve the result."
+    _paragraph, plan = build_plan(scan_text(source))
+    diagnostics = [
+        {
+            "variant_id": "v1",
+            "source": "llm",
+            "accepted_by_selector": True,
+            "blockers": [],
+            "quality_warnings": ["compressed_list_repair_review_required"],
+            "candidate_findings": 3,
+            "source_findings": 5,
+            "candidate_mean_risk": 22.0,
+            "source_mean_risk": 35.0,
+            "candidate_finding_details": [
+                {
+                    "text": "This pressure creates a problem.",
+                    "tags": ["context_anchor_gap"],
+                },
+                {
+                    "text": "Teams may pass, but they do not always know how to explain, check, or improve the result.",
+                    "tags": ["packed_list", "sentence_overload", "broad_claim", "paragraph_rhythm"],
+                },
+                {
+                    "text": "This is a concern because the process now asks people to explain, check, and improve.",
+                    "tags": ["predictable_start", "context_anchor_gap", "author_anchor_gap", "unsupported_claim_gap"],
+                },
+            ],
+        }
+    ]
+
+    feedback = plan_with_writer_feedback(plan, diagnostics).ai_safe_route["writer_retry_feedback"][0]
+
+    obligations = " ".join(feedback["residual_rewrite_obligations"])
+    assert "named actor/action" in obligations
+    assert "overloaded list" in obligations
+    assert "unsupported broad explanation" in obligations
+    assert "demonstrative" in feedback["failed_sentences"][0]["repair_instruction"]
 
 
 def test_v6_blocks_not_always_scope_inversion():

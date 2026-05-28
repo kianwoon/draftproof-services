@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from typing import Any, Callable
 
 from .json_io import parse_json
@@ -160,7 +161,7 @@ def _naturalisation_prompt(text: str) -> str:
             "Parallel short-list sequences may be merged when adjacent short sentences perform the same local job and every concrete item is preserved.",
             "Rhetorical ladders such as repeated 'no longer' sentences followed by 'the real challenge' may receive only a light merge; do not replace the author's concepts or wording with a new voice.",
             "Do not polish every sentence. Leave clear, purposeful short sentences unchanged.",
-            "Do not optimize for AI detectors. Do not make the text smoother, broader, more generic, or more formal than needed.",
+            "Do not optimize for detectors. Do not make the text smoother, broader, more generic, or more formal than needed.",
             "Preserve all concrete meaning, citations, names, numbers, examples, paragraph order, paragraph boundaries, and author voice.",
             "Each find string must be an exact substring from the submitted text.",
             "Each replacement must stay inside the same paragraph and be no larger than needed.",
@@ -404,17 +405,56 @@ def _lower_leading_common_word(clause: str) -> str:
     if not words:
         return clause
     first = words[0]
-    protected = {"AI", "YouTube", "TikTok", "NASA", "Google", "Microsoft", "Apple", "Tesla"}
-    if first in protected:
+    if first.isupper() or re.search(r"[a-z][A-Z]|\d", first):
         return clause
-    common = {
-        "Online", "Search", "Social", "Peer", "Individuals", "People", "Students", "Creators",
-        "Schools", "They", "These", "The", "Assessment", "Discussion", "Improvement", "Other",
-        "Some", "Many", "Curricula", "Access", "Knowledge",
+    function_words = {
+        "A",
+        "An",
+        "And",
+        "Another",
+        "Both",
+        "Each",
+        "Either",
+        "Every",
+        "It",
+        "Many",
+        "Neither",
+        "Other",
+        "Some",
+        "That",
+        "The",
+        "These",
+        "They",
+        "This",
+        "Those",
     }
-    if first not in common:
+    if first not in function_words and not _common_lowercase_word(first):
         return clause
     return first[:1].lower() + first[1:] + clause[len(first):]
+
+
+def _common_lowercase_word(word: str) -> bool:
+    value = str(word or "")
+    if not value or value.isupper() or re.search(r"[a-z][A-Z]|\d", value):
+        return False
+    lowered = value.casefold()
+    if lowered in _system_common_words():
+        return True
+    return bool(re.search(r"(?:al|ary|ed|ic|ical|ine|ing|ive|ory|ous)$", lowered))
+
+
+@lru_cache(maxsize=1)
+def _system_common_words() -> set[str]:
+    rows: set[str] = set()
+    try:
+        with open("/usr/share/dict/words", encoding="utf-8") as handle:
+            for line in handle:
+                value = line.strip().casefold()
+                if value.isalpha() and len(value) >= 4:
+                    rows.add(value)
+    except OSError:
+        pass
+    return rows
 
 
 def _skip_reason(text: str, operation: NaturalisationOperation) -> str:
@@ -462,7 +502,11 @@ def _has_overrepair_signal(text: str) -> bool:
         return True
     if _has_rhetorical_ladder_sequence(text):
         return True
-    abstract_nouns = re.findall(r"\b(?:situation|process|goal|system|model|issue|students?|teachers?)\b", text, flags=re.I)
+    abstract_nouns = [
+        word
+        for word in re.findall(r"[A-Za-z][A-Za-z'’-]*", text)
+        if _abstract_or_process_noun(word)
+    ]
     return len(abstract_nouns) >= 3
 
 
@@ -504,9 +548,20 @@ def _has_rhetorical_ladder_sequence(text: str) -> bool:
     no_longer_count = sum(1 for sentence in sentences if re.search(r"\b(?:is|are|was|were)?\s*no\s+longer\b", sentence, flags=re.I))
     if no_longer_count >= 2 and re.search(r"\b(?:real|main|harder|hardest)\s+(?:challenge|problem|part)\b", joined):
         return True
-    if no_longer_count >= 2 and any(re.search(r"\b(?:accurate|useful|trust(?:ing|ed|worthy)?)\b", sentence, flags=re.I) for sentence in sentences):
+    if no_longer_count >= 2 and any(_has_evaluative_adjective_list(sentence) for sentence in sentences):
         return True
     return False
+
+
+def _has_evaluative_adjective_list(sentence: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:what|which|whether)\b[^.!?]{0,60}\b(?:is|are|can\s+be)\b"
+            r"[^.!?]{0,80}\b[a-z][a-z'’-]+,\s+[a-z][a-z'’-]+",
+            str(sentence or ""),
+            flags=re.I,
+        )
+    )
 
 
 def _has_repeated_phrase_pattern(sentences: list[str]) -> bool:
@@ -530,7 +585,7 @@ def _first_main_verb(sentence: str) -> str:
         return ""
     stop = {
         "a", "an", "the", "this", "that", "these", "those", "some", "other",
-        "many", "students", "teachers", "people", "individuals", "creators",
+        "many", "people", "individuals",
     }
     verbish = {
         "provide", "provides", "offer", "offers", "share", "shares", "deliver", "delivers",
@@ -551,7 +606,6 @@ def _dropped_content_terms(find: str, replace: str) -> list[str]:
     replace_key = str(replace or "").casefold()
     droppable = {
         "situation", "process", "goal", "system", "model", "issue",
-        "students", "student", "teachers", "teacher",
         "continue", "continues", "continued", "make", "makes", "made", "raise", "raises", "raised",
         "include", "includes", "included", "incorporate", "incorporates", "complete", "completes",
         "demonstrate", "demonstrates", "demonstrated", "prove", "proves", "proved",
@@ -561,7 +615,7 @@ def _dropped_content_terms(find: str, replace: str) -> list[str]:
         "shared", "generate", "generates", "generated", "retrieve", "retrieves", "retrieved",
         "connect", "connects", "connected", "receive", "receives", "received", "improve",
         "improves", "improved",
-        "further", "absence", "learners", "learner",
+        "further", "absence",
         "mostly",
     }
     dropped: list[str] = []
@@ -597,15 +651,27 @@ def _sentence_start_key(sentence: str) -> str:
     first = words[0].casefold()
     if first in {"the", "a", "an"} and len(words) > 1:
         return f"{first} {words[1].casefold()}"
-    stable_subjects = {
-        "teachers", "teacher", "students", "student", "schools", "school", "assessment",
-        "model", "situation", "goal", "process", "system", "technology", "curricula",
-    }
-    if first in stable_subjects:
-        return first
-    if len(words) > 1 and first in {"education", "knowledge", "access"}:
+    if len(words) > 1 and _abstract_or_process_noun(first):
         return f"{first} {words[1].casefold()}"
+    if _stable_subject_like(first):
+        return first
     return first
+
+
+def _abstract_or_process_noun(word: str) -> bool:
+    value = str(word or "").casefold()
+    return value in {"situation", "process", "goal", "system", "model", "issue"} or value.endswith(
+        ("tion", "sion", "ment", "ness", "ity", "ance", "ence", "ship")
+    )
+
+
+def _stable_subject_like(word: str) -> bool:
+    value = str(word or "").casefold()
+    if _abstract_or_process_noun(value):
+        return True
+    if len(value) > 3 and value.endswith("s") and value not in {"this", "his"}:
+        return True
+    return bool(value.endswith(("er", "or", "ist", "ian", "ant", "ent")))
 
 
 def _naturalisation_enabled() -> bool:

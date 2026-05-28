@@ -45,22 +45,27 @@ def build_writer_brief_prompt(paragraph: Paragraph, plan: Plan) -> str:
             "grammar fragment or missing verb",
             "sentence starts with a conjunction or dropped subject",
             "subject is joined to a predicate with 'and' instead of a verb",
-            "with + subject + finite verb, such as 'with students received'",
-            "connector fragment such as 'and in many schools', 'and as a result', or a sentence fragment after a period",
+            "with + noun phrase + finite verb",
+            "connector fragment after a period or comma",
             "broken contrast pair such as 'does not only ... Yet it also ...'",
             "one final sentence per finding",
             "keyword dump or repeated and-chain",
             "repeated same subject starts",
             "generic reward-system or conclusion claim not present in the brief",
             "vague abstract risk-label opener",
+            "vague demonstrative opener copied from the source route",
             "topic-announcement opener when a specific source tension can open the paragraph",
             "closing consequence appears before the planned cause or behaviour it is meant to follow",
             "the same consequence is stated twice in the same paragraph",
+            "final consequence compresses several required judgement terms into one long abstract list",
             "meta-language such as 'provides evidence', 'bridge', 'author-proxy', or 'planner'",
             "new recommendation, solution, or policy shift that was not in the source paragraph",
+            "redacted source sentence is restored as a standalone coverage sentence",
+            "copy-blocked source meaning is appended after the planned route",
             "neighbor context becomes a new paragraph topic",
-            "proxy context becomes an adjective-stacked label such as digital-media-rich classrooms",
-            "proxy context becomes dramatic generic wording such as flood of information or floods classrooms with information",
+            "proxy context becomes an adjective-stacked topic label",
+            "proxy context becomes dramatic generic wording instead of source-grounded wording",
+            "unsupported inflated quantity wording not present in the source or planner brief",
             "model/framework/system becomes 'longer' or 'longer than before'",
             "source meaning or polarity changes",
             "source uncertainty is hardened, such as changing may/could/might become into become",
@@ -101,15 +106,21 @@ def build_writer_brief_prompt(paragraph: Paragraph, plan: Plan) -> str:
             "Do not split every coverage term into its own sentence.",
             "For risk paragraphs, follow the planned route order rather than moving the consequence forward.",
             "Final-consequence terms belong only in the final consequence beat.",
+            "If the final beat has several required judgement terms, distribute them across short final beats instead of one comma-list sentence.",
             "Do not announce a broad topic opener if the paragraph can open with a practical tension.",
             "Do not state the closing consequence before the planned cause or risk beat, and do not repeat it later.",
             "Do not add a final advice sentence; rewrite only the submitted paragraph's claim path.",
+            "A redacted source sentence is not missing content. Fuse its coverage beat into the planned route; never restore it as a standalone sentence.",
+            "Never append a source-coverage sentence after the final planned consequence.",
+            "If a redacted sentence contains the opener or final consequence, realize its meaning through the planned first or final beat only.",
             "When using an author-proxy bridge, integrate it into the relevant source beat instead of appending a separate judgement sentence.",
             "Do not introduce the author-proxy bridge as a separate first sentence and then restate the original claim; that repeats sentence intent.",
             "Do not turn an author-proxy bridge into a compound adjective label in the opening; use it as a plain reason clause or omit it.",
             "Author profile terms are routing labels, not wording permission; do not insert profile terms unless the planner bridge itself uses them.",
             "When an author-proxy bridge explains why a claim matters, write it as a short reason beat before/after the claim; do not pack the reason and claim into one overloaded sentence.",
             "For role-importance claims, prefer plain actor logic from the Planner route; avoid inflated labels not present in the source.",
+            "If a source opener is blocked, open with the actor, condition, or source action instead.",
+            "When the brief blocks a vague demonstrative opener, avoid rebuilding the same abstract-noun route.",
             "Never write visible meta-language such as 'provides evidence that' or 'this bridge shows'.",
             "Do not add final suitability or appropriateness claims unless they appear in the source.",
             "For 'no longer reflects', preserve the negation relation exactly; never turn it into 'longer than before' or 'has become longer'.",
@@ -135,8 +146,11 @@ def build_writer_brief_prompt(paragraph: Paragraph, plan: Plan) -> str:
             "Do not return only one variant when three are requested.",
             "If writer_retry_feedback is present, fix those failures and do not repeat the failed route.",
             "If writer_retry_feedback includes failed_sentences, address each repair_instruction in the next variants.",
+            "If writer_retry_feedback includes residual_rewrite_obligations, satisfy every obligation before returning variants.",
             "If writer_retry_feedback includes retry_goal, the next variants must beat the failed candidate, not paraphrase it.",
             "Never repeat text listed in writer_retry_feedback.do_not_repeat.",
+            "Never restore a redacted source sentence as a separate coverage sentence.",
+            "Never append blocked-source meaning after completing the planned route.",
             "Before returning, scan each variant against route_sequence_guards and discard it if a final-consequence term appears too early.",
         ],
     }
@@ -241,7 +255,31 @@ def _writer_execution_plan(planner_brief: dict[str, Any]) -> list[dict[str, Any]
 
 
 def _redacted_source_paragraph(text: str, planner_brief: dict[str, Any]) -> str:
-    return _redact_text(text, _string_rows(planner_brief.get("do_not_copy_route")))
+    return _redact_sentences_with_blockers(text, _string_rows(planner_brief.get("do_not_copy_route")))
+
+
+def _redact_sentences_with_blockers(text: str, blockers: list[str]) -> str:
+    visible = str(text or "")
+    parts = re.split(r"(?<=[.!?])\s+", visible)
+    redacted: list[str] = []
+    for index, part in enumerate(parts, start=1):
+        sentence = part.strip()
+        if not sentence:
+            continue
+        if _contains_copy_blocker(sentence, blockers):
+            redacted.append(f"[copy-blocked source wording] sentence {index}; use coverage_beats for meaning")
+        else:
+            redacted.append(_redact_text(sentence, blockers))
+    return " ".join(redacted).strip()
+
+
+def _contains_copy_blocker(text: str, blockers: list[str]) -> bool:
+    lowered = str(text or "").casefold()
+    return any(
+        len(blocker.split()) >= 2 and blocker.casefold() in lowered
+        for blocker in blockers
+        if str(blocker).strip()
+    )
 
 
 def _redact_text(text: str, blockers: list[str]) -> str:
@@ -337,12 +375,13 @@ def _must_keep_terms(paragraph: Paragraph, plan: Plan) -> list[str]:
         terms.extend(action.preserve_terms)
     terms.extend(_quoted_terms(paragraph.text))
     risky_terms = risky_source_terms(paragraph.text)
+    blocked_components = _copy_blocker_component_terms(paragraph.text)
     seen: set[str] = set()
     kept: list[str] = []
     for term in terms:
         normalized = _normalize_keep_term(term)
         key = normalized.casefold()
-        if not normalized or key in seen or key in risky_terms:
+        if not normalized or key in seen or key in risky_terms or key in blocked_components:
             continue
         seen.add(key)
         kept.append(normalized)
@@ -364,6 +403,23 @@ def _quoted_terms(text: str) -> list[str]:
         for match in re.finditer(r"[\"“”']([^\"“”']{2,80})[\"“”']", str(text or ""))
         if match.group(1).strip()
     ]
+
+
+def _copy_blocker_component_terms(text: str) -> set[str]:
+    from .prose_repair_rules import risky_source_copy_phrases
+
+    visible = str(text or "")
+    blocked = risky_source_copy_phrases(visible)
+    rows: set[str] = set()
+    for phrase in blocked:
+        remainder = re.sub(re.escape(phrase), " ", visible, flags=re.I)
+        for token in re.findall(r"[A-Za-z][A-Za-z'’-]*", phrase):
+            key = token.casefold()
+            if len(key) <= 3:
+                continue
+            if not re.search(rf"\b{re.escape(key)}\b", remainder, flags=re.I):
+                rows.add(key)
+    return rows
 
 
 def _string_rows(value: Any) -> list[str]:

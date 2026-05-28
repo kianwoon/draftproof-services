@@ -380,6 +380,16 @@ def _planner_status(contract_gaps: list[str]) -> str:
 def _author_proxy_request(decision: dict[str, Any], plan: Plan) -> dict[str, Any]:
     request = decision.get("author_proxy_request") if isinstance(decision.get("author_proxy_request"), dict) else {}
     grounding = plan.paragraph_strategy.get("author_proxy_grounding", {})
+    proxy_pack = plan.paragraph_strategy.get("author_proxy_pack", {})
+    has_proxy_pack = isinstance(proxy_pack, dict) and bool(proxy_pack)
+    if has_proxy_pack:
+        usable = proxy_pack.get("usable_bridges")
+        return {
+            "required": False,
+            "reason": "author_proxy_pack_integrated" if usable else "author_proxy_pack_empty",
+            "target_sentence_ids": [],
+            "finding_basis": [],
+        }
     grounding_required = bool(grounding.get("required")) if isinstance(grounding, dict) else False
     required = request.get("required") if "required" in request else grounding_required
     target_ids = request.get("target_sentence_ids")
@@ -415,6 +425,7 @@ def _route_rewrite_guidance(plan: Plan, construction_route: dict[str, Any], deci
     rows = [
         *_string_rows(construction_route.get("route_rewrite_guidance")),
         *_string_rows(decision.get("route_rewrite_guidance")),
+        *_author_proxy_route_guidance(plan),
         *risky_source_rewrite_guidance(_plan_source_text(plan)),
         *instruction_rows,
     ]
@@ -437,6 +448,7 @@ def _guidance_text(value: str) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     if text.casefold().startswith("do not "):
         return "Preserve source meaning through the planned route without copying blocked source wording."
+    text = re.sub(r"\s*\((?:e\.g\.|for example)[^)]*\)", "", text, flags=re.I).strip()
     return text
 
 
@@ -503,6 +515,9 @@ def _coverage_beats(plan: Plan, construction_route: dict[str, Any], decision: di
             meaning = _coverage_meaning(_string_rows(job.get("must_use_meaning")))
         if not meaning:
             continue
+        bridge_meanings = _author_proxy_bridges_for_basis(plan, basis)
+        if bridge_meanings:
+            meaning = "; ".join([*bridge_meanings, meaning])
         must_not_copy = _local_must_not_copy(job, sources)
         meaning = _safe_coverage_meaning(meaning, must_not_copy)
         rows.append({
@@ -510,7 +525,7 @@ def _coverage_beats(plan: Plan, construction_route: dict[str, Any], decision: di
             "route_job_id": str(job.get("job_id") or f"job_{index}"),
             "source_basis": basis,
             "meaning": meaning,
-            "must_cover": _short_must_cover(job, meaning),
+            "must_cover": _dedupe_strings([*bridge_meanings, *_short_must_cover(job, meaning)])[:6],
             "must_not_copy": must_not_copy,
         })
     return _dedupe_coverage_beats(rows)[:10]
@@ -563,10 +578,13 @@ def _safe_anchor_values(values: list[str], source_text: str) -> list[str]:
             continue
         if text.casefold() in risky or _contains_blocked_phrase(text, blocked):
             continue
+        if _single_token_only_inside_blocked_phrase(text, source_text, blocked):
+            continue
         if _sentence_like_anchor(text):
             rows.extend(
                 anchor for anchor in _short_anchor_phrases(text)
                 if not _contains_blocked_phrase(anchor, blocked)
+                and not _single_token_only_inside_blocked_phrase(anchor, source_text, blocked)
             )
             continue
         rows.append(text)
@@ -576,6 +594,26 @@ def _safe_anchor_values(values: list[str], source_text: str) -> list[str]:
 def _contains_blocked_phrase(text: str, blocked: list[str]) -> bool:
     lowered = str(text or "").casefold()
     return any(phrase.casefold() in lowered for phrase in blocked if phrase)
+
+
+def _single_token_only_inside_blocked_phrase(text: str, source_text: str, blocked: list[str]) -> bool:
+    token_match = re.fullmatch(r"[A-Za-z][A-Za-z'’-]*", str(text or "").strip())
+    if not token_match:
+        return False
+    token = token_match.group(0).casefold()
+    if len(token) <= 3:
+        return False
+    blocked_with_token = [
+        phrase
+        for phrase in blocked
+        if re.search(rf"\b{re.escape(token)}\b", phrase, flags=re.I)
+    ]
+    if not blocked_with_token:
+        return False
+    visible = str(source_text or "")
+    for phrase in blocked_with_token:
+        visible = re.sub(re.escape(phrase), " ", visible, flags=re.I)
+    return not re.search(rf"\b{re.escape(token)}\b", visible, flags=re.I)
 
 
 def _sentence_like_anchor(text: str) -> bool:
@@ -592,8 +630,19 @@ def _coverage_meaning(sources: list[str]) -> str:
 def _clean_coverage_phrase(text: str) -> str:
     value = re.sub(r"\s+", " ", str(text or "")).strip(" .")
     value = re.sub(r"^(?:However|But|Also|Moreover|Furthermore|Therefore|Thus|So),?\s+", "", value, flags=re.I)
-    value = value[:1].lower() + value[1:] if value[:1].isupper() and not value.startswith("AI") else value
+    if value[:1].isupper() and not _starts_with_proper_or_acronym(value):
+        value = value[:1].lower() + value[1:]
     return value.strip()
+
+
+def _starts_with_proper_or_acronym(text: str) -> bool:
+    words = re.findall(r"[A-Za-z][A-Za-z'’-]*", str(text or ""))
+    if not words:
+        return False
+    first = words[0]
+    if first.isupper() and len(first) > 1:
+        return True
+    return len(words) > 1 and words[1][:1].isupper()
 
 
 def _dedupe_coverage_beats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -682,6 +731,35 @@ def _author_proxy_coverage_terms(plan: Plan) -> list[str]:
         for bridge in bridges
         if isinstance(bridge, dict) and str(bridge.get("usable_bridge") or "").strip()
     ][:3]
+
+
+def _author_proxy_bridges_for_basis(plan: Plan, basis: list[str]) -> list[str]:
+    pack = plan.paragraph_strategy.get("author_proxy_pack", {}) if isinstance(plan.paragraph_strategy, dict) else {}
+    bridges = pack.get("usable_bridges") if isinstance(pack, dict) else []
+    if not isinstance(bridges, list):
+        return []
+    basis_set = {str(source_id) for source_id in basis}
+    rows: list[str] = []
+    for bridge in bridges:
+        if not isinstance(bridge, dict):
+            continue
+        target_ids = {str(item) for item in bridge.get("target_sentence_ids", []) if str(item)}
+        text = str(bridge.get("usable_bridge") or "").strip()
+        if text and target_ids & basis_set:
+            rows.append(text)
+    return _dedupe_strings(rows)[:2]
+
+
+def _author_proxy_route_guidance(plan: Plan) -> list[str]:
+    pack = plan.paragraph_strategy.get("author_proxy_pack", {}) if isinstance(plan.paragraph_strategy, dict) else {}
+    if not isinstance(pack, dict):
+        return []
+    guidance = pack.get("planner_guidance")
+    if not isinstance(guidance, dict):
+        return []
+    rows = [str(guidance.get("use") or "").strip()]
+    rows.extend(f"Avoid {item}." for item in _string_rows(guidance.get("avoid")))
+    return [row for row in rows if row]
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:
@@ -868,12 +946,17 @@ def _unsubmitted_bridge_term(text: str, contract: dict[str, Any]) -> str:
         for term in contract.get("coverage_terms", [])
         for token in re.findall(r"[A-Za-z][A-Za-z'’-]{2,}", str(term))
     }
-    risky = {"other", "various", "broader", "critical", "complex", "significant", "important"}
-    for token in re.findall(r"[A-Za-z][A-Za-z'’-]{2,}", str(text or "")):
-        key = token.casefold()
-        if key in risky and key not in allowed:
+    for token in _bridge_modifier_tokens(text):
+        if token.casefold() not in allowed:
             return token
     return ""
+
+
+def _bridge_modifier_tokens(text: str) -> list[str]:
+    rows: list[str] = []
+    for match in re.finditer(r"\b([A-Za-z][A-Za-z'’-]{5,})\s+[A-Za-z][A-Za-z'’-]{3,}\b", str(text or "")):
+        rows.append(match.group(1))
+    return rows
 
 
 def _planning_label(text: str) -> str:

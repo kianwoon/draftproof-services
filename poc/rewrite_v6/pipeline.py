@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from dataclasses import asdict, dataclass, field, replace
@@ -343,15 +344,25 @@ def _run_v6_full_paragraph_rewrite(
             cancellation_check=cancellation_check,
         )
     )
-    variants = write_variants(paragraph, plan, client=client)
+    copy_blockers = _copy_blockers_from_plan(plan)
+    variants = _strip_copy_blocked_restoration_sentences(
+        write_variants(paragraph, plan, client=client),
+        copy_blockers,
+    )
     _raise_if_canceled(cancellation_check)
     _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 2), f"Scoring V6 paragraph {paragraph.id} candidate")
-    diagnostics = selection_diagnostics(variants, paragraph)
-    if needs_writer_feedback_retry(diagnostics):
+    diagnostics = selection_diagnostics(variants, paragraph, copy_blockers=copy_blockers)
+    for feedback_round in range(_writer_feedback_rounds()):
+        if not _needs_writer_feedback_round(diagnostics, feedback_round):
+            break
         _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 2), f"Rewriting V6 paragraph {paragraph.id} with diagnostics feedback")
         plan = plan_with_writer_feedback(plan, diagnostics)
-        variants = write_variants(paragraph, plan, client=client)
-        diagnostics = selection_diagnostics(variants, paragraph)
+        retry_variants = _strip_copy_blocked_restoration_sentences(
+            write_variants(paragraph, plan, client=client),
+            copy_blockers,
+        )
+        variants = _combine_retry_variants(_source_preserved_variants(variants), retry_variants)
+        diagnostics = selection_diagnostics(variants, paragraph, copy_blockers=copy_blockers)
     _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 3), f"Selecting V6 paragraph {paragraph.id} candidate")
     selected, diagnostics = _select_variant(
         paragraph=paragraph,
@@ -425,19 +436,29 @@ def _run_v6_window_rewrite(
             cancellation_check=cancellation_check,
         )
     )
-    variants = write_variants(window_paragraph, window_plan, client=client)
+    copy_blockers = _copy_blockers_from_plan(window_plan)
+    variants = _strip_copy_blocked_restoration_sentences(
+        write_variants(window_paragraph, window_plan, client=client),
+        copy_blockers,
+    )
     _raise_if_canceled(cancellation_check)
     _emit_progress(
         progress_callback,
         _stage_progress_percent(progress_percent, progress_end_percent, 2),
         f"Scoring V6 paragraph {paragraph.id} window candidate",
     )
-    diagnostics = selection_diagnostics(variants, window_paragraph)
-    if needs_writer_feedback_retry(diagnostics):
+    diagnostics = selection_diagnostics(variants, window_paragraph, copy_blockers=copy_blockers)
+    for feedback_round in range(_writer_feedback_rounds()):
+        if not _needs_writer_feedback_round(diagnostics, feedback_round):
+            break
         _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 2), f"Rewriting V6 paragraph {paragraph.id} window with diagnostics feedback")
         window_plan = plan_with_writer_feedback(window_plan, diagnostics)
-        variants = write_variants(window_paragraph, window_plan, client=client)
-        diagnostics = selection_diagnostics(variants, window_paragraph)
+        retry_variants = _strip_copy_blocked_restoration_sentences(
+            write_variants(window_paragraph, window_plan, client=client),
+            copy_blockers,
+        )
+        variants = _combine_retry_variants(_source_preserved_variants(variants), retry_variants)
+        diagnostics = selection_diagnostics(variants, window_paragraph, copy_blockers=copy_blockers)
     _emit_progress(
         progress_callback,
         _stage_progress_percent(progress_percent, progress_end_percent, 3),
@@ -479,6 +500,121 @@ def _run_v6_window_rewrite(
         rewritten_text=compose_window_rewrite(scan.paragraphs, window, selected),
         candidate_diagnostics=diagnostics,
     )
+
+
+def _combine_retry_variants(initial: list[Variant], retry: list[Variant]) -> list[Variant]:
+    rows: list[Variant] = []
+    seen_texts: set[str] = set()
+    seen_ids: set[str] = set()
+    for variant in [*initial, *retry]:
+        text_key = re.sub(r"\s+", " ", str(variant.text or "").strip()).casefold()
+        if not text_key or text_key in seen_texts:
+            continue
+        next_variant = variant
+        if variant.source != "source_preserved" and variant.id in seen_ids:
+            next_variant = replace(variant, id=_unique_variant_id(f"retry_{variant.id}", seen_ids))
+        rows.append(next_variant)
+        seen_texts.add(text_key)
+        seen_ids.add(next_variant.id)
+    return rows
+
+
+def _source_preserved_variants(variants: list[Variant]) -> list[Variant]:
+    return [variant for variant in variants if variant.source == "source_preserved"]
+
+
+def _unique_variant_id(candidate: str, seen_ids: set[str]) -> str:
+    value = candidate
+    while value in seen_ids:
+        value = f"retry_{value}"
+    return value
+
+
+def _copy_blockers_from_plan(plan: Plan) -> list[str]:
+    decision = plan.ai_safe_route.get("llm_planner_decision") if isinstance(plan.ai_safe_route, dict) else {}
+    if not isinstance(decision, dict):
+        return []
+    rows = decision.get("do_not_copy_route")
+    if not isinstance(rows, list):
+        return []
+    return [str(row).strip() for row in rows if str(row).strip()]
+
+
+def _writer_feedback_rounds() -> int:
+    try:
+        value = int(float(os.environ.get("DRAFTPROOF_V6_WRITER_FEEDBACK_ROUNDS", "1")))
+    except ValueError:
+        value = 1
+    return max(1, min(4, value))
+
+
+def _needs_writer_feedback_round(diagnostics: list[dict[str, Any]], feedback_round: int) -> bool:
+    if needs_writer_feedback_retry(diagnostics):
+        return True
+    return feedback_round < _minimum_writer_feedback_rounds() and _best_generated_has_findings(diagnostics)
+
+
+def _minimum_writer_feedback_rounds() -> int:
+    try:
+        value = int(float(os.environ.get("DRAFTPROOF_V6_MIN_WRITER_FEEDBACK_ROUNDS", "1")))
+    except ValueError:
+        value = 1
+    return max(0, min(_writer_feedback_rounds(), value))
+
+
+def _best_generated_has_findings(diagnostics: list[dict[str, Any]]) -> bool:
+    rows = [
+        row for row in diagnostics
+        if row.get("source") != "source_preserved" and row.get("accepted_by_selector")
+    ]
+    if not rows:
+        return False
+    best = min(
+        rows,
+        key=lambda row: (
+            int(row.get("candidate_findings") or 999),
+            float(row.get("candidate_mean_risk") or 999.0),
+            -float(row.get("risk_drop") or 0.0),
+        ),
+    )
+    return int(best.get("candidate_findings") or 0) > 0
+
+
+def _strip_copy_blocked_restoration_sentences(variants: list[Variant], copy_blockers: list[str]) -> list[Variant]:
+    blockers = [
+        blocker
+        for blocker in copy_blockers
+        if len(str(blocker or "").split()) >= 2
+    ]
+    if not blockers:
+        return variants
+    rows: list[Variant] = []
+    for variant in variants:
+        if variant.source == "source_preserved":
+            rows.append(variant)
+            continue
+        cleaned = _strip_copy_blocked_sentences(variant.text, blockers)
+        rows.append(replace(variant, text=cleaned) if cleaned and cleaned != variant.text else variant)
+    return rows
+
+
+def _strip_copy_blocked_sentences(text: str, copy_blockers: list[str]) -> str:
+    sentences = [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", str(text or "")) if sentence.strip()]
+    if len(sentences) <= 2:
+        return str(text or "")
+    kept = [
+        sentence
+        for sentence in sentences
+        if not _sentence_contains_copy_blocker(sentence, copy_blockers)
+    ]
+    if len(kept) < 2:
+        return str(text or "")
+    return " ".join(kept)
+
+
+def _sentence_contains_copy_blocker(sentence: str, copy_blockers: list[str]) -> bool:
+    lowered = str(sentence or "").casefold()
+    return any(str(blocker).casefold() in lowered for blocker in copy_blockers)
 
 
 def _run_planner_with_author_proxy(
@@ -643,7 +779,7 @@ def _selector_prompt(paragraph: Any, variants: list[Variant], diagnostics: list[
             "All shown variants have already passed hard blockers; do not choose a worse-scoring variant for subjective polish.",
             "Prefer the variant that preserves the full source route, reads directly, and needs only light punctuation or flow cleanup.",
             "Reject or downgrade variants with forced connectors such as Consequently, Thus, Similarly, Ultimately, or Moreover when those connectors make the paragraph sound engineered.",
-            "Reject or downgrade variants that change a possible risk into something already happening, such as 'A danger emerges as students become...' when the source frames dependency as a risk.",
+            "Reject or downgrade variants that change a possible risk into something already happening when the source frames it as only possible.",
             "Downgrade clunky wording such as 'by enabling them to', vague danger openings, and unnecessarily formal substitutions when a plainer variant is available.",
             "Do not select a variant with more candidate_findings than another shown variant.",
             "If candidate_findings tie, do not select a variant with higher candidate_mean_risk than another shown variant.",

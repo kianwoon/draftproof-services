@@ -17,7 +17,7 @@ def consolidated_prose_repair_rules() -> list[dict[str, Any]]:
         _rule("over_formal_synonym", "Do not upgrade simple words into academic filler.", "plain words such as use, help, reduce, ability"),
         _rule("same_sentence_route", "Change sentence job, not only wording.", "claim -> example -> contrast -> effect"),
         _rule("too_smooth_progression", "Add a scoped step or local contrast.", "old model still exists + new pressure beside it"),
-        _rule("generic_skill_list", "Convert policy skills into student behaviour.", "check, explain, compare, apply"),
+        _rule("generic_skill_list", "Convert abstract skill labels into actor behaviour.", "actor checks, explains, compares, or applies something"),
         _rule("generic_conclusion", "Close with the specific consequence, not a broad moral.", "specific next implication"),
         _rule("modern_world_claim", "Replace the big setting with a real setting.", "work, daily life, classroom, or assessment"),
         _rule("passive_institutional_voice", "Put the actor back.", "actor has a harder time judging/doing the task"),
@@ -25,7 +25,7 @@ def consolidated_prose_repair_rules() -> list[dict[str, Any]]:
         _rule("broad_claim", "Narrow by setting, task, actor, or condition.", "in task, tool helps actor do specific thing"),
         _rule("repeated_can_chain", "Reduce repeated modal verbs.", "specific verb + condition"),
         _rule("dependency_claim", "Show what dependence looks like.", "visible behaviour + learning gap"),
-        _rule("polished_work_claim", "Show the mismatch between output and ability.", "finished work + student cannot explain it"),
+        _rule("polished_work_claim", "Show the mismatch between output and ability.", "finished output + actor cannot explain the reasoning"),
         _rule("repeated_sentence_starter", "Change the entry point.", "setting / actor / effect / contrast"),
         _rule("transition_announcement", "Do not announce the transition. Make the next claim.", "concrete changed condition"),
         _rule("three_beat_rhythm", "Break tidy list rhythm.", "A and B + detail about C"),
@@ -45,6 +45,7 @@ def risky_source_terms(source_text: str) -> set[str]:
     terms = {phrase.casefold() for phrase in risky_source_copy_phrases(source_text)}
     if re.search(r"\b(?:when\s+)?used\s+well\b", str(source_text or ""), flags=re.I):
         terms.update({"used", "well"})
+    terms.update(_demonstrative_head_terms(str(source_text or "")))
     return terms
 
 
@@ -61,6 +62,12 @@ def risky_source_shape_guidance(source_text: str) -> list[str]:
         guidance.append("abstract question-raising consequence")
     if _demonstrative_consequence_phrases(text):
         guidance.append("demonstrative consequence opener")
+    if _demonstrative_opener_phrases(text):
+        guidance.append("vague demonstrative opener")
+    if _transition_label_phrases(text):
+        guidance.append("transition label")
+    if _not_only_but_also_phrases(text):
+        guidance.append("balanced not-only/but-also contrast")
     return _dedupe(guidance)
 
 
@@ -72,6 +79,9 @@ def risky_source_copy_phrases(source_text: str) -> list[str]:
         *_vague_danger_phrases(text),
         *_abstract_question_phrases(text),
         *_demonstrative_consequence_phrases(text),
+        *_demonstrative_opener_phrases(text),
+        *_transition_label_phrases(text),
+        *_not_only_but_also_phrases(text),
     ])
 
 
@@ -86,6 +96,12 @@ def risky_source_rewrite_guidance(source_text: str) -> list[str]:
         rows.append("Show the risk as visible source behaviour instead of a vague danger label.")
     if _abstract_question_phrases(text) or _demonstrative_consequence_phrases(text):
         rows.append("Close with what becomes harder to judge, using actor-action wording rather than abstract question-raising.")
+    if _demonstrative_opener_phrases(text):
+        rows.append("Use the source condition or concrete antecedent before the consequence instead of a demonstrative opener.")
+    if _transition_label_phrases(text):
+        rows.append("Remove transition-label wording and let the next claim carry the relation directly.")
+    if _not_only_but_also_phrases(text):
+        rows.append("Preserve both sides of the contrast without copying the not-only/but-also surface frame.")
     return _dedupe(rows)
 
 
@@ -139,6 +155,38 @@ def _demonstrative_consequence_phrases(text: str) -> list[str]:
         flags=re.I,
     )
     return [_clean_phrase(match.group(0)) for match in pattern.finditer(text)]
+
+
+def _demonstrative_opener_phrases(text: str) -> list[str]:
+    rows: list[str] = []
+    pattern = re.compile(r"(?:^|(?<=[.!?])\s+)((?:this|that|these|those)\s+[A-Za-z][A-Za-z'’-]{3,})\b", flags=re.I)
+    for match in pattern.finditer(str(text or "")):
+        rows.append(_clean_phrase(match.group(1)))
+    return rows
+
+
+def _demonstrative_head_terms(text: str) -> list[str]:
+    rows: list[str] = []
+    for phrase in _demonstrative_opener_phrases(text):
+        parts = re.findall(r"[A-Za-z][A-Za-z'’-]*", phrase)
+        if len(parts) >= 2:
+            rows.append(parts[-1].casefold())
+    return rows
+
+
+def _transition_label_phrases(text: str) -> list[str]:
+    return [_clean_phrase(match.group(0)) for match in re.finditer(r"\b(?:in\s+other\s+words|consequently|thus|therefore|in\s+this\s+way)\b", text, flags=re.I)]
+
+
+def _not_only_but_also_phrases(text: str) -> list[str]:
+    rows: list[str] = []
+    if re.search(r"\bnot\s+only\b", text, flags=re.I):
+        rows.append("not only")
+    if re.search(r"\bbut\s+also\b", text, flags=re.I):
+        rows.append("but also")
+    if re.search(r"\bnot\s+only\b[^.!?]{0,160}\bbut\s+also\b", text, flags=re.I):
+        rows.append("not only...but also")
+    return rows
 
 
 def _clean_phrase(value: str) -> str:

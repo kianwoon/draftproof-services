@@ -51,7 +51,7 @@ def run_quality_repair(
         _quality_repair_prompt(text),
         system=(
             "You are a copy editor. Return valid JSON only. "
-            "Do not rewrite for style, sophistication, detector avoidance, or AI-risk reduction."
+            "Do not rewrite for style, sophistication, detector avoidance, or detector-risk reduction."
         ),
         temperature=0.0,
         top_p=0.2,
@@ -180,7 +180,7 @@ def _quality_repair_prompt(text: str) -> str:
         "contract": [
             "Return patch operations only. Do not return a full rewritten document.",
             "Fix only obvious grammar, typo, punctuation, subject-verb agreement, missing article, and broken sentence-fragment defects.",
-            "Do not optimize for AI detectors. Do not make the text more polished, generic, formal, or academic.",
+            "Do not optimize for detectors. Do not make the text more polished, generic, formal, or academic.",
             "Do not rewrite paragraphs or restructure argument flow.",
             "Preserve all meaning, citations, names, numbers, unit codes, examples, paragraph order, and author voice.",
             "If a sentence is awkward but grammatically acceptable, leave it unchanged.",

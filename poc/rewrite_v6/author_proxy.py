@@ -39,7 +39,10 @@ def attach_author_proxy_pack(paragraph: Paragraph, plan: Plan, findings: list[Fi
         response_format={"type": "json_object"},
         app_label="Author-proxy",
     )
-    pack = _parse_pack(parse_json(getattr(response, "raw_content", "") or response.content))
+    pack = _parse_pack(
+        parse_json(getattr(response, "raw_content", "") or response.content),
+        support_text=_support_text_for_plan(paragraph, plan),
+    )
     pack["author_profile"] = author_profile
     strategy = dict(plan.paragraph_strategy)
     strategy["author_proxy_pack"] = pack
@@ -92,9 +95,10 @@ def _build_prompt(
             "do_not_create": [
                 "broad filler claims",
                 "new thesis sentences",
-                "reward-system abstractions unless present in submitted text",
+                "abstract framework labels unless present in submitted text",
                 "generic conclusions",
-                "generic role inflation such as essential, vital, critical filter, mentor, digital-media context, or flood of information",
+                "generic role inflation not grounded in submitted text",
+                "inflated quantity wording when a plain source-based phrase is enough",
                 "keyword lists",
                 "copied comma lists from bridge anchors",
                 "instructions to omit source paragraph terms or source closing claims",
@@ -167,7 +171,7 @@ def _author_profile(
     nearby_terms = _dedupe_text(
         term
         for anchor in bridge_anchors
-        for term in source_anchor_terms(str(anchor), term_limit=10, phrase_limit=2)
+        for term in source_anchor_terms(_anchor_text(anchor), term_limit=10, phrase_limit=2)
     )
     context_terms = _dedupe_text([*selected_terms, *evidence_terms, *nearby_terms])[:28]
     actor_terms = _actor_terms(context_terms)
@@ -243,12 +247,18 @@ def _dedupe_text(values: Any) -> list[str]:
     return rows
 
 
-def _parse_pack(payload: Any) -> dict[str, Any]:
+def _parse_pack(payload: Any, *, support_text: str = "") -> dict[str, Any]:
     pack = payload.get("proxy_pack") if isinstance(payload, dict) else {}
     if not isinstance(pack, dict):
         pack = {}
-    bridges = [_bridge(row) for row in pack.get("usable_bridges", []) if isinstance(row, dict)]
+    bridges = [_bridge(row, support_text=support_text) for row in pack.get("usable_bridges", []) if isinstance(row, dict)]
     review_items = [_review_item(row) for row in pack.get("author_review_items", []) if isinstance(row, dict)]
+    if not any(bridges):
+        bridges = [
+            _bridge(_bridge_from_review_item(row, support_text), support_text=support_text)
+            for row in pack.get("author_review_items", [])
+            if isinstance(row, dict)
+        ]
     guidance = pack.get("planner_guidance") if isinstance(pack.get("planner_guidance"), dict) else pack.get("writer_guidance")
     guidance = guidance if isinstance(guidance, dict) else {}
     return {
@@ -263,17 +273,66 @@ def _parse_pack(payload: Any) -> dict[str, Any]:
     }
 
 
-def _bridge(row: dict[str, Any]) -> dict[str, Any]:
-    usable_bridge = str(row.get("usable_bridge") or "").strip()
+def _support_text_for_plan(paragraph: Paragraph, plan: Plan) -> str:
+    grounding = plan.paragraph_strategy.get("author_proxy_grounding", {})
+    anchors = grounding.get("bridge_anchors", []) if isinstance(grounding, dict) else []
+    rows = [paragraph.text, *[_anchor_text(anchor) for anchor in anchors]]
+    return " ".join(row for row in rows if row.strip())
+
+
+def _anchor_text(anchor: Any) -> str:
+    if isinstance(anchor, dict):
+        for key in ("text", "anchor_text", "source_text", "usable_bridge"):
+            value = str(anchor.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+    return str(anchor or "").strip()
+
+
+def _bridge_from_review_item(row: dict[str, Any], support_text: str) -> dict[str, Any]:
+    bridge = str(row.get("target_text") or row.get("generated_text") or "").strip()
+    if not bridge:
+        return {}
+    return {
+        "bridge_id": str(row.get("bridge_id") or "review_bridge_001"),
+        "anchor_source": str(row.get("anchor_source") or "submitted_context"),
+        "anchor_text": _best_anchor_text(bridge, support_text),
+        "usable_bridge": bridge,
+        "target_sentence_ids": row.get("target_sentence_ids") or [],
+        "integration_role": str(row.get("integration_role") or "ground local anchor gap"),
+        "integration_instruction": str(row.get("integration_instruction") or "Fold this reviewable bridge into the matching source beat."),
+        "review_reason": str(row.get("user_input_needed") or row.get("review_reason") or "Author should confirm this inferred bridge."),
+    }
+
+
+def _best_anchor_text(bridge: str, support_text: str) -> str:
+    sentences = [row.strip() for row in re.split(r"(?<=[.!?])\s+", str(support_text or "")) if row.strip()]
+    if not sentences:
+        return str(support_text or "").strip()[:280]
+    bridge_roots = {_term_root(term) for term in _content_terms(bridge)}
+    ranked = sorted(
+        sentences,
+        key=lambda sentence: len(bridge_roots & {_term_root(term) for term in _content_terms(sentence)}),
+        reverse=True,
+    )
+    return ranked[0][:280]
+
+
+def _bridge(row: dict[str, Any], *, support_text: str = "") -> dict[str, Any]:
+    usable_bridge = _compact_bridge_examples(str(row.get("usable_bridge") or "").strip())
     anchor_text = str(row.get("anchor_text") or "").strip()
+    if usable_bridge and not anchor_text:
+        anchor_text = _best_anchor_text(usable_bridge, support_text)
     if not usable_bridge or not anchor_text:
         return {}
-    if usable_bridge.count(",") >= 3:
+    if _list_heavy_bridge(usable_bridge):
         return {}
-    if _generic_bridge_inflation(usable_bridge):
-        return {}
-    unsupported_terms = _unsupported_bridge_terms(usable_bridge, anchor_text)
-    if len(unsupported_terms) >= 2 and _unsupported_ratio(usable_bridge, anchor_text) >= 0.45:
+    support = f"{anchor_text} {support_text}".strip()
+    unsupported_terms = _unsupported_bridge_terms(usable_bridge, support)
+    unsupported_ratio = _unsupported_ratio(usable_bridge, support)
+    enough_source_overlap = _supported_term_count(usable_bridge, support) >= 4 and unsupported_ratio < 0.62
+    if len(unsupported_terms) >= 2 and unsupported_ratio >= 0.45 and not enough_source_overlap:
         return {}
     return {
         "bridge_id": str(row.get("bridge_id") or "").strip()[:24],
@@ -285,6 +344,27 @@ def _bridge(row: dict[str, Any]) -> dict[str, Any]:
         "integration_instruction": str(row.get("integration_instruction") or "").strip()[:220],
         "review_reason": str(row.get("review_reason") or "").strip()[:220],
     }
+
+
+def _compact_bridge_examples(text: str) -> str:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not value:
+        return ""
+    value = re.sub(
+        r"\b(?:such as|including|for example)\b\s+.*?,\s+(?=[A-Za-z][A-Za-z'’-]*\s+(?:must|should|can|could|may|might|will|would|is|are|was|were|has|have|had|help|helps|need|needs|judge|judges|guide|guides|support|supports)\b)",
+        "from submitted examples, ",
+        value,
+        flags=re.I,
+    )
+    value = re.sub(
+        r"\b(?:with|from|through|via|on|to)\s+.*?,\s+(?=[A-Za-z][A-Za-z'’-]*\s+(?:must|should|can|could|may|might|will|would|is|are|was|were|has|have|had|help|helps|need|needs|judge|judges|guide|guides|support|supports)\b)",
+        "from submitted examples, ",
+        value,
+        flags=re.I,
+    )
+    value = re.sub(r"\(\s*[^)]*,[^)]*\)", "from submitted examples", value)
+    value = re.sub(r"\s*[-–—]\s*[^-–—]*,[^-–—]*[-–—]\s*", " from submitted examples ", value)
+    return re.sub(r"\s+", " ", value).strip(" ,")
 
 
 def _unsupported_bridge_terms(bridge: str, anchor_text: str) -> list[str]:
@@ -304,34 +384,19 @@ def _unsupported_ratio(bridge: str, anchor_text: str) -> float:
     return len(_unsupported_bridge_terms(bridge, anchor_text)) / len(terms)
 
 
-def _generic_bridge_inflation(text: str) -> bool:
-    lowered = str(text or "").casefold()
-    generic_role_terms = {
-        "critical",
-        "essential",
-        "vital",
-        "indispensable",
-        "navigator",
-        "navigators",
-        "mentor",
-        "mentors",
-        "filter",
-        "filters",
-        "flood",
-        "underscores",
-        "highlights",
-        "proves",
-        "evolving",
-        "demands",
-    }
-    terms = set(_content_terms(lowered))
-    if terms & generic_role_terms:
+def _supported_term_count(bridge: str, anchor_text: str) -> int:
+    return max(0, len(_content_terms(bridge)) - len(_unsupported_bridge_terms(bridge, anchor_text)))
+
+
+def _list_heavy_bridge(text: str) -> bool:
+    value = str(text or "")
+    if value.count(",") >= 3:
         return True
-    return bool(
-        re.search(r"\bdigital[-\s]+media\s+(?:context|era|environment)\b", lowered)
-        or re.search(r"\bflood\s+of\s+(?:digital\s+)?(?:media|information)\b", lowered)
-        or re.search(r"\b(?:teachers?|educators?)\s+(?:are|become)\s+(?:critical|essential|vital)\b", lowered)
-    )
+    terms = _content_terms(value)
+    if len(terms) < 10:
+        return False
+    repeated_connector_count = len(re.findall(r"\b(?:and|or)\b", value, flags=re.I))
+    return repeated_connector_count >= 3
 
 
 def _content_terms(text: str) -> list[str]:
@@ -350,9 +415,17 @@ def _content_terms(text: str) -> list[str]:
 
 def _term_root(term: str) -> str:
     value = term.casefold()
-    for suffix in ("ing", "ized", "ised", "izes", "ises", "ed", "es", "s"):
-        if len(value) > len(suffix) + 4 and value.endswith(suffix):
+    for suffix in ("ing", "ized", "ised", "izes", "ises", "ed"):
+        if len(value) > len(suffix) + 3 and value.endswith(suffix):
             return value[: -len(suffix)]
+    if len(value) > 5 and value.endswith("ies"):
+        return value[:-3] + "y"
+    if len(value) > 5 and value.endswith("es"):
+        stem = value[:-2]
+        if stem.endswith(("s", "x", "z", "ch", "sh")):
+            return stem
+    if len(value) > 4 and value.endswith("s") and not value.endswith("ss"):
+        return value[:-1]
     return value
 
 

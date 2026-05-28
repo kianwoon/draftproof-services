@@ -867,7 +867,6 @@ def _starter_terms(phrase: str, tags: list[str]) -> list[str]:
         term for term in terms
         if term.casefold() not in weak_starters
         and not term.casefold().endswith(("ed", "ly"))
-        and term.casefold() not in {"received", "proved", "practiced"}
     ]
     if contrast_left_terms:
         candidates = [
@@ -1229,12 +1228,23 @@ def _source_channels(text: str) -> list[str]:
         span = re.split(r"\b(?:because|which|where|when|while)\b", match.group(1), maxsplit=1, flags=re.I)[0]
         matches.extend(_list_items(span))
     named = re.findall(r"\b(?:[A-Z][A-Za-z0-9'’-]{2,}|[A-Z]{2,})(?:\s+(?:[A-Z][A-Za-z0-9'’-]{2,}|[A-Z]{2,}))*\b", str(text or ""))
-    matches.extend(named)
+    matches.extend(term for term in named if _proper_or_acronym_channel(term))
     channels = _dedupe([
         term for term in matches
-        if _source_channel_key(term) not in {"now", "this", "that", "they", "the", "students", "knowledge", "access"}
+        if _source_channel_key(term) not in {"now", "this", "that", "they", "the"}
     ])
     return _normalise_source_channels(channels)[:18]
+
+
+def _proper_or_acronym_channel(term: str) -> bool:
+    words = re.findall(r"[A-Za-z][A-Za-z0-9'’-]*", str(term or ""))
+    if not words:
+        return False
+    if any(word.isupper() and len(word) >= 2 for word in words):
+        return True
+    if any(re.search(r"[a-z][A-Z]", word) for word in words):
+        return True
+    return len(words) > 1 and any(word[:1].isupper() for word in words[1:])
 
 
 def _normalise_source_channels(channels: list[str]) -> list[str]:
@@ -1242,11 +1252,6 @@ def _normalise_source_channels(channels: list[str]) -> list[str]:
     seen: set[str] = set()
     for channel in channels:
         key = _source_channel_key(channel)
-        if key == "ai" and "ai tools" in seen:
-            continue
-        if key == "ai tools" and "ai" in seen:
-            rows = [row for row in rows if _source_channel_key(row) != "ai"]
-            seen.discard("ai")
         if key not in seen:
             rows.append(channel)
             seen.add(key)

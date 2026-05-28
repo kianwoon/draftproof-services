@@ -9,7 +9,7 @@ from .prose_quality import has_fragment_or_trace_sentences
 from .prose_quality import catalogue_sentence_chain, robotic_sentence_chain
 from .scan import scan_text
 from .source_quality import scope_marker_reused_as_content, source_quality_blockers, unsupported_semantic_padding
-from .text import Paragraph
+from .text import Paragraph, source_terms
 from .write import (
     Variant,
     _candidate_contract_violation,
@@ -24,15 +24,20 @@ from .write import (
 )
 
 
-def selection_diagnostics(variants: list[Variant], paragraph: Paragraph) -> list[dict[str, Any]]:
+def selection_diagnostics(
+    variants: list[Variant],
+    paragraph: Paragraph,
+    *,
+    copy_blockers: list[str] | None = None,
+) -> list[dict[str, Any]]:
     source = next((variant for variant in variants if variant.source == "source_preserved"), None)
     if source is None:
-        return [_variant_diagnostics(variant, None, paragraph) for variant in variants]
+        return [_variant_diagnostics(variant, None, paragraph, copy_blockers or []) for variant in variants]
     generated = [variant for variant in variants if variant.source != "source_preserved"]
     if not generated:
         return [_generation_failure_diagnostic(source, paragraph)]
     return [
-        _variant_diagnostics(variant, source, paragraph)
+        _variant_diagnostics(variant, source, paragraph, copy_blockers or [])
         for variant in generated
     ]
 
@@ -48,6 +53,7 @@ def _variant_diagnostics(
     variant: Variant,
     source: Variant | None,
     paragraph: Paragraph,
+    copy_blockers: list[str],
 ) -> dict[str, Any]:
     candidate_scan = scan_text(variant.text)
     source_scan = scan_text(source.text) if source is not None else scan_text(paragraph.text)
@@ -55,7 +61,7 @@ def _variant_diagnostics(
     risk_drop = source_scan.scores["mean_sentence_shape_risk"] - candidate_scan.scores["mean_sentence_shape_risk"]
     missing_terms = missing_required_source_term_details(variant.text, paragraph)
     integrity_blockers = candidate_integrity_blockers(variant.text)
-    blockers = _blockers(variant, source, paragraph, finding_drop, risk_drop, missing_terms, integrity_blockers)
+    blockers = _blockers(variant, source, paragraph, finding_drop, risk_drop, missing_terms, integrity_blockers, copy_blockers)
     quality_warnings = _quality_warnings(variant, paragraph)
     return {
         "variant_id": variant.id,
@@ -166,6 +172,7 @@ def _blockers(
     risk_drop: float,
     missing_terms: list[str],
     integrity_blockers: list[str],
+    copy_blockers: list[str],
 ) -> list[str]:
     blockers: list[str] = []
     blockers.extend(
@@ -173,16 +180,17 @@ def _blockers(
         if blocker in {
             "planner_language_leakage",
             "external_narrator_reporting_chain",
+            "malformed_subject_verb_agreement",
             "malformed_negation_order",
+            "missing_verb_after_negation_scope",
             "malformed_serial_verb_chain",
             "malformed_nominal_stack",
-            "malformed_learning_predicate",
+            "malformed_nonhuman_activity_predicate",
             "malformed_telegraphic_predicate",
             "unnatural_completion_phrase",
             "dangling_consequence_tail",
             "dangling_additive_tail",
             "standalone_additive_fragment",
-            "misplaced_channel_in_challenge",
             "malformed_parallel_connector_list",
             "malformed_parallel_verb_tail",
             "redundant_trust_phrase",
@@ -192,9 +200,9 @@ def _blockers(
             "repeated_platform_catalogue",
             "repeated_subject_start",
             "vague_unintroduced_reliance",
-            "malformed_tool_student_relation",
+            "malformed_tool_actor_relation",
             "malformed_with_finite_clause",
-            "tool_practise_skills_predicate",
+            "malformed_tool_skill_predicate",
             "demonstrative_agreement_error",
             "semantic_anchor_corruption",
             "sentence_starts_with_conjunction",
@@ -209,24 +217,129 @@ def _blockers(
             "vague_danger_opener",
             "duplicated_assessment_consequence",
             "premature_assessment_consequence",
+            "transition_label_final_consequence",
+            "compressed_final_consequence_list",
         }
     )
     if source is not None and finding_drop < 1 and risk_drop < 5.0:
         blockers.append("insufficient_scanner_movement")
     if source is not None and finding_drop == 0 and risk_drop < 0:
         blockers.append("sentence_shape_risk_regression")
-    if missing_terms:
+    if missing_terms and not _missing_terms_are_reviewable(finding_drop, risk_drop, integrity_blockers):
         blockers.append("required_source_terms_missing")
+    if _copy_blocker_violations(variant.text, copy_blockers):
+        blockers.append("copy_blocked_source_phrase")
     if _repeats_sentence_intent(variant.text):
         blockers.append("repeated_sentence_intent")
     if robotic_sentence_chain(variant.text):
         blockers.append("mechanical_sentence_chain")
     if _not_always_scope_inverted(variant.text, paragraph):
         blockers.append("not_always_scope_inversion")
+    if _severe_polarity_inversion(variant.text, paragraph):
+        blockers.append("source_polarity_inversion")
     blockers.extend(source_quality_blockers(variant.text, paragraph))
     if has_fragment_or_trace_sentences(variant.text):
         blockers.append("fragment_or_trace_sentence")
     return blockers
+
+
+def _missing_terms_are_reviewable(
+    finding_drop: float,
+    risk_drop: float,
+    integrity_blockers: list[str],
+) -> bool:
+    if integrity_blockers:
+        return False
+    if finding_drop >= 2 and risk_drop >= -2.0:
+        return True
+    if finding_drop >= 1 and risk_drop >= 0.0:
+        return True
+    return finding_drop >= 0 and risk_drop >= 10.0
+
+
+def _severe_polarity_inversion(candidate: str, paragraph: Paragraph) -> bool:
+    source = str(paragraph.text or "").casefold()
+    text = str(candidate or "").casefold()
+    if "not only" not in source:
+        return False
+    if re.search(r"\b(?:also|as well as|too|both)\b", text):
+        return False
+    first_side, second_side = _not_only_source_sides(source)
+    first_present = _side_specific_term_present(first_side, second_side, text)
+    second_present = _side_specific_term_present(second_side, first_side, text)
+    if first_present != second_present:
+        return True
+    contrast_sentence = _not_only_side_contrast_sentence(text, first_side, second_side)
+    return bool(contrast_sentence and re.search(r"\b(?:instead of|rather than|more than|less than)\b", contrast_sentence))
+
+
+def _not_only_source_sides(source: str) -> tuple[str, str]:
+    tail = source.split("not only", 1)[-1]
+    if "but also" in tail:
+        return tail.split("but also", 1)
+    if "also" in tail:
+        return tail.split("also", 1)
+    return tail, ""
+
+
+def _side_term_present(side_text: str, candidate: str) -> bool:
+    terms = _side_terms(side_text)
+    if not terms:
+        return True
+    return any(term in candidate for term in terms[:5])
+
+
+def _side_specific_term_present(side_text: str, other_side_text: str, candidate: str) -> bool:
+    other_keys = {_side_term_key(term) for term in _side_terms(other_side_text)}
+    terms = [
+        term for term in _side_terms(side_text)
+        if _side_term_key(term) not in other_keys
+    ]
+    if not terms:
+        terms = _side_terms(side_text)
+    if not terms:
+        return True
+    return any(term in candidate for term in terms[:5])
+
+
+def _side_terms(side_text: str) -> list[str]:
+    return [
+        term.casefold()
+        for term in source_terms(side_text, limit=8)
+        if _contrast_side_term(term)
+    ]
+
+
+def _contrast_side_term(term: str) -> bool:
+    value = str(term or "").casefold()
+    return len(value) > 3 and value not in {
+        "only", "also", "about", "that", "with", "into", "from", "people", "person", "group", "groups", "users", "user", "those", "these"
+    }
+
+
+def _side_term_key(term: str) -> str:
+    value = str(term or "").casefold()
+    return value[:-1] if len(value) > 4 and value.endswith("s") else value
+
+
+def _not_only_side_contrast_sentence(candidate: str, first_side: str, second_side: str) -> str:
+    for sentence in re.findall(r"[^.!?]+[.!?]?", str(candidate or "")):
+        lowered = sentence.casefold()
+        if _side_term_present(first_side, lowered) or _side_term_present(second_side, lowered):
+            return lowered
+    return ""
+
+
+def _copy_blocker_violations(text: str, copy_blockers: list[str]) -> list[str]:
+    lowered = str(text or "").casefold()
+    rows: list[str] = []
+    for blocker in copy_blockers:
+        phrase = re.sub(r"\s+", " ", str(blocker or "")).strip()
+        if len(phrase.split()) < 2:
+            continue
+        if phrase.casefold() in lowered:
+            rows.append(phrase)
+    return rows
 
 
 def _quality_warnings(variant: Variant, paragraph: Paragraph) -> list[str]:
@@ -282,9 +395,21 @@ def _not_always_scope_inverted(candidate: str, paragraph: Paragraph) -> bool:
     source = str(paragraph.text or "").casefold()
     if "not always" not in source:
         return False
-    return bool(
-        re.search(
-            r"(?:\b(?:may|might|could)\s+always|(?<!not\s)\balways)\s+(?:learn|pass|think|solve|connect|develop|show|reflect)\b",
-            str(candidate or "").casefold(),
-        )
-    )
+    scoped_terms: set[str] = set()
+    for match in re.finditer(r"\bnot always\b", source):
+        scoped_terms.update(_source_scope_terms(source[max(0, match.start() - 100):match.start()]))
+        scoped_terms.update(_source_scope_terms(source[match.end():match.end() + 100]))
+    if not scoped_terms:
+        return False
+    pattern = "|".join(re.escape(term) for term in sorted(scoped_terms, key=len, reverse=True))
+    return bool(re.search(rf"(?:\b(?:may|might|could)\s+always|(?<!not\s)\balways)\s+(?:{pattern})\b", str(candidate or "").casefold()))
+
+
+def _source_scope_terms(text: str) -> set[str]:
+    return {
+        term.casefold()
+        for term in source_terms(text, limit=8)
+        if len(term) >= 4
+        and re.search(r"[a-z]", term, flags=re.I)
+        and not term.casefold().endswith(("tion", "sion", "ment", "ness", "ity"))
+    }

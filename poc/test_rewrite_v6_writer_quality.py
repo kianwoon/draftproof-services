@@ -124,7 +124,7 @@ def test_v6_writer_quality_blocks_since_subordinate_fragment():
     assert has_fragment_or_trace_sentences(text)
 
 
-def test_v6_writer_quality_blocks_malformed_learning_predicates():
+def test_v6_writer_quality_blocks_malformed_nonhuman_activity_predicates():
     source = (
         "Students learn from teachers, YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities. "
         "This has created a new kind of learning environment."
@@ -142,10 +142,10 @@ def test_v6_writer_quality_blocks_malformed_learning_predicates():
 
     blockers = candidate_integrity_blockers(candidate)
 
-    assert "malformed_learning_predicate" in blockers
+    assert "malformed_nonhuman_activity_predicate" in blockers
     assert "malformed_telegraphic_predicate" in blockers
     diagnostics = selection_diagnostics(variants, paragraph)[0]
-    assert "malformed_learning_predicate" in diagnostics["blockers"]
+    assert "malformed_nonhuman_activity_predicate" in diagnostics["blockers"]
     assert "malformed_telegraphic_predicate" in diagnostics["blockers"]
     assert choose_variant(variants, paragraph).source == "source_preserved"
 
@@ -189,7 +189,7 @@ def test_v6_writer_quality_blocks_repeated_subject_and_unintroduced_reliance():
     assert "vague_unintroduced_reliance" in blockers
 
 
-def test_v6_writer_quality_blocks_tool_student_semantic_role_defects():
+def test_v6_writer_quality_blocks_tool_actor_semantic_role_defects():
     text = (
         "AI tools and students belong together as the tools provide help. "
         "The same tools improve writing and practise skills."
@@ -197,14 +197,14 @@ def test_v6_writer_quality_blocks_tool_student_semantic_role_defects():
 
     blockers = candidate_integrity_blockers(text)
 
-    assert "malformed_tool_student_relation" in blockers
-    assert "tool_practise_skills_predicate" in blockers
+    assert "malformed_tool_actor_relation" in blockers
+    assert "malformed_tool_skill_predicate" in blockers
 
 
 def test_v6_writer_quality_allows_students_as_practise_skills_actor():
     text = "These tools also improve writing and allow students to practise skills."
 
-    assert "tool_practise_skills_predicate" not in candidate_integrity_blockers(text)
+    assert "malformed_tool_skill_predicate" not in candidate_integrity_blockers(text)
 
 
 def test_v6_writer_quality_blocks_dangling_additive_tail():
@@ -489,8 +489,8 @@ def test_v6_writer_quality_repairs_quoted_concept_literalisation():
     assert "focus on what students know" in repaired
 
 
-def test_v6_writer_quality_blocks_flood_bridge_inflation():
-    text = "The digital shift has made teachers more important because it floods classrooms with information."
+def test_v6_writer_quality_blocks_generic_adaptation_role_padding():
+    text = "The local process improves as departments respond to new challenges."
 
     assert "generic_role_inflation" in candidate_integrity_blockers(text)
 

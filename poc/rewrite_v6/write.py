@@ -296,7 +296,7 @@ def _route_quality_penalty(text: str) -> float:
     penalty += len(forced_connectors) * 4.0
     patterns = {
         r"\bSuch\s+a\s+mix\b": 3.0,
-        r"\bblend\s+of\s+traditional\s+and\s+digital\s+sources\b": 5.0,
+        r"\bblend\s+of\s+[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2}\s+and\s+[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2}\s+sources\b": 5.0,
         r"\bdifficulty\s+shifts\s+toward\s+assessing\b": 5.0,
         r"\bjudging\s+information\s+quality\b": 3.0,
         r"\bassessing\s+information\s+quality\b": 3.0,
@@ -483,7 +483,8 @@ def _without_parentheticals(text: str) -> str:
 
 def _adds_unsubmitted_success_close(text: str, source_paragraph: Paragraph) -> bool:
     source = str(source_paragraph.text or "").casefold()
-    if re.search(r"\b(success|essential|readiness|ready|complex|real-world)\b", source):
+    outcome_terms = _final_outcome_terms()
+    if _has_any_terms(source, outcome_terms):
         return False
     candidate_sentences = [
         sentence.text.casefold()
@@ -493,7 +494,16 @@ def _adds_unsubmitted_success_close(text: str, source_paragraph: Paragraph) -> b
     if not candidate_sentences:
         return False
     final = candidate_sentences[-1]
-    return bool(re.search(r"\b(success|essential|readiness|ready|complex|real-world)\b", final))
+    return _has_any_terms(final, outcome_terms)
+
+
+def _final_outcome_terms() -> tuple[str, ...]:
+    return ("success", "essential", "readiness", "ready", "complex", "real-world")
+
+
+def _has_any_terms(text: str, terms: tuple[str, ...]) -> bool:
+    pattern = "|".join(re.escape(term) for term in terms)
+    return bool(re.search(rf"\b(?:{pattern})\b", str(text or ""), flags=re.I))
 
 
 def _adds_extra_conclusion_beat(text: str, source_paragraph: Paragraph) -> bool:
@@ -581,7 +591,7 @@ def _modal_risk_hardened(source: str, candidate: str) -> bool:
     )
     for modal, bare in modal_shapes:
         if modal in source and modal not in candidate:
-            if re.search(rf"\b(?:students|learners|people|users|they)\s+{bare}\b", candidate):
+            if re.search(rf"\b(?:they|people|users|[A-Za-z][A-Za-z'’-]*(?:ers|ents|ants|ists|ors))\s+{bare}\b", candidate):
                 return True
     return False
 
@@ -592,7 +602,7 @@ def _not_only_relation_preserved(source: str, candidate: str) -> bool:
     first_side, second_side = _not_only_source_sides(source)
     if not first_side or not second_side:
         return True
-    return _side_term_present(first_side, candidate) and _side_term_present(second_side, candidate)
+    return _side_specific_term_present(first_side, second_side, candidate) and _side_specific_term_present(second_side, first_side, candidate)
 
 
 def _not_only_source_sides(source: str) -> tuple[str, str]:
@@ -607,14 +617,43 @@ def _not_only_source_sides(source: str) -> tuple[str, str]:
 
 
 def _side_term_present(side_text: str, candidate: str) -> bool:
-    terms = [
-        term.casefold()
-        for term in source_terms(side_text, limit=8)
-        if len(term) > 3 and term.casefold() not in {"only", "also", "about", "that", "with", "into", "from"}
-    ]
+    terms = _side_terms(side_text)
     if not terms:
         return True
     return any(term in candidate for term in terms[:5])
+
+
+def _side_specific_term_present(side_text: str, other_side_text: str, candidate: str) -> bool:
+    other_keys = {_side_term_key(term) for term in _side_terms(other_side_text)}
+    terms = [
+        term for term in _side_terms(side_text)
+        if _side_term_key(term) not in other_keys
+    ]
+    if not terms:
+        terms = _side_terms(side_text)
+    if not terms:
+        return True
+    return any(term in candidate for term in terms[:5])
+
+
+def _side_terms(side_text: str) -> list[str]:
+    return [
+        term.casefold()
+        for term in source_terms(side_text, limit=8)
+        if _contrast_side_term(term)
+    ]
+
+
+def _contrast_side_term(term: str) -> bool:
+    value = str(term or "").casefold()
+    return len(value) > 3 and value not in {
+        "only", "also", "about", "that", "with", "into", "from", "people", "person", "group", "groups", "users", "user", "those", "these"
+    }
+
+
+def _side_term_key(term: str) -> str:
+    value = str(term or "").casefold()
+    return value[:-1] if len(value) > 4 and value.endswith("s") else value
 
 
 def _malformed_not_only(candidate: str) -> bool:
@@ -639,17 +678,34 @@ def _moves_not_always_to_positive_side(source: str, candidate: str) -> bool:
         return False
     for match in re.finditer(r"\bnot always\b", source):
         positive_terms = source_terms(source[max(0, match.start() - 80):match.start()], limit=6)
-        scoped_terms = {term.casefold() for term in positive_terms if term.casefold() in {"learn", "pass", "progress"}}
+        scoped_terms = _scoped_positive_terms(positive_terms)
         for term in scoped_terms:
             if re.search(rf"\b(?:do\s+not\s+always|does\s+not\s+always|not\s+always)\b(?:\W+\w+){{0,4}}\W+{re.escape(term)}\b", candidate):
                 return True
     return False
 
 
+def _scoped_positive_terms(terms: list[str]) -> set[str]:
+    return {
+        term.casefold()
+        for term in terms
+        if len(term) >= 4
+        and re.search(r"[a-z]", term, flags=re.I)
+        and not term.casefold().endswith(("tion", "sion", "ment", "ness", "ity"))
+    }
+
+
 def _not_always_scope_inverted(source: str, candidate: str) -> bool:
     if "not always" not in source:
         return False
-    return bool(re.search(r"(?:\b(?:may|might|could)\s+always|(?<!not\s)\balways)\s+(?:learn|pass|think|solve|connect|develop|show|reflect)\b", candidate))
+    scoped_terms: set[str] = set()
+    for match in re.finditer(r"\bnot always\b", source):
+        scoped_terms.update(_scoped_positive_terms(source_terms(source[max(0, match.start() - 100):match.start()], limit=8)))
+        scoped_terms.update(_scoped_positive_terms(source_terms(source[match.end():match.end() + 100], limit=8)))
+    if not scoped_terms:
+        return False
+    pattern = "|".join(re.escape(term) for term in sorted(scoped_terms, key=len, reverse=True))
+    return bool(re.search(rf"(?:\b(?:may|might|could)\s+always|(?<!not\s)\balways)\s+(?:{pattern})\b", candidate, flags=re.I))
 
 
 def _conclusion_like_start(text: str) -> bool:
@@ -712,15 +768,15 @@ def _hard_integrity_blockers(text: str) -> list[str]:
             "planner_language_leakage",
             "external_narrator_reporting_chain",
             "malformed_negation_order",
+            "missing_verb_after_negation_scope",
             "malformed_serial_verb_chain",
             "malformed_nominal_stack",
-            "malformed_learning_predicate",
+            "malformed_nonhuman_activity_predicate",
             "malformed_telegraphic_predicate",
             "unnatural_completion_phrase",
             "dangling_consequence_tail",
             "dangling_additive_tail",
             "standalone_additive_fragment",
-            "misplaced_channel_in_challenge",
             "malformed_parallel_connector_list",
             "malformed_parallel_verb_tail",
             "redundant_trust_phrase",
@@ -730,9 +786,9 @@ def _hard_integrity_blockers(text: str) -> list[str]:
             "repeated_platform_catalogue",
             "repeated_subject_start",
             "vague_unintroduced_reliance",
-            "malformed_tool_student_relation",
+            "malformed_tool_actor_relation",
             "malformed_with_finite_clause",
-            "tool_practise_skills_predicate",
+            "malformed_tool_skill_predicate",
             "malformed_contrast_pair",
             "malformed_additive_predicate",
             "proxy_context_adjective_stack",
@@ -741,6 +797,8 @@ def _hard_integrity_blockers(text: str) -> list[str]:
             "awkward_modal_double_hedge",
             "duplicated_assessment_consequence",
             "premature_assessment_consequence",
+            "transition_label_final_consequence",
+            "compressed_final_consequence_list",
         }
     ]
 

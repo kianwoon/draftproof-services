@@ -1171,7 +1171,7 @@ def test_v6_integrity_guard_rejects_remaining_production_bad_shapes():
 
     blockers = candidate_integrity_blockers(text)
 
-    assert "unsupported_learner_blame_shape" in blockers
+    assert "unsupported_actor_blame_shape" in blockers
     assert "bare_instruction_fragment" in blockers
     assert "stranded_thereby_citation" in blockers
     assert "citation_report_sentence" in blockers
@@ -1201,6 +1201,81 @@ def test_v6_integrity_guard_rejects_malformed_serial_verb_chain():
     blockers = candidate_integrity_blockers(text)
 
     assert "malformed_serial_verb_chain" in blockers
+
+
+def test_v6_integrity_guard_allows_punctuated_serial_verb_list():
+    text = (
+        "A team may pass the review, yet it can still explain causes, "
+        "solve problems, or connect steps across the process."
+    )
+
+    blockers = candidate_integrity_blockers(text)
+
+    assert "malformed_serial_verb_chain" not in blockers
+
+
+def test_v6_integrity_guard_rejects_auxiliary_negation_stack():
+    text = "The team may complete the task but are do not always able to explain the result."
+
+    blockers = candidate_integrity_blockers(text)
+
+    assert "malformed_negation_order" in blockers
+
+
+def test_v6_integrity_guard_rejects_repeated_auxiliary_before_negation():
+    text = "The team may complete the task, yet they can can not explain the result."
+
+    blockers = candidate_integrity_blockers(text)
+
+    assert "malformed_serial_verb_chain" in blockers
+
+
+def test_v6_integrity_guard_rejects_missing_verb_after_negation_scope():
+    text = "The team can pass the check, but does not always how to explain the result."
+
+    blockers = candidate_integrity_blockers(text)
+
+    assert "missing_verb_after_negation_scope" in blockers
+
+
+def test_v6_selection_blocks_severe_not_only_polarity_inversion():
+    source = (
+        "The process does not only reward people who complete forms. "
+        "It also rewards people who explain decisions, adjust plans, communicate clearly, and build trust."
+    )
+    candidate = (
+        "The process rewards people who complete forms more than those who explain decisions, "
+        "adjust plans, communicate clearly, and build trust."
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    row = selection_diagnostics(
+        [
+            Variant(id="source_preserved", text=source, source="source_preserved"),
+            Variant(id="v1", text=candidate, source="llm"),
+        ],
+        paragraph,
+    )[0]
+
+    assert "source_polarity_inversion" in row["blockers"]
+
+
+def test_v6_selection_blocks_one_sided_not_only_relation_loss():
+    source = (
+        "The process does not only reward people who complete forms. "
+        "It also rewards people who explain decisions, adjust plans, communicate clearly, and build trust."
+    )
+    candidate = "The process rewards people who complete forms."
+    paragraph = scan_text(source).paragraphs[0]
+    row = selection_diagnostics(
+        [
+            Variant(id="source_preserved", text=source, source="source_preserved"),
+            Variant(id="v1", text=candidate, source="llm"),
+        ],
+        paragraph,
+    )[0]
+
+    assert "source_polarity_inversion" in row["blockers"]
+    assert row["accepted_by_selector"] is False
 
 
 def test_v6_integrity_guard_rejects_malformed_nominal_stack():

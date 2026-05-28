@@ -79,8 +79,8 @@ def provider_from_env(role: str, model: str) -> dict[str, Any] | None:
     order = _csv_env(f"{prefix}_ORDER")
     only = _csv_env(f"{prefix}_ONLY")
     ignore = _csv_env(f"{prefix}_IGNORE")
-    if not order and str(model or "").casefold() == "z-ai/glm-4.7":
-        order = ["Cerebras"]
+    if not order:
+        order = _csv_env("DRAFTPROOF_V6_PROVIDER_DEFAULT_ORDER")
     if order:
         provider["order"] = order
     if only:
@@ -197,7 +197,12 @@ def _selector_model() -> str:
 
 
 def _source_sensitive_text(text: str) -> bool:
-    return bool(re.search(r"\([A-Z][A-Za-z .,&;'-]*\b\d{4}\)|\b(?:Act|Standards?|assessment|competency|citation|legal|VET|TAFE|unit)\b", str(text or ""), flags=re.I))
+    value = str(text or "")
+    return bool(
+        re.search(r"\([A-Z][A-Za-z .,&;'-]*\b\d{4}\)", value)
+        or re.search(r"\b[A-Z]{2,}\b", value)
+        or re.search(r"\b[A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+){1,6}\s+(?:Act|Standards?|Code|Policy|Framework)\b", value)
+    )
 
 
 def _first_env(*names: str) -> str | None:
