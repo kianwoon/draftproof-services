@@ -290,7 +290,7 @@ def _variant_requirements() -> list[dict[str, str]]:
 def _requested_variant_requirements() -> list[dict[str, str]]:
     return _variant_requirements()[:_requested_variant_count()]
 def _requested_variant_count() -> int:
-    raw = os.environ.get("DRAFTPROOF_V6_WRITER_VARIANTS", "1")
+    raw = os.environ.get("DRAFTPROOF_V6_WRITER_VARIANTS", "3")
     try:
         value = int(raw)
     except ValueError:
