@@ -306,7 +306,7 @@ def _v6_min_llm_request_seconds() -> int:
 
 
 def _v6_max_passes() -> int:
-    return _int_env("DRAFTPROOF_V6_MAX_PASSES", 3, minimum=1, maximum=20)
+    return _int_env("DRAFTPROOF_V6_MAX_PASSES", 8, minimum=1, maximum=20)
 
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:

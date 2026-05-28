@@ -72,7 +72,8 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             ),
             "semantic_role_rule": (
                 "Use dense_paragraph_plan.semantic_role_map to combine source terms by role before writing. "
-                "A natural compact list is allowed when the listed terms share one role; do not create catalogue sentences to avoid commas."
+                "A natural compact list is allowed when the listed terms share one role; do not create catalogue sentences to avoid commas. "
+                "Do not move terms from one role into another role's sentence just to satisfy coverage."
             ),
             "human_route_rule": (
                 "Follow dense_paragraph_plan.human_route.movement and sentence_jobs. "
@@ -131,6 +132,11 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
                 "If paragraph_repair_plan.repair_unit is paragraph, rebuild paragraph flow from source meaning. "
                 "Merge only semantically dependent or mechanically repetitive short beats, keep independent contrasts visible, "
                 "allow one natural role-based list when clearer, and avoid a chain of same-shape short sentences."
+            ),
+            "coverage_role_integrity_rule": (
+                "Coverage must be grammatical and role-correct. A leftover source term appended to an unrelated closure, "
+                "challenge, or trust sentence is a failed variant. When a term cannot fit naturally, keep prose intact and "
+                "record the term in author_review_items."
             ),
         },
         "active_variant": variant_focus or {},
