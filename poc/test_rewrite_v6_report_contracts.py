@@ -1332,6 +1332,58 @@ def test_v6_generated_variants_require_selector_decision():
     assert result.candidate_diagnostics[0]["selector_source"] == "selector_required_missing"
 
 
+def test_v6_progress_reports_candidate_scoring_and_selector_steps():
+    source = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
+    writer = SequencedVariantClient([json.dumps({
+        "variants": [{
+            "id": "v1",
+            "text": "The process uses forms and queues while labels, reviews, approvals, and checks support team improvement.",
+        }]
+    })])
+    selector = SequencedVariantClient([json.dumps({"selected_id": "v1", "rationale": "test"})])
+    messages: list[tuple[int, str]] = []
+
+    run_v6_rewrite(
+        source,
+        writer_client=writer,
+        selector_client=selector,
+        progress_callback=lambda percent, message: messages.append((percent, message)),
+        progress_percent=63,
+        progress_end_percent=71,
+    )
+
+    assert (68, "Scoring V6 paragraph p001 candidate") in messages
+    assert (71, "Selecting V6 paragraph p001 candidate") in messages
+
+
+def test_v6_progress_reports_author_proxy_writer_step():
+    text = (
+        "Teams use forms, queues, reviewer notes, and follow-up checks before final decisions.\n\n"
+        "This is a serious concern because the process should improve across teams."
+    )
+    scan = scan_text(text)
+    paragraph, plan = build_plan(scan, excluded_paragraph_ids={"p001"}, priority_paragraph_ids={"p002"})
+    messages: list[tuple[int, str]] = []
+
+    v6_pipeline._run_v6_full_paragraph_rewrite(
+        scan=scan,
+        paragraph=paragraph,
+        plan=plan,
+        planner_client=None,
+        writer_client=SequencedVariantClient(['{"variants":[]}']),
+        selector_client=SequencedVariantClient([json.dumps({"selected_id": "v1", "rationale": "test"})]),
+        model=None,
+        api_key=None,
+        base_url=None,
+        progress_callback=lambda percent, message: messages.append((percent, message)),
+        progress_percent=63,
+        progress_end_percent=71,
+        cancellation_check=None,
+    )
+
+    assert (66, "Writing V6 paragraph p002 with Author-proxy") in messages
+
+
 def test_v6_citation_anchor_recipe_keeps_attribution_as_source_to_claim_relation():
     scan = scan_text("According to cognitive load theory, complex spatial task such as constructing haircutting structure place a significant strain on working memory.")
     paragraph, plan = build_plan(scan)

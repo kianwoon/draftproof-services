@@ -10,6 +10,9 @@ from poc.llm.gateway import LLMConfig, LLMGateway
 
 from .plan import Plan, build_plan
 from .planner_llm import run_planner_llm
+from .progress import emit_progress as _emit_progress
+from .progress import stage_progress_percent as _stage_progress_percent
+from .progress import writer_progress_message as _writer_progress_message
 from .repair_windows import RepairWindow, compose_window_rewrite, select_repair_window
 from .report_contracts import apply_report_signal_contracts
 from .scan import Scan, findings_for_paragraph, scan_text
@@ -81,6 +84,7 @@ def run_v6_rewrite(
     base_url: str | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     progress_percent: int | None = None,
+    progress_end_percent: int | None = None,
     cancellation_check: Callable[[], None] | None = None,
     report_signal_contracts: list[dict[str, Any]] | None = None,
     priority_paragraph_ids: set[str] | None = None,
@@ -105,6 +109,7 @@ def run_v6_rewrite(
             base_url=base_url,
             progress_callback=progress_callback,
             progress_percent=progress_percent,
+            progress_end_percent=progress_end_percent,
             cancellation_check=cancellation_check,
             report_signal_contracts=report_signal_contracts,
         )
@@ -120,6 +125,7 @@ def run_v6_rewrite(
         base_url=base_url,
         progress_callback=progress_callback,
         progress_percent=progress_percent,
+        progress_end_percent=progress_end_percent,
         cancellation_check=cancellation_check,
     )
 
@@ -156,6 +162,7 @@ def run_v6_rewrite_with_residuals(
         base_url=base_url,
         progress_callback=progress_callback,
         progress_percent=63,
+        progress_end_percent=79,
         cancellation_check=cancellation_check,
         report_signal_contracts=report_signal_contracts,
         priority_paragraph_ids=priority_paragraph_ids,
@@ -267,6 +274,7 @@ def _run_v6_full_paragraph_rewrite(
     base_url: str | None,
     progress_callback: Callable[[int, str], None] | None,
     progress_percent: int | None,
+    progress_end_percent: int | None,
     cancellation_check: Callable[[], None] | None,
 ) -> Result:
     target_findings = findings_for_paragraph(scan, paragraph.id)
@@ -283,7 +291,7 @@ def _run_v6_full_paragraph_rewrite(
                 cancellation_check=cancellation_check,
             ),
         )
-    _emit_progress(progress_callback, progress_percent, f"Writing V6 paragraph {paragraph.id}")
+    _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 1), _writer_progress_message(paragraph.id, plan))
     _raise_if_canceled(cancellation_check)
     client = writer_client or LLMGateway(
         LLMConfig(
@@ -298,8 +306,9 @@ def _run_v6_full_paragraph_rewrite(
     )
     variants = write_variants(paragraph, plan, client=client)
     _raise_if_canceled(cancellation_check)
-    _emit_progress(progress_callback, progress_percent, f"Scanning V6 paragraph {paragraph.id} candidate")
+    _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 2), f"Scoring V6 paragraph {paragraph.id} candidate")
     diagnostics = selection_diagnostics(variants, paragraph)
+    _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 3), f"Selecting V6 paragraph {paragraph.id} candidate")
     selected, diagnostics = _select_variant(
         paragraph=paragraph,
         variants=variants,
@@ -323,6 +332,7 @@ def _run_v6_window_rewrite(
     base_url: str | None,
     progress_callback: Callable[[int, str], None] | None,
     progress_percent: int | None,
+    progress_end_percent: int | None,
     cancellation_check: Callable[[], None] | None,
     report_signal_contracts: list[dict[str, Any]] | None,
 ) -> Result:
@@ -350,8 +360,8 @@ def _run_v6_window_rewrite(
         window_plan = _attach_window_context(window_plan, parent_plan, window)
     _emit_progress(
         progress_callback,
-        progress_percent,
-        f"Writing V6 paragraph {paragraph.id} window {window.start_sentence_index + 1}-{window.end_sentence_index + 1}",
+        _stage_progress_percent(progress_percent, progress_end_percent, 1),
+        _writer_progress_message(paragraph.id, window_plan, window=f"{window.start_sentence_index + 1}-{window.end_sentence_index + 1}"),
     )
     _raise_if_canceled(cancellation_check)
     client = writer_client or LLMGateway(
@@ -369,10 +379,15 @@ def _run_v6_window_rewrite(
     _raise_if_canceled(cancellation_check)
     _emit_progress(
         progress_callback,
-        progress_percent,
-        f"Scanning V6 paragraph {paragraph.id} window candidate",
+        _stage_progress_percent(progress_percent, progress_end_percent, 2),
+        f"Scoring V6 paragraph {paragraph.id} window candidate",
     )
     diagnostics = selection_diagnostics(variants, window_paragraph)
+    _emit_progress(
+        progress_callback,
+        _stage_progress_percent(progress_percent, progress_end_percent, 3),
+        f"Selecting V6 paragraph {paragraph.id} window candidate",
+    )
     selected, diagnostics = _select_variant(
         paragraph=window_paragraph,
         variants=variants,
@@ -381,6 +396,11 @@ def _run_v6_window_rewrite(
     )
     has_generated = any(variant.source != "source_preserved" for variant in variants)
     if has_generated and (selected is None or selected.source == "source_preserved"):
+        _emit_progress(
+            progress_callback,
+            _stage_progress_percent(progress_percent, progress_end_percent, 3),
+            f"Retrying full V6 paragraph {paragraph.id} after window candidate rejection",
+        )
         return _run_v6_full_paragraph_rewrite(
             scan=scan,
             paragraph=paragraph,
@@ -393,6 +413,7 @@ def _run_v6_window_rewrite(
             base_url=base_url,
             progress_callback=progress_callback,
             progress_percent=progress_percent,
+            progress_end_percent=progress_end_percent,
             cancellation_check=cancellation_check,
         )
     return Result(
@@ -606,6 +627,7 @@ def run_v6_rewrite_all(
                 )
             )
             break
+        end_percent = _rewrite_progress_percent(pass_index + 1, limit)
         result = run_v6_rewrite(
             current,
             planner_client=planner_client,
@@ -617,11 +639,11 @@ def run_v6_rewrite_all(
             base_url=base_url,
             progress_callback=progress_callback,
             progress_percent=start_percent,
+            progress_end_percent=end_percent,
             cancellation_check=cancellation_check,
             report_signal_contracts=report_signal_contracts,
             priority_paragraph_ids=finding_paragraph_ids - exhausted,
         )
-        end_percent = _rewrite_progress_percent(pass_index + 1, limit)
         if _same_text(result.rewritten_text, current):
             attempts[result.plan.paragraph_id] = attempts.get(result.plan.paragraph_id, 0) + 1
             retryable_no_change = retryable_no_change_result(result)
@@ -777,6 +799,7 @@ def _run_residual_followups(
             base_url=base_url,
             progress_callback=progress_callback,
             progress_percent=progress_percent,
+            progress_end_percent=min(87, progress_percent + 3),
             cancellation_check=cancellation_check,
             report_signal_contracts=report_signal_contracts,
             priority_paragraph_ids=active_targets,
@@ -1253,11 +1276,6 @@ def _rewrite_progress_percent(step: int, limit: int) -> int:
     bounded_limit = max(1, int(limit or 1))
     bounded_step = max(0, min(bounded_limit, int(step or 0)))
     return span_start + int(round((span_end - span_start) * (bounded_step / bounded_limit)))
-
-
-def _emit_progress(callback: Callable[[int, str], None] | None, percent: int | None, message: str) -> None:
-    if callback is not None and percent is not None:
-        callback(percent, message)
 
 
 DEFAULT_V6_MODEL = "openai/gpt-oss-120b"
