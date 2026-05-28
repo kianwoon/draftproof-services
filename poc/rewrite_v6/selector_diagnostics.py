@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 from .coverage_guard import missing_required_source_term_details
-from .integrity_guard import candidate_integrity_blockers
+from .integrity_guard import candidate_integrity_blockers, candidate_integrity_warnings
 from .prose_quality import has_fragment_or_trace_sentences
 from .prose_quality import catalogue_sentence_chain, robotic_sentence_chain
 from .scan import scan_text
@@ -175,52 +175,7 @@ def _blockers(
     copy_blockers: list[str],
 ) -> list[str]:
     blockers: list[str] = []
-    blockers.extend(
-        blocker for blocker in integrity_blockers
-        if blocker in {
-            "planner_language_leakage",
-            "external_narrator_reporting_chain",
-            "malformed_subject_verb_agreement",
-            "malformed_negation_order",
-            "missing_verb_after_negation_scope",
-            "malformed_serial_verb_chain",
-            "malformed_nominal_stack",
-            "malformed_nonhuman_activity_predicate",
-            "malformed_telegraphic_predicate",
-            "unnatural_completion_phrase",
-            "dangling_consequence_tail",
-            "dangling_additive_tail",
-            "standalone_additive_fragment",
-            "malformed_parallel_connector_list",
-            "malformed_parallel_verb_tail",
-            "redundant_trust_phrase",
-            "keyword_dump_sequence",
-            "lost_serial_punctuation",
-            "capitalized_common_noun_mid_sentence",
-            "repeated_platform_catalogue",
-            "repeated_subject_start",
-            "vague_unintroduced_reliance",
-            "malformed_tool_actor_relation",
-            "malformed_with_finite_clause",
-            "malformed_tool_skill_predicate",
-            "demonstrative_agreement_error",
-            "semantic_anchor_corruption",
-            "sentence_starts_with_conjunction",
-            "stranded_prepositional_fragment",
-            "malformed_connector_fragment",
-            "malformed_contrast_pair",
-            "malformed_additive_predicate",
-            "proxy_context_adjective_stack",
-            "generic_role_inflation",
-            "unsupported_evidence_tail",
-            "awkward_modal_double_hedge",
-            "vague_danger_opener",
-            "duplicated_assessment_consequence",
-            "premature_assessment_consequence",
-            "transition_label_final_consequence",
-            "compressed_final_consequence_list",
-        }
-    )
+    blockers.extend(candidate_integrity_blockers(variant.text))
     if source is not None and finding_drop < 1 and risk_drop < 5.0:
         blockers.append("insufficient_scanner_movement")
     if source is not None and finding_drop == 0 and risk_drop < 0:
@@ -353,6 +308,7 @@ def _quality_warnings(variant: Variant, paragraph: Paragraph) -> list[str]:
         warnings.append("required_source_terms_missing_review_required")
     integrity_blockers = candidate_integrity_blockers(variant.text)
     warnings.extend(f"{blocker}_review_required" for blocker in integrity_blockers)
+    warnings.extend(f"{warning}_review_required" for warning in candidate_integrity_warnings(variant.text))
     if _hard_candidate_contract_violation(variant.text, paragraph):
         warnings.append("candidate_contract_violation_review_required")
     if has_fragment_or_trace_sentences(variant.text):

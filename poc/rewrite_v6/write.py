@@ -762,45 +762,7 @@ def _unreviewed_bridge_violation(variant: Variant, paragraph: Paragraph) -> bool
 
 
 def _hard_integrity_blockers(text: str) -> list[str]:
-    return [
-        blocker for blocker in candidate_integrity_blockers(text)
-        if blocker in {
-            "planner_language_leakage",
-            "external_narrator_reporting_chain",
-            "malformed_negation_order",
-            "missing_verb_after_negation_scope",
-            "malformed_serial_verb_chain",
-            "malformed_nominal_stack",
-            "malformed_nonhuman_activity_predicate",
-            "malformed_telegraphic_predicate",
-            "unnatural_completion_phrase",
-            "dangling_consequence_tail",
-            "dangling_additive_tail",
-            "standalone_additive_fragment",
-            "malformed_parallel_connector_list",
-            "malformed_parallel_verb_tail",
-            "redundant_trust_phrase",
-            "keyword_dump_sequence",
-            "lost_serial_punctuation",
-            "capitalized_common_noun_mid_sentence",
-            "repeated_platform_catalogue",
-            "repeated_subject_start",
-            "vague_unintroduced_reliance",
-            "malformed_tool_actor_relation",
-            "malformed_with_finite_clause",
-            "malformed_tool_skill_predicate",
-            "malformed_contrast_pair",
-            "malformed_additive_predicate",
-            "proxy_context_adjective_stack",
-            "generic_role_inflation",
-            "unsupported_evidence_tail",
-            "awkward_modal_double_hedge",
-            "duplicated_assessment_consequence",
-            "premature_assessment_consequence",
-            "transition_label_final_consequence",
-            "compressed_final_consequence_list",
-        }
-    ]
+    return candidate_integrity_blockers(text)
 
 
 def _word_base(word: str) -> str:

@@ -1205,7 +1205,7 @@ def _dynamic_pass_limit(scan: Scan, report_signal_contracts: list[dict[str, Any]
     active_paragraphs = _finding_paragraph_ids(scan) | _report_target_paragraph_ids(scan, report_signal_contracts)
     if not active_paragraphs:
         return 1
-    return min(
+    planned = min(
         _dynamic_max_passes(),
         max(
             len(active_paragraphs),
@@ -1213,6 +1213,7 @@ def _dynamic_pass_limit(scan: Scan, report_signal_contracts: list[dict[str, Any]
             len(active_paragraphs) * _attempts_per_finding_paragraph(),
         ),
     )
+    return max(len(active_paragraphs), planned)
 
 
 def _attempts_per_finding_paragraph() -> int:

@@ -310,7 +310,7 @@ def _v6_max_passes() -> int | None:
 
     raw = os.environ.get("DRAFTPROOF_V6_MAX_PASSES")
     if raw is None or not raw.strip():
-        return 3
+        return None
     return _int_env("DRAFTPROOF_V6_MAX_PASSES", 0, minimum=1, maximum=20)
 
 

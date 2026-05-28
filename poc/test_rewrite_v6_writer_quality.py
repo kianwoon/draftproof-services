@@ -4,7 +4,7 @@ from poc.rewrite_v6.prose_quality import catalogue_sentence_chain, repair_genera
 from poc.rewrite_v6.prose_quality import has_fragment_or_trace_sentences
 from poc.rewrite_v6.scan import scan_text
 from poc.rewrite_v6.selector_diagnostics import selection_diagnostics
-from poc.rewrite_v6.integrity_guard import candidate_integrity_blockers
+from poc.rewrite_v6.integrity_guard import candidate_integrity_blockers, candidate_integrity_warnings
 from poc.rewrite_v6.write import Variant, _candidate_contract_violation, choose_variant
 
 
@@ -184,8 +184,9 @@ def test_v6_writer_quality_blocks_repeated_subject_and_unintroduced_reliance():
     )
 
     blockers = candidate_integrity_blockers(text)
+    warnings = candidate_integrity_warnings(text)
 
-    assert "repeated_subject_start" in blockers
+    assert "repeated_subject_start" in warnings
     assert "vague_unintroduced_reliance" in blockers
 
 
@@ -199,6 +200,18 @@ def test_v6_writer_quality_blocks_tool_actor_semantic_role_defects():
 
     assert "malformed_tool_actor_relation" in blockers
     assert "malformed_tool_skill_predicate" in blockers
+
+
+def test_v6_writer_quality_blocks_modal_do_negation():
+    text = "Students may do not always acquire the capacity to think deeply."
+
+    assert "malformed_modal_do_negation" in candidate_integrity_blockers(text)
+
+
+def test_v6_writer_quality_blocks_dangling_terminal_and_tail():
+    text = "The real challenge is knowing what is accurate, useful, ethical, and worth trusting and AI tools."
+
+    assert "dangling_terminal_and_tail" in candidate_integrity_blockers(text)
 
 
 def test_v6_writer_quality_allows_students_as_practise_skills_actor():
@@ -249,10 +262,11 @@ def test_v6_writer_quality_blocks_keyword_dump_sequences():
     )
 
     blockers = candidate_integrity_blockers(text)
+    warnings = candidate_integrity_warnings(text)
 
     assert "keyword_dump_sequence" in blockers
     assert "lost_serial_punctuation" in blockers
-    assert "repeated_platform_catalogue" in blockers
+    assert "repeated_platform_catalogue" in warnings
 
 
 def test_v6_writer_quality_blocks_capitalized_common_noun_mid_sentence():

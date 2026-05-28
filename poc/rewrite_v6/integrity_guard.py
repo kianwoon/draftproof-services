@@ -18,6 +18,8 @@ def candidate_integrity_blockers(text: str) -> list[str]:
         blockers.append("split_negation_fragment")
     if _malformed_negation_order(visible):
         blockers.append("malformed_negation_order")
+    if _malformed_modal_do_negation(visible):
+        blockers.append("malformed_modal_do_negation")
     if _missing_verb_after_negation_scope(visible):
         blockers.append("missing_verb_after_negation_scope")
     if _malformed_verb_complement(visible):
@@ -50,6 +52,8 @@ def candidate_integrity_blockers(text: str) -> list[str]:
         blockers.append("dangling_consequence_tail")
     if _dangling_additive_tail(visible):
         blockers.append("dangling_additive_tail")
+    if _dangling_terminal_and_tail(visible):
+        blockers.append("dangling_terminal_and_tail")
     if _standalone_additive_fragment(visible):
         blockers.append("standalone_additive_fragment")
     if _malformed_parallel_connector_list(visible):
@@ -64,10 +68,6 @@ def candidate_integrity_blockers(text: str) -> list[str]:
         blockers.append("lost_serial_punctuation")
     if _capitalized_common_noun_mid_sentence(visible):
         blockers.append("capitalized_common_noun_mid_sentence")
-    if _repeated_platform_catalogue(visible):
-        blockers.append("repeated_platform_catalogue")
-    if _repeated_subject_start(visible):
-        blockers.append("repeated_subject_start")
     if _vague_unintroduced_reliance(visible):
         blockers.append("vague_unintroduced_reliance")
     if _malformed_tool_actor_relation(visible):
@@ -76,8 +76,6 @@ def candidate_integrity_blockers(text: str) -> list[str]:
         blockers.append("malformed_tool_skill_predicate")
     if _demonstrative_agreement_error(visible):
         blockers.append("demonstrative_agreement_error")
-    if _dangling_modifier_sentence_start(visible):
-        blockers.append("dangling_modifier_sentence_start")
     if _semantic_anchor_corruption(visible):
         blockers.append("semantic_anchor_corruption")
     if _sentence_starts_with_conjunction(visible):
@@ -104,11 +102,23 @@ def candidate_integrity_blockers(text: str) -> list[str]:
         blockers.append("duplicated_assessment_consequence")
     if _premature_assessment_consequence(visible):
         blockers.append("premature_assessment_consequence")
-    if _transition_label_final_consequence(visible):
-        blockers.append("transition_label_final_consequence")
-    if _compressed_final_consequence_list(visible):
-        blockers.append("compressed_final_consequence_list")
     return blockers
+
+
+def candidate_integrity_warnings(text: str) -> list[str]:
+    warnings: list[str] = []
+    visible = _normalize(text)
+    if _repeated_platform_catalogue(visible):
+        warnings.append("repeated_platform_catalogue")
+    if _repeated_subject_start(visible):
+        warnings.append("repeated_subject_start")
+    if _dangling_modifier_sentence_start(visible):
+        warnings.append("dangling_modifier_sentence_start")
+    if _transition_label_final_consequence(visible):
+        warnings.append("transition_label_final_consequence")
+    if _compressed_final_consequence_list(visible):
+        warnings.append("compressed_final_consequence_list")
+    return warnings
 
 
 def _normalize(text: str) -> str:
@@ -261,6 +271,10 @@ def _malformed_negation_order(text: str) -> bool:
         or re.search(r"\bnot\s+longer\s+(?:appropriate|suitable|adequate|sufficient|reflecting|reflects?)\b", text, flags=re.I)
         or _bare_not_always_without_auxiliary(text)
     )
+
+
+def _malformed_modal_do_negation(text: str) -> bool:
+    return bool(re.search(r"\b(?:may|might|could|should|would|can)\s+do\s+not\s+\w+", text, flags=re.I))
 
 
 def _bare_not_always_without_auxiliary(text: str) -> bool:
@@ -468,6 +482,21 @@ def _dangling_additive_tail(text: str) -> bool:
         re.search(r"\b(?:and|or)\s+(?:additionally|also|further|moreover)\s*[.!?]", text, flags=re.I)
         or any(_has_dangling_participle_tail(sentence) for sentence in _sentences(text))
     )
+
+
+def _dangling_terminal_and_tail(text: str) -> bool:
+    for sentence in _sentences(text):
+        lowered = sentence.casefold()
+        if not re.search(r"\b(?:what|which|whether)\s+(?:is|are|can\s+be)\b", lowered):
+            continue
+        if sentence.count(",") < 2:
+            continue
+        if re.search(
+            r"\b(?:worth|safe|fair|valid|useful|ethical|accurate|original|responsible)\s+\w+\s+and\s+[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2}\s*[.!?]?$",
+            lowered,
+        ):
+            return True
+    return False
 
 
 def _has_dangling_participle_tail(sentence: str) -> bool:

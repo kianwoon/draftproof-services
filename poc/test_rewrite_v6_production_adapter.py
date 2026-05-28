@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from poc.rewrite_v6 import production as v6_production
+from poc.rewrite_v6.pipeline import _dynamic_pass_limit
 from poc.rewrite_v6.scan import scan_text
 
 
@@ -42,8 +43,8 @@ def test_v6_production_adapter_uses_configured_three_pass_budget(tmp_path, monke
     assert summary["rewrite_effective_config"]["max_passes"] == 3
 
 
-def test_v6_production_adapter_defaults_to_three_pass_budget(tmp_path, monkeypatch):
-    captured: dict[str, int] = {}
+def test_v6_production_adapter_defaults_to_dynamic_pass_budget(tmp_path, monkeypatch):
+    captured: dict[str, int | None] = {}
 
     def fake_run_v6_rewrite_all(text, **kwargs):
         captured["max_passes"] = kwargs["max_passes"]
@@ -72,5 +73,20 @@ def test_v6_production_adapter_defaults_to_three_pass_budget(tmp_path, monkeypat
     )
     summary = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
 
-    assert captured["max_passes"] == 3
-    assert summary["rewrite_effective_config"]["max_passes"] == 3
+    assert captured["max_passes"] is None
+    assert summary["rewrite_effective_config"]["max_passes"] is None
+
+
+def test_v6_dynamic_pass_budget_covers_each_finding_paragraph(monkeypatch):
+    scan = SimpleNamespace(
+        findings=[
+            SimpleNamespace(paragraph_id="p001"),
+            SimpleNamespace(paragraph_id="p002"),
+            SimpleNamespace(paragraph_id="p003"),
+            SimpleNamespace(paragraph_id="p004"),
+        ]
+    )
+
+    monkeypatch.setenv("DRAFTPROOF_V6_MAX_DYNAMIC_PASSES", "2")
+
+    assert _dynamic_pass_limit(scan) == 4
