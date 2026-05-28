@@ -656,6 +656,40 @@ def test_v6_author_proxy_feeds_planner_before_writer_handoff():
     assert "author_proxy_plan" not in planner_decision
 
 
+def test_v6_author_proxy_malformed_json_degrades_without_task_retry():
+    source = "This result shows a serious concern because the process should improve across teams."
+    scan = scan_text(source)
+    paragraph, plan = build_plan(scan)
+    findings = scan.findings
+    request_decision = _planner_decision(
+        author_proxy_request={
+            "required": True,
+            "reason": "author_anchor_gap requires submitted context before the broad claim can be scoped",
+            "target_sentence_ids": ["p001_s001"],
+            "finding_basis": ["author_anchor_gap"],
+        },
+    )
+    planned = run_planner_llm(
+        paragraph,
+        plan,
+        findings,
+        client=StaticJsonClient(json.dumps({"planner_decision": request_decision})),
+    )
+
+    packed = attach_author_proxy_pack(
+        paragraph,
+        planned,
+        findings,
+        client=StaticJsonClient('{"proxy_pack":{"usable_bridges":[{"bridge_id":"b001"}]'),
+    )
+
+    pack = packed.paragraph_strategy["author_proxy_pack"]
+    assert author_proxy_required(packed) is False
+    assert pack["status"] == "failed"
+    assert pack["usable_bridges"] == []
+    assert pack["error_type"] == "JSONDecodeError"
+
+
 def test_v6_author_proxy_promotes_grounded_review_bridge_to_usable_bridge():
     source = "This result creates a serious concern because the review process should improve."
     scan = scan_text(source)

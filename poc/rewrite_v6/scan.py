@@ -6,7 +6,7 @@ from statistics import mean
 from typing import Any
 
 from .paragraph_normalizer import normalize_paragraph_blocks
-from .text import Paragraph, Sentence, split_paragraphs
+from .text import Paragraph, Sentence, split_paragraphs, split_sentences, word_count
 
 
 @dataclass(frozen=True)
@@ -84,6 +84,258 @@ def scan_text(text: str) -> Scan:
             "mean_sentence_shape_risk": round(mean(risks), 3) if risks else 0.0,
         },
     )
+
+
+def scan_text_with_report(text: str, report: dict[str, Any] | None) -> Scan:
+    """Build a V6 scan from full submitted text plus scanner report identity metadata."""
+    base = scan_text(text)
+    if not isinstance(report, dict):
+        return base
+    paragraphs = _report_aligned_paragraphs(base.source_text, report)
+    if not paragraphs:
+        return base
+    scan = _scan_from_paragraphs(base.source_text, paragraphs)
+    report_findings = _report_findings(report, paragraphs)
+    if not report_findings:
+        return scan
+    findings = _merge_findings(scan.findings, report_findings)
+    return Scan(
+        source_text=scan.source_text,
+        paragraphs=scan.paragraphs,
+        findings=findings,
+        scores={
+            **scan.scores,
+            "finding_count": float(len(findings)),
+            "report_finding_count": float(len(report_findings)),
+        },
+    )
+
+
+def _scan_from_paragraphs(text: str, paragraphs: list[Paragraph]) -> Scan:
+    sentences = [sentence for paragraph in paragraphs for sentence in paragraph.sentences]
+    risks = [_risk(sentence) for sentence in sentences]
+    threshold = max(12.0, mean(risks) if risks else 0.0)
+    findings: list[Finding] = []
+    seen_findings: set[tuple[str, str]] = set()
+    for sentence, risk in zip(sentences, risks, strict=False):
+        tags = _dedupe([*_tags(sentence), *(["paragraph_rhythm"] if risk >= threshold else [])])
+        if tags and risk >= 12.0:
+            for tag in tags:
+                seen_findings.add((sentence.id, tag))
+            findings.append(
+                Finding(
+                    sentence_id=sentence.id,
+                    paragraph_id=sentence.paragraph_id,
+                    tags=tags,
+                    severity=round(risk, 3),
+                    evidence={
+                        "text": sentence.text,
+                        "word_count": sentence.word_count,
+                        "list_pressure": round(_list_pressure(sentence.text), 3),
+                        "abstract_pressure": round(_abstract_pressure(sentence.text), 3),
+                    },
+                )
+            )
+    for finding in _repeated_frame_findings(paragraphs):
+        key = (finding.sentence_id, "repeated_sentence_frame")
+        if key in seen_findings:
+            continue
+        findings.append(finding)
+        seen_findings.add(key)
+    return Scan(
+        source_text=text,
+        paragraphs=paragraphs,
+        findings=findings,
+        scores={
+            "finding_count": float(len(findings)),
+            "paragraph_count": float(len(paragraphs)),
+            "sentence_count": float(len(sentences)),
+            "mean_sentence_shape_risk": round(mean(risks), 3) if risks else 0.0,
+        },
+    )
+
+
+def _report_aligned_paragraphs(text: str, report: dict[str, Any]) -> list[Paragraph]:
+    blocks = [block.strip() for block in re.split(r"\n\s*\n+", normalize_paragraph_blocks(text)) if block.strip()]
+    report_rows = _report_paragraph_rows(report)
+    if not blocks:
+        return []
+    if report_rows and len(report_rows) != len(blocks):
+        return []
+    sentence_id_map = _report_sentence_id_map(report)
+    paragraphs: list[Paragraph] = []
+    for index, block in enumerate(blocks):
+        paragraph_id = _report_paragraph_id(report_rows, index)
+        sentences = _align_sentence_ids(
+            split_sentences(block, paragraph_id=paragraph_id),
+            paragraph_id=paragraph_id,
+            sentence_id_map=sentence_id_map,
+        )
+        paragraphs.append(Paragraph(id=paragraph_id, index=index, text=block, sentences=sentences))
+    return paragraphs
+
+
+def _report_paragraph_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    document = (report.get("scan_intelligence") or {}).get("document") if isinstance(report.get("scan_intelligence"), dict) else {}
+    rows = document.get("paragraphs") if isinstance(document, dict) else []
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _report_paragraph_id(rows: list[dict[str, Any]], index: int) -> str:
+    if 0 <= index < len(rows):
+        paragraph_id = str(rows[index].get("paragraph_id") or "").strip()
+        if paragraph_id:
+            return paragraph_id
+    return f"p{index + 1:03d}"
+
+
+def _report_sentence_id_map(report: dict[str, Any]) -> dict[tuple[str, str], str]:
+    sentence_map = report.get("sentence_map") if isinstance(report.get("sentence_map"), dict) else {}
+    rows: dict[tuple[str, str], str] = {}
+    for sentence_id, item in sentence_map.items():
+        if not isinstance(item, dict):
+            continue
+        paragraph_id = str(item.get("paragraph_id") or "").strip()
+        text = _text_key(item.get("text"))
+        if paragraph_id and text:
+            rows[(paragraph_id, text)] = str(sentence_id)
+    return rows
+
+
+def _align_sentence_ids(
+    sentences: list[Sentence],
+    *,
+    paragraph_id: str,
+    sentence_id_map: dict[tuple[str, str], str],
+) -> list[Sentence]:
+    used: set[str] = set()
+    aligned: list[Sentence] = []
+    for sentence in sentences:
+        report_id = sentence_id_map.get((paragraph_id, _text_key(sentence.text)))
+        sentence_id = report_id if report_id and report_id not in used else sentence.id
+        used.add(sentence_id)
+        aligned.append(
+            Sentence(
+                id=sentence_id,
+                paragraph_id=paragraph_id,
+                index=sentence.index,
+                text=sentence.text,
+                word_count=sentence.word_count,
+            )
+        )
+    return aligned
+
+
+def _report_findings(report: dict[str, Any], paragraphs: list[Paragraph]) -> list[Finding]:
+    sentence_lookup = {
+        sentence.id: sentence
+        for paragraph in paragraphs
+        for sentence in paragraph.sentences
+    }
+    grouped: dict[str, dict[str, Any]] = {}
+    for segment in report.get("highlight_segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        sentence_id = str(segment.get("sentence_id") or segment.get("segment_id") or "").strip()
+        sentence = sentence_lookup.get(sentence_id)
+        if sentence is None:
+            continue
+        signals = [signal for signal in segment.get("signals") or [] if isinstance(signal, dict)]
+        if not signals:
+            primary = segment.get("primary_signal")
+            signals = [primary] if isinstance(primary, dict) else []
+        if not signals:
+            continue
+        entry = grouped.setdefault(sentence_id, {
+            "sentence": sentence,
+            "tags": [],
+            "severity": 0.0,
+            "finding_ids": [],
+            "actionability": [],
+        })
+        for signal in signals:
+            entry["tags"].extend(_report_signal_tags(signal))
+            entry["severity"] = max(float(entry["severity"]), _report_signal_severity(signal))
+            finding_id = str(signal.get("finding_id") or "").strip()
+            if finding_id:
+                entry["finding_ids"].append(finding_id)
+            actionability = str(signal.get("actionability") or "").strip()
+            if actionability:
+                entry["actionability"].append(actionability)
+    findings: list[Finding] = []
+    for sentence_id, entry in grouped.items():
+        sentence = entry["sentence"]
+        tags = _dedupe([tag for tag in entry["tags"] if tag])
+        if not tags:
+            continue
+        findings.append(
+            Finding(
+                sentence_id=sentence_id,
+                paragraph_id=sentence.paragraph_id,
+                tags=tags,
+                severity=round(max(12.0, float(entry["severity"])), 3),
+                evidence={
+                    "text": sentence.text,
+                    "source": "scan_report",
+                    "finding_ids": _dedupe(entry["finding_ids"])[:8],
+                    "actionability": _dedupe(entry["actionability"])[:6],
+                    "word_count": word_count(sentence.text),
+                },
+            )
+        )
+    return findings
+
+
+def _report_signal_tags(signal: dict[str, Any]) -> list[str]:
+    values = [
+        signal.get("title"),
+        signal.get("scanner"),
+        signal.get("category"),
+        signal.get("key"),
+    ]
+    tags: list[str] = []
+    for value in values:
+        tag = re.sub(r"[^a-z0-9]+", "_", str(value or "").casefold()).strip("_")
+        if tag:
+            tags.append(tag)
+    return tags
+
+
+def _report_signal_severity(signal: dict[str, Any]) -> float:
+    for key in ("score", "adjusted_risk", "severity"):
+        try:
+            value = float(signal.get(key))
+        except (TypeError, ValueError):
+            continue
+        return value * 100.0 if 0 < value <= 1 else value
+    tier = str(signal.get("tier") or "").casefold()
+    return {"critical": 85.0, "high": 70.0, "medium": 45.0, "low": 18.0}.get(tier, 20.0)
+
+
+def _merge_findings(base: list[Finding], report_findings: list[Finding]) -> list[Finding]:
+    merged: dict[str, Finding] = {finding.sentence_id: finding for finding in base}
+    for finding in report_findings:
+        current = merged.get(finding.sentence_id)
+        if current is None:
+            merged[finding.sentence_id] = finding
+            continue
+        merged[finding.sentence_id] = Finding(
+            sentence_id=current.sentence_id,
+            paragraph_id=current.paragraph_id,
+            tags=_dedupe([*current.tags, *finding.tags]),
+            severity=max(current.severity, finding.severity),
+            evidence={
+                **current.evidence,
+                "report_evidence": finding.evidence,
+            },
+        )
+    return list(merged.values())
+
+
+def _text_key(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
 
 
 def _repeated_frame_findings(paragraphs: list[Paragraph]) -> list[Finding]:

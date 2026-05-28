@@ -119,12 +119,13 @@ def run_v6_rewrite(
     cancellation_check: Callable[[], None] | None = None,
     report_signal_contracts: list[dict[str, Any]] | None = None,
     priority_paragraph_ids: set[str] | None = None,
+    source_scan: Scan | None = None,
 ) -> Result:
     _raise_if_canceled(cancellation_check)
     api_key = _resolve_v6_api_key(api_key)
     base_url = _resolve_v6_base_url(base_url)
     model = _resolve_v6_model(model)
-    scan = scan_text(text)
+    scan = source_scan or scan_text(text)
     paragraph, plan = build_plan(scan, excluded_paragraph_ids, priority_paragraph_ids)
     plan = apply_report_signal_contracts(plan, report_signal_contracts)
     target_findings = findings_for_paragraph(scan, paragraph.id)
@@ -825,9 +826,10 @@ def run_v6_rewrite_all(
     min_llm_request_seconds: float = 180.0,
     report_signal_contracts: list[dict[str, Any]] | None = None,
     residual_followup_passes: int | None = None,
+    source_scan: Scan | None = None,
 ) -> DocumentResult:
     started_at = time.monotonic()
-    initial_scan = scan_text(text)
+    initial_scan = source_scan or scan_text(text)
     current = text
     passes: list[Result] = []
     pass_trace: list[dict[str, Any]] = []
@@ -889,6 +891,7 @@ def run_v6_rewrite_all(
             cancellation_check=cancellation_check,
             report_signal_contracts=report_signal_contracts,
             priority_paragraph_ids=finding_paragraph_ids - exhausted,
+            source_scan=source_scan,
         )
         result = _project_source_result_to_current(source_result, before)
         if _same_text(result.rewritten_text, current):

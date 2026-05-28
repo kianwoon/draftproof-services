@@ -26,27 +26,43 @@ def attach_author_proxy_pack(paragraph: Paragraph, plan: Plan, findings: list[Fi
     if not author_proxy_required(plan):
         return plan
     author_profile = _author_profile_for_plan(paragraph, plan, findings)
-    response = client.chat(
-        _build_prompt(paragraph, plan, findings, author_profile=author_profile),
-        system=(
-            "Return valid JSON only. Act as an author-proxy content layer, not the final prose writer. "
-            "Act like the author and a subject expert supplying missing intent/context, not a generic essay improver. "
-            "Feed the planner a small reviewable content bridge that fills the local anchor gap from submitted context."
-        ),
-        temperature=0.05,
-        top_p=0.8,
-        max_tokens=1400,
-        response_format={"type": "json_object"},
-        app_label="Author-proxy",
-    )
-    pack = _parse_pack(
-        parse_json(getattr(response, "raw_content", "") or response.content),
-        support_text=_support_text_for_plan(paragraph, plan),
-    )
+    try:
+        response = client.chat(
+            _build_prompt(paragraph, plan, findings, author_profile=author_profile),
+            system=(
+                "Return valid JSON only. Act as an author-proxy content layer, not the final prose writer. "
+                "Act like the author and a subject expert supplying missing intent/context, not a generic essay improver. "
+                "Feed the planner a small reviewable content bridge that fills the local anchor gap from submitted context."
+            ),
+            temperature=0.05,
+            top_p=0.8,
+            max_tokens=1400,
+            response_format={"type": "json_object"},
+            app_label="Author-proxy",
+        )
+        pack = _parse_pack(
+            parse_json(getattr(response, "raw_content", "") or response.content),
+            support_text=_support_text_for_plan(paragraph, plan),
+        )
+    except Exception as exc:
+        pack = _failed_pack(type(exc).__name__)
     pack["author_profile"] = author_profile
     strategy = dict(plan.paragraph_strategy)
     strategy["author_proxy_pack"] = pack
     return replace(plan, paragraph_strategy=strategy)
+
+
+def _failed_pack(reason: str) -> dict[str, Any]:
+    return {
+        "usable_bridges": [],
+        "planner_guidance": {
+            "use": "Proceed with selected-paragraph source meaning only; no author-proxy bridge was available.",
+            "avoid": ["do not invent missing context to replace the failed author-proxy bridge"],
+        },
+        "author_review_items": [],
+        "status": "failed",
+        "error_type": str(reason or "author_proxy_failed"),
+    }
 
 
 def _build_prompt(

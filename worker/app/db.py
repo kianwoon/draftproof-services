@@ -201,9 +201,11 @@ def update_rewrite_status(
         vals = [status]
         if status == "completed":
             sets.append("completed_at = now()")
-        if error:
+        if error is not None:
             sets.append("error = %s")
             vals.append(error)
+        elif status == "completed":
+            sets.append("error = NULL")
         if include_progress and progress_percent is not None:
             sets.append("progress_percent = %s")
             vals.append(max(0, min(100, int(progress_percent))))

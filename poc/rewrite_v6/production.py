@@ -21,6 +21,7 @@ except ModuleNotFoundError:
 
 from .pipeline import _planner_model, _writer_model, run_v6_rewrite_all
 from .report_contracts import extract_report_signal_contracts
+from .scan import scan_text_with_report
 
 
 def run_rewrite_pipeline_v6(
@@ -55,6 +56,7 @@ def run_rewrite_pipeline_v6(
     resolved_writer_model = model or _writer_model()
     resolved_planner_model = _planner_model()
     max_passes = _v6_max_passes()
+    source_scan = scan_text_with_report(original_text, effective_detect_json)
 
     document = run_v6_rewrite_all(
         original_text,
@@ -67,6 +69,7 @@ def run_rewrite_pipeline_v6(
         runtime_budget_seconds=_v6_runtime_budget_seconds(started),
         min_llm_request_seconds=_v6_min_llm_request_seconds(),
         report_signal_contracts=extract_report_signal_contracts(effective_detect_json),
+        source_scan=source_scan,
     )
     stage_timings: list[dict[str, Any]] = []
 
@@ -126,6 +129,9 @@ def run_rewrite_pipeline_v6(
             "pipeline": "v6",
             "max_passes": max_passes,
             "passes": len(document.passes),
+            "source_scan": "scan_json_aligned",
+            "source_scan_paragraphs": len(source_scan.paragraphs),
+            "source_scan_report_findings": int(source_scan.scores.get("report_finding_count") or 0),
         },
         "rewrite_source": rewrite_source,
         "candidate_generation_status": {
