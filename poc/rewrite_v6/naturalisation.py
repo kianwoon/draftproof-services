@@ -116,7 +116,7 @@ def run_naturalisation_repair(
         app_label="naturalisation",
     )
     payload = parse_json(getattr(response, "raw_content", "") or response.content)
-    operations = _with_deterministic_candidates(text, _parse_operations(payload))
+    operations = _with_rule_candidates(text, _parse_operations(payload))
     repaired, applied, skipped = apply_naturalisation_operations(text, operations)
     return NaturalisationResult(
         original_text=text,
@@ -242,17 +242,17 @@ def _parse_operations(payload: Any) -> list[NaturalisationOperation]:
     return operations
 
 
-def _with_deterministic_candidates(
+def _with_rule_candidates(
     text: str,
     operations: list[NaturalisationOperation],
 ) -> list[NaturalisationOperation]:
-    deterministic = [
+    rule_candidates = [
         *_passive_voice_candidates(text),
         *_rhetorical_ladder_candidates(text),
         *_repeated_subject_candidates(text),
         *_parallel_clause_candidates(text),
     ]
-    return [*deterministic, *operations]
+    return [*rule_candidates, *operations]
 
 
 def _repeated_subject_candidates(text: str) -> list[NaturalisationOperation]:

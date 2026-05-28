@@ -316,7 +316,7 @@ def test_v6_downgrades_unsafe_llm_planner_contracts_to_route_questions():
     serialized_decision = json.dumps(decision)
     assert "concrete source anchor" in serialized_decision or "Group related source terms" in serialized_decision
     assert "author_route_questions" in build_prompt(paragraph, updated)
-    assert "deterministic fallback finding_contracts" in decision["fallback_instruction"]
+    assert "route-skeleton fallback finding_contracts" in decision["fallback_instruction"]
 
 
 def test_v6_author_anchor_instruction_reaches_writer_beat():
@@ -466,7 +466,12 @@ def test_v6_selection_rejects_malformed_not_only_concern():
             }
         ]
     })
-    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    selector_payload = json.dumps({"selected_id": "v1", "rationale": "reviewable author bridge"})
+    result = run_v6_rewrite(
+        source,
+        writer_client=StaticJsonClient(writer_payload),
+        selector_client=StaticJsonClient(selector_payload),
+    )
     assert result.selected is not None
     assert result.selected.source == "source_preserved"
 
@@ -487,7 +492,12 @@ def test_v6_selection_rejects_not_only_without_also_side():
             }
         ]
     })
-    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    selector_payload = json.dumps({"selected_id": "v1", "rationale": "reviewable author bridge"})
+    result = run_v6_rewrite(
+        source,
+        writer_client=StaticJsonClient(writer_payload),
+        selector_client=StaticJsonClient(selector_payload),
+    )
     assert result.selected is not None
     assert result.selected.source == "source_preserved"
 
@@ -1602,7 +1612,12 @@ def test_v6_selection_allows_reviewable_author_proxy_bridges():
             }
         ]
     })
-    result = run_v6_rewrite(source, writer_client=StaticJsonClient(writer_payload))
+    selector_payload = json.dumps({"selected_id": "v1", "rationale": "reviewable author bridge"})
+    result = run_v6_rewrite(
+        source,
+        writer_client=StaticJsonClient(writer_payload),
+        selector_client=StaticJsonClient(selector_payload),
+    )
     assert result.selected is not None
     assert result.selected.source == "llm"
     assert "author confirmation" in result.rewritten_text

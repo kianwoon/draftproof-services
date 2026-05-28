@@ -5,10 +5,14 @@ from typing import Any
 
 def retryable_no_change_result(result: Any) -> bool:
     selected = getattr(result, "selected", None)
-    if selected is None or getattr(selected, "source", None) != "source_preserved":
-        return False
     diagnostics = list(getattr(result, "candidate_diagnostics", []) or [])
     generated_rows = [row for row in diagnostics if row.get("source") != "source_preserved"]
+    if selected is None:
+        return bool(generated_rows) and any(_selector_did_not_make_valid_choice(row) for row in generated_rows)
+    if getattr(selected, "source", None) != "source_preserved":
+        return False
+    if _author_proxy_grounding_required(result):
+        return True
     if not generated_rows:
         return True
     if any(_selector_did_not_make_valid_choice(row) for row in generated_rows):
@@ -41,4 +45,13 @@ def _blocked_row_moved_scanner(row: dict[str, Any]) -> bool:
 
 def _selector_did_not_make_valid_choice(row: dict[str, Any]) -> bool:
     source = str(row.get("selector_source") or "")
-    return source.startswith("invalid_selector_source_preserved") or source.startswith("selector_unavailable_source_preserved")
+    return source.startswith("invalid_selector_source_preserved") or source.startswith("selector_required_missing")
+
+
+def _author_proxy_grounding_required(result: Any) -> bool:
+    plan = getattr(result, "plan", None)
+    strategy = getattr(plan, "paragraph_strategy", {}) if plan is not None else {}
+    if not isinstance(strategy, dict):
+        return False
+    grounding = strategy.get("author_proxy_grounding")
+    return isinstance(grounding, dict) and bool(grounding.get("required"))

@@ -68,7 +68,7 @@ def build_plan(
             )
         )
     author_proxy_context = _author_proxy_context(scan, paragraph)
-    paragraph_strategy = _paragraph_strategy(paragraph, actions)
+    paragraph_strategy = _paragraph_strategy(paragraph, actions, author_proxy_context)
     plan = Plan(
         paragraph_id=paragraph.id,
         route_goal="change sentence route while preserving source meaning and reducing packed or predictable shape",
@@ -103,6 +103,7 @@ def _author_proxy_context(scan: Scan, paragraph: Paragraph) -> dict[str, Any]:
         "years": _years(context_text),
         "citation_spans": _citation_spans(context_text),
         "quoted_terms": _quoted_terms(context_text),
+        "neighbor_bridge_anchors": _neighbor_bridge_anchors(previous_paragraph, next_paragraph),
         "author_proxy_instruction": (
             "Use these submitted context anchors to ground missing author/context bridges. "
             "Do not invent external names, years, citations, statistics, events, or institutions. "
@@ -163,6 +164,40 @@ def _quoted_terms(text: str) -> list[str]:
     for pattern in patterns:
         values.extend(match.group(1).strip() for match in re.finditer(pattern, str(text or "")))
     return _dedupe(values)[:24]
+
+
+def _neighbor_bridge_anchors(previous_paragraph: str, next_paragraph: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for source, text in [("previous_paragraph", previous_paragraph), ("next_paragraph", next_paragraph)]:
+        for sentence in re.split(r"(?<=[.!?])\s+", str(text or "").strip()):
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            terms = source_anchor_terms(sentence, term_limit=16, phrase_limit=2)
+            if len(terms) < 3:
+                continue
+            if not _bridge_sentence_worth_carrying(sentence):
+                continue
+            rows.append({
+                "source": source,
+                "text": sentence[:260],
+                "bridge_terms": terms[:12],
+                "use": "ground an abstract paragraph claim with submitted neighboring context",
+            })
+            if len(rows) >= 6:
+                return rows
+    return rows
+
+
+def _bridge_sentence_worth_carrying(sentence: str) -> bool:
+    visible = str(sentence or "")
+    if visible.count(",") >= 2:
+        return True
+    if len(re.findall(r"\b(?:also|but|because|although|while|whereas|therefore|so)\b", visible, flags=re.I)) >= 2:
+        return True
+    if len(re.findall(r"\b(?:and|or)\b", visible, flags=re.I)) >= 2:
+        return True
+    return False
 
 
 def _dedupe(values: list[str]) -> list[str]:
@@ -286,6 +321,7 @@ def _ai_safe_route(
             "citation_spans": context.get("citation_spans", []),
             "quoted_terms": context.get("quoted_terms", []),
             "nearby_context_terms": context.get("context_terms", [])[:20],
+            "neighbor_bridge_anchors": context.get("neighbor_bridge_anchors", [])[:4],
         },
         "sentence_route_steps": [_route_step(action, context) for action in actions],
         "forbidden_ai_shapes": [
@@ -915,11 +951,12 @@ def _allowed_context_anchors(action: PlanAction, context: dict[str, Any]) -> lis
     return _dedupe(anchors)[:16]
 
 
-def _paragraph_strategy(paragraph: Paragraph, actions: list[PlanAction]) -> dict[str, Any]:
+def _paragraph_strategy(paragraph: Paragraph, actions: list[PlanAction], context: dict[str, Any]) -> dict[str, Any]:
     affected = [action for action in actions if action.tags]
     tag_counts = Counter(tag for action in affected for tag in action.tags)
     methods = {action.method for action in affected}
     dense_plan = _dense_paragraph_plan(paragraph, actions, affected)
+    grounding_plan = _author_proxy_grounding_plan(paragraph, actions, context)
     failed_parts: list[str] = []
     if "list_rhythm_rebuild" in methods:
         failed_parts.append("packed list beats create dense, predictable rhythm")
@@ -931,6 +968,8 @@ def _paragraph_strategy(paragraph: Paragraph, actions: list[PlanAction]) -> dict
         failed_parts.append("this/that/it references need a clearer source-grounded antecedent")
     if "author_proxy_bridge" in methods:
         failed_parts.append("missing author or context anchor may need reviewable author-proxy wording")
+    if grounding_plan["required"]:
+        failed_parts.append("abstract high-anchor paragraph needs neighbor-context grounding instead of synonym rotation")
     failed_route = "; ".join(failed_parts) if failed_parts else "paragraph needs light route variation while preserving source meaning"
     return {
         "dominant_findings": [tag for tag, _count in tag_counts.most_common()],
@@ -939,6 +978,7 @@ def _paragraph_strategy(paragraph: Paragraph, actions: list[PlanAction]) -> dict
         "finding_density": dense_plan["finding_density"],
         "target_sentence_range": dense_plan["target_sentence_range"],
         "dense_paragraph_plan": dense_plan,
+        "author_proxy_grounding": grounding_plan,
         "failed_route": failed_route,
         "replacement_route": (
             (
@@ -958,14 +998,108 @@ def _paragraph_strategy(paragraph: Paragraph, actions: list[PlanAction]) -> dict
                 "Use affected sentence actions as diagnostic evidence for a paragraph-level rewrite. "
                 "Do not create a short-sentence chain, do not make every finding a separate sentence, and do not append a new takeaway. "
                 "If author-proxy wording is needed, place it inside the relevant source beat and mark it for review."
+                + (" Use neighbor-context grounding because the source paragraph lacks concrete anchors." if grounding_plan["required"] else "")
             )
             if dense_plan["repair_unit"] == "paragraph"
             else (
                 "Use the affected sentence actions as a mapped source-beat plan, not isolated synonym edits. "
                 "Do not append a new takeaway; if author-proxy wording is needed, place it inside the relevant source beat and mark it for review."
+                + (" Use neighbor-context grounding because the source paragraph lacks concrete anchors." if grounding_plan["required"] else "")
             )
         ),
     }
+
+
+def _author_proxy_grounding_plan(paragraph: Paragraph, actions: list[PlanAction], context: dict[str, Any]) -> dict[str, Any]:
+    bridge_anchors = _grounding_bridge_anchors(paragraph, actions, context)
+    tag_set = {tag for action in actions for tag in action.tags}
+    quoted = _quoted_terms(paragraph.text)
+    starts_with_context_pointer = bool(re.match(r"^\s*(this|that|these|those|it|they)\b", paragraph.text, flags=re.I))
+    anchor_gap_tags = {"author_anchor_gap", "unsupported_claim_gap", "broad_claim", "context_anchor_gap", "semantic_bridge_gap"}
+    has_anchor_gap = bool(tag_set & anchor_gap_tags)
+    local_anchor_count = len(source_anchor_terms(_strip_leading_heading(paragraph.text), term_limit=16))
+    abstract_or_pointer = starts_with_context_pointer or "semantic_bridge_gap" in tag_set
+    claim_needs_grounding = (
+        bool(tag_set & {"author_anchor_gap", "unsupported_claim_gap"})
+        and (starts_with_context_pointer or local_anchor_count <= 12)
+    ) or ("broad_claim" in tag_set and local_anchor_count <= 8)
+    context_claim_bridge = any(
+        "context_anchor_gap" in action.tags and set(action.tags) & {"author_anchor_gap", "unsupported_claim_gap", "broad_claim"}
+        for action in actions
+    )
+    required = bool(
+        bridge_anchors
+        and has_anchor_gap
+        and (
+            quoted
+            or abstract_or_pointer
+            or claim_needs_grounding
+            or context_claim_bridge
+        )
+    )
+    return {
+        "required": required,
+        "reason": (
+            _author_proxy_grounding_reason(tag_set, quoted=quoted, starts_with_context_pointer=starts_with_context_pointer, local_anchor_count=local_anchor_count)
+            if required
+            else ""
+        ),
+        "bridge_anchors": bridge_anchors,
+        "writer_instruction": (
+            "Use one submitted bridge anchor to ground the abstract or unsupported claim, then mark the inferred bridge in author_review_items."
+            if required
+            else ""
+        ),
+        "review_rule": (
+            "Any wording pulled from bridge anchors must be listed in author_review_items because it is author-proxy grounding, not direct source-paragraph wording."
+            if required
+            else ""
+        ),
+    }
+
+
+def _grounding_bridge_anchors(paragraph: Paragraph, actions: list[PlanAction], context: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = list(context.get("neighbor_bridge_anchors", [])[:4])
+    rows.extend(_local_bridge_anchors(paragraph, actions))
+    return rows[:6]
+
+
+def _local_bridge_anchors(paragraph: Paragraph, actions: list[PlanAction]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    gap_tags = {"author_anchor_gap", "unsupported_claim_gap", "broad_claim", "context_anchor_gap", "semantic_bridge_gap"}
+    for action in actions:
+        terms = source_anchor_terms(_strip_leading_heading(action.source_text), term_limit=16, phrase_limit=2)
+        if len(terms) < 3:
+            continue
+        if set(action.tags) & gap_tags and len(terms) < 5:
+            continue
+        rows.append({
+            "source": "selected_paragraph",
+            "text": action.source_text[:260],
+            "bridge_terms": terms[:12],
+            "use": "ground an anchor-gap claim with submitted same-paragraph context",
+        })
+        if len(rows) >= 4:
+            break
+    return rows
+
+
+def _author_proxy_grounding_reason(
+    tag_set: set[str],
+    *,
+    quoted: list[str],
+    starts_with_context_pointer: bool,
+    local_anchor_count: int,
+) -> str:
+    if quoted and (starts_with_context_pointer or "context_anchor_gap" in tag_set):
+        return "The paragraph depends on protected quoted anchors and an abstract context pointer, so source-only paraphrase is likely to stay generic."
+    if "semantic_bridge_gap" in tag_set:
+        return "The paragraph has a missing source-to-claim bridge, so the rewrite must ground the bridge with submitted anchors and mark reviewable inference."
+    if tag_set & {"author_anchor_gap", "unsupported_claim_gap"}:
+        return "The paragraph contains an evaluative or unsupported claim with limited local anchors, so the rewrite must use author-proxy grounding instead of a detached conclusion."
+    if "broad_claim" in tag_set and local_anchor_count <= 10:
+        return "The paragraph contains a broad claim with limited local anchors, so the rewrite must narrow it through submitted bridge anchors."
+    return "The paragraph has an anchor gap that needs submitted bridge grounding."
 
 
 def _dense_paragraph_plan(

@@ -65,12 +65,19 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
             top_p=0.75,
             max_tokens=None,
             response_format={"type": "json_object"},
-            app_label="writer",
+            app_label=_writer_app_label(plan),
         )
         variants.extend(replace(v, text=repair_generated_prose(apply_architecture_split_text(v.text, split_contract), paragraph.text)) for v in parse_variants(parse_json(getattr(response, "raw_content", "") or response.content)))
     except (Exception, ValueError):
         pass
     return _dedupe_variants(variants)
+
+
+def _writer_app_label(plan: Plan) -> str:
+    grounding = plan.paragraph_strategy.get("author_proxy_grounding", {})
+    if isinstance(grounding, dict) and grounding.get("required"):
+        return "Author-proxy"
+    return "writer"
 
 
 def source_preserved_variant(paragraph: Paragraph) -> Variant:

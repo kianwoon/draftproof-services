@@ -99,7 +99,7 @@ def test_v6_planner_contract_gaps_reject_unsubmitted_or_forbidden_safe_shape():
     assert any("unsubmitted bridge term 'other'" in gap for gap in gaps)
 
 
-def test_v6_planner_contract_gaps_trigger_deterministic_fallback():
+def test_v6_planner_contract_gaps_trigger_route_skeleton_fallback():
     scan = scan_text(
         "A student I will call Johnny had disclosed learning support needs related to ADHD, ASD, anxiety and learning difficulties."
     )

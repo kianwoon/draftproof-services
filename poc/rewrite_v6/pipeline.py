@@ -413,8 +413,11 @@ def _select_variant(
     selector_client: Any | None,
 ) -> tuple[Variant | None, list[dict[str, Any]]]:
     source = next((variant for variant in variants if variant.source == "source_preserved"), None)
+    generated = [variant for variant in variants if variant.source != "source_preserved"]
     if selector_client is None:
-        return source, _mark_selector_decision(diagnostics, source.id if source else None, "selector_unavailable_source_preserved", "")
+        if generated:
+            return None, _mark_selector_decision(diagnostics, None, "selector_required_missing", "")
+        return source, _mark_selector_decision(diagnostics, source.id if source else None, "no_generated_variants_source_preserved", "")
     selected_id, rationale = _selector_llm_choice(paragraph, variants, diagnostics, selector_client)
     selected = _variant_by_id(variants, selected_id)
     if selected is None or selected.source == "source_preserved":

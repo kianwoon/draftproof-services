@@ -27,6 +27,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
     planner_decision.setdefault("flow_plan", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("flow_plan", []))
     planner_decision.setdefault("semantic_role_map", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("semantic_role_map", {}))
     planner_decision.setdefault("human_route", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("human_route", {}))
+    author_proxy_grounding = plan.paragraph_strategy.get("author_proxy_grounding", {})
     construction_recipes = _prompt_construction_recipes(plan)
     author_route_questions = _prompt_author_route_questions(plan)
     coverage_groups = coverage_loss_contract(sentence_plan)
@@ -79,6 +80,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
                 "Follow dense_paragraph_plan.human_route.movement and sentence_jobs. "
                 "The route must read like lived reasoning, not topic -> list -> explanation -> neat conclusion."
             ),
+            "author_proxy_grounding": author_proxy_grounding,
         },
         "writer_execution_contract": writer_execution_contract(
             paragraph,
@@ -149,11 +151,17 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
         "plain_route_contract_for_v1": "Low-polish source-coverage candidate: use source terms and plain relation verbs; avoid unsubmitted intensity, benefit claims, semicolon lists, and descriptor lists.",
         "author_proxy_policy": {
             "enabled": True,
+            "grounding_required": bool(author_proxy_grounding.get("required")) if isinstance(author_proxy_grounding, dict) else False,
+            "neighbor_bridge_anchors": author_proxy_grounding.get("bridge_anchors", []) if isinstance(author_proxy_grounding, dict) else [],
             "non_interrupting": True,
             "allowed_provenance": ["source_preserved", "inferred_from_draft", "needs_author_confirmation", "must_replace"],
             "review_required": True,
             "responsibility_boundary": "DraftProof drafts and labels provenance; the user must review and owns facts, citations, anchors, and author-proxy bridges before submission.",
-            "rule": "Do not stop for questions. When a needed anchor is not directly supported by submitted text, continue the rewrite and include it in author_review_items.",
+            "rule": (
+                "Do not stop for questions. When a needed anchor is not directly supported by submitted text, continue the rewrite and include it in author_review_items. "
+                "Use author_proxy_provenance or author_review_items for reviewable bridges. "
+                "If grounding_required is true, use one bridge anchor from neighbor_bridge_anchors to ground the anchor-gap paragraph; source-only synonym rotation is a failed variant."
+            ),
         },
         "required_shape": {
             "paragraph_count": split_contract["paragraph_count"] if split_contract["active"] else 1,
@@ -189,6 +197,7 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
     planner_decision.setdefault("flow_plan", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("flow_plan", []))
     planner_decision.setdefault("semantic_role_map", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("semantic_role_map", {}))
     planner_decision.setdefault("human_route", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("human_route", {}))
+    author_proxy_grounding = plan.paragraph_strategy.get("author_proxy_grounding", {})
     planner_decision.pop("document_signal_contracts", None)
     construction_recipes = _prompt_construction_recipes(plan)
     author_route_questions = _prompt_author_route_questions(plan)
@@ -217,6 +226,7 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
             "semantic_role_rule": (
                 "Use dense_paragraph_plan.semantic_role_map. A natural compact list is allowed when terms share one role."
             ),
+            "author_proxy_grounding": author_proxy_grounding,
         },
         "writer_execution_contract": writer_execution_contract(
             paragraph,
@@ -258,6 +268,16 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
             "dense_paragraph_repair_rule": (
                 "If paragraph_repair_plan.repair_unit is paragraph, merge semantically dependent short beats and remove repeated subject starts. "
                 "Keep source meaning and avoid broad polish."
+            ),
+        },
+        "author_proxy_policy": {
+            "enabled": True,
+            "grounding_required": bool(author_proxy_grounding.get("required")) if isinstance(author_proxy_grounding, dict) else False,
+            "neighbor_bridge_anchors": author_proxy_grounding.get("bridge_anchors", []) if isinstance(author_proxy_grounding, dict) else [],
+            "review_required": True,
+            "rule": (
+                "If grounding_required is true, use one bridge anchor from neighbor_bridge_anchors to ground the paragraph and list the bridge in author_review_items. "
+                "Do not return source-only synonym rotation."
             ),
         },
         "active_variant": {"id": "retry_v1", "mode": "defect_feedback_retry"},
@@ -420,6 +440,11 @@ def _allowed_content_terms(paragraph: Paragraph, plan: Plan) -> list[str]:
     terms.extend(source_terms(strip_leading_heading(paragraph.text), limit=80))
     for value in _prompt_context_terms(plan)[:5]:
         terms.append(str(value))
+    grounding = plan.paragraph_strategy.get("author_proxy_grounding", {})
+    if isinstance(grounding, dict) and grounding.get("required"):
+        for anchor in grounding.get("bridge_anchors", [])[:4]:
+            if isinstance(anchor, dict):
+                terms.extend(str(term) for term in anchor.get("bridge_terms", []) if str(term).strip())
     for value in _prompt_named_references(plan)[:16]:
         terms.extend(source_terms(str(value), limit=8) or [str(value)])
     for key in ("years", "citation_spans", "quoted_terms"):

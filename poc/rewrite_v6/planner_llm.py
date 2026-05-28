@@ -59,7 +59,7 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             }
             for finding in findings
         ],
-        "deterministic_route_skeleton": {
+        "route_skeleton": {
             "paragraph_strategy": plan.paragraph_strategy,
             "coverage_beats": _compact_rows(plan.ai_safe_route.get("coverage_beats", []), limit=16),
             "construction_recipes": _compact_rows(plan.ai_safe_route.get("construction_recipes", []), limit=16),
@@ -133,7 +133,7 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             "Do not write replacement paragraph prose.",
             "Do not hardcode domain-specific starts or examples.",
             "Return one finding_contract for every scanner_findings row for traceability.",
-            "When deterministic_route_skeleton.paragraph_strategy.repair_unit is paragraph, treat finding_contracts as diagnostic symptoms feeding one paragraph flow, not as separate final sentences.",
+            "When route_skeleton.paragraph_strategy.repair_unit is paragraph, treat finding_contracts as diagnostic symptoms feeding one paragraph flow, not as separate final sentences.",
             "For dense paragraph repair, paragraph_route and flow_plan must tell the writer how to group, merge, and sequence source ideas at paragraph level.",
             "For dense paragraph repair, provide semantic_role_map and say which source terms share one semantic role.",
             "For dense paragraph repair, provide human_route. It must describe movement of thought, not only content coverage.",
@@ -150,7 +150,7 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             "For closure findings, split continuity and limitation into separate beats when one sentence would create a comma-but or broad-summary closure.",
             "Every paragraph_blueprint step must reference the finding_contracts it resolves when applicable.",
             "Normalize all findings into positive construction steps.",
-            "Use deterministic_route_skeleton.author_route_questions as the frame for paragraph_blueprint.",
+            "Use route_skeleton.author_route_questions as the frame for paragraph_blueprint.",
             "Every blueprint step for a scanner finding must answer a route question, not merely restate an avoid rule.",
             "When a finding needs author/context support, plan an Author-Proxy bridge from submitted anchors or mark it as reviewable.",
             "Make paragraph_blueprint concrete enough that a writer can follow it without guessing.",
@@ -193,7 +193,7 @@ def _merge_decision(plan: Plan, decision: dict[str, Any]) -> Plan:
         "do_not_copy_phrases": _do_not_copy_phrases(contract_gaps),
         "contract_gaps": contract_gaps,
         "fallback_instruction": (
-            "Ignore unsafe LLM planner shapes and use the deterministic fallback finding_contracts, "
+            "Ignore unsafe LLM planner shapes and use the route-skeleton fallback finding_contracts, "
             "paragraph_blueprint, author_route_questions, coverage_beats, and construction_recipes."
         ) if unsafe_contracts else "",
     }

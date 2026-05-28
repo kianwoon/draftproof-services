@@ -5,7 +5,7 @@ import json
 from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6 import pipeline as v6_pipeline
 from poc.rewrite_v6.paragraph_architecture import apply_architecture_split_text, architecture_split_contract
-from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _dynamic_pass_limit, _report_target_paragraph_ids, _same_text, run_v6_rewrite_all
+from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _dynamic_pass_limit, _report_target_paragraph_ids, _same_text, run_v6_rewrite, run_v6_rewrite_all
 from poc.rewrite_v6.planner_llm import build_planner_prompt
 from poc.rewrite_v6.prose_quality import drop_redundant_adjacent_sentence_intent, has_fragment_or_trace_sentences, repair_generated_prose
 from poc.rewrite_v6.integrity_guard import candidate_integrity_blockers
@@ -13,7 +13,7 @@ from poc.rewrite_v6.repair_windows import RepairWindow, compose_window_rewrite, 
 from poc.rewrite_v6.report_contracts import apply_report_signal_contracts, extract_report_signal_contracts
 from poc.rewrite_v6.scan import findings_for_paragraph, scan_text
 from poc.rewrite_v6.selector_diagnostics import selection_diagnostics
-from poc.rewrite_v6.write import Variant, build_prompt, choose_variant
+from poc.rewrite_v6.write import Variant, build_prompt, choose_variant, write_variants
 
 
 class EmptyVariantClient:
@@ -112,7 +112,7 @@ def test_v6_report_signal_contracts_reach_planner_and_writer_prompts():
     planner_payload = json.loads(build_planner_prompt(paragraph, plan, findings_for_paragraph(scan, paragraph.id)).split("\n", 1)[1])
     writer_payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
 
-    planner_contracts = planner_payload["deterministic_route_skeleton"]["document_signal_contracts"]
+    planner_contracts = planner_payload["route_skeleton"]["document_signal_contracts"]
     direct_writer_contracts = writer_payload["document_signal_contracts"]
     assert planner_contracts[0]["signal_group"] == "grounding_route"
     assert planner_contracts[0]["target_excerpt_count"] == 1
@@ -154,7 +154,7 @@ def test_v6_dense_paragraph_plan_reaches_planner_and_writer_payloads():
     planner_payload = json.loads(build_planner_prompt(paragraph, plan, findings_for_paragraph(scan, paragraph.id)).split("\n", 1)[1])
     writer_payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
 
-    assert planner_payload["deterministic_route_skeleton"]["paragraph_strategy"]["repair_unit"] == "paragraph"
+    assert planner_payload["route_skeleton"]["paragraph_strategy"]["repair_unit"] == "paragraph"
     assert "one paragraph flow" in " ".join(planner_payload["rules"])
     assert writer_payload["paragraph_repair_plan"]["repair_unit"] == "paragraph"
     assert writer_payload["writer_execution_contract"]["paragraph_repair_unit"] == "paragraph"
@@ -368,6 +368,157 @@ def test_v6_retries_source_preserved_when_selector_fails_with_generated_candidat
             }]
             return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current, candidate_diagnostics=diagnostics)
         replacement = "Students improve after teachers review the target."
+        selected = Variant(id="v1", text=replacement, source="llm")
+        return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current.replace(paragraph.text, replacement), candidate_diagnostics=[])
+
+    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
+
+    result = run_v6_rewrite_all(source, max_passes=2, residual_followup_passes=0)
+
+    assert seen == [seen[0], seen[0]]
+    assert result.pass_trace[0]["status"] == "no_change_retryable"
+    assert result.passes
+
+
+def test_v6_abstract_quoted_context_pointer_requires_author_proxy_grounding():
+    text = (
+        "Now, students are surrounded by information. "
+        "They learn from teachers, but also from YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities. "
+        "The real challenge is knowing what is accurate, useful, ethical, and worth trusting.\n\n"
+        "This shift has made the role of teachers even more important, not less important. "
+        "A teacher is no longer just someone who delivers information. "
+        "A good teacher helps students make sense of information. "
+        "They guide students to question sources, compare viewpoints, develop judgment, and apply knowledge in real situations. "
+        "In other words, education today should not only focus on “what students know,” but also on “how students think.”"
+    )
+    scan = scan_text(text)
+    paragraph, plan = build_plan(scan, excluded_paragraph_ids={"p001"}, priority_paragraph_ids={"p002"})
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+
+    grounding = plan.paragraph_strategy["author_proxy_grounding"]
+    assert grounding["required"] is True
+    assert grounding["bridge_anchors"]
+    assert payload["author_proxy_policy"]["grounding_required"] is True
+    assert payload["author_proxy_policy"]["neighbor_bridge_anchors"]
+    allowed_terms = {term.casefold() for term in payload["content_word_boundary"]["allowed_content_terms"]}
+    assert {"youtube", "tiktok", "accurate", "trusting"} <= allowed_terms
+    assert "source-only synonym rotation is a failed variant" in payload["author_proxy_policy"]["rule"]
+
+
+def test_v6_concrete_information_environment_does_not_force_author_proxy_grounding():
+    text = (
+        "Students are surrounded by information. "
+        "They learn from teachers, but also from YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities. "
+        "The real challenge is knowing what is accurate, useful, ethical, and worth trusting.\n\n"
+        "This shift has made the role of teachers even more important, not less important. "
+        "Education today should not only focus on “what students know,” but also on “how students think.”"
+    )
+    scan = scan_text(text)
+    paragraph, plan = build_plan(scan, excluded_paragraph_ids={"p002"}, priority_paragraph_ids={"p001"})
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+
+    assert paragraph.id == "p001"
+    assert plan.paragraph_strategy["author_proxy_grounding"]["required"] is False
+    assert payload["author_proxy_policy"]["grounding_required"] is False
+
+
+def test_v6_unsupported_claim_gap_requires_author_proxy_grounding():
+    text = (
+        "Teams use forms, queues, reviewer notes, and follow-up checks before final decisions. "
+        "The process records delays, missing documents, and client updates.\n\n"
+        "This is a serious concern because the process should improve across teams."
+    )
+    scan = scan_text(text)
+    paragraph, plan = build_plan(scan, excluded_paragraph_ids={"p001"}, priority_paragraph_ids={"p002"})
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+
+    grounding = plan.paragraph_strategy["author_proxy_grounding"]
+    assert paragraph.id == "p002"
+    assert grounding["required"] is True
+    assert "unsupported claim" in grounding["reason"]
+    assert payload["author_proxy_policy"]["grounding_required"] is True
+    allowed_terms = {term.casefold() for term in payload["content_word_boundary"]["allowed_content_terms"]}
+    assert {"forms", "queues", "reviewer", "delays"}.issubset(allowed_terms)
+
+
+def test_v6_semantic_bridge_gap_requires_author_proxy_grounding():
+    text = (
+        "The review log shows repeated missing documents, late approvals, and unclear handover notes.\n\n"
+        "This means teams need a clearer intake route before decisions are made."
+    )
+    scan = scan_text(text)
+    paragraph, plan = build_plan(scan, excluded_paragraph_ids={"p001"}, priority_paragraph_ids={"p002"})
+
+    grounding = plan.paragraph_strategy["author_proxy_grounding"]
+    assert paragraph.id == "p002"
+    assert grounding["required"] is True
+    assert "source-to-claim bridge" in grounding["reason"]
+    assert any(anchor["source"] == "previous_paragraph" for anchor in grounding["bridge_anchors"])
+
+
+def test_v6_context_anchor_gap_uses_same_paragraph_author_proxy_grounding():
+    text = (
+        "The intake review records missing documents, late approvals, and unclear handover notes. "
+        "This creates a serious concern for the weekly decision route."
+    )
+    scan = scan_text(text)
+    paragraph, plan = build_plan(scan, priority_paragraph_ids={"p001"})
+
+    grounding = plan.paragraph_strategy["author_proxy_grounding"]
+    assert grounding["required"] is True
+    assert any(anchor["source"] == "selected_paragraph" for anchor in grounding["bridge_anchors"])
+
+
+def test_v6_author_proxy_required_writer_call_uses_author_proxy_app_label():
+    text = (
+        "Teams use forms, queues, reviewer notes, and follow-up checks before final decisions.\n\n"
+        "This is a serious concern because the process should improve across teams."
+    )
+    scan = scan_text(text)
+    paragraph, plan = build_plan(scan, excluded_paragraph_ids={"p001"}, priority_paragraph_ids={"p002"})
+    client = SequencedVariantClient(['{"variants":[]}'])
+
+    write_variants(paragraph, plan, client=client)
+
+    assert client.kwargs[0]["app_label"] == "Author-proxy"
+
+
+def test_v6_normal_writer_call_keeps_writer_app_label():
+    paragraph, plan = build_plan(scan_text("The process uses forms, queues, reviewer notes, and follow-up checks."))
+    client = SequencedVariantClient(['{"variants":[]}'])
+
+    write_variants(paragraph, plan, client=client)
+
+    assert client.kwargs[0]["app_label"] == "writer"
+
+
+def test_v6_retries_source_preserved_when_author_proxy_grounding_required(monkeypatch):
+    source = (
+        "Students learn from teachers, YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities.\n\n"
+        "This shift has made the role of teachers even more important, not less important. "
+        "Education today should not only focus on “what students know,” but also on “how students think.”"
+    )
+    seen = []
+
+    def fake_run(current, **kwargs):
+        scan = scan_text(current)
+        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"), kwargs.get("priority_paragraph_ids"))
+        seen.append(paragraph.id)
+        if len(seen) == 1:
+            selected = Variant(id="source_preserved", text=paragraph.text, source="source_preserved")
+            diagnostics = [{
+                "variant_id": "v1",
+                "source": "llm",
+                "candidate_findings": 1,
+                "source_findings": 1,
+                "finding_drop": 0,
+                "candidate_mean_risk": 20.0,
+                "source_mean_risk": 20.0,
+                "risk_drop": 0.0,
+                "blockers": [],
+            }]
+            return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current, candidate_diagnostics=diagnostics)
+        replacement = "Because students learn from many places, teachers help them decide which sources deserve trust."
         selected = Variant(id="v1", text=replacement, source="llm")
         return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current.replace(paragraph.text, replacement), candidate_diagnostics=[])
 
@@ -1163,6 +1314,22 @@ def test_v6_candidate_diagnostics_include_missing_terms_for_retry_feedback():
 
     assert "required_source_terms_missing_review_required" in diagnostic["quality_warnings"]
     assert set(diagnostic["missing_required_terms"]) & {"labels", "reviews", "approvals", "checks"}
+
+
+def test_v6_generated_variants_require_selector_decision():
+    source = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
+    response = json.dumps({
+        "variants": [{
+            "id": "v1",
+            "text": "The process uses forms and queues because teams should improve.",
+        }]
+    })
+
+    result = run_v6_rewrite(source, writer_client=SequencedVariantClient([response]))
+
+    assert result.selected is None
+    assert result.candidate_diagnostics
+    assert result.candidate_diagnostics[0]["selector_source"] == "selector_required_missing"
 
 
 def test_v6_citation_anchor_recipe_keeps_attribution_as_source_to_claim_relation():

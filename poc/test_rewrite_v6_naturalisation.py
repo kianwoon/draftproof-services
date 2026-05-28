@@ -35,7 +35,7 @@ class SequencedQualityClient:
         return StaticJsonResponse(json.dumps(self.responses.pop(0)))
 
 
-def test_naturalisation_adds_deterministic_candidate_for_three_repeated_starts():
+def test_naturalisation_adds_rule_candidate_for_three_repeated_starts():
     text = (
         "Teachers guide students to question sources. "
         "Teachers compare viewpoints. "
@@ -49,7 +49,7 @@ def test_naturalisation_adds_deterministic_candidate_for_three_repeated_starts()
     assert [operation.reason for operation in result.operations] == ["repeated_subject_start"]
 
 
-def test_naturalisation_adds_deterministic_candidate_for_two_repeated_starts():
+def test_naturalisation_adds_rule_candidate_for_two_repeated_starts():
     text = "The model still exists. The model no longer reflects current learning."
     client = SequencedQualityClient([{"operations": []}])
 
@@ -58,7 +58,7 @@ def test_naturalisation_adds_deterministic_candidate_for_two_repeated_starts():
     assert result.repaired_text == "The model still exists but no longer reflects current learning."
 
 
-def test_naturalisation_adds_deterministic_passive_voice_candidate():
+def test_naturalisation_adds_rule_passive_voice_candidate():
     text = "Knowledge was received by students from trusted sources."
     client = SequencedQualityClient([{"operations": []}])
 
@@ -220,7 +220,7 @@ def test_naturalisation_allows_light_rhetorical_ladder_repair():
     assert skipped == []
 
 
-def test_naturalisation_adds_deterministic_light_rhetorical_ladder_candidate():
+def test_naturalisation_adds_rule_light_rhetorical_ladder_candidate():
     text = (
         "Knowledge is no longer scarce. Access is no longer the biggest problem. "
         "The real challenge is knowing what is accurate and useful."
@@ -272,7 +272,7 @@ def test_naturalisation_allows_parallel_short_list_sequence_with_preserved_terms
     assert skipped == []
 
 
-def test_naturalisation_adds_deterministic_parallel_clause_candidate():
+def test_naturalisation_adds_rule_parallel_clause_candidate():
     text = (
         "Teachers provide instruction. YouTube offers tutorials. TikTok shares bite-size lessons. "
         "Online courses deliver structured curricula."

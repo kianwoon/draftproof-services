@@ -6,7 +6,7 @@ from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6.pipeline import run_v6_rewrite
 from poc.rewrite_v6.planner_llm import build_planner_prompt
 from poc.rewrite_v6.scan import scan_text
-from poc.rewrite_v6.text import source_terms
+from poc.rewrite_v6.text import source_anchor_terms, source_terms
 from poc.rewrite_v6.write import build_prompt, parse_variants
 from poc.rewrite_v6.coverage_guard import missing_required_source_term_details, missing_required_source_terms
 
@@ -97,6 +97,81 @@ def test_v6_source_terms_keep_short_acronym_anchors():
     assert "12" in terms
 
 
+def test_v6_source_anchor_terms_preserve_pseudonym_phrase_without_modal_tokens():
+    terms = source_anchor_terms(
+        "A student I will call Johnny had disclosed learning support needs related to ADHD, ASD, anxiety and learning difficulties.",
+        term_limit=16,
+    )
+
+    assert "A student I will call Johnny" in terms
+    assert "will" not in terms
+    assert "call" not in terms
+    assert {"ADHD", "ASD", "anxiety", "difficulties"}.issubset(set(terms))
+
+
+def test_v6_planner_uses_phrase_anchors_for_writer_preserve_contract():
+    paragraph, plan = build_plan(scan_text(
+        "A student I will call Johnny had disclosed learning support needs related to ADHD, ASD, anxiety and learning difficulties. "
+        "During one role-playing activity, I had Johnny take on the role of hair salon manager in a group project."
+    ))
+    first_terms = plan.actions[0].preserve_terms
+    second_terms = plan.actions[1].preserve_terms
+
+    assert "A student I will call Johnny" in first_terms
+    assert "A student I will call Johnny" in plan.opening_terms
+    assert "will" not in first_terms
+    assert "will" not in plan.opening_terms
+    assert "call" not in first_terms
+    assert "call" not in plan.opening_terms
+    assert "During one role-playing activity" in second_terms
+
+
+def test_v6_coverage_beats_use_phrase_anchors_for_writer_contract():
+    _, plan = build_plan(scan_text(
+        "A student I will call Johnny had disclosed learning support needs related to ADHD, ASD, anxiety and learning difficulties. "
+        "During one role-playing activity, I had Johnny take on the role of hair salon manager in a group project."
+    ))
+    beat_terms = [
+        term
+        for beat in plan.ai_safe_route["coverage_beats"]
+        for term in beat["coverage_terms"]
+    ]
+
+    assert "A student I will call Johnny" in beat_terms
+    assert "During one role-playing activity" in beat_terms
+
+
+def test_v6_planner_does_not_make_single_acronym_or_glue_starter_beats():
+    _, plan = build_plan(scan_text(
+        "A student I will call Johnny had disclosed learning support needs related to ADHD, ASD, anxiety and learning difficulties. "
+        "At the beginning, he was quite reserved, but as we got to know each other through casual conversation, I learned about some of his past learning experiences."
+    ))
+    beats = plan.ai_safe_route["coverage_beats"]
+
+    assert not any(beat["coverage_terms"] == ["ASD"] for beat in beats)
+    starter_terms = [
+        term.casefold()
+        for beat in beats
+        for term in beat["starter_terms"]
+    ]
+    assert "call" not in starter_terms
+    assert "will" not in starter_terms
+    assert "quite" not in starter_terms
+    assert "know" not in starter_terms
+    assert "each" not in starter_terms
+
+
+def test_v6_planner_skips_empty_discourse_beats_and_merges_singleton_years():
+    _, plan = build_plan(scan_text(
+        "Because of this, a one-size-fits-all teaching method is no longer sufficient for the current learning environment. "
+        "Inclusive learning is linked to legal responsibilities, including reasonable adjustment under the Disability Standards for Education 2005 (Australian Government, 2005)."
+    ))
+    beats = plan.ai_safe_route["coverage_beats"]
+
+    assert all(beat["coverage_terms"] for beat in beats)
+    assert not any(beat["coverage_terms"] == ["2005"] for beat in beats)
+
+
 def test_v6_sentence_plan_marks_slot_coverage_loss_as_failure():
     payload = _payload(
         "The team combined intake forms, API checks, SSO review, and MFA support."
@@ -127,6 +202,15 @@ def test_v6_required_coverage_rejects_dropped_numeric_anchors():
 
     assert missing_required_source_terms(candidate, paragraph)
     assert missing_required_source_term_details(candidate, paragraph)
+
+
+def test_v6_required_coverage_does_not_hard_require_glue_words():
+    paragraph = scan_text(
+        "At the beginning, he was quite reserved, but as we got to know each other through casual conversation, I learned about some of his past learning experiences."
+    ).paragraphs[0]
+    candidate = "He remained reserved at first. Casual conversation helped me learn about his past learning experiences."
+
+    assert not missing_required_source_terms(candidate, paragraph)
 
 
 def test_v6_required_coverage_ignores_leading_heading_terms():
@@ -1038,7 +1122,7 @@ def test_v6_llm_planner_prompt_receives_scanner_findings():
     prompt = build_planner_prompt(paragraph, plan, scan.findings)
     payload = json.loads(prompt.split("\n", 1)[1])
     assert payload["scanner_findings"]
-    assert payload["deterministic_route_skeleton"]["construction_recipes"]
+    assert payload["route_skeleton"]["construction_recipes"]
     assert payload["required_decision"]["finding_contracts"]
     assert payload["required_decision"]["finding_recipe_overrides"]
     assert payload["required_decision"]["paragraph_blueprint"]
