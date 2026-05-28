@@ -560,7 +560,7 @@ def run_v6_rewrite_all(
     current = text
     passes: list[Result] = []
     pass_trace: list[dict[str, Any]] = []
-    limit = max_passes if max_passes is not None else max(1, len(initial_scan.paragraphs) * 5)
+    limit = max_passes if max_passes is not None else _dynamic_pass_limit(initial_scan, report_signal_contracts)
     attempts: dict[str, int] = {}
     exhausted: set[str] = set()
     covered: set[str] = set()
@@ -906,6 +906,42 @@ def _quality_repair_risk_tolerance() -> float:
 
 def _finding_paragraph_ids(scan: Scan) -> set[str]:
     return {finding.paragraph_id for finding in scan.findings}
+
+
+def _dynamic_pass_limit(scan: Scan, report_signal_contracts: list[dict[str, Any]] | None = None) -> int:
+    active_paragraphs = _finding_paragraph_ids(scan) | _report_target_paragraph_ids(scan, report_signal_contracts)
+    if not active_paragraphs:
+        return 1
+    return min(
+        _dynamic_max_passes(),
+        max(
+            len(active_paragraphs),
+            _dynamic_min_passes(),
+            len(active_paragraphs) * _attempts_per_finding_paragraph(),
+        ),
+    )
+
+
+def _attempts_per_finding_paragraph() -> int:
+    return _bounded_int_env("DRAFTPROOF_V6_ATTEMPTS_PER_FINDING_PARAGRAPH", 2, minimum=1, maximum=4)
+
+
+def _dynamic_min_passes() -> int:
+    return _bounded_int_env("DRAFTPROOF_V6_MIN_DYNAMIC_PASSES", 3, minimum=1, maximum=12)
+
+
+def _dynamic_max_passes() -> int:
+    return _bounded_int_env("DRAFTPROOF_V6_MAX_DYNAMIC_PASSES", 12, minimum=1, maximum=24)
+
+
+def _bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    import os
+
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 def _residual_followup_limit(value: int | None) -> int:

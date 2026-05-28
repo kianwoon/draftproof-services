@@ -5,7 +5,7 @@ import json
 from poc.rewrite_v6.plan import build_plan
 from poc.rewrite_v6 import pipeline as v6_pipeline
 from poc.rewrite_v6.paragraph_architecture import apply_architecture_split_text, architecture_split_contract
-from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _report_target_paragraph_ids, _same_text, run_v6_rewrite_all
+from poc.rewrite_v6.pipeline import _acceptable_progress, _cross_paragraph_regression, _dynamic_pass_limit, _report_target_paragraph_ids, _same_text, run_v6_rewrite_all
 from poc.rewrite_v6.planner_llm import build_planner_prompt
 from poc.rewrite_v6.prose_quality import drop_redundant_adjacent_sentence_intent, has_fragment_or_trace_sentences, repair_generated_prose
 from poc.rewrite_v6.integrity_guard import candidate_integrity_blockers
@@ -229,6 +229,24 @@ def test_v6_cross_paragraph_regression_allows_small_recalibration_when_target_sp
 
     assert int(before.scores["finding_count"]) > int(after.scores["finding_count"])
     assert not _cross_paragraph_regression(before, after, "p002")
+
+
+def test_v6_dynamic_pass_limit_scales_by_finding_paragraphs_not_total_paragraphs():
+    text = "\n\n".join([
+        "This is an important process because teams should improve.",
+        "This is an important method because students should improve.",
+        "Plain paragraph without a scanner pattern.",
+        "This is an important issue because schools should improve.",
+        "Plain context for the document.",
+        "This is an important problem because teachers should improve.",
+        "Another ordinary paragraph for context.",
+        "This is an important result because learners should improve.",
+    ])
+    scan = scan_text(text)
+
+    assert len(scan.paragraphs) == 8
+    assert len({finding.paragraph_id for finding in scan.findings}) == 5
+    assert _dynamic_pass_limit(scan) == 10
 
 
 def test_v6_pipeline_schedules_report_target_even_without_local_findings():
