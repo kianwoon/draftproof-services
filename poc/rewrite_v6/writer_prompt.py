@@ -25,6 +25,8 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
     planner_decision = compact_planner_decision(plan.ai_safe_route.get("llm_planner_decision", {}))
     planner_decision.setdefault("repair_unit", plan.paragraph_strategy.get("repair_unit"))
     planner_decision.setdefault("flow_plan", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("flow_plan", []))
+    planner_decision.setdefault("semantic_role_map", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("semantic_role_map", {}))
+    planner_decision.setdefault("human_route", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("human_route", {}))
     construction_recipes = _prompt_construction_recipes(plan)
     author_route_questions = _prompt_author_route_questions(plan)
     coverage_groups = coverage_loss_contract(sentence_plan)
@@ -68,6 +70,14 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
                 "When repair_unit is paragraph, scanner findings are symptoms of paragraph flow. "
                 "Preserve traceability, but do not write one final sentence per finding, source row, or coverage beat."
             ),
+            "semantic_role_rule": (
+                "Use dense_paragraph_plan.semantic_role_map to combine source terms by role before writing. "
+                "A natural compact list is allowed when the listed terms share one role; do not create catalogue sentences to avoid commas."
+            ),
+            "human_route_rule": (
+                "Follow dense_paragraph_plan.human_route.movement and sentence_jobs. "
+                "The route must read like lived reasoning, not topic -> list -> explanation -> neat conclusion."
+            ),
         },
         "writer_execution_contract": writer_execution_contract(
             paragraph,
@@ -81,10 +91,10 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
         "hard_generation_requirements": {
             "required_variant_ids": [row["id"] for row in variant_requirements],
             "exact_variant_count": len(variant_requirements),
-            "list_contract_active": _list_contract_active(plan),
+            "list_contract_active": _list_contract_active(plan) and paragraph_repair_unit != "paragraph",
             "list_contract_rule": (
-                "No final text sentence may contain two or more commas when list_contract_active is true. "
-                "Use paired relation sentences instead of comma lists."
+                "When paragraph_repair_plan.repair_unit is paragraph, a compact natural list is allowed if all items share one semantic role. "
+                "Otherwise, no final text sentence may contain two or more commas when list_contract_active is true."
             ),
             "forbidden_sentence_starts": [
                 "And",
@@ -120,7 +130,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "dense_paragraph_repair_rule": (
                 "If paragraph_repair_plan.repair_unit is paragraph, rebuild paragraph flow from source meaning. "
                 "Merge only semantically dependent or mechanically repetitive short beats, keep independent contrasts visible, "
-                "and avoid a chain of same-shape short sentences."
+                "allow one natural role-based list when clearer, and avoid a chain of same-shape short sentences."
             ),
         },
         "active_variant": variant_focus or {},
@@ -171,6 +181,8 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
     planner_decision = compact_planner_decision(plan.ai_safe_route.get("llm_planner_decision", {}))
     planner_decision.setdefault("repair_unit", plan.paragraph_strategy.get("repair_unit"))
     planner_decision.setdefault("flow_plan", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("flow_plan", []))
+    planner_decision.setdefault("semantic_role_map", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("semantic_role_map", {}))
+    planner_decision.setdefault("human_route", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("human_route", {}))
     planner_decision.pop("document_signal_contracts", None)
     construction_recipes = _prompt_construction_recipes(plan)
     author_route_questions = _prompt_author_route_questions(plan)
@@ -196,6 +208,9 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
                 "When repair_unit is paragraph, retry as one paragraph flow. "
                 "Do not repair each finding as a separate sentence."
             ),
+            "semantic_role_rule": (
+                "Use dense_paragraph_plan.semantic_role_map. A natural compact list is allowed when terms share one role."
+            ),
         },
         "writer_execution_contract": writer_execution_contract(
             paragraph,
@@ -209,7 +224,7 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
         "hard_generation_requirements": {
             "required_variant_ids": ["retry_v1"],
             "exact_variant_count": 1,
-            "list_contract_active": _list_contract_active(plan),
+            "list_contract_active": _list_contract_active(plan) and plan.paragraph_strategy.get("repair_unit") != "paragraph",
             "forbidden_sentence_starts": [
                 "And",
                 "But",

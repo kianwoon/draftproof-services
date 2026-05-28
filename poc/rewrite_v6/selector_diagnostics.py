@@ -5,7 +5,7 @@ from typing import Any
 from .coverage_guard import missing_required_source_term_details
 from .integrity_guard import candidate_integrity_blockers
 from .prose_quality import has_fragment_or_trace_sentences
-from .prose_quality import robotic_sentence_chain
+from .prose_quality import catalogue_sentence_chain, robotic_sentence_chain
 from .scan import scan_text
 from .text import Paragraph
 from .write import (
@@ -17,6 +17,7 @@ from .write import (
     _over_decomposition_review_reasons,
     _polarity_violation,
     _replaces_final_source_beat_with_conclusion,
+    _route_quality_penalty,
 )
 
 
@@ -80,7 +81,30 @@ def _blockers(
     blockers: list[str] = []
     blockers.extend(
         blocker for blocker in integrity_blockers
-        if blocker in {"planner_language_leakage", "malformed_serial_verb_chain", "malformed_nominal_stack"}
+        if blocker in {
+            "planner_language_leakage",
+            "external_narrator_reporting_chain",
+            "malformed_serial_verb_chain",
+            "malformed_nominal_stack",
+            "malformed_learning_predicate",
+            "malformed_telegraphic_predicate",
+            "unnatural_completion_phrase",
+            "dangling_consequence_tail",
+            "dangling_additive_tail",
+            "standalone_additive_fragment",
+            "misplaced_channel_in_challenge",
+            "malformed_parallel_connector_list",
+            "malformed_parallel_verb_tail",
+            "redundant_trust_phrase",
+            "keyword_dump_sequence",
+            "lost_serial_punctuation",
+            "capitalized_common_noun_mid_sentence",
+            "repeated_platform_catalogue",
+            "repeated_subject_start",
+            "vague_unintroduced_reliance",
+            "malformed_tool_student_relation",
+            "tool_practise_skills_predicate",
+        }
     )
     if source is not None and finding_drop < 1 and risk_drop < 8.0:
         blockers.append("insufficient_scanner_movement")
@@ -114,6 +138,10 @@ def _quality_warnings(variant: Variant, paragraph: Paragraph) -> list[str]:
         warnings.append("candidate_contract_warning")
     if robotic_sentence_chain(variant.text):
         warnings.append("mechanical_sentence_chain")
+    if catalogue_sentence_chain(variant.text):
+        warnings.append("catalogue_sentence_chain_review_required")
+    if _route_quality_penalty(variant.text) >= 3.0:
+        warnings.append("engineered_route_quality_review_required")
     if _polarity_violation(variant.text, paragraph):
         warnings.append("source_polarity_changed_review_required")
     return warnings

@@ -36,6 +36,6 @@ def writer_generation_rules() -> list[str]:
         "Use ordinary complete sentences. No final sentence may start with And, But, Or, Which, Where, In, Through, During, From, This, That, These, Those, As, or Thereby.",
         "Every final sentence must stand alone with its own subject and predicate.",
         "Do not close with This, That, or These plus a summary noun. Name the source activity, source object, or concrete antecedent instead.",
-        "Do not use semicolons, em dashes, parenthetical asides, colon-led lists, or sentences with two or more commas when list_contract_active is true.",
+        "Do not use semicolons, em dashes, or parenthetical asides. When list_contract_active is true, avoid comma-list rhythm unless paragraph_repair_plan.repair_unit is paragraph and the list carries one semantic role from semantic_role_map.",
         "Return JSON only.",
     ]

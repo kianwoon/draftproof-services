@@ -25,6 +25,7 @@ def writer_execution_contract(
     author_route_questions: list[dict[str, Any]],
     planner_decision: dict[str, Any],
 ) -> dict[str, Any]:
+    dense_repair = isinstance(planner_decision, dict) and planner_decision.get("repair_unit") == "paragraph"
     beats_by_source = _rows_by_source(coverage_beats)
     recipes_by_source = _rows_by_source(construction_recipes)
     questions_by_source = _rows_by_source(author_route_questions)
@@ -55,7 +56,7 @@ def writer_execution_contract(
             ]),
             "coverage_terms": _source_terms_for_row(sentence.text, beats, slot),
             "must_cover_terms": _strings(slot.get("must_cover_terms"), 10),
-            "route_goal": _first_text([
+            "route_goal": _dense_route_goal(planner_decision) if dense_repair else _first_text([
                 slot.get("slot_goal"),
                 *(row.get("safe_rebuild_shape") for row in contracts),
                 *(row.get("safe_sentence_shape") for row in blueprint),
@@ -64,7 +65,7 @@ def writer_execution_contract(
                 slot.get("sentence_route"),
                 *(row.get("function") for row in blueprint),
             ]),
-            "writer_must_do": _dedupe([
+            "writer_must_do": _dense_writer_must_do() if dense_repair else _dedupe([
                 value
                 for row in contracts
                 for value in _strings(row.get("writer_must_do"), 2)
@@ -107,6 +108,22 @@ def writer_execution_contract(
     }
 
 
+def _dense_route_goal(planner_decision: dict[str, Any]) -> str:
+    role_map = planner_decision.get("semantic_role_map") if isinstance(planner_decision, dict) else {}
+    if isinstance(role_map, dict) and role_map:
+        return "Use semantic_role_map to combine this row into paragraph movement; do not make this row a separate sentence."
+    return "Use this row as traceability evidence for one paragraph route; do not make this row a separate sentence."
+
+
+def _dense_writer_must_do() -> list[str]:
+    return [
+        "combine source terms by semantic role before writing",
+        "allow a compact natural list when terms share one role",
+        "merge dependent short beats into paragraph movement",
+        "avoid catalogue sentences and term-by-term expansion",
+    ]
+
+
 def compact_planner_decision(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -116,6 +133,8 @@ def compact_planner_decision(value: Any) -> dict[str, Any]:
         "status": value.get("status"),
         "repair_unit": value.get("repair_unit"),
         "paragraph_problem": value.get("paragraph_problem"),
+        "semantic_role_map": value.get("semantic_role_map"),
+        "human_route": value.get("human_route"),
         "fallback_instruction": value.get("fallback_instruction"),
         "contract_gaps": _strings(value.get("contract_gaps"), 8),
         "do_not_copy_phrases": _strings(value.get("do_not_copy_phrases"), 8),

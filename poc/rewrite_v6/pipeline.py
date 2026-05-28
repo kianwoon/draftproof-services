@@ -15,25 +15,10 @@ from .report_contracts import apply_report_signal_contracts
 from .scan import Scan, findings_for_paragraph, scan_text
 from .json_io import parse_json
 from .naturalisation import NaturalisationResult, run_naturalisation_repair_once
-from .paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from .paragraph_layout import restore_original_paragraph_layout
 from .quality_repair import QualityRepairResult, _grammer_extra_body, _grammer_model, run_quality_repair_once
-from .selector_diagnostics import rejected_variant_feedback, selection_diagnostics
-from .prose_quality import repair_generated_prose
-from .write import Variant, choose_variant, parse_variants, write_variants
-from .writer_prompt import build_retry_contract
-
-_RETRY_QUALITY_WARNINGS = {
-    "sentence_count_expansion_review_required",
-    "short_sentence_chain_review_required",
-    "repeated_sentence_start_review_required",
-    "mechanical_transition_stack_review_required",
-    "planner_language_leakage_review_required",
-    "candidate_contract_warning",
-    "candidate_contract_violation_review_required",
-    "fragment_or_trace_sentence_review_required",
-    "mechanical_sentence_chain",
-}
+from .selector_diagnostics import selection_diagnostics
+from .write import Variant, _annotate_selected_variant, write_variants
 
 
 @dataclass(frozen=True)
@@ -88,6 +73,7 @@ def run_v6_rewrite(
     *,
     planner_client: Any | None = None,
     writer_client: Any | None = None,
+    selector_client: Any | None = None,
     excluded_paragraph_ids: set[str] | None = None,
     model: str | None = None,
     api_key: str | None = None,
@@ -112,6 +98,7 @@ def run_v6_rewrite(
             window=window,
             planner_client=planner_client,
             writer_client=writer_client,
+            selector_client=selector_client,
             model=model,
             api_key=api_key,
             base_url=base_url,
@@ -126,6 +113,7 @@ def run_v6_rewrite(
         plan=plan,
         planner_client=planner_client,
         writer_client=writer_client,
+        selector_client=selector_client,
         model=model,
         api_key=api_key,
         base_url=base_url,
@@ -142,6 +130,7 @@ def run_v6_rewrite_with_residuals(
     residual_followup_passes: int | None = None,
     planner_client: Any | None = None,
     writer_client: Any | None = None,
+    selector_client: Any | None = None,
     quality_client: Any | None = None,
     excluded_paragraph_ids: set[str] | None = None,
     model: str | None = None,
@@ -159,6 +148,7 @@ def run_v6_rewrite_with_residuals(
         text,
         planner_client=planner_client,
         writer_client=writer_client,
+        selector_client=selector_client,
         excluded_paragraph_ids=excluded_paragraph_ids,
         model=model,
         api_key=api_key,
@@ -229,6 +219,7 @@ def run_v6_rewrite_with_residuals(
             residual_limit=residual_limit,
             planner_client=planner_client,
             writer_client=writer_client,
+            selector_client=selector_client,
             model=model,
             api_key=api_key,
             base_url=base_url,
@@ -269,6 +260,7 @@ def _run_v6_full_paragraph_rewrite(
     plan: Plan,
     planner_client: Any | None,
     writer_client: Any | None,
+    selector_client: Any | None,
     model: str | None,
     api_key: str | None,
     base_url: str | None,
@@ -306,14 +298,13 @@ def _run_v6_full_paragraph_rewrite(
     variants = write_variants(paragraph, plan, client=client)
     _raise_if_canceled(cancellation_check)
     _emit_progress(progress_callback, progress_percent, f"Scanning V6 paragraph {paragraph.id} candidate")
-    variants, selected = _select_with_retry(
-        paragraph,
-        plan,
-        variants,
-        client=client,
-        cancellation_check=cancellation_check,
-    )
     diagnostics = selection_diagnostics(variants, paragraph)
+    selected, diagnostics = _select_variant(
+        paragraph=paragraph,
+        variants=variants,
+        diagnostics=diagnostics,
+        selector_client=selector_client or (None if writer_client is not None else _selector_gateway(api_key=api_key, base_url=base_url, cancellation_check=cancellation_check)),
+    )
     return Result(scan=scan, plan=plan, variants=variants, selected=selected, rewritten_text=_compose(scan, paragraph.id, selected), candidate_diagnostics=diagnostics)
 
 
@@ -325,6 +316,7 @@ def _run_v6_window_rewrite(
     window: RepairWindow,
     planner_client: Any | None,
     writer_client: Any | None,
+    selector_client: Any | None,
     model: str | None,
     api_key: str | None,
     base_url: str | None,
@@ -379,14 +371,13 @@ def _run_v6_window_rewrite(
         progress_percent,
         f"Scanning V6 paragraph {paragraph.id} window candidate",
     )
-    variants, selected = _select_with_retry(
-        window_paragraph,
-        window_plan,
-        variants,
-        client=client,
-        cancellation_check=cancellation_check,
-    )
     diagnostics = selection_diagnostics(variants, window_paragraph)
+    selected, diagnostics = _select_variant(
+        paragraph=window_paragraph,
+        variants=variants,
+        diagnostics=diagnostics,
+        selector_client=selector_client or (None if writer_client is not None else _selector_gateway(api_key=api_key, base_url=base_url, cancellation_check=cancellation_check)),
+    )
     has_generated = any(variant.source != "source_preserved" for variant in variants)
     if has_generated and (selected is None or selected.source == "source_preserved"):
         return _run_v6_full_paragraph_rewrite(
@@ -395,6 +386,7 @@ def _run_v6_window_rewrite(
             plan=parent_plan,
             planner_client=planner_client,
             writer_client=writer_client,
+            selector_client=selector_client,
             model=model,
             api_key=api_key,
             base_url=base_url,
@@ -412,98 +404,137 @@ def _run_v6_window_rewrite(
     )
 
 
-def _select_with_retry(
-    paragraph: Any,
-    plan: Plan,
-    variants: list[Variant],
+def _select_variant(
     *,
-    client: Any,
-    cancellation_check: Callable[[], None] | None,
-) -> tuple[list[Variant], Variant | None]:
-    _raise_if_canceled(cancellation_check)
-    selected = choose_variant(variants, paragraph)
-    feedback = _retry_feedback_for_selection(variants, selected, paragraph)
-    if not feedback:
-        return variants, selected
-    _raise_if_canceled(cancellation_check)
-    try:
-        response = client.chat(
-            _retry_prompt(paragraph, plan, feedback),
-            system="Return valid JSON only with a variants array.",
-            temperature=0.12,
-            top_p=0.75,
-            max_tokens=None,
-            response_format={"type": "json_object"},
-            app_label="writer",
-        )
-        split_contract = architecture_split_contract(paragraph, plan)
-        retry_variants = [
-            replace(variant, text=repair_generated_prose(apply_architecture_split_text(variant.text, split_contract), paragraph.text))
-            for variant in parse_variants(parse_json(getattr(response, "raw_content", "") or response.content))
-        ]
-    except (Exception, ValueError):
-        retry_variants = []
-    if not retry_variants:
-        return variants, selected
-    combined = [*variants, *retry_variants]
-    return combined, choose_variant(combined, paragraph)
-
-
-def _retry_feedback_for_selection(
-    variants: list[Variant],
-    selected: Variant | None,
     paragraph: Any,
-) -> list[dict[str, Any]]:
-    if selected is None:
-        return rejected_variant_feedback(variants, paragraph)
-    if selected.source == "source_preserved":
-        return rejected_variant_feedback(variants, paragraph)
-    diagnostics = selection_diagnostics(variants, paragraph)
-    selected_row = next((row for row in diagnostics if row.get("variant_id") == selected.id), None)
-    if not selected_row:
-        return []
-    blockers = set(selected_row.get("blockers") or [])
-    warnings = set(selected_row.get("quality_warnings") or [])
-    if blockers or (warnings & _RETRY_QUALITY_WARNINGS):
-        return [selected_row]
-    return []
+    variants: list[Variant],
+    diagnostics: list[dict[str, Any]],
+    selector_client: Any | None,
+) -> tuple[Variant | None, list[dict[str, Any]]]:
+    source = next((variant for variant in variants if variant.source == "source_preserved"), None)
+    if selector_client is None:
+        return source, _mark_selector_decision(diagnostics, source.id if source else None, "selector_unavailable_source_preserved", "")
+    selected_id, rationale = _selector_llm_choice(paragraph, variants, diagnostics, selector_client)
+    selected = _variant_by_id(variants, selected_id)
+    if selected is None or selected.source == "source_preserved":
+        return source, _mark_selector_decision(diagnostics, source.id if source else None, "invalid_selector_source_preserved", rationale)
+    selected_row = next((row for row in diagnostics if row.get("variant_id") == selected.id), {})
+    hard_blockers = set(selected_row.get("blockers") or []) & _selector_hard_blockers()
+    if hard_blockers:
+        return source, _mark_selector_decision(diagnostics, source.id if source else None, f"blocked_selector_source_preserved:{','.join(sorted(hard_blockers))}", rationale)
+    return _annotate_selected_variant(selected, paragraph), _mark_selector_decision(diagnostics, selected.id, "selector_llm", rationale)
 
 
-def _retry_prompt(paragraph: Any, plan: Plan, feedback: list[dict[str, Any]]) -> str:
-    normalized_feedback = []
-    for row in feedback[:3]:
-        blockers = [
-            "malformed_fragment_or_trace_sentence" if blocker == "fragment_or_trace_sentence" else blocker
-            for blocker in row.get("blockers", [])
-        ]
-        normalized_feedback.append({
-            "variant_id": row.get("variant_id"),
-            "blockers": blockers,
+def _selector_llm_choice(
+    paragraph: Any,
+    variants: list[Variant],
+    diagnostics: list[dict[str, Any]],
+    selector_client: Any,
+) -> tuple[str | None, str]:
+    try:
+        response = selector_client.chat(
+            _selector_prompt(paragraph, variants, diagnostics),
+            system="Return valid JSON only. Select an existing variant id only. Do not rewrite, edit, or create text.",
+            temperature=0.0,
+            top_p=1.0,
+            max_tokens=2500,
+            response_format={"type": "json_object"},
+            app_label="Selector",
+        )
+        payload = parse_json(getattr(response, "raw_content", "") or response.content)
+    except (Exception, ValueError):
+        return None, "selector_llm_failed"
+    if not isinstance(payload, dict):
+        return None, "selector_payload_not_object"
+    selected_id = str(payload.get("selected_id") or "").strip()
+    rationale = str(payload.get("rationale") or payload.get("reason") or "").strip()
+    return selected_id or None, rationale
+
+
+def _selector_prompt(paragraph: Any, variants: list[Variant], diagnostics: list[dict[str, Any]]) -> str:
+    generated = [variant for variant in variants if variant.source != "source_preserved"]
+    rows = []
+    diagnostics_by_id = {str(row.get("variant_id")): row for row in diagnostics}
+    for variant in generated:
+        row = diagnostics_by_id.get(variant.id, {})
+        rows.append({
+            "id": variant.id,
+            "mode": variant.mode,
+            "text": variant.text,
+            "blockers": row.get("blockers", []),
             "quality_warnings": row.get("quality_warnings", []),
-            "missing_required_terms": row.get("missing_required_terms", [])[:12],
             "candidate_findings": row.get("candidate_findings"),
             "candidate_mean_risk": row.get("candidate_mean_risk"),
+            "risk_drop": row.get("risk_drop"),
+            "missing_required_terms": row.get("missing_required_terms", []),
         })
     payload = {
-        "task": "retry_rejected_v6_writer_candidate",
-        "instruction": "Generate one corrected replacement that fixes every listed defect while preserving submitted meaning and source coverage.",
-        "defect_feedback_label": "Defect feedback from rejected candidates",
-        "defect_feedback": normalized_feedback,
-        "retry_writer_contract": build_retry_contract(paragraph, plan),
-        "retry_rules": [
-            "Fix the listed blockers directly; do not repeat the rejected sentence route.",
-            "Use source_units as the only source text and keep coverage in the selected paragraph.",
-            "Use writer_execution_contract rows as the build order.",
-            "Do not output route fragments, coverage maps, sentence rows, analysis notes, or repair traces.",
-            "Do not expose internal planning labels or phrases such as coverage beat, source slot, route question, relationship sees, writer_execution_contract, construction recipe, planner decision, or coverage capsule.",
-            "If the defect feedback mentions sentence expansion or short sentence chain, merge only semantically dependent short sentences and keep source meaning intact.",
-            "Do not add external facts, new citations, new named references, new years, or stronger claims.",
-            "Keep submitted citations inside their original parenthetical span when cited.",
-            "Every final sentence must be a complete ordinary sentence with its own subject and predicate.",
+        "task": "select_existing_v6_rewrite_variant",
+        "source_paragraph": paragraph.text,
+        "variants": rows,
+        "rules": [
+            "Return only selected_id and rationale.",
+            "Select exactly one existing variant id from variants.",
+            "Do not rewrite, repair, merge, or create any text.",
+            "Reject variants with hard blockers: grammar corruption, sentence fragments, keyword dumps, misplaced source terms, broken lists, or malformed parallelism.",
+            "Choose the best overall variant, not automatically the lowest scanner score.",
+            "Use candidate_findings, candidate_mean_risk, and risk_drop as evidence, but do not let them override obvious prose defects.",
+            "Prefer the variant that preserves the full source route, reads directly, and needs only light punctuation or flow cleanup.",
+            "Reject or downgrade variants with forced connectors such as Consequently, Thus, Similarly, Ultimately, or Moreover when those connectors make the paragraph sound engineered.",
+            "Reject or downgrade variants that change a possible risk into something already happening, such as 'A danger emerges as students become...' when the source frames dependency as a risk.",
+            "Downgrade clunky wording such as 'by enabling them to', vague danger openings, and unnecessarily formal substitutions when a plainer variant is available.",
+            "If one variant has slightly worse findings but clearly better source coverage, route, and prose quality, select that better variant.",
+            "If variants are equally good by prose and coverage, then use lower candidate_findings, lower candidate_mean_risk, and higher risk_drop as tie-breakers.",
         ],
-        "output_schema": {"variants": [{"id": "retry_v1", "text": "corrected replacement text only", "author_proxy_provenance": [], "author_review_items": []}]},
+        "output_schema": {"selected_id": "existing variant id", "rationale": "brief reason for the selected existing variant"},
     }
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _variant_by_id(variants: list[Variant], selected_id: str | None) -> Variant | None:
+    if not selected_id:
+        return None
+    return next((variant for variant in variants if variant.id == selected_id), None)
+
+
+def _mark_selector_decision(diagnostics: list[dict[str, Any]], selected_id: str | None, source: str, rationale: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in diagnostics:
+        updated = dict(row)
+        updated["selected_by_selector"] = bool(selected_id and row.get("variant_id") == selected_id)
+        updated["selector_source"] = source
+        if updated["selected_by_selector"] and rationale:
+            updated["selector_rationale"] = rationale
+        rows.append(updated)
+    return rows
+
+
+def _selector_hard_blockers() -> set[str]:
+    return {
+        "planner_language_leakage",
+        "external_narrator_reporting_chain",
+        "malformed_serial_verb_chain",
+        "malformed_nominal_stack",
+        "malformed_learning_predicate",
+        "malformed_telegraphic_predicate",
+        "unnatural_completion_phrase",
+        "dangling_consequence_tail",
+        "dangling_additive_tail",
+        "standalone_additive_fragment",
+        "misplaced_channel_in_challenge",
+        "malformed_parallel_connector_list",
+        "malformed_parallel_verb_tail",
+        "redundant_trust_phrase",
+        "keyword_dump_sequence",
+        "lost_serial_punctuation",
+        "capitalized_common_noun_mid_sentence",
+        "repeated_platform_catalogue",
+        "repeated_subject_start",
+        "vague_unintroduced_reliance",
+        "malformed_tool_student_relation",
+        "tool_practise_skills_predicate",
+        "fragment_or_trace_sentence",
+    }
 
 
 def run_v6_rewrite_all(
@@ -511,6 +542,7 @@ def run_v6_rewrite_all(
     *,
     planner_client: Any | None = None,
     writer_client: Any | None = None,
+    selector_client: Any | None = None,
     quality_client: Any | None = None,
     max_passes: int | None = None,
     model: str | None = None,
@@ -574,6 +606,7 @@ def run_v6_rewrite_all(
             current,
             planner_client=planner_client,
             writer_client=writer_client,
+            selector_client=selector_client,
             excluded_paragraph_ids=excluded_for_pass,
             model=model,
             api_key=api_key,
@@ -654,6 +687,7 @@ def run_v6_rewrite_all(
                 residual_limit=residual_limit,
                 planner_client=planner_client,
                 writer_client=writer_client,
+                selector_client=selector_client,
                 model=model,
                 api_key=api_key,
                 base_url=base_url,
@@ -699,6 +733,7 @@ def _run_residual_followups(
     residual_limit: int,
     planner_client: Any | None,
     writer_client: Any | None,
+    selector_client: Any | None,
     model: str | None,
     api_key: str | None,
     base_url: str | None,
@@ -728,6 +763,7 @@ def _run_residual_followups(
             current,
             planner_client=planner_client,
             writer_client=writer_client,
+            selector_client=selector_client,
             excluded_paragraph_ids={paragraph.id for paragraph in before_residual.paragraphs if paragraph.id not in active_targets},
             model=model,
             api_key=api_key,
@@ -1183,6 +1219,18 @@ def _writer_model() -> str:
     return os.environ.get("DRAFTPROOF_V6_WRITER_MODEL") or os.environ.get("LLM_MODEL") or DEFAULT_V6_MODEL
 
 
+def _selector_model() -> str:
+    import os
+
+    return (
+        os.environ.get("DRAFTPROOF_V6_SELECTOR_MODEL")
+        or os.environ.get("DRAFTPROOF_V6_PLANNER_MODEL")
+        or os.environ.get("DRAFTPROOF_PLANNER_MODEL")
+        or os.environ.get("LLM_MODEL")
+        or DEFAULT_V6_MODEL
+    )
+
+
 def _planner_model() -> str:
     import os
 
@@ -1215,8 +1263,32 @@ def _planner_gateway(
     )
 
 
+def _selector_gateway(
+    *,
+    api_key: str | None,
+    base_url: str | None,
+    cancellation_check: Callable[[], None] | None = None,
+) -> LLMGateway:
+    model = _selector_model()
+    return LLMGateway(
+        LLMConfig(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            **_selector_llm_profile(model),
+            provider=_selector_provider(model),
+            extra_body=_selector_extra_body(model),
+            cancellation_check=cancellation_check,
+        )
+    )
+
+
 def _planner_provider(model: str) -> dict[str, Any] | None:
     return _provider_from_env("PLANNER", model)
+
+
+def _selector_provider(model: str) -> dict[str, Any] | None:
+    return _provider_from_env("SELECTOR", model)
 
 
 def _writer_provider(model: str) -> dict[str, Any] | None:
@@ -1268,6 +1340,15 @@ def _planner_extra_body(model: str) -> dict[str, Any] | None:
     return {"reasoning": {"enabled": False}, "include_reasoning": False}
 
 
+def _selector_extra_body(model: str) -> dict[str, Any] | None:
+    normalized = str(model or "").casefold()
+    if "gpt-oss" in normalized:
+        return {"reasoning": {"effort": "low", "exclude": True}, "include_reasoning": False}
+    if "thinking" in normalized:
+        return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 32}, "include_reasoning": False}
+    return {"reasoning": {"enabled": False}, "include_reasoning": False}
+
+
 def _writer_extra_body(model: str) -> dict[str, Any] | None:
     normalized = str(model or "").casefold()
     if "gpt-oss" in normalized:
@@ -1289,6 +1370,13 @@ def _planner_llm_profile(model: str) -> dict[str, Any]:
             "repetition_penalty": 1.0,
         }
     return {"max_tokens": None, "temperature": 0.1, "top_p": 0.75}
+
+
+def _selector_llm_profile(model: str) -> dict[str, Any]:
+    profile = dict(_planner_llm_profile(model))
+    profile["temperature"] = 0.0
+    profile["top_p"] = 1.0
+    return profile
 
 
 def _writer_llm_profile(model: str, text: str = "") -> dict[str, Any]:

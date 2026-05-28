@@ -8,7 +8,13 @@ from .integrity_guard import candidate_integrity_blockers
 from .json_io import parse_json
 from .paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from .plan import Plan
-from .prose_quality import fragment_trace_penalty, has_fragment_or_trace_sentences, repair_generated_prose, robotic_sentence_chain
+from .prose_quality import (
+    catalogue_sentence_chain,
+    fragment_trace_penalty,
+    has_fragment_or_trace_sentences,
+    repair_generated_prose,
+    robotic_sentence_chain,
+)
 from .review_provenance import annotate_review_items
 from .scan import scan_text
 from .text import Paragraph, source_terms, split_paragraphs, word_count
@@ -47,6 +53,7 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
             system=(
                 "Return valid JSON only with a variants array matching the requested variant ids. "
                 "If list_contract_active is true, no final text sentence may contain two or more commas. "
+                "If list_contract_active is false, compact natural lists are allowed when the listed terms share one semantic role. "
                 "When the source uses not only / but also inside an overloaded sentence, preserve both sides in separate ordinary sentences; do not keep one long not-only sentence. "
                 "Do not use pronoun-led also wrappers such as It also or This also for concrete source work; name the subject and split the consequence. "
                 "Avoid repeated sentence starts; do not use summary-noun wrappers such as The example or The result as the route. "
@@ -160,6 +167,8 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
     risk_drop = before.scores["mean_sentence_shape_risk"] - after.scores["mean_sentence_shape_risk"]
     if word_count(candidate.text) < max(8, int(word_count(paragraph.text) * 0.35)):
         return False
+    if finding_drop >= 1 and risk_drop >= -5.0 and not _severe_route_quality_penalty(candidate.text):
+        return True
     if finding_drop >= 2 and risk_drop >= -2.0:
         return True
     if finding_drop >= 1 and risk_drop >= 0.0:
@@ -203,15 +212,17 @@ def _variant_rank(variant: Variant, paragraph: Paragraph, source_words: int) -> 
     compression_penalty = 2.0 if _compresses_list_repair(variant.text, paragraph) else 0.0
     extra_beat_penalty = 2.0 if _adds_extra_conclusion_beat(variant.text, paragraph) else 0.0
     final_beat_penalty = 2.0 if _replaces_final_source_beat_with_conclusion(variant.text, paragraph) else 0.0
+    catalogue_penalty = 4.0 if catalogue_sentence_chain(variant.text) else 0.0
     polarity_penalty = 1.0 if _polarity_violation(variant.text, paragraph) else 0.0
     bridge_penalty = 4.0 if _unreviewed_bridge_violation(variant, paragraph) else 0.0
     contract_penalty = 4.0 if _candidate_contract_violation(variant.text, paragraph) else 0.0
     hard_integrity_penalty = 12.0 if _hard_integrity_blockers(variant.text) else 0.0
+    route_quality_penalty = _route_quality_penalty(variant.text)
     mean_risk = scan.scores["mean_sentence_shape_risk"]
     return (
         -(scan.scores["finding_count"] + virtual_findings),
         -mean_risk,
-        -(quality_penalty + fragment_trace_penalty(variant.text) + source_drift_penalty * 0.25 + compression_penalty + extra_beat_penalty + final_beat_penalty + polarity_penalty + bridge_penalty + contract_penalty + hard_integrity_penalty),
+        -(quality_penalty + fragment_trace_penalty(variant.text) + source_drift_penalty * 0.25 + compression_penalty + extra_beat_penalty + final_beat_penalty + catalogue_penalty + polarity_penalty + bridge_penalty + contract_penalty + hard_integrity_penalty + route_quality_penalty),
         coverage_ratio(variant.text, paragraph),
         words >= source_words * 0.9,
         -abs(words - source_words),
@@ -243,7 +254,32 @@ def _mechanical_quality_penalty(text: str, source_paragraph: Paragraph) -> float
         penalty += stats["repeated_frame_ratio"] * 5.0
     if stats["transition_start_ratio"] >= _TRANSITION_STACK_REVIEW_RATIO:
         penalty += stats["transition_start_ratio"] * 3.0
+    if catalogue_sentence_chain(text):
+        penalty += 9.0
+    penalty += _route_quality_penalty(text)
     return round(penalty, 3)
+
+
+def _route_quality_penalty(text: str) -> float:
+    value = str(text or "")
+    penalty = 0.0
+    forced_connectors = re.findall(r"(?:^|[.!?]\s+)(?:Moreover|Thus|Consequently|Furthermore|Additionally)\b", value)
+    penalty += len(forced_connectors) * 4.0
+    patterns = {
+        r"\bSuch\s+a\s+mix\b": 3.0,
+        r"\bblend\s+of\s+traditional\s+and\s+digital\s+sources\b": 5.0,
+        r"\bdifficulty\s+shifts\s+toward\s+assessing\b": 5.0,
+        r"\bjudging\s+information\s+quality\b": 3.0,
+        r"\bassessing\s+information\s+quality\b": 3.0,
+    }
+    for pattern, weight in patterns.items():
+        if re.search(pattern, value, flags=re.I):
+            penalty += weight
+    return penalty
+
+
+def _severe_route_quality_penalty(text: str) -> bool:
+    return _route_quality_penalty(text) >= 8.0
 
 
 def _over_decomposition_review_reasons(text: str, source_paragraph: Paragraph) -> list[str]:
@@ -265,6 +301,8 @@ def _over_decomposition_review_reasons(text: str, source_paragraph: Paragraph) -
         reasons.append("repeated_sentence_start")
     if stats["transition_start_ratio"] >= _TRANSITION_STACK_REVIEW_RATIO:
         reasons.append("mechanical_transition_stack")
+    if catalogue_sentence_chain(text):
+        reasons.append("catalogue_sentence_chain")
     return reasons
 
 
@@ -335,6 +373,7 @@ def _candidate_contract_violation(text: str, source_paragraph: Paragraph) -> boo
     return (
         _repeats_sentence_intent(text)
         or robotic_sentence_chain(text)
+        or catalogue_sentence_chain(text)
         or bool(_hard_integrity_blockers(text))
         or _hard_candidate_contract_violation(text, source_paragraph)
     )
@@ -383,11 +422,30 @@ def _repeats_sentence_intent(text: str) -> bool:
 def _keeps_forbidden_list_contract(text: str, source_paragraph: Paragraph) -> bool:
     if not any(_has_list_shape(sentence.text) for sentence in source_paragraph.sentences):
         return False
+    if _natural_compact_list_allowed(text, source_paragraph):
+        return False
     for paragraph in split_paragraphs(text):
         for sentence in paragraph.sentences:
             if _without_parentheticals(sentence.text).count(",") >= 2:
                 return True
     return False
+
+
+def _natural_compact_list_allowed(text: str, source_paragraph: Paragraph) -> bool:
+    candidate_sentences = [
+        sentence
+        for paragraph in split_paragraphs(text)
+        for sentence in paragraph.sentences
+    ]
+    if not candidate_sentences or len(candidate_sentences) > len(source_paragraph.sentences):
+        return False
+    comma_list_sentences = [
+        sentence for sentence in candidate_sentences
+        if _without_parentheticals(sentence.text).count(",") >= 2
+    ]
+    if len(comma_list_sentences) != 1:
+        return False
+    return not catalogue_sentence_chain(text) and not robotic_sentence_chain(text)
 
 
 def _without_parentheticals(text: str) -> str:
@@ -595,7 +653,30 @@ def _unreviewed_bridge_violation(variant: Variant, paragraph: Paragraph) -> bool
 def _hard_integrity_blockers(text: str) -> list[str]:
     return [
         blocker for blocker in candidate_integrity_blockers(text)
-        if blocker in {"planner_language_leakage", "malformed_serial_verb_chain", "malformed_nominal_stack"}
+        if blocker in {
+            "planner_language_leakage",
+            "external_narrator_reporting_chain",
+            "malformed_serial_verb_chain",
+            "malformed_nominal_stack",
+            "malformed_learning_predicate",
+            "malformed_telegraphic_predicate",
+            "unnatural_completion_phrase",
+            "dangling_consequence_tail",
+            "dangling_additive_tail",
+            "standalone_additive_fragment",
+            "misplaced_channel_in_challenge",
+            "malformed_parallel_connector_list",
+            "malformed_parallel_verb_tail",
+            "redundant_trust_phrase",
+            "keyword_dump_sequence",
+            "lost_serial_punctuation",
+            "capitalized_common_noun_mid_sentence",
+            "repeated_platform_catalogue",
+            "repeated_subject_start",
+            "vague_unintroduced_reliance",
+            "malformed_tool_student_relation",
+            "tool_practise_skills_predicate",
+        }
     ]
 
 

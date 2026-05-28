@@ -978,6 +978,7 @@ def _dense_paragraph_plan(
     density = affected_count / sentence_count
     max_cluster = _max_adjacent_affected_cluster(actions)
     tag_counts = Counter(tag for action in affected for tag in action.tags)
+    semantic_roles = _semantic_role_map(actions)
     repair_unit = "paragraph" if (
         sentence_count >= 3
         and affected_count >= 3
@@ -992,6 +993,8 @@ def _dense_paragraph_plan(
         "source_sentence_count": sentence_count,
         "max_adjacent_affected_cluster": max_cluster,
         "target_sentence_range": f"{low} to {high} ordinary sentences",
+        "semantic_role_map": semantic_roles,
+        "human_route": _human_route(actions, semantic_roles),
         "dominant_flow_problem": _dominant_flow_problem(tag_counts),
         "finding_interpretation_rule": (
             "Scanner findings are paragraph-flow symptoms. Preserve traceability, but do not allocate one final sentence to each finding."
@@ -1000,13 +1003,181 @@ def _dense_paragraph_plan(
         "merge_policy": (
             "Merge only semantically dependent or mechanically repetitive short beats; keep independent contrasts, examples, and limits visible."
         ),
+        "natural_list_policy": (
+            "A compact natural list is allowed when several source terms share one semantic role. "
+            "Do not split a single role into catalogue sentences just to avoid commas."
+        ),
         "writer_must_not": [
             "do not create one short sentence per source sentence or scanner finding",
+            "do not turn must_include terms into separate sentence obligations",
             "do not repeat the same subject at the start of adjacent sentences",
             "do not expose route, beat, contract, source slot, or other planning language",
             "do not polish into a generic essay paragraph",
         ],
     }
+
+
+def _human_route(actions: list[PlanAction], semantic_roles: dict[str, Any]) -> dict[str, Any]:
+    text = " ".join(action.source_text for action in actions).casefold()
+    if (
+        re.search(r"\b(?:students?|learners?)\b", text)
+        and re.search(r"\b(?:teachers?|classroom|youtube|tiktok|online|ai|search|social|peer)\b", text)
+        and re.search(r"\b(?:knowledge|access|accurate|useful|trust)\b", text)
+    ):
+        return {
+            "route_type": "INFORMATION_ENVIRONMENT_TO_TRUST_PROBLEM",
+            "movement": "teacher remains -> outside sources expand -> access is easier -> trust becomes harder",
+            "human_logic": "The writer is explaining how learning moved beyond the classroom and why judgement now matters more than access.",
+            "sentence_jobs": [
+                "Name that students still learn from teachers but no longer rely only on the classroom.",
+                "Show the outside sources as a lived learning situation, not as a platform catalogue.",
+                "Connect the wider source mix to the new learning environment.",
+                "Merge knowledge/access into one contrast, then close on trust and accuracy.",
+            ],
+            "allowed_texture": {
+                "compact_list": 1,
+                "short_sentences": 0,
+                "compound_sentences": 2,
+                "direct_contrast": True,
+            },
+            "avoid": [
+                "platform catalogue",
+                "one sentence per channel",
+                "formal substitute words",
+                "completes the challenge",
+                "forced transition chain",
+            ],
+        }
+    if re.search(r"\b(?:ai|technology|tools?)\b", text) and re.search(r"\b(?:risk|danger|depend|assessment)\b", text):
+        return {
+            "route_type": "USEFUL_TOOL_TO_DEPENDENCY_RISK",
+            "movement": "useful support -> over-reliance risk -> assessment consequence",
+            "human_logic": "The writer is showing when a helpful tool becomes a learning risk.",
+            "sentence_jobs": [
+                "Start with practical help, not a balanced topic sentence.",
+                "Show the risk as dependence on answers.",
+                "Connect polished work to hidden understanding.",
+                "Close on assessment difficulty.",
+            ],
+            "allowed_texture": {"compact_list": 1, "short_sentences": 1, "compound_sentences": 2, "direct_contrast": True},
+            "avoid": ["opportunities and risks template", "on one hand", "on the other hand", "raises questions about"],
+        }
+    return {
+        "route_type": "PRESSURE_EXAMPLE_CONSEQUENCE",
+        "movement": "pressure/problem -> concrete shape -> practical consequence",
+        "human_logic": "The writer should reason through the paragraph instead of arranging terms.",
+        "sentence_jobs": [
+            "Start from the pressure or problem.",
+            "Show what it looks like using source terms.",
+            "Explain why it matters.",
+            "Close with the practical consequence.",
+        ],
+        "allowed_texture": {"compact_list": 1, "short_sentences": 1, "compound_sentences": 2, "direct_contrast": True},
+        "avoid": ["list-and-explain route", "forced transition chain", "abstract conclusion"],
+    }
+
+
+def _semantic_role_map(actions: list[PlanAction]) -> dict[str, Any]:
+    paragraph_text = " ".join(action.source_text for action in actions)
+    rows: dict[str, Any] = {
+        "primary_actor": _first_matching_term(paragraph_text, ["students", "learners", "teachers", "people", "teams"]),
+        "main_condition": _condition_phrase(paragraph_text),
+        "source_channels": _source_channels(paragraph_text),
+        "result_relation": _result_relation(actions),
+        "contrast_relation": _contrast_relation(actions),
+        "challenge_relation": _challenge_relation(actions),
+        "role_instruction": (
+            "Use these roles to build paragraph movement. Do not allocate one final sentence to each term inside a role."
+        ),
+    }
+    return {key: value for key, value in rows.items() if value}
+
+
+def _first_matching_term(text: str, candidates: list[str]) -> str:
+    lowered = str(text or "").casefold()
+    for candidate in candidates:
+        if re.search(rf"\b{re.escape(candidate)}\b", lowered):
+            return candidate
+    terms = source_terms(text, limit=4)
+    return terms[0] if terms else ""
+
+
+def _condition_phrase(text: str) -> str:
+    match = re.search(r"\b(?:surrounded by|facing|using|working with|learning from)\s+([^.!?]{3,80})", str(text or ""), flags=re.I)
+    return match.group(0).strip(" .") if match else ""
+
+
+def _source_channels(text: str) -> list[str]:
+    matches: list[str] = []
+    for match in re.finditer(r"\bfrom\s+([^.!?]+)", str(text or ""), flags=re.I):
+        span = re.split(r"\b(?:because|which|where|when|while)\b", match.group(1), maxsplit=1, flags=re.I)[0]
+        matches.extend(_list_items(span))
+    named = re.findall(r"\b(?:[A-Z][A-Za-z0-9'’-]{2,}|[A-Z]{2,})(?:\s+(?:[A-Z][A-Za-z0-9'’-]{2,}|[A-Z]{2,}))*\b", str(text or ""))
+    matches.extend(named)
+    channels = _dedupe([
+        term for term in matches
+        if _source_channel_key(term) not in {"now", "this", "that", "they", "the", "students", "knowledge", "access"}
+    ])
+    return _normalise_source_channels(channels)[:18]
+
+
+def _normalise_source_channels(channels: list[str]) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for channel in channels:
+        key = _source_channel_key(channel)
+        if key == "ai" and "ai tools" in seen:
+            continue
+        if key == "ai tools" and "ai" in seen:
+            rows = [row for row in rows if _source_channel_key(row) != "ai"]
+            seen.discard("ai")
+        if key not in seen:
+            rows.append(channel)
+            seen.add(key)
+    return rows
+
+
+def _source_channel_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+
+
+def _list_items(text: str) -> list[str]:
+    visible = re.sub(r"\bbut\s+also\s+from\b", "", str(text or ""), flags=re.I)
+    visible = re.sub(r"\balso\s+from\b", "", visible, flags=re.I)
+    parts = [
+        part.strip(" ,")
+        for part in re.split(r",|\s+\band\b\s+", visible)
+        if part.strip(" ,")
+    ]
+    rows: list[str] = []
+    for part in parts:
+        cleaned = re.sub(r"^(?:from|also|but)\s+", "", part, flags=re.I).strip(" ,")
+        if cleaned:
+            rows.append(cleaned)
+    return rows
+
+
+def _result_relation(actions: list[PlanAction]) -> str:
+    for action in actions:
+        if re.search(r"\b(?:created|produced|made|led to|resulted in)\b", action.source_text, flags=re.I):
+            return _strip_leading_heading(action.source_text).strip(" .")
+    return ""
+
+
+def _contrast_relation(actions: list[PlanAction]) -> str:
+    no_longer = [
+        _strip_leading_heading(action.source_text).strip(" .")
+        for action in actions
+        if re.search(r"\bno longer\b", action.source_text, flags=re.I)
+    ]
+    return " ".join(no_longer[:2])
+
+
+def _challenge_relation(actions: list[PlanAction]) -> str:
+    for action in reversed(actions):
+        if re.search(r"\b(?:challenge|problem|issue|risk|concern)\b", action.source_text, flags=re.I):
+            return _strip_leading_heading(action.source_text).strip(" .")
+    return ""
 
 
 def _max_adjacent_affected_cluster(actions: list[PlanAction]) -> int:

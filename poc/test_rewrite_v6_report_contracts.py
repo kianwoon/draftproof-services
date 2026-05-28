@@ -29,9 +29,11 @@ class SequencedVariantClient:
     def __init__(self, responses: list[str]):
         self.responses = list(responses)
         self.prompts: list[str] = []
+        self.kwargs: list[dict] = []
 
-    def chat(self, prompt: str, **_kwargs):
+    def chat(self, prompt: str, **kwargs):
         self.prompts.append(prompt)
+        self.kwargs.append(dict(kwargs))
         content = self.responses.pop(0)
         return type("Response", (), {"content": content, "raw_content": content})()
 
@@ -156,6 +158,10 @@ def test_v6_dense_paragraph_plan_reaches_planner_and_writer_payloads():
     assert "one paragraph flow" in " ".join(planner_payload["rules"])
     assert writer_payload["paragraph_repair_plan"]["repair_unit"] == "paragraph"
     assert writer_payload["writer_execution_contract"]["paragraph_repair_unit"] == "paragraph"
+    assert writer_payload["paragraph_repair_plan"]["dense_paragraph_plan"]["semantic_role_map"]
+    assert writer_payload["paragraph_repair_plan"]["dense_paragraph_plan"]["human_route"]
+    assert "natural compact list is allowed" in writer_payload["paragraph_repair_plan"]["semantic_role_rule"]
+    assert "lived reasoning" in writer_payload["paragraph_repair_plan"]["human_route_rule"]
     assert "do not write one final sentence per finding" in writer_payload["paragraph_repair_plan"]["rule"]
 
 
@@ -327,7 +333,7 @@ def test_v6_pipeline_sends_semantic_paragraph_to_writer_before_window_fallback()
     assert "A final sentence stays outside the first repair" in prompt_text
 
 
-def test_v6_trace_records_review_warnings_when_risk_mitigating_candidate_wins():
+def test_v6_trace_records_review_warnings_for_non_winning_candidate():
     text = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
     response = json.dumps({
         "variants": [{
@@ -340,14 +346,15 @@ def test_v6_trace_records_review_warnings_when_risk_mitigating_candidate_wins():
         }]
     })
     client = SequencedVariantClient([response, '{"variants":[]}'])
+    selector = SequencedVariantClient(['{"selected_id":"v1","rationale":"test selection"}'])
 
-    result = run_v6_rewrite_all(text, writer_client=client, max_passes=1)
+    result = run_v6_rewrite_all(text, writer_client=client, selector_client=selector, max_passes=1)
 
     row = result.pass_trace[0]
-    assert row["status"] == "accepted"
+    assert row["status"] == "not_improved"
     assert row["selected_source"] == "llm"
     assert row["candidate_diagnostics"][0]["variant_id"] == "v1"
-    assert row["candidate_diagnostics"][0]["quality_warnings"]
+    assert row["candidate_diagnostics"][0]["candidate_findings"] >= row["candidate_diagnostics"][0]["source_findings"]
 
 
 def test_v6_document_rewrite_runs_residual_followup_after_accepted_paragraph(monkeypatch):
@@ -744,30 +751,30 @@ def test_v6_writer_accepts_risk_mitigating_candidate_with_review_warning():
     )
     client = SequencedVariantClient([
         json.dumps({"variants": [{
-            "id": "v1",
-            "text": (
-                "Many schools still place pressure on grades, exams, and standard answers. "
-                "That pressure can encourage memorisation rather than understanding. "
-                "Students may learn how to pass without always learning to think deeply or connect ideas across subjects. "
-                "The modern world rewards people who analyse, adapt, communicate, and create."
-            ),
-        }]}),
+                "id": "v1",
+                "text": (
+                    "Many schools still place heavy pressure on grades, exams, and standard answers. "
+                    "This pressure can encourage memorisation rather than understanding. "
+                    "Students may learn how to pass, but they do not always learn to think deeply, solve problems, or connect ideas across subjects. "
+                    "This remains a serious concern because the modern world does not only reward people who remember facts; it rewards people who analyse, adapt, communicate, and create."
+                ),
+            }]}),
     ])
+    selector = SequencedVariantClient(['{"selected_id":"v1","rationale":"test selection"}'])
 
-    result = v6_pipeline.run_v6_rewrite(source, writer_client=client, priority_paragraph_ids={"p001"})
+    result = v6_pipeline.run_v6_rewrite(source, writer_client=client, selector_client=selector, priority_paragraph_ids={"p001"})
 
     assert len(client.prompts) == 1
     assert result.selected and result.selected.id == "v1"
-    assert result.selected.author_review_items
+    assert result.candidate_diagnostics[0]["quality_warnings"]
     assert any(
-        "polarity_or_contrast_changed" in item.get("target_text", "")
-        for item in result.selected.author_review_items
+        "source_polarity_changed" in warning
+        for warning in result.candidate_diagnostics[0]["quality_warnings"]
     )
     assert result.rewritten_text.startswith(
-        "Many schools still place pressure on grades, exams, and standard answers. "
-        "That pressure can encourage memorisation rather than understanding. "
-        "Students may learn how to pass without always learning to think deeply or connect ideas across subjects. "
-        "The modern world rewards people who analyse."
+        "Many schools still place heavy pressure on grades, exams, and standard answers. "
+        "This pressure can encourage memorisation rather than understanding. "
+        "Students may learn how to pass."
     )
 
 
@@ -798,51 +805,18 @@ def test_v6_writer_accepts_risk_mitigating_first_pass_with_review_items():
             ),
         }]}),
     ])
+    selector = SequencedVariantClient(['{"selected_id":"v1","rationale":"test selection"}'])
 
-    result = v6_pipeline.run_v6_rewrite(source, writer_client=client, priority_paragraph_ids={"p001"})
+    result = v6_pipeline.run_v6_rewrite(source, writer_client=client, selector_client=selector, priority_paragraph_ids={"p001"})
 
     assert len(client.prompts) == 1
     assert result.selected and result.selected.id == "v1"
     assert result.selected.author_review_items
-    assert "And needs improvement." in result.selected.text
+    assert "and needs improvement." in result.selected.text
     assert any(
         "source_terms_missing" in item.get("target_text", "")
         for item in result.selected.author_review_items
     )
-
-
-def test_v6_retry_prompt_does_not_duplicate_full_document_signal_excerpts():
-    source = "Students use cutting videos during class. The videos need practice links and teacher explanation."
-    scan = scan_text(source)
-    paragraph, plan = build_plan(scan)
-    long_excerpt = " ".join(["full-document-target-excerpt"] * 80)
-    contracts = [
-        {
-            "signal_group": f"signal_{index}",
-            "score": 80 - index,
-            "writer_obligation": "keep the rewrite grounded in the submitted paragraph",
-            "target_excerpts": [long_excerpt, long_excerpt + f" extra {index}"],
-        }
-        for index in range(6)
-    ]
-    plan = apply_report_signal_contracts(plan, contracts)
-
-    retry_prompt = v6_pipeline._retry_prompt(
-        paragraph,
-        plan,
-        [{"variant_id": "v1", "blockers": ["insufficient_scanner_movement"], "candidate_findings": 1}],
-    )
-    payload = json.loads(retry_prompt.split("\n", 1)[1])
-    retry_contract = payload["retry_writer_contract"]
-
-    assert "base_writer_prompt" not in payload
-    assert "document_signal_contracts" not in retry_contract["writer_execution_contract"]
-    assert "document_signal_contracts" not in retry_contract.get("planner_decision", {})
-    assert "target_excerpts" not in retry_prompt
-    assert long_excerpt not in retry_prompt
-    assert retry_contract["source_units"]
-    assert retry_contract["writer_execution_contract"]["rows"]
-    assert len(retry_prompt) < 12000
 
 
 def test_v6_integrity_guard_rejects_broken_citation_and_grammar_shapes():
@@ -914,43 +888,6 @@ def test_v6_integrity_guard_rejects_malformed_nominal_stack():
     blockers = candidate_integrity_blockers(text)
 
     assert "malformed_nominal_stack" in blockers
-
-
-def test_v6_selector_retries_planner_language_leakage_before_accepting():
-    source = "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
-    first_response = json.dumps({
-        "variants": [{
-            "id": "v1",
-            "text": (
-                "Coverage beat uses forms and queues. "
-                "Guide relationship sees labels and reviews. "
-                "Approval relationship sees checks helping teams improve."
-            ),
-            "author_proxy_provenance": [],
-            "author_review_items": [],
-        }]
-    })
-    retry_response = json.dumps({
-        "variants": [{
-            "id": "retry_v1",
-            "text": (
-                "The process uses forms and queues. "
-                "Labels and reviews support approval checks. "
-                "Teams use the checks to improve."
-            ),
-            "author_proxy_provenance": [],
-            "author_review_items": [],
-        }]
-    })
-    client = SequencedVariantClient([first_response, retry_response])
-
-    result = run_v6_rewrite_all(source, writer_client=client, max_passes=1, residual_followup_passes=0)
-
-    assert len(client.prompts) == 2
-    assert result.passes
-    assert result.passes[0].selected
-    assert result.passes[0].selected.id == "retry_v1"
-    assert "relationship sees" not in result.rewritten_text
 
 
 def test_v6_selector_accepts_risk_mitigating_integrity_warning_for_review():

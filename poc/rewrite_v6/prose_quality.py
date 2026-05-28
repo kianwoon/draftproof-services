@@ -17,10 +17,10 @@ def repair_generated_prose(text: str, source_text: str = "") -> str:
                                         _revoice_displayed_quality(
                                             _revoice_guidance_understanding(
                                                 _revoice_broad_belief_recommendations(
-                                                    _restore_not_only_polarity(_repair_gerund_evidence_fragments(text), source_text),
-                                                    source_text,
-                                                )
-                                            )
+                                            _restore_not_only_polarity(_merge_source_term_fragments(_repair_gerund_evidence_fragments(text)), source_text),
+                                            source_text,
+                                        )
+                                    )
                                         )
                                     )
                                 )
@@ -32,6 +32,63 @@ def repair_generated_prose(text: str, source_text: str = "") -> str:
             source_text,
         )
     )
+
+
+def _merge_source_term_fragments(text: str) -> str:
+    paragraphs = [block.strip() for block in re.split(r"\n\s*\n+", str(text or "")) if block.strip()]
+    repaired: list[str] = []
+    for block in paragraphs:
+        heading, body = _split_heading(block)
+        sentences = _sentences(body)
+        rows: list[str] = []
+        index = 0
+        while index < len(sentences):
+            current = sentences[index].strip()
+            fragments: list[str] = []
+            next_index = index + 1
+            while next_index < len(sentences) and _source_term_fragment(sentences[next_index]):
+                fragments.append(_normalise_fragment_item(sentences[next_index]))
+                next_index += 1
+            if fragments:
+                rows.append(_append_fragment_list(current, fragments))
+                index = next_index
+                continue
+            rows.append(current)
+            index += 1
+        repaired.append("\n".join(part for part in [heading, " ".join(rows).strip()] if part).strip())
+    return "\n\n".join(repaired).strip()
+
+
+def _source_term_fragment(sentence: str) -> bool:
+    value = sentence.strip(" .!?")
+    lowered = value.casefold()
+    words = re.findall(r"[A-Za-z][A-Za-z'’-]*", value)
+    if not words or len(words) > 5:
+        return False
+    if re.match(r"^(?:and|or)\s+", lowered):
+        return True
+    clear_predicate = re.search(
+        r"\b(?:am|are|is|was|were|be|being|been|have|has|had|do|does|did|learn|learns|create|creates|created|make|makes|made|help|helps|support|supports|provide|provides|offer|offers)\b",
+        lowered,
+    )
+    return not bool(clear_predicate)
+
+
+def _normalise_fragment_item(sentence: str) -> str:
+    value = sentence.strip(" .!?")
+    value = re.sub(r"^(?:and|or)\s+", "", value, flags=re.I).strip()
+    if value.isupper() or re.search(r"\b[A-Z]{2,}\b", value) or any(ch.isupper() for ch in value[1:]):
+        return value
+    return value[:1].lower() + value[1:]
+
+
+def _append_fragment_list(sentence: str, fragments: list[str]) -> str:
+    base = sentence.strip().rstrip(".!?")
+    if not fragments:
+        return sentence
+    if len(fragments) == 1:
+        return f"{base} and {fragments[0]}."
+    return f"{base}, {', '.join(fragments[:-1])} and {fragments[-1]}."
 
 
 def drop_redundant_adjacent_sentence_intent(text: str) -> str:
@@ -449,6 +506,36 @@ def robotic_sentence_chain(text: str) -> bool:
     return max(starts.values(), default=0) >= 4 or max(frames.values(), default=0) >= 3
 
 
+def catalogue_sentence_chain(text: str) -> bool:
+    sentences = _sentences(text)
+    if len(sentences) < 5:
+        return False
+    catalogue_run = 0
+    for sentence in sentences:
+        if _catalogue_sentence(sentence):
+            catalogue_run += 1
+            if catalogue_run >= 3:
+                return True
+        else:
+            catalogue_run = 0
+    return False
+
+
+def _catalogue_sentence(sentence: str) -> bool:
+    value = sentence.strip()
+    words = re.findall(r"[A-Za-z][A-Za-z'’-]*", value)
+    if not (4 <= len(words) <= 10):
+        return False
+    lowered = value.casefold()
+    if re.match(r"^(?:knowledge|access|the\s+real\s+challenge|the\s+harder\s+task)\b", lowered):
+        return True
+    if re.match(r"^(?:online\s+courses|ai\s+tools|search\s+engines|social\s+media|peer\s+communities|youtube|tiktok)\b", lowered):
+        return True
+    return bool(
+        re.match(r"^[A-Z][A-Za-z'’-]+(?:\s+(?:and|or)\s+[A-Z]?[A-Za-z'’-]+)?\s+(?:add|adds|aid|aids|broaden|broadens|complete|completes|enrich|enriches|expand|expands|further|help|helps|locate|offer|offers|provide|provides|support|supports)\b", value)
+    )
+
+
 def _sentences(text: str) -> list[str]:
     protected = re.sub(r"\bet\s+al\.", "et al<dot>", str(text or ""), flags=re.I)
     parts = [part.replace("et al<dot>", "et al.").strip() for part in re.split(r"(?<=[.!?])\s+", protected)]
@@ -500,7 +587,13 @@ def _fragment_like(sentence: str) -> bool:
         return True
     if re.match(r"^(?:and|but|or)\s+(?:need|needs|require|requires|must|can|could|should|would|is|are|was|were|has|have|had|do|does|did)\b", lowered):
         return True
-    if re.match(r"^(?:when|while|whilst|although|though|because|if)\b", lowered) and "," not in value and not _has_late_main_clause(lowered):
+    if re.match(r"^(?:but\s+)?not\s+always\b", lowered):
+        return True
+    if re.match(r"^(?:and|but|or)\s+(?:solve|connect|analyse|analyze|adapt|communicate|create)\b", lowered):
+        return True
+    if re.match(r"^(?:solve|connect|analyse|analyze|adapt|communicate|create)\b", lowered) and len(words) <= 8:
+        return True
+    if re.match(r"^(?:when|while|whilst|although|though|because|if|since)\b", lowered) and "," not in value and not _has_late_main_clause(lowered):
         return True
     if re.match(r"^as\b", lowered) and "," not in value and not _has_late_main_clause(lowered):
         return True
@@ -520,7 +613,13 @@ def _hard_fragment_like(sentence: str) -> bool:
         return True
     if re.match(r"^(?:and|but|or)\s+(?:need|needs|require|requires|must|can|could|should|would|is|are|was|were|has|have|had|do|does|did)\b", lowered):
         return True
-    return bool(re.match(r"^as\b", lowered) and "," not in value and not _has_late_main_clause(lowered))
+    if re.match(r"^(?:but\s+)?not\s+always\b", lowered):
+        return True
+    if re.match(r"^(?:and|but|or)\s+(?:solve|connect|analyse|analyze|adapt|communicate|create)\b", lowered):
+        return True
+    if re.match(r"^(?:solve|connect|analyse|analyze|adapt|communicate|create)\b", lowered) and len(re.findall(r"[A-Za-z][A-Za-z'’-]*", value)) <= 8:
+        return True
+    return bool(re.match(r"^(?:as|since)\b", lowered) and "," not in value and not _has_late_main_clause(lowered))
 
 
 def _repair_trace_like(sentence: str) -> bool:

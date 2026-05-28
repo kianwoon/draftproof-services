@@ -79,6 +79,21 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
                     "must_not_become": ["mechanical or AI-shaped failure to avoid"],
                 }
             ],
+            "semantic_role_map": {
+                "primary_actor": "who or what the paragraph is actually about",
+                "source_channels": ["terms that share one role and may be carried as a natural list"],
+                "result_relation": "source-supported outcome relation",
+                "contrast_relation": "paired contrast that should be merged when dependent",
+                "challenge_relation": "closing source relation without artificial split",
+            },
+            "human_route": {
+                "route_type": "named movement family",
+                "movement": "how the paragraph should move as lived reasoning",
+                "human_logic": "what the writer is reasoning through",
+                "sentence_jobs": ["job of each sentence or clause group"],
+                "allowed_texture": {"compact_list": 1, "compound_sentences": 2},
+                "avoid": ["machine route shapes to avoid"],
+            },
             "paragraph_route": "positive route the writer must follow",
             "finding_contracts": [
                 {
@@ -120,6 +135,10 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             "Return one finding_contract for every scanner_findings row for traceability.",
             "When deterministic_route_skeleton.paragraph_strategy.repair_unit is paragraph, treat finding_contracts as diagnostic symptoms feeding one paragraph flow, not as separate final sentences.",
             "For dense paragraph repair, paragraph_route and flow_plan must tell the writer how to group, merge, and sequence source ideas at paragraph level.",
+            "For dense paragraph repair, provide semantic_role_map and say which source terms share one semantic role.",
+            "For dense paragraph repair, provide human_route. It must describe movement of thought, not only content coverage.",
+            "For dense paragraph repair, a natural compact list is allowed when terms share one semantic role; do not force awkward sentence splitting to avoid every list.",
+            "Avoid machine routes: topic-list-explain-conclude, platform catalogue, balanced essay route, forced transition route, and abstract conclusion route.",
             "For dense paragraph repair, do not plan one output sentence per scanner finding, one output sentence per coverage beat, or one output sentence per source item.",
             "Every finding_contract must target the exact finding tags and sentence id from scanner_findings.",
             "Do not use placeholder-only safe shapes such as <anchor>, <relation>, or <claim>.",
@@ -162,6 +181,8 @@ def _merge_decision(plan: Plan, decision: dict[str, Any]) -> Plan:
         "repair_unit": decision.get("repair_unit") or plan.paragraph_strategy.get("repair_unit"),
         "paragraph_problem": decision.get("paragraph_problem", ""),
         "flow_plan": [] if unsafe_contracts else _recipe_rows(decision.get("flow_plan")),
+        "semantic_role_map": decision.get("semantic_role_map") or plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("semantic_role_map", {}),
+        "human_route": decision.get("human_route") or plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("human_route", {}),
         "paragraph_route": decision.get("paragraph_route", ""),
         "finding_contracts": fallback_contracts if unsafe_contracts else _recipe_rows(decision.get("finding_contracts")),
         "paragraph_blueprint": fallback_blueprint if unsafe_contracts else _recipe_rows(decision.get("paragraph_blueprint")),
