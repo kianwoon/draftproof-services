@@ -620,11 +620,13 @@ def run_v6_rewrite_all(
         end_percent = _rewrite_progress_percent(pass_index + 1, limit)
         if _same_text(result.rewritten_text, current):
             attempts[result.plan.paragraph_id] = attempts.get(result.plan.paragraph_id, 0) + 1
-            exhausted.add(result.plan.paragraph_id)
+            retryable_no_change = _retryable_blocked_no_change(result)
+            if not retryable_no_change or attempts[result.plan.paragraph_id] >= _no_change_retry_limit():
+                exhausted.add(result.plan.paragraph_id)
             pass_trace.append(
                 _pass_trace_row(
                     pass_index=pass_index,
-                    status="no_change",
+                    status="no_change_retryable" if retryable_no_change and result.plan.paragraph_id not in exhausted else "no_change",
                     before=before,
                     target_paragraph_id=result.plan.paragraph_id,
                     excluded=excluded_for_pass,
@@ -633,7 +635,12 @@ def run_v6_rewrite_all(
                     selected_source=result.selected.source if result.selected else None,
                 )
             )
-            _emit_progress(progress_callback, end_percent, f"V6 paragraph {result.plan.paragraph_id} made no change")
+            message = (
+                f"V6 paragraph {result.plan.paragraph_id} blocked by repairable candidate defects; retrying later"
+                if retryable_no_change and result.plan.paragraph_id not in exhausted
+                else f"V6 paragraph {result.plan.paragraph_id} made no change"
+            )
+            _emit_progress(progress_callback, end_percent, message)
             continue
         after = scan_text(result.rewritten_text)
         result_targets = _target_paragraph_ids_after_rewrite(before, after, result)
@@ -906,6 +913,31 @@ def _quality_repair_risk_tolerance() -> float:
 
 def _finding_paragraph_ids(scan: Scan) -> set[str]:
     return {finding.paragraph_id for finding in scan.findings}
+
+
+def _retryable_blocked_no_change(result: Result) -> bool:
+    if result.selected is None or result.selected.source != "source_preserved":
+        return False
+    generated_rows = [
+        row for row in result.candidate_diagnostics
+        if row.get("source") != "source_preserved" and row.get("blockers")
+    ]
+    if not generated_rows:
+        return False
+    for row in generated_rows:
+        try:
+            finding_drop = int(row.get("finding_drop") or 0)
+            risk_drop = float(row.get("risk_drop") or 0.0)
+        except (TypeError, ValueError):
+            finding_drop = 0
+            risk_drop = 0.0
+        if finding_drop > 0 or risk_drop > 0:
+            return True
+    return False
+
+
+def _no_change_retry_limit() -> int:
+    return _bounded_int_env("DRAFTPROOF_V6_NO_CHANGE_RETRY_LIMIT", 2, minimum=1, maximum=4)
 
 
 def _dynamic_pass_limit(scan: Scan, report_signal_contracts: list[dict[str, Any]] | None = None) -> int:

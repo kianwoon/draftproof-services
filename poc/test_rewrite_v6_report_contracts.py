@@ -272,6 +272,45 @@ def test_v6_pipeline_schedules_report_target_even_without_local_findings():
     assert not result.passes
 
 
+def test_v6_retries_source_preserved_when_blocked_candidates_improved(monkeypatch):
+    source = (
+        "This is an important setup because teams should improve.\n\n"
+        "This is an important target because students should improve."
+    )
+    seen = []
+
+    def fake_run(current, **kwargs):
+        scan = scan_text(current)
+        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"), kwargs.get("priority_paragraph_ids"))
+        seen.append(paragraph.id)
+        if len(seen) == 1:
+            selected = Variant(id="source_preserved", text=paragraph.text, source="source_preserved")
+            diagnostics = [{
+                "variant_id": "v1",
+                "source": "llm",
+                "candidate_findings": 0,
+                "source_findings": 1,
+                "finding_drop": 1,
+                "candidate_mean_risk": 5.0,
+                "source_mean_risk": 40.0,
+                "risk_drop": 35.0,
+                "blockers": ["lost_serial_punctuation"],
+                "quality_warnings": ["lost_serial_punctuation_review_required"],
+            }]
+            return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current, candidate_diagnostics=diagnostics)
+        replacement = "The target improves through a student review."
+        selected = Variant(id="v1", text=replacement, source="llm")
+        return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current.replace(paragraph.text, replacement), candidate_diagnostics=[])
+
+    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
+
+    result = run_v6_rewrite_all(source, max_passes=2, residual_followup_passes=0)
+
+    assert seen == ["p001", "p001"]
+    assert result.pass_trace[0]["status"] == "no_change_retryable"
+    assert result.passes
+
+
 def test_v6_selects_sentence_window_for_overloaded_target_paragraph():
     text = (
         "Opening setup stays outside the repair. "
