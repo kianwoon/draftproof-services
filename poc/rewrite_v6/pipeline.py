@@ -15,6 +15,7 @@ from .report_contracts import apply_report_signal_contracts
 from .scan import Scan, findings_for_paragraph, scan_text
 from .json_io import parse_json
 from .naturalisation import NaturalisationResult, run_naturalisation_repair_once
+from .no_change_policy import no_change_retry_message, no_change_retry_status, retryable_no_change_result
 from .paragraph_layout import restore_original_paragraph_layout
 from .quality_repair import QualityRepairResult, _grammer_extra_body, _grammer_model, run_quality_repair_once
 from .selector_diagnostics import selection_diagnostics
@@ -620,13 +621,14 @@ def run_v6_rewrite_all(
         end_percent = _rewrite_progress_percent(pass_index + 1, limit)
         if _same_text(result.rewritten_text, current):
             attempts[result.plan.paragraph_id] = attempts.get(result.plan.paragraph_id, 0) + 1
-            retryable_no_change = _retryable_blocked_no_change(result)
-            if not retryable_no_change or attempts[result.plan.paragraph_id] >= _no_change_retry_limit():
+            retryable_no_change = retryable_no_change_result(result)
+            will_retry = retryable_no_change and attempts[result.plan.paragraph_id] < _no_change_retry_limit()
+            if not will_retry:
                 exhausted.add(result.plan.paragraph_id)
             pass_trace.append(
                 _pass_trace_row(
                     pass_index=pass_index,
-                    status="no_change_retryable" if retryable_no_change and result.plan.paragraph_id not in exhausted else "no_change",
+                    status=no_change_retry_status(result, will_retry=will_retry),
                     before=before,
                     target_paragraph_id=result.plan.paragraph_id,
                     excluded=excluded_for_pass,
@@ -635,12 +637,7 @@ def run_v6_rewrite_all(
                     selected_source=result.selected.source if result.selected else None,
                 )
             )
-            message = (
-                f"V6 paragraph {result.plan.paragraph_id} blocked by repairable candidate defects; retrying later"
-                if retryable_no_change and result.plan.paragraph_id not in exhausted
-                else f"V6 paragraph {result.plan.paragraph_id} made no change"
-            )
-            _emit_progress(progress_callback, end_percent, message)
+            _emit_progress(progress_callback, end_percent, no_change_retry_message(result.plan.paragraph_id, will_retry=will_retry))
             continue
         after = scan_text(result.rewritten_text)
         result_targets = _target_paragraph_ids_after_rewrite(before, after, result)
@@ -782,8 +779,11 @@ def _run_residual_followups(
             priority_paragraph_ids=active_targets,
         )
         if _same_text(result.rewritten_text, current):
-            exhausted_targets.add(result.plan.paragraph_id)
-            pass_trace.append(_residual_trace_row(pass_index, residual_index, "no_change_residual", before_residual, None, sorted(active_targets), result))
+            retryable_no_change = retryable_no_change_result(result)
+            status = "no_change_retryable_residual" if retryable_no_change else "no_change_residual"
+            if not retryable_no_change:
+                exhausted_targets.add(result.plan.paragraph_id)
+            pass_trace.append(_residual_trace_row(pass_index, residual_index, status, before_residual, None, sorted(active_targets), result))
             residual_index += 1
             continue
         after_residual = scan_text(result.rewritten_text)
@@ -913,27 +913,6 @@ def _quality_repair_risk_tolerance() -> float:
 
 def _finding_paragraph_ids(scan: Scan) -> set[str]:
     return {finding.paragraph_id for finding in scan.findings}
-
-
-def _retryable_blocked_no_change(result: Result) -> bool:
-    if result.selected is None or result.selected.source != "source_preserved":
-        return False
-    generated_rows = [
-        row for row in result.candidate_diagnostics
-        if row.get("source") != "source_preserved" and row.get("blockers")
-    ]
-    if not generated_rows:
-        return False
-    for row in generated_rows:
-        try:
-            finding_drop = int(row.get("finding_drop") or 0)
-            risk_drop = float(row.get("risk_drop") or 0.0)
-        except (TypeError, ValueError):
-            finding_drop = 0
-            risk_drop = 0.0
-        if finding_drop > 0 or risk_drop > 0:
-            return True
-    return False
 
 
 def _no_change_retry_limit() -> int:
@@ -1123,7 +1102,7 @@ def _pass_trace_row(
     if selected_variant_id or selected_source:
         row["selected_variant_id"] = selected_variant_id
         row["selected_source"] = selected_source
-    if candidate_diagnostics:
+    if candidate_diagnostics is not None:
         row["candidate_diagnostics"] = candidate_diagnostics[:5]
     if after is not None:
         row.update(

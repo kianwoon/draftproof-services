@@ -264,11 +264,13 @@ def test_v6_pipeline_schedules_report_target_even_without_local_findings():
 
     result = run_v6_rewrite_all(text, writer_client=writer, max_passes=2, report_signal_contracts=contracts)
 
-    assert len(writer.prompts) == 1
+    assert len(writer.prompts) == 2
     assert "haircutting structure" in writer.prompts[0]
     assert "ordinary setup" not in writer.prompts[0]
-    assert result.pass_trace[0]["status"] == "no_change"
+    assert result.pass_trace[0]["status"] == "no_change_retryable"
+    assert result.pass_trace[1]["status"] == "no_change_retry_exhausted"
     assert result.pass_trace[0]["target_paragraph_id"] == "p002"
+    assert result.pass_trace[0]["candidate_diagnostics"] == []
     assert not result.passes
 
 
@@ -306,7 +308,74 @@ def test_v6_retries_source_preserved_when_blocked_candidates_improved(monkeypatc
 
     result = run_v6_rewrite_all(source, max_passes=2, residual_followup_passes=0)
 
-    assert seen == ["p001", "p001"]
+    assert seen == [seen[0], seen[0]]
+    assert result.pass_trace[0]["status"] == "no_change_retryable"
+    assert result.passes
+
+
+def test_v6_retries_source_preserved_when_writer_produces_no_candidate_diagnostics(monkeypatch):
+    source = (
+        "This is an important setup because teams should improve.\n\n"
+        "This is an important target because students should improve."
+    )
+    seen = []
+
+    def fake_run(current, **kwargs):
+        scan = scan_text(current)
+        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"), kwargs.get("priority_paragraph_ids"))
+        seen.append(paragraph.id)
+        if len(seen) == 1:
+            selected = Variant(id="source_preserved", text=paragraph.text, source="source_preserved")
+            return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current, candidate_diagnostics=[])
+        replacement = "Students improve after teachers review the target."
+        selected = Variant(id="v1", text=replacement, source="llm")
+        return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current.replace(paragraph.text, replacement), candidate_diagnostics=[])
+
+    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
+
+    result = run_v6_rewrite_all(source, max_passes=2, residual_followup_passes=0)
+
+    assert seen == [seen[0], seen[0]]
+    assert result.pass_trace[0]["status"] == "no_change_retryable"
+    assert result.pass_trace[0]["candidate_diagnostics"] == []
+    assert result.passes
+
+
+def test_v6_retries_source_preserved_when_selector_fails_with_generated_candidates(monkeypatch):
+    source = (
+        "This is an important setup because teams should improve.\n\n"
+        "This is an important target because students should improve."
+    )
+    seen = []
+
+    def fake_run(current, **kwargs):
+        scan = scan_text(current)
+        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"), kwargs.get("priority_paragraph_ids"))
+        seen.append(paragraph.id)
+        if len(seen) == 1:
+            selected = Variant(id="source_preserved", text=paragraph.text, source="source_preserved")
+            diagnostics = [{
+                "variant_id": "v1",
+                "source": "llm",
+                "candidate_findings": 1,
+                "source_findings": 1,
+                "finding_drop": 0,
+                "candidate_mean_risk": 20.0,
+                "source_mean_risk": 22.0,
+                "risk_drop": 2.0,
+                "blockers": [],
+                "selector_source": "invalid_selector_source_preserved",
+            }]
+            return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current, candidate_diagnostics=diagnostics)
+        replacement = "Students improve after teachers review the target."
+        selected = Variant(id="v1", text=replacement, source="llm")
+        return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current.replace(paragraph.text, replacement), candidate_diagnostics=[])
+
+    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
+
+    result = run_v6_rewrite_all(source, max_passes=2, residual_followup_passes=0)
+
+    assert seen == [seen[0], seen[0]]
     assert result.pass_trace[0]["status"] == "no_change_retryable"
     assert result.passes
 
@@ -478,6 +547,50 @@ def test_v6_residual_followup_continues_across_split_child_targets(monkeypatch):
     assert result.pass_trace[1]["target_paragraph_id"] == "p001,p002"
     assert result.pass_trace[2]["target_paragraph_id"] == "p002"
     assert [paragraph_id for paragraph_id, _ in seen] == ["p001", "p001", "p002"]
+
+
+def test_v6_residual_followup_retries_source_preserved_without_diagnostics(monkeypatch):
+    source = "This method uses forms, queues, labels, reviews, approvals, and checks because students should improve."
+    split_candidate = (
+        "This method uses forms, queues, labels, reviews, approvals, and checks.\n\n"
+        "This result shows a problem because students should improve."
+    )
+    final_replacement = "Students improve after checking the result."
+    final_candidate = (
+        "This method uses forms, queues, labels, reviews, approvals, and checks.\n\n"
+        f"{final_replacement}"
+    )
+    seen = []
+
+    def fake_run(current, **kwargs):
+        scan = scan_text(current)
+        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"), kwargs.get("priority_paragraph_ids"))
+        seen.append(paragraph.id)
+        if len(seen) == 1:
+            return v6_pipeline.Result(
+                scan=scan,
+                plan=plan,
+                variants=[],
+                selected=Variant(id="v1", text=split_candidate, source="llm"),
+                rewritten_text=split_candidate,
+            )
+        if len(seen) == 2:
+            selected = Variant(id="source_preserved", text=paragraph.text, source="source_preserved")
+            return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current, candidate_diagnostics=[])
+        return v6_pipeline.Result(
+            scan=scan,
+            plan=plan,
+            variants=[],
+            selected=Variant(id="v2", text=final_replacement, source="llm"),
+            rewritten_text=final_candidate,
+        )
+
+    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
+    result = v6_pipeline.run_v6_rewrite_all(source, max_passes=1, residual_followup_passes=2)
+
+    assert [row["status"] for row in result.pass_trace] == ["accepted", "no_change_retryable_residual", "accepted_residual"]
+    assert [paragraph_id for paragraph_id in seen] == ["p001", "p001", "p001"]
+    assert final_replacement in result.rewritten_text
 
 
 def test_v6_no_change_detection_ignores_paragraph_spacing_normalization():
