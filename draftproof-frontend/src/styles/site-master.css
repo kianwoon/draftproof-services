@@ -6124,12 +6124,16 @@ th {
 .submitted-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 34%);
+  align-items: stretch;
   min-height: 360px;
 }
 
 .submitted-document {
-  max-height: 620px;
+  align-self: stretch;
+  min-height: 100%;
+  max-height: none;
   overflow: auto;
+  box-sizing: border-box;
   padding: 1.25rem 1.35rem;
   border-right: 1px solid #e2e8f0;
   background: #fff;
@@ -6231,6 +6235,7 @@ th {
 .submitted-signal-panel {
   display: flex;
   flex-direction: column;
+  align-self: stretch;
   gap: .85rem;
   padding: 1.15rem;
   background: #f8fafc;
@@ -7808,6 +7813,8 @@ th {
     grid-template-columns: 1fr;
   }
   .submitted-document {
+    align-self: auto;
+    min-height: 0;
     max-height: 520px;
     border-right: 0;
     border-bottom: 1px solid #e2e8f0;
