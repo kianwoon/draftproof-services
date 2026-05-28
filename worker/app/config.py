@@ -1,6 +1,13 @@
-"""Worker configuration — reads from environment / .env."""
+"""Worker configuration - reads from environment / .env."""
 
 from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+
+
+# Several rewrite modules read role-specific V6 settings directly from
+# os.environ. Loading .env here keeps local worker runs aligned with production
+# service environment variables, without overriding real production env values.
+load_dotenv(override=False)
 
 
 class Settings(BaseSettings):
@@ -28,6 +35,24 @@ class Settings(BaseSettings):
     DRAFTPROOF_REWRITE_V4_MODEL: str = ""
     DRAFTPROOF_V6_PLANNER_MODEL: str = ""
     DRAFTPROOF_V6_WRITER_MODEL: str = ""
+    DRAFTPROOF_V6_SELECTOR_MODEL: str = ""
+    DRAFTPROOF_V6_CEREBRAS_DIRECT: bool = False
+    DRAFTPROOF_V6_PROVIDER_DEFAULT_ORDER: str = ""
+    DRAFTPROOF_V6_PLANNER_PROVIDER_ORDER: str = ""
+    DRAFTPROOF_V6_PLANNER_PROVIDER_SORT: str = ""
+    DRAFTPROOF_V6_PLANNER_ALLOW_FALLBACKS: bool = True
+    DRAFTPROOF_V6_WRITER_PROVIDER_ORDER: str = ""
+    DRAFTPROOF_V6_WRITER_PROVIDER_SORT: str = ""
+    DRAFTPROOF_V6_WRITER_ALLOW_FALLBACKS: bool = True
+    DRAFTPROOF_V6_SELECTOR_PROVIDER_ORDER: str = ""
+    DRAFTPROOF_V6_SELECTOR_PROVIDER_SORT: str = ""
+    DRAFTPROOF_V6_SELECTOR_ALLOW_FALLBACKS: bool = True
+    DRAFTPROOF_V6_WRITER_VARIANTS: int = 3
+    DRAFTPROOF_V6_WRITER_FEEDBACK_ROUNDS: int = 1
+    DRAFTPROOF_V6_MIN_WRITER_FEEDBACK_ROUNDS: int = 1
+    DRAFTPROOF_V6_MAX_PASSES: int = 3
+    DRAFTPROOF_V6_GRAMMER_REPAIR_ENABLED: bool = False
+    DRAFTPROOF_V6_NATURALISATION_ENABLED: bool = False
     LLM_BASE_URL: str = ""
     SCAN_SOFT_TIME_LIMIT_SECONDS: int = 300
     SCAN_TIME_LIMIT_SECONDS: int = 330

@@ -192,6 +192,7 @@ def test_paragraph_explainer_uses_worker_supplied_llm_settings(monkeypatch):
         def __init__(self, config):
             captured["api_key"] = config.api_key
             captured["base_url"] = config.base_url
+            captured["model"] = config.model
 
         def chat(self, *_args, **kwargs):
             return type("Response", (), {
@@ -207,6 +208,8 @@ def test_paragraph_explainer_uses_worker_supplied_llm_settings(monkeypatch):
             })()
 
     monkeypatch.setattr(gateway_module, "LLMGateway", Gateway)
+    monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_V6_CEREBRAS_DIRECT", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.setenv("LLM_API_KEY", "wrong-env-key")
@@ -240,5 +243,70 @@ def test_paragraph_explainer_uses_worker_supplied_llm_settings(monkeypatch):
     assert captured == {
         "api_key": "settings-key",
         "base_url": "https://settings-base.example/v1",
+        "model": "planner-test",
     }
     assert explanations["paragraphs"][0]["recommendation"].startswith("Rewrite the paragraph")
+
+
+def test_paragraph_explainer_uses_v6_cerebras_direct_settings(monkeypatch):
+    from llm import gateway as gateway_module
+
+    captured = {}
+
+    class Gateway:
+        model = "gpt-oss-120b"
+
+        def __init__(self, config):
+            captured["api_key"] = config.api_key
+            captured["base_url"] = config.base_url
+            captured["model"] = config.model
+
+        def chat(self, *_args, **_kwargs):
+            return type("Response", (), {
+                "content": (
+                    '{"paragraphs":[{"paragraph_id":"p001",'
+                    '"reader_summary":"The paragraph needs a clearer student-facing explanation.",'
+                    '"main_issue":"Explain the issue in plain terms.",'
+                    '"why_flagged":["The paragraph is too general for the reader."],'
+                    '"recommendation":"Use concrete wording tied to the paragraph.",'
+                    '"rewrite_hint":"Name the exact learning issue in the paragraph.",'
+                    '"confidence":"medium"}]}'
+                )
+            })()
+
+    monkeypatch.setattr(gateway_module, "LLMGateway", Gateway)
+    monkeypatch.setenv("CEREBRAS_API_KEY", "cerebras-test-key")
+    monkeypatch.setenv("DRAFTPROOF_V6_CEREBRAS_DIRECT", "1")
+    monkeypatch.setenv("LLM_API_KEY", "openrouter-test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+
+    sentences = [
+        _sentence("s001", "p001", "This paragraph opens with a very general claim.", 0.7, "high", 0, 47),
+    ]
+    report = DraftReport(
+        overall_tier=Tier.HIGH,
+        finding_count=1,
+        findings_by_tier={
+            "critical": [],
+            "high": [
+                Finding(Tier.HIGH, "predictability", "predictability", "high_predictability", "Predictable", "Evidence", "Revise.", sentence_id="s001", finding_id="f001"),
+            ],
+            "medium": [],
+            "low": [],
+            "clean": [],
+        },
+        predictability=PredictabilitySummary(0.7, {"high": 1}, sentences, [], []),
+        original_text="This paragraph opens with a very general claim.",
+    )
+
+    explanations = generate_paragraph_explanations(
+        report_to_dict(report),
+        model="openai/gpt-oss-120b",
+    )
+
+    assert captured == {
+        "api_key": "cerebras-test-key",
+        "base_url": "https://api.cerebras.ai/v1",
+        "model": "gpt-oss-120b",
+    }
+    assert explanations["paragraphs"][0]["recommendation"].startswith("Use concrete wording")

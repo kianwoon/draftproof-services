@@ -109,18 +109,40 @@ def generate_paragraph_explanations(
 
     model = model or planner_model_from_env()
     if gateway is None:
-        resolved_api_key = (
+        configured_api_key = (
             (api_key or "").strip()
             or os.environ.get("OPENROUTER_API_KEY", "").strip()
             or os.environ.get("LLM_API_KEY", "").strip()
+            or os.environ.get("CEREBRAS_API_KEY", "").strip()
         )
+        configured_base_url = base_url or os.environ.get("LLM_BASE_URL") or None
+        try:
+            from rewrite_v6.llm_config import (
+                resolve_v6_api_key,
+                resolve_v6_base_url,
+                resolve_v6_model,
+            )
+        except ModuleNotFoundError:
+            from poc.rewrite_v6.llm_config import (
+                resolve_v6_api_key,
+                resolve_v6_base_url,
+                resolve_v6_model,
+            )
+
+        try:
+            resolved_api_key = resolve_v6_api_key(configured_api_key)
+            resolved_base_url = resolve_v6_base_url(configured_base_url)
+            model = resolve_v6_model(model) or model
+        except Exception:
+            resolved_api_key = configured_api_key
+            resolved_base_url = configured_base_url
         if not resolved_api_key:
             return None
         from llm.gateway import LLMConfig, LLMGateway
 
         gateway = LLMGateway(LLMConfig(
             api_key=resolved_api_key,
-            base_url=base_url or os.environ.get("LLM_BASE_URL") or None,
+            base_url=resolved_base_url,
             model=model,
             temperature=0.15,
             max_tokens=_int_env("DRAFTPROOF_PARAGRAPH_EXPLAINER_MAX_TOKENS", 5000),
