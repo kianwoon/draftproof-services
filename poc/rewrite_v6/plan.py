@@ -68,6 +68,7 @@ def build_plan(
             )
         )
     author_proxy_context = _author_proxy_context(scan, paragraph)
+    paragraph_strategy = _paragraph_strategy(paragraph, actions)
     plan = Plan(
         paragraph_id=paragraph.id,
         route_goal="change sentence route while preserving source meaning and reducing packed or predictable shape",
@@ -77,9 +78,9 @@ def build_plan(
             phrase_limit=4,
         )[:6],
         actions=actions,
-        paragraph_strategy=_paragraph_strategy(paragraph, actions),
+        paragraph_strategy=paragraph_strategy,
         author_proxy_context=author_proxy_context,
-        ai_safe_route=_ai_safe_route(paragraph, actions, author_proxy_context),
+        ai_safe_route=_ai_safe_route(paragraph, actions, author_proxy_context, paragraph_strategy),
     )
     return paragraph, plan
 
@@ -186,7 +187,13 @@ def _planning_tags(tags: list[str], source_text: str) -> list[str]:
     return rows
 
 
-def _ai_safe_route(paragraph: Paragraph, actions: list[PlanAction], context: dict[str, Any]) -> dict[str, Any]:
+def _ai_safe_route(
+    paragraph: Paragraph,
+    actions: list[PlanAction],
+    context: dict[str, Any],
+    paragraph_strategy: dict[str, Any],
+) -> dict[str, Any]:
+    dense_repair = paragraph_strategy.get("repair_unit") == "paragraph"
     return {
         "route_name": "grounded_source_beat_author_proxy_route",
         "objective": (
@@ -260,13 +267,16 @@ def _ai_safe_route(paragraph: Paragraph, actions: list[PlanAction], context: dic
             ],
             "rule": "Every rewritten beat must remain traceable to one origin source beat and its local_anchor_terms without copying the original sentence wording.",
         },
-        "coverage_beats": _coverage_beats(actions),
+        "paragraph_repair_unit": paragraph_strategy.get("repair_unit", "sentence_cluster"),
+        "dense_paragraph_plan": paragraph_strategy.get("dense_paragraph_plan", {}),
+        "coverage_beats": _coverage_beats(actions, dense_repair=dense_repair),
         "construction_recipes": [_construction_recipe(action, context) for action in actions if action.tags],
         "author_route_questions": _author_route_questions(actions, context),
         "route_order": [
             "start from the paragraph's concrete source pressure or condition",
-            "repair affected source beats in original order",
-            "split packed lists into connected short prose beats",
+            "repair dense findings as paragraph flow when many adjacent sentences are flagged",
+            "repair affected source beats in original order without making one sentence per finding",
+            "split packed lists only when the source relationship needs separation",
             "scope evaluative claims with submitted context anchors",
             "end on the original source beat, not a new takeaway",
         ],
@@ -283,6 +293,8 @@ def _ai_safe_route(paragraph: Paragraph, actions: list[PlanAction], context: dic
             "same route with elevated synonyms",
             "compressed list sentence",
             "one-item-per-sentence mechanical list",
+            "one short sentence for every scanner finding",
+            "paragraph rebuilt as repeated subject-verb fragments",
             "unsupported final takeaway",
             "new external fact, citation, statistic, date, named event, or institution",
             "polished abstract labels that replace source wording",
@@ -319,12 +331,13 @@ def _route_step(action: PlanAction, context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _coverage_beats(actions: list[PlanAction]) -> list[dict[str, Any]]:
+def _coverage_beats(actions: list[PlanAction], *, dense_repair: bool = False) -> list[dict[str, Any]]:
     beats: list[dict[str, Any]] = []
     for action in actions:
         source_text = _strip_leading_heading(action.source_text)
-        phrases = _coverage_phrases(source_text) if _should_split_coverage(action) else [_safe_coverage_phrase(source_text, action.tags)]
-        if _should_split_coverage(action):
+        split_coverage = _should_split_coverage(action, dense_repair=dense_repair)
+        phrases = _coverage_phrases(source_text) if split_coverage else [_safe_coverage_phrase(source_text, action.tags)]
+        if split_coverage:
             for index, phrase in enumerate(phrases or [source_text], start=1):
                 beats.append({
                     "beat_id": f"{action.sentence_id}_b{index:02d}",
@@ -351,8 +364,16 @@ def _coverage_beats(actions: list[PlanAction]) -> list[dict[str, Any]]:
                 "grouped_relation": " | " in phrase,
                 "polarity_markers": _polarity_markers(phrase),
                 "starter_terms": _starter_terms(phrase, action.tags),
-                "generation_duty": "carry this source-supported idea with a scoped route and clear anchor without preserving original wording",
-                "merge_rule": "merge only if the source idea stays visible and grounded",
+                "generation_duty": (
+                    "carry this source-supported idea inside the paragraph flow without preserving original wording"
+                    if dense_repair
+                    else "carry this source-supported idea with a scoped route and clear anchor without preserving original wording"
+                ),
+                "merge_rule": (
+                    "merge with neighboring beats when the ideas are semantically dependent or repeated-shape fragments"
+                    if dense_repair
+                    else "merge only if the source idea stays visible and grounded"
+                ),
             })
     return beats
 
@@ -604,7 +625,9 @@ def _author_proxy_move(tags: list[str], context: dict[str, Any]) -> str:
     return "use a narrow inferred bridge only when recorded in author_review_items"
 
 
-def _should_split_coverage(action: PlanAction) -> bool:
+def _should_split_coverage(action: PlanAction, *, dense_repair: bool = False) -> bool:
+    if dense_repair:
+        return False
     return (
         action.method == "list_rhythm_rebuild"
         or "broad_claim" in action.tags
@@ -896,6 +919,7 @@ def _paragraph_strategy(paragraph: Paragraph, actions: list[PlanAction]) -> dict
     affected = [action for action in actions if action.tags]
     tag_counts = Counter(tag for action in affected for tag in action.tags)
     methods = {action.method for action in affected}
+    dense_plan = _dense_paragraph_plan(paragraph, actions, affected)
     failed_parts: list[str] = []
     if "list_rhythm_rebuild" in methods:
         failed_parts.append("packed list beats create dense, predictable rhythm")
@@ -911,17 +935,146 @@ def _paragraph_strategy(paragraph: Paragraph, actions: list[PlanAction]) -> dict
     return {
         "dominant_findings": [tag for tag, _count in tag_counts.most_common()],
         "affected_sentence_ids": [action.sentence_id for action in affected],
+        "repair_unit": dense_plan["repair_unit"],
+        "finding_density": dense_plan["finding_density"],
+        "target_sentence_range": dense_plan["target_sentence_range"],
+        "dense_paragraph_plan": dense_plan,
         "failed_route": failed_route,
         "replacement_route": (
-            "Repair affected sentences as one paragraph route in source order. "
-            "Keep every source beat distinct, preserve core terms, redistribute packed lists without compression, "
-            "and scope evaluative claims inside the same source beat."
+            (
+                "Repair this as one paragraph route because many adjacent source sentences are flagged. "
+                "Treat sentence findings as symptoms of paragraph flow, preserve core source terms, "
+                "merge semantically dependent short beats, and avoid one sentence per finding."
+            )
+            if dense_plan["repair_unit"] == "paragraph"
+            else (
+                "Repair affected sentences as one paragraph route in source order. "
+                "Keep every source beat distinct, preserve core terms, redistribute packed lists without compression, "
+                "and scope evaluative claims inside the same source beat."
+            )
         ),
         "writer_instruction": (
-            "Use the affected sentence actions as a mapped source-beat plan, not isolated synonym edits. "
-            "Do not append a new takeaway; if author-proxy wording is needed, place it inside the relevant source beat and mark it for review."
+            (
+                "Use affected sentence actions as diagnostic evidence for a paragraph-level rewrite. "
+                "Do not create a short-sentence chain, do not make every finding a separate sentence, and do not append a new takeaway. "
+                "If author-proxy wording is needed, place it inside the relevant source beat and mark it for review."
+            )
+            if dense_plan["repair_unit"] == "paragraph"
+            else (
+                "Use the affected sentence actions as a mapped source-beat plan, not isolated synonym edits. "
+                "Do not append a new takeaway; if author-proxy wording is needed, place it inside the relevant source beat and mark it for review."
+            )
         ),
     }
+
+
+def _dense_paragraph_plan(
+    paragraph: Paragraph,
+    actions: list[PlanAction],
+    affected: list[PlanAction],
+) -> dict[str, Any]:
+    sentence_count = max(1, len(actions))
+    affected_count = len(affected)
+    density = affected_count / sentence_count
+    max_cluster = _max_adjacent_affected_cluster(actions)
+    tag_counts = Counter(tag for action in affected for tag in action.tags)
+    repair_unit = "paragraph" if (
+        sentence_count >= 3
+        and affected_count >= 3
+        and (density >= 0.5 or max_cluster >= 3)
+    ) else "sentence_cluster"
+    low = max(1, min(sentence_count, affected_count or sentence_count))
+    high = max(low, min(sentence_count + 2, int(sentence_count * 1.35) + 1))
+    return {
+        "repair_unit": repair_unit,
+        "finding_density": round(density, 3),
+        "affected_sentence_count": affected_count,
+        "source_sentence_count": sentence_count,
+        "max_adjacent_affected_cluster": max_cluster,
+        "target_sentence_range": f"{low} to {high} ordinary sentences",
+        "dominant_flow_problem": _dominant_flow_problem(tag_counts),
+        "finding_interpretation_rule": (
+            "Scanner findings are paragraph-flow symptoms. Preserve traceability, but do not allocate one final sentence to each finding."
+        ),
+        "flow_plan": _paragraph_flow_plan(paragraph, actions, affected, tag_counts),
+        "merge_policy": (
+            "Merge only semantically dependent or mechanically repetitive short beats; keep independent contrasts, examples, and limits visible."
+        ),
+        "writer_must_not": [
+            "do not create one short sentence per source sentence or scanner finding",
+            "do not repeat the same subject at the start of adjacent sentences",
+            "do not expose route, beat, contract, source slot, or other planning language",
+            "do not polish into a generic essay paragraph",
+        ],
+    }
+
+
+def _max_adjacent_affected_cluster(actions: list[PlanAction]) -> int:
+    best = 0
+    current = 0
+    for action in actions:
+        if action.tags:
+            current += 1
+            best = max(best, current)
+        else:
+            current = 0
+    return best
+
+
+def _dominant_flow_problem(tag_counts: Counter[str]) -> str:
+    if not tag_counts:
+        return "light local route repair"
+    if tag_counts.get("packed_list") or tag_counts.get("sentence_overload"):
+        return "packed source material risks turning into item-by-item short sentences"
+    if tag_counts.get("paragraph_rhythm") or tag_counts.get("predictable_start"):
+        return "repeated sentence routes and starts need paragraph-level rhythm repair"
+    if tag_counts.get("context_anchor_gap") or tag_counts.get("broad_claim"):
+        return "claims need clearer paragraph anchors and scoped relations"
+    return "multiple local findings need one coherent paragraph route"
+
+
+def _paragraph_flow_plan(
+    paragraph: Paragraph,
+    actions: list[PlanAction],
+    affected: list[PlanAction],
+    tag_counts: Counter[str],
+) -> list[dict[str, Any]]:
+    first_terms = source_anchor_terms(_strip_leading_heading(paragraph.text), term_limit=12)[:5]
+    affected_terms = _dedupe([
+        term
+        for action in affected
+        for term in action.preserve_terms[:4]
+    ])[:12]
+    return [
+        {
+            "step_id": "paragraph_b001",
+            "function": "open from a concrete source condition, actor, or contrast",
+            "source_basis": [actions[0].sentence_id] if actions else [],
+            "must_include": first_terms[:4],
+            "must_avoid_shape": ["generic opener", "same source sentence with synonyms"],
+        },
+        {
+            "step_id": "paragraph_b002",
+            "function": "group related source material before explaining it",
+            "source_basis": [action.sentence_id for action in affected[:4]],
+            "must_include": affected_terms[:8],
+            "must_avoid_shape": ["one sentence per finding", "comma-list compression", "repeated subject starts"],
+        },
+        {
+            "step_id": "paragraph_b003",
+            "function": "state the scoped relationship or limitation supported by the source beats",
+            "source_basis": [action.sentence_id for action in affected[-4:]],
+            "must_include": affected_terms[4:12],
+            "must_avoid_shape": ["broad takeaway", "unsupported stronger claim"],
+        },
+        {
+            "step_id": "paragraph_b004",
+            "function": "close on the paragraph's submitted purpose without adding a new conclusion",
+            "source_basis": [actions[-1].sentence_id] if actions else [],
+            "must_include": source_anchor_terms(actions[-1].source_text if actions else paragraph.text, term_limit=8)[:5],
+            "must_avoid_shape": ["detached final summary", "smooth generic essay close"],
+        },
+    ]
 
 
 def _operation(tags: list[str]) -> str:

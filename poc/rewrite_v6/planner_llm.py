@@ -68,6 +68,17 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             "document_signal_contracts": compact_document_signal_contracts(plan.ai_safe_route.get("document_signal_contracts", [])),
         },
         "required_decision": {
+            "repair_unit": "paragraph when dense findings should be repaired as one paragraph flow; otherwise sentence_cluster",
+            "paragraph_problem": "plain-language diagnosis of why sentence-level repair would fail",
+            "flow_plan": [
+                {
+                    "step_id": "fp001",
+                    "function": "paragraph-level job for this beat",
+                    "source_basis": ["submitted sentence id or source term"],
+                    "must_include": ["source-supported term or relation"],
+                    "must_not_become": ["mechanical or AI-shaped failure to avoid"],
+                }
+            ],
             "paragraph_route": "positive route the writer must follow",
             "finding_contracts": [
                 {
@@ -106,7 +117,10 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
         "rules": [
             "Do not write replacement paragraph prose.",
             "Do not hardcode domain-specific starts or examples.",
-            "Return one finding_contract for every scanner_findings row.",
+            "Return one finding_contract for every scanner_findings row for traceability.",
+            "When deterministic_route_skeleton.paragraph_strategy.repair_unit is paragraph, treat finding_contracts as diagnostic symptoms feeding one paragraph flow, not as separate final sentences.",
+            "For dense paragraph repair, paragraph_route and flow_plan must tell the writer how to group, merge, and sequence source ideas at paragraph level.",
+            "For dense paragraph repair, do not plan one output sentence per scanner finding, one output sentence per coverage beat, or one output sentence per source item.",
             "Every finding_contract must target the exact finding tags and sentence id from scanner_findings.",
             "Do not use placeholder-only safe shapes such as <anchor>, <relation>, or <claim>.",
             "Each safe_rebuild_shape must include actual submitted source terms from the source sentence or neighboring paragraph context.",
@@ -145,6 +159,9 @@ def _merge_decision(plan: Plan, decision: dict[str, Any]) -> Plan:
     fallback_blueprint = _fallback_paragraph_blueprint(plan, contract_gaps) if unsafe_contracts else []
     route["llm_planner_decision"] = {
         "status": "degraded_contract_gaps" if unsafe_contracts else "ok",
+        "repair_unit": decision.get("repair_unit") or plan.paragraph_strategy.get("repair_unit"),
+        "paragraph_problem": decision.get("paragraph_problem", ""),
+        "flow_plan": [] if unsafe_contracts else _recipe_rows(decision.get("flow_plan")),
         "paragraph_route": decision.get("paragraph_route", ""),
         "finding_contracts": fallback_contracts if unsafe_contracts else _recipe_rows(decision.get("finding_contracts")),
         "paragraph_blueprint": fallback_blueprint if unsafe_contracts else _recipe_rows(decision.get("paragraph_blueprint")),

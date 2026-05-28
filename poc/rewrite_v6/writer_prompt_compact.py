@@ -96,6 +96,11 @@ def writer_execution_contract(
         })
     return {
         "source_reference_rule": "Use source_units for source text. All rows below refer to source_sentence_id; do not expect repeated source text inside findings.",
+        "paragraph_repair_unit": planner_decision.get("repair_unit") if isinstance(planner_decision, dict) else None,
+        "paragraph_flow_rule": (
+            "When paragraph_repair_unit is paragraph, use rows as traceability evidence for one paragraph route. "
+            "Do not create one final sentence for each row, finding, or coverage beat."
+        ),
         "rows": [_drop_empty(row) for row in rows],
         "planner_gaps": _strings(planner_decision.get("contract_gaps"), 8) if isinstance(planner_decision, dict) else [],
         "do_not_copy_phrases": _strings(planner_decision.get("do_not_copy_phrases"), 8) if isinstance(planner_decision, dict) else [],
@@ -109,14 +114,27 @@ def compact_planner_decision(value: Any) -> dict[str, Any]:
     blueprint = [_compact_blueprint(row) for row in value.get("paragraph_blueprint", []) if isinstance(row, dict)]
     decision = {
         "status": value.get("status"),
+        "repair_unit": value.get("repair_unit"),
+        "paragraph_problem": value.get("paragraph_problem"),
         "fallback_instruction": value.get("fallback_instruction"),
         "contract_gaps": _strings(value.get("contract_gaps"), 8),
         "do_not_copy_phrases": _strings(value.get("do_not_copy_phrases"), 8),
+        "flow_plan": [_compact_flow_step(row) for row in value.get("flow_plan", []) if isinstance(row, dict)][:6],
         "finding_contracts": rows[:8],
         "paragraph_blueprint": blueprint[:8],
         "document_signal_contracts": compact_document_signal_contracts(value.get("document_signal_contracts")),
     }
     return {key: val for key, val in decision.items() if val not in (None, [], "")}
+
+
+def _compact_flow_step(row: dict[str, Any]) -> dict[str, Any]:
+    return _drop_empty({
+        "step_id": row.get("step_id"),
+        "function": row.get("function"),
+        "source_basis": _strings(row.get("source_basis"), 6),
+        "must_include": _strings(row.get("must_include"), 8),
+        "must_not_become": _strings(row.get("must_not_become") or row.get("must_avoid_shape"), 4),
+    })
 
 
 def compact_document_signal_contracts(rows: Any) -> list[dict[str, Any]]:

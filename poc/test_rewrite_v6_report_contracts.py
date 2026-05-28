@@ -124,6 +124,41 @@ def test_v6_report_signal_contracts_reach_planner_and_writer_prompts():
     assert "document_signal_contracts as the primary build contract" in " ".join(writer_payload["generation_rules"])
 
 
+def test_v6_dense_findings_become_paragraph_repair_unit_without_beat_explosion():
+    text = (
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve. "
+        "The process uses forms, queues, labels, reviews, approvals, and checks because teams should improve."
+    )
+
+    paragraph, plan = build_plan(scan_text(text))
+
+    assert plan.paragraph_strategy["repair_unit"] == "paragraph"
+    assert plan.paragraph_strategy["dense_paragraph_plan"]["finding_interpretation_rule"].startswith("Scanner findings")
+    assert len(plan.ai_safe_route["coverage_beats"]) == len(paragraph.sentences)
+    assert all("one final sentence per finding" not in beat["merge_rule"] for beat in plan.ai_safe_route["coverage_beats"])
+
+
+def test_v6_dense_paragraph_plan_reaches_planner_and_writer_payloads():
+    text = (
+        "This process is important because teams should improve. "
+        "This method is important because students should improve. "
+        "This issue is important because schools should improve. "
+        "This problem is important because teachers should improve."
+    )
+    scan = scan_text(text)
+    paragraph, plan = build_plan(scan)
+
+    planner_payload = json.loads(build_planner_prompt(paragraph, plan, findings_for_paragraph(scan, paragraph.id)).split("\n", 1)[1])
+    writer_payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+
+    assert planner_payload["deterministic_route_skeleton"]["paragraph_strategy"]["repair_unit"] == "paragraph"
+    assert "one paragraph flow" in " ".join(planner_payload["rules"])
+    assert writer_payload["paragraph_repair_plan"]["repair_unit"] == "paragraph"
+    assert writer_payload["writer_execution_contract"]["paragraph_repair_unit"] == "paragraph"
+    assert "do not write one final sentence per finding" in writer_payload["paragraph_repair_plan"]["rule"]
+
+
 def test_v6_report_target_excerpts_map_to_local_paragraph_ids_without_raw_id_coupling():
     text = (
         "First paragraph has ordinary setup.\n\n"

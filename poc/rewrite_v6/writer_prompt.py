@@ -20,13 +20,17 @@ from .writer_prompt_compact import (
 
 def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, str] | None = None) -> str:
     golden_route = plan.ai_safe_route.get("golden_route", {})
-    variant_requirements = [variant_focus] if variant_focus else _requested_variant_requirements()
     coverage_beats = _prompt_coverage_beats(plan)
     sentence_plan, split_contract = paragraph_sentence_plan(paragraph, coverage_beats), architecture_split_contract(paragraph, plan)
     planner_decision = compact_planner_decision(plan.ai_safe_route.get("llm_planner_decision", {}))
+    planner_decision.setdefault("repair_unit", plan.paragraph_strategy.get("repair_unit"))
+    planner_decision.setdefault("flow_plan", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("flow_plan", []))
     construction_recipes = _prompt_construction_recipes(plan)
     author_route_questions = _prompt_author_route_questions(plan)
     coverage_groups = coverage_loss_contract(sentence_plan)
+    paragraph_repair_unit = plan.paragraph_strategy.get("repair_unit", "sentence_cluster")
+    dense_paragraph_plan = plan.paragraph_strategy.get("dense_paragraph_plan", {})
+    variant_requirements = [variant_focus] if variant_focus else _requested_variant_requirements()
     payload = {
         "task": "coverage_beat_paragraph_generation",
         "golden_question": golden_route.get(
@@ -56,6 +60,15 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
         },
         "polarity_constraints": _polarity_constraints(paragraph),
         "source_units": source_units(paragraph),
+        "paragraph_repair_plan": {
+            "repair_unit": paragraph_repair_unit,
+            "target_sentence_range": plan.paragraph_strategy.get("target_sentence_range"),
+            "dense_paragraph_plan": dense_paragraph_plan,
+            "rule": (
+                "When repair_unit is paragraph, scanner findings are symptoms of paragraph flow. "
+                "Preserve traceability, but do not write one final sentence per finding, source row, or coverage beat."
+            ),
+        },
         "writer_execution_contract": writer_execution_contract(
             paragraph,
             coverage_beats=coverage_beats,
@@ -104,6 +117,11 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
                 "planner decision, source sentence, active variant, beat plan, or coverage capsule. Do not turn route verbs into "
                 "sentence subjects, such as Guide prompts, Compare prompts, Apply knowledge occurs, or Focus expands."
             ),
+            "dense_paragraph_repair_rule": (
+                "If paragraph_repair_plan.repair_unit is paragraph, rebuild paragraph flow from source meaning. "
+                "Merge only semantically dependent or mechanically repetitive short beats, keep independent contrasts visible, "
+                "and avoid a chain of same-shape short sentences."
+            ),
         },
         "active_variant": variant_focus or {},
         "variant_requirements": variant_requirements,
@@ -124,7 +142,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
         "required_shape": {
             "paragraph_count": split_contract["paragraph_count"] if split_contract["active"] else 1,
             "sentence_count": "uncapped during golden-route discovery; use as many ordinary prose sentences as needed to preserve coverage and answer the route questions",
-            "preferred_sentence_count": _preferred_sentence_count(paragraph),
+            "preferred_sentence_count": _preferred_sentence_count(paragraph, plan),
             "word_count": "uncapped during golden-route discovery; preserve source coverage and expand only when needed for grounding, concrete detail, or reasoning",
         },
         "output_schema": {"variants": [_variant_schema(requirement) for requirement in variant_requirements]},
@@ -151,6 +169,8 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
     coverage_beats = _prompt_coverage_beats(plan)
     sentence_plan = paragraph_sentence_plan(paragraph, coverage_beats)
     planner_decision = compact_planner_decision(plan.ai_safe_route.get("llm_planner_decision", {}))
+    planner_decision.setdefault("repair_unit", plan.paragraph_strategy.get("repair_unit"))
+    planner_decision.setdefault("flow_plan", plan.paragraph_strategy.get("dense_paragraph_plan", {}).get("flow_plan", []))
     planner_decision.pop("document_signal_contracts", None)
     construction_recipes = _prompt_construction_recipes(plan)
     author_route_questions = _prompt_author_route_questions(plan)
@@ -168,6 +188,15 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
         },
         "polarity_constraints": _polarity_constraints(paragraph),
         "source_units": source_units(paragraph),
+        "paragraph_repair_plan": {
+            "repair_unit": plan.paragraph_strategy.get("repair_unit", "sentence_cluster"),
+            "target_sentence_range": plan.paragraph_strategy.get("target_sentence_range"),
+            "dense_paragraph_plan": plan.paragraph_strategy.get("dense_paragraph_plan", {}),
+            "rule": (
+                "When repair_unit is paragraph, retry as one paragraph flow. "
+                "Do not repair each finding as a separate sentence."
+            ),
+        },
         "writer_execution_contract": writer_execution_contract(
             paragraph,
             coverage_beats=coverage_beats,
@@ -205,6 +234,10 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
                 "planner decision, source sentence, active variant, beat plan, or coverage capsule. Do not turn route verbs into "
                 "sentence subjects, such as Guide prompts, Compare prompts, Apply knowledge occurs, or Focus expands."
             ),
+            "dense_paragraph_repair_rule": (
+                "If paragraph_repair_plan.repair_unit is paragraph, merge semantically dependent short beats and remove repeated subject starts. "
+                "Keep source meaning and avoid broad polish."
+            ),
         },
         "active_variant": {"id": "retry_v1", "mode": "defect_feedback_retry"},
     }
@@ -237,6 +270,8 @@ def _variant_requirements() -> list[dict[str, str]]:
             "distinctive_obligation": "Start each affected slot from the strongest available context/source antecedent; keep paragraph order unless the antecedent is inside the same source slot.",
         },
     ]
+
+
 def _requested_variant_requirements() -> list[dict[str, str]]:
     return _variant_requirements()[:_requested_variant_count()]
 def _requested_variant_count() -> int:
@@ -246,6 +281,8 @@ def _requested_variant_count() -> int:
     except ValueError:
         value = 1
     return max(1, min(3, value))
+
+
 def _variant_schema(requirement: dict[str, str]) -> dict[str, Any]:
     return {
         "id": requirement["id"],
@@ -256,7 +293,11 @@ def _variant_schema(requirement: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def _preferred_sentence_count(paragraph: Paragraph) -> str:
+def _preferred_sentence_count(paragraph: Paragraph, plan: Plan | None = None) -> str:
+    if plan is not None:
+        target = plan.paragraph_strategy.get("target_sentence_range")
+        if target:
+            return str(target)
     source_count = max(1, len(paragraph.sentences))
     low = max(1, source_count)
     high = min(source_count + 2, max(source_count, int(source_count * 1.35) + 1))
