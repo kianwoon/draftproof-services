@@ -17,7 +17,9 @@ def repair_generated_prose(text: str, source_text: str = "") -> str:
                                         _revoice_displayed_quality(
                                             _revoice_guidance_understanding(
                                                 _revoice_broad_belief_recommendations(
-                                            _restore_not_only_polarity(_merge_source_term_fragments(_repair_gerund_evidence_fragments(text)), source_text),
+                                            _repair_quoted_concept_literalization(
+                                                _restore_not_only_polarity(_merge_source_term_fragments(_repair_malformed_not_always_order(_repair_gerund_evidence_fragments(text))), source_text)
+                                            ),
                                             source_text,
                                         )
                                     )
@@ -31,6 +33,21 @@ def repair_generated_prose(text: str, source_text: str = "") -> str:
             ),
             source_text,
         )
+    )
+
+
+def _repair_quoted_concept_literalization(text: str) -> str:
+    repaired = re.sub(
+        r"\b(?:the\s+)?words?\s+([\"“'](?:what\s+students\s+know|how\s+students\s+think)[.,]?\s*[\"”'])",
+        r"\1",
+        str(text or ""),
+        flags=re.I,
+    )
+    return re.sub(
+        r"\bthe\s+words\s+that\s+represent\s+(what\s+students\s+know|how\s+students\s+think)\b",
+        r"\1",
+        repaired,
+        flags=re.I,
     )
 
 
@@ -57,6 +74,15 @@ def _merge_source_term_fragments(text: str) -> str:
             index += 1
         repaired.append("\n".join(part for part in [heading, " ".join(rows).strip()] if part).strip())
     return "\n\n".join(repaired).strip()
+
+
+def _repair_malformed_not_always_order(text: str) -> str:
+    return re.sub(
+        r"\b(they|students|learners|people|users)\s+not\s+always\b",
+        lambda match: f"{match.group(1)} do not always",
+        str(text or ""),
+        flags=re.I,
+    )
 
 
 def _source_term_fragment(sentence: str) -> bool:
@@ -308,6 +334,8 @@ def _previous_actor(sentence: str) -> str:
 def _restore_not_only_polarity(text: str, source_text: str) -> str:
     if "not only" not in str(source_text or "").casefold() or "not only" in str(text or "").casefold():
         return text
+    if _already_preserves_not_only_relation(text):
+        return text
     source_sentences = [sentence for sentence in _sentences(source_text) if "not only" in sentence.casefold()]
     if not source_sentences:
         return text
@@ -328,8 +356,28 @@ def _restore_not_only_sentence(sentence: str, source_sentences: list[str]) -> st
     if not match:
         return sentence
     subject, verb, first_side, second_side = match.groups()
+    if verb.casefold() not in _NOT_ONLY_RESTORABLE_VERBS:
+        return sentence
     helper, base = _not_only_helper_and_base(verb)
     return f"{subject} {helper} not only {base} as {first_side} but also {second_side}"
+
+
+_NOT_ONLY_RESTORABLE_VERBS = {
+    "act",
+    "acts",
+    "appear",
+    "appears",
+    "function",
+    "functions",
+    "serve",
+    "serves",
+    "work",
+    "works",
+}
+
+
+def _already_preserves_not_only_relation(text: str) -> bool:
+    return bool(re.search(r"\b(?:as well as|also|too|both)\b", str(text or ""), flags=re.I))
 
 
 def _split_not_only_sentences(text: str) -> str:
@@ -583,7 +631,9 @@ def _fragment_like(sentence: str) -> bool:
     words = re.findall(r"[A-Za-z][A-Za-z'’-]*", value)
     if lowered.endswith((" that", " because", " while", " when", " with", " by", " to", " of", " for")):
         return True
-    if re.match(r"^(?:which|where|that)\b", lowered) and len(words) <= 18:
+    if re.match(r"^(?:which|where)\b", lowered) and len(words) <= 18:
+        return True
+    if re.match(r"^that\b", lowered) and len(words) <= 18 and not _has_finite_verb(lowered):
         return True
     if re.match(r"^(?:and|but|or)\s+(?:need|needs|require|requires|must|can|could|should|would|is|are|was|were|has|have|had|do|does|did)\b", lowered):
         return True
@@ -609,7 +659,9 @@ def _fragment_like(sentence: str) -> bool:
 def _hard_fragment_like(sentence: str) -> bool:
     value = sentence.strip(" .!?")
     lowered = value.casefold()
-    if re.match(r"^(?:which|where|that)\b", lowered):
+    if re.match(r"^(?:which|where)\b", lowered):
+        return True
+    if re.match(r"^that\b", lowered) and not _has_finite_verb(lowered):
         return True
     if re.match(r"^(?:and|but|or)\s+(?:need|needs|require|requires|must|can|could|should|would|is|are|was|were|has|have|had|do|does|did)\b", lowered):
         return True

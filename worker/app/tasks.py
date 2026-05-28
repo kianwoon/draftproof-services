@@ -2071,7 +2071,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         from poc.rewrite_pipeline import run_rewrite_pipeline
         from app.config import settings
 
-        llm_api_key = settings.LLM_API_KEY or settings.OPENROUTER_API_KEY
+        llm_api_key = settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or settings.CEREBRAS_API_KEY
         if not llm_api_key:
             update_rewrite_status(
                 rewrite_id,

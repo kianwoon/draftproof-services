@@ -11,6 +11,8 @@ def retryable_no_change_result(result: Any) -> bool:
         return bool(generated_rows) and any(_selector_did_not_make_valid_choice(row) for row in generated_rows)
     if getattr(selected, "source", None) != "source_preserved":
         return False
+    if any(_selector_rejected_blocked_choice(row) for row in generated_rows):
+        return False
     if _author_proxy_grounding_required(result):
         return True
     if not generated_rows:
@@ -46,6 +48,10 @@ def _blocked_row_moved_scanner(row: dict[str, Any]) -> bool:
 def _selector_did_not_make_valid_choice(row: dict[str, Any]) -> bool:
     source = str(row.get("selector_source") or "")
     return source.startswith("invalid_selector_source_preserved") or source.startswith("selector_required_missing")
+
+
+def _selector_rejected_blocked_choice(row: dict[str, Any]) -> bool:
+    return str(row.get("selector_source") or "").startswith("blocked_selector_source_preserved")
 
 
 def _author_proxy_grounding_required(result: Any) -> bool:

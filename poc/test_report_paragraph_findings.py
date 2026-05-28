@@ -119,9 +119,11 @@ def test_paragraph_explainer_generates_once_from_grouped_findings():
 
         def __init__(self):
             self.calls = 0
+            self.prompt = ""
 
-        def chat(self, *_args, **kwargs):
+        def chat(self, *args, **kwargs):
             self.calls += 1
+            self.prompt = str(args[0])
             assert kwargs["app_label"] == "Dignose"
             return type("Response", (), {
                 "content": (
@@ -162,6 +164,8 @@ def test_paragraph_explainer_generates_once_from_grouped_findings():
     explanations = generate_paragraph_explanations(payload, gateway=gateway, model="planner-test")
 
     assert gateway.calls == 1
+    assert "Combine repeated sentence findings into one paragraph-level diagnosis" in gateway.prompt
+    assert "Do not list every signal mechanically" in gateway.prompt
     assert explanations["schema_version"] == "paragraph_explanations.v2"
     assert explanations["paragraphs"][0]["paragraph_id"] == "p001"
     assert explanations["paragraphs"][0]["reader_summary"].startswith("A reader may understand")

@@ -33,7 +33,7 @@ def test_v6_writer_quality_marks_robotic_sentence_chains_as_soft_warnings():
     diagnostics = selection_diagnostics(variants, paragraph)[0]
     assert "mechanical_sentence_chain" in diagnostics["quality_warnings"]
     assert "candidate_contract_warning" in diagnostics["quality_warnings"]
-    assert "candidate_contract_violation" not in diagnostics["blockers"]
+    assert "mechanical_sentence_chain" in diagnostics["blockers"]
     assert choose_variant(variants, paragraph).source == "source_preserved"
 
 
@@ -73,6 +73,46 @@ def test_v6_writer_quality_blocks_short_fragment_chain():
     text = "Students may learn how to pass. But not always how to think deeply. Solve problems. Or connect ideas across subjects."
 
     assert has_fragment_or_trace_sentences(text)
+
+
+def test_v6_selector_diagnostics_expose_handoff_scope_failure_evidence():
+    source = "Students may learn how to pass, but not always how to think deeply, solve problems, or connect ideas across subjects."
+    candidate = "Students may always learn how to pass exams but miss deeper thinking and problem solving."
+    paragraph = scan_text(source).paragraphs[0]
+
+    row = selection_diagnostics(
+        [
+            Variant(id="source_preserved", text=source, source="source_preserved"),
+            Variant(id="v1", text=candidate, source="llm"),
+        ],
+        paragraph,
+    )[0]
+
+    assert "not_always_scope_inversion" in row["blockers"]
+    assert row["handoff_validation"]["planner_to_writer_contract"] == "validated"
+    assert row["handoff_validation"]["writer_to_selector_candidate"] == "failed"
+    assert row["handoff_validation"]["selector_gate"] == "blocked"
+    assert row["handoff_validation"]["source_scope_markers"] == ["not always"]
+
+
+def test_v6_not_always_scope_accepts_preserved_negation_and_blocks_malformed_order():
+    source = "Students may learn how to pass, but not always how to think deeply, solve problems, or connect ideas across subjects."
+    valid = "Students may learn how to pass exams, but they do not always develop deeper thinking or problem-solving across subjects."
+    malformed = "Students may learn how to pass, but they not always think deeply or solve problems."
+    paragraph = scan_text(source).paragraphs[0]
+
+    valid_row = selection_diagnostics(
+        [Variant(id="source_preserved", text=source, source="source_preserved"), Variant(id="v1", text=valid, source="llm")],
+        paragraph,
+    )[0]
+    malformed_row = selection_diagnostics(
+        [Variant(id="source_preserved", text=source, source="source_preserved"), Variant(id="v2", text=malformed, source="llm")],
+        paragraph,
+    )[0]
+
+    assert "not_always_scope_inversion" not in valid_row["blockers"]
+    assert "malformed_negation_order" in malformed_row["blockers"]
+    assert "they do not always" in repair_generated_prose(malformed, source)
 
 
 def test_v6_writer_quality_blocks_since_subordinate_fragment():
@@ -161,6 +201,12 @@ def test_v6_writer_quality_blocks_tool_student_semantic_role_defects():
     assert "tool_practise_skills_predicate" in blockers
 
 
+def test_v6_writer_quality_allows_students_as_practise_skills_actor():
+    text = "These tools also improve writing and allow students to practise skills."
+
+    assert "tool_practise_skills_predicate" not in candidate_integrity_blockers(text)
+
+
 def test_v6_writer_quality_blocks_dangling_additive_tail():
     text = "Students remain surrounded by an ever-growing flow of information and additionally."
 
@@ -177,6 +223,23 @@ def test_v6_writer_quality_blocks_redundant_trust_phrases():
     text = "The real challenge is knowing what is accurate, useful, ethical, trustworthy and worth trusting."
 
     assert "redundant_trust_phrase" in candidate_integrity_blockers(text)
+
+
+def test_v6_prose_repair_does_not_corrupt_valid_as_well_as_not_only_relation():
+    source = (
+        "This is a serious concern because the modern world does not only reward people "
+        "who can remember facts. It rewards people who can analyse, adapt, communicate, and create."
+    )
+    candidate = (
+        "This creates a serious concern, since the modern world rewards people who remember facts "
+        "as well as those who analyse, adapt, communicate and create."
+    )
+
+    repaired = repair_generated_prose(candidate, source)
+
+    assert "remember does not only fact" not in repaired
+    assert "It also create" not in repaired
+    assert repaired == candidate
 
 
 def test_v6_writer_quality_blocks_keyword_dump_sequences():
@@ -339,10 +402,160 @@ def test_v6_writer_quality_prefers_compact_role_list_over_catalogue_chain():
     assert choose_variant(variants, paragraph).id == "v2"
 
 
+def test_v6_selector_blocks_scope_marker_padding_even_when_risk_drops():
+    source = (
+        "Today’s education system is changing faster than many schools can comfortably manage. "
+        "In the past, education was mostly built around the classroom, the textbook, and the teacher. "
+        "Students received knowledge from trusted sources, practiced it through homework, and proved their learning through tests. "
+        "That model still exists, but it no longer fully reflects how young people learn today."
+    )
+    padded = Variant(
+        id="v1",
+        source="llm",
+        text=(
+            "Today the education system is changing faster than many schools can comfortably manage longer periods of change. "
+            "In the past education was mostly built around the classroom. "
+            "It also depended on the textbook and on the teacher. "
+            "Students received knowledge from trusted sources, practiced it with homework and proved their learning through tests. "
+            "That model still exists but it no longer fully reflects how young people learn today."
+        ),
+    )
+    clean = Variant(
+        id="v2",
+        source="llm",
+        text=(
+            "Today the education system is changing faster than many schools can comfortably manage. "
+            "In the past, education was mostly built around the classroom, the textbook and the teacher. "
+            "Students received knowledge from trusted sources, practiced it through homework and proved their learning through tests. "
+            "That model still exists, but it no longer fully reflects how young people learn today."
+        ),
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    variants = [Variant(id="source_preserved", text=source, source="source_preserved"), padded, clean]
+    diagnostics = selection_diagnostics(variants, paragraph)
+    padded_row = next(row for row in diagnostics if row["variant_id"] == "v1")
+
+    assert "source_scope_marker_reused_as_content" in padded_row["blockers"]
+    assert "source_scope_marker_reused_as_content_review_required" in padded_row["quality_warnings"]
+    assert choose_variant(variants, paragraph).id == "v2"
+
+
 def test_v6_writer_quality_blocks_unnatural_completion_phrase():
     text = "The real challenge is knowing what is accurate. Determining what is ethical and worth trusting completes the challenge."
 
     assert "unnatural_completion_phrase" in candidate_integrity_blockers(text)
+
+
+def test_v6_writer_quality_blocks_malformed_additive_predicate():
+    text = 'Education today should focus not only on "what students know". It also on how students think.'
+
+    assert "malformed_additive_predicate" in candidate_integrity_blockers(text)
+
+
+def test_v6_writer_quality_blocks_proxy_context_adjective_stack():
+    text = "The shift toward digital-media-rich classrooms has made teachers more important."
+
+    assert "proxy_context_adjective_stack" in candidate_integrity_blockers(text)
+
+
+def test_v6_writer_quality_blocks_generic_role_inflation():
+    text = "Teachers now act as navigators who help students assess credibility."
+
+    assert "generic_role_inflation" in candidate_integrity_blockers(text)
+
+
+def test_v6_writer_quality_blocks_quoted_concept_literalised_as_words():
+    text = (
+        'Education today should not only focus on the words "what students know," '
+        'It should also focus on the words "how students think."'
+    )
+
+    assert "semantic_anchor_corruption" in candidate_integrity_blockers(text)
+
+
+def test_v6_writer_quality_repairs_quoted_concept_literalisation():
+    text = (
+        'Education today should not only focus on the words "what students know," '
+        'but also on the words "how students think." '
+        "It should not focus on the words that represent what students know."
+    )
+
+    repaired = repair_generated_prose(text)
+
+    assert "the words" not in repaired
+    assert "words that represent" not in repaired
+    assert '"what students know,"' in repaired
+    assert '"how students think."' in repaired
+    assert "focus on what students know" in repaired
+
+
+def test_v6_writer_quality_blocks_flood_bridge_inflation():
+    text = "The digital shift has made teachers more important because it floods classrooms with information."
+
+    assert "generic_role_inflation" in candidate_integrity_blockers(text)
+
+
+def test_v6_writer_quality_blocks_assessment_consequence_before_ai_risk_behaviour():
+    text = (
+        "AI tools help students brainstorm ideas. "
+        "This makes assessment more difficult and raises questions about fairness. "
+        "Students may become dependent on AI-generated answers without understanding the work."
+    )
+
+    assert "premature_assessment_consequence" in candidate_integrity_blockers(text)
+
+
+def test_v6_writer_quality_blocks_duplicated_assessment_consequence():
+    text = (
+        "This makes assessment more difficult. "
+        "Students may submit polished work that does not reflect their ability. "
+        "Assessment becomes more difficult and raises questions about fairness."
+    )
+
+    assert "duplicated_assessment_consequence" in candidate_integrity_blockers(text)
+
+
+def test_v6_selector_allows_large_risk_drop_without_finding_drop_for_review():
+    source = (
+        "This shift has made the role of teachers even more important, not less important. "
+        "A teacher is no longer just someone who delivers information. "
+        "A good teacher helps students make sense of information. "
+        "They guide students to question sources, compare viewpoints, develop judgment, and apply knowledge in real situations. "
+        "In other words, education today should not only focus on what students know, but also on how students think."
+    )
+    candidate = Variant(
+        id="v1",
+        source="llm",
+        text=(
+            "The recent shift has made the role of teachers even more important, not less important. "
+            "A teacher is no longer someone who delivers information. "
+            "A good teacher helps students make sense of that information. "
+            "Teachers guide students to question sources and compare viewpoints. "
+            "They help students develop judgment and apply knowledge in real situations. "
+            "Education today should not only focus on what students know, but also on how students think."
+        ),
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    variants = [Variant(id="source_preserved", text=source, source="source_preserved"), candidate]
+    row = selection_diagnostics(variants, paragraph)[0]
+
+    assert row["finding_drop"] >= 0
+    assert row["risk_drop"] >= 10.0
+    assert row["accepted_by_selector"] is True
+
+
+def test_v6_selector_treats_dangling_modifier_as_review_warning_not_blocker():
+    source = "A teacher is no longer just someone who delivers information. A good teacher helps students make sense of information."
+    candidate = Variant(
+        id="v1",
+        source="llm",
+        text="No longer merely someone who delivers information, a good teacher helps students make sense of what they learn.",
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    row = selection_diagnostics([Variant(id="source_preserved", text=source, source="source_preserved"), candidate], paragraph)[0]
+
+    assert "dangling_modifier_sentence_start_review_required" in row["quality_warnings"]
+    assert "dangling_modifier_sentence_start" not in row["blockers"]
 
 
 def test_v6_writer_quality_repairs_source_term_fragments_into_role_lists():

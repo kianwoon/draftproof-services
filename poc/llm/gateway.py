@@ -494,8 +494,12 @@ class LLMGateway:
         self.repetition_penalty = cfg.repetition_penalty
         self.seed = cfg.seed
         self.response_format = cfg.response_format
-        self.provider = cfg.provider if cfg.provider is not None else _provider_from_env()
-        self.extra_body = _safe_extra_body(cfg.extra_body if cfg.extra_body is not None else _extra_body_from_env())
+        if self._is_cerebras_base_url():
+            self.provider = cfg.provider
+            self.extra_body = _safe_extra_body(cfg.extra_body)
+        else:
+            self.provider = cfg.provider if cfg.provider is not None else _provider_from_env()
+            self.extra_body = _safe_extra_body(cfg.extra_body if cfg.extra_body is not None else _extra_body_from_env())
         self.max_retries = cfg.max_retries
         self.timeout = cfg.timeout
         self.site_url = cfg.site_url or _first_env("LLM_SITE_URL", "DRAFTPROOF_OPENROUTER_SITE_URL")
@@ -607,6 +611,9 @@ class LLMGateway:
     def _is_openrouter_base_url(self) -> bool:
         return "openrouter.ai" in str(self.base_url or "").casefold()
 
+    def _is_cerebras_base_url(self) -> bool:
+        return "cerebras.ai" in str(self.base_url or "").casefold()
+
     def _attribution_site_url(self, app_label: str | None) -> str | None:
         if not self.site_url:
             return None
@@ -674,6 +681,9 @@ class LLMGateway:
             "seed": effective_seed,
         }
         caps = _model_capabilities(self.model)
+        if self._is_cerebras_base_url():
+            caps["reasoning"] = False
+            caps["reasoning_required"] = False
         if caps.get("temperature", True) is False:
             payload.pop("temperature", None)
         if effective_top_p is not None and caps.get("top_p", True):

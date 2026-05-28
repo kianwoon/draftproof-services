@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     SEMANTIC_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     LLM_API_KEY: str = ""
     OPENROUTER_API_KEY: str = ""
+    CEREBRAS_API_KEY: str = ""
     LLM_MODEL: str = ""
     DRAFTPROOF_PLANNER_MODEL: str = ""
     DRAFTPROOF_GENERATOR_MODEL: str = ""

@@ -202,6 +202,30 @@ def test_llm_gateway_preserves_reasoning_disable_for_non_reasoning_model(monkeyp
     assert payload["include_reasoning"] is False
 
 
+def test_llm_gateway_ignores_openrouter_env_payload_for_cerebras(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_OPENROUTER_PROVIDER_SORT", "latency")
+    monkeypatch.setenv("DRAFTPROOF_OPENROUTER_PROVIDER_ORDER", "cerebras")
+    monkeypatch.setenv("DRAFTPROOF_OPENROUTER_ALLOW_FALLBACKS", "true")
+    monkeypatch.setenv("DRAFTPROOF_OPENROUTER_REASONING_EFFORT", "none")
+    gateway = LLMGateway(LLMConfig(
+        api_key="test",
+        base_url="https://api.cerebras.ai/v1",
+        model="gpt-oss-120b",
+        max_retries=1,
+    ))
+    fake_session = _FakeSession()
+    gateway._session_local.session = fake_session
+
+    gateway.chat("return json", response_format={"type": "json_object"})
+
+    payload = fake_session.calls[0]["json"]
+    assert payload["model"] == "gpt-oss-120b"
+    assert payload["response_format"] == {"type": "json_object"}
+    assert "provider" not in payload
+    assert "reasoning" not in payload
+    assert "include_reasoning" not in payload
+
+
 def test_llm_gateway_checks_cancellation_before_request():
     class Canceled(BaseException):
         pass

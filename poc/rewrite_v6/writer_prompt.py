@@ -7,6 +7,7 @@ from typing import Any
 
 from .paragraph_architecture import architecture_split_contract
 from .plan import Plan
+from .prose_repair_rules import consolidated_prose_repair_rules, writer_agent_profile
 from .prompt_shape import coverage_loss_contract, paragraph_sentence_plan
 from .text import Paragraph, source_terms, strip_leading_heading
 from .writer_generation_rules import writer_generation_rules
@@ -36,6 +37,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
     variant_requirements = [variant_focus] if variant_focus else _requested_variant_requirements()
     payload = {
         "task": "coverage_beat_paragraph_generation",
+        "writer_agent_profile": writer_agent_profile(),
         "golden_question": golden_route.get(
             "question_rule",
             "What did the writer see, read, compare, struggle with, or decide, and why does it matter?",
@@ -62,6 +64,7 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             ),
         },
         "polarity_constraints": _polarity_constraints(paragraph),
+        "global_prose_repair_rules": consolidated_prose_repair_rules(),
         "source_units": source_units(paragraph),
         "paragraph_repair_plan": {
             "repair_unit": paragraph_repair_unit,
@@ -157,10 +160,16 @@ def build_prompt(paragraph: Paragraph, plan: Plan, *, variant_focus: dict[str, s
             "allowed_provenance": ["source_preserved", "inferred_from_draft", "needs_author_confirmation", "must_replace"],
             "review_required": True,
             "responsibility_boundary": "DraftProof drafts and labels provenance; the user must review and owns facts, citations, anchors, and author-proxy bridges before submission.",
+            "proxy_pack": plan.paragraph_strategy.get("author_proxy_pack", {}),
             "rule": (
                 "Do not stop for questions. When a needed anchor is not directly supported by submitted text, continue the rewrite and include it in author_review_items. "
-                "Use author_proxy_provenance or author_review_items for reviewable bridges. "
-                "If grounding_required is true, use one bridge anchor from neighbor_bridge_anchors to ground the anchor-gap paragraph; source-only synonym rotation is a failed variant."
+                "Use author_proxy_provenance or author_review_items for reviewable bridges. If proxy_pack.usable_bridges is present, use only those bridge phrases and do not invent another bridge. "
+                "Use proxy_pack.author_profile to keep the bridge in the paragraph's local actor/context profile; unsupported broad phrases outside that profile are failed variants. "
+                "author_profile.local_context_terms are routing/profile labels, not wording permission; do not insert them unless they already appear in source text or proxy_pack.usable_bridges. "
+                "If no proxy bridge improves the paragraph, write from the selected paragraph instead of adding generic filler. "
+                "A bridge must not become a new thesis wrapper, generic conclusion, repeated abstract noun route, or reward-system sentence unless the source paragraph itself says it. "
+                "Keep natural list punctuation; do not replace comma lists with repeated 'and' chains. "
+                "If grounding_required is true and no proxy_pack exists, use one bridge anchor from neighbor_bridge_anchors to ground the anchor-gap paragraph; source-only synonym rotation is a failed variant."
             ),
         },
         "required_shape": {
@@ -274,9 +283,15 @@ def build_retry_contract(paragraph: Paragraph, plan: Plan) -> dict[str, Any]:
             "enabled": True,
             "grounding_required": bool(author_proxy_grounding.get("required")) if isinstance(author_proxy_grounding, dict) else False,
             "neighbor_bridge_anchors": author_proxy_grounding.get("bridge_anchors", []) if isinstance(author_proxy_grounding, dict) else [],
+            "proxy_pack": plan.paragraph_strategy.get("author_proxy_pack", {}),
             "review_required": True,
             "rule": (
-                "If grounding_required is true, use one bridge anchor from neighbor_bridge_anchors to ground the paragraph and list the bridge in author_review_items. "
+                "If proxy_pack.usable_bridges is present, use only those bridge phrases and list the bridge in author_review_items. "
+                "Use proxy_pack.author_profile to keep the bridge in the paragraph's local actor/context profile; unsupported broad phrases outside that profile are failed variants. "
+                "author_profile.local_context_terms are routing/profile labels, not wording permission; do not insert them unless they already appear in source text or proxy_pack.usable_bridges. "
+                "If no proxy bridge improves the paragraph, write from the selected paragraph instead of adding generic filler. "
+                "Keep natural list punctuation; do not replace comma lists with repeated 'and' chains. "
+                "If grounding_required is true and no proxy_pack exists, use one bridge anchor from neighbor_bridge_anchors to ground the paragraph and list the bridge in author_review_items. "
                 "Do not return source-only synonym rotation."
             ),
         },
@@ -329,8 +344,16 @@ def _variant_schema(requirement: dict[str, str]) -> dict[str, Any]:
         "id": requirement["id"],
         "mode": requirement["mode"],
         "text": "replacement text only; may contain paragraph breaks only when architecture_split_contract.active is true",
-        "author_proxy_provenance": [],
-        "author_review_items": [],
+        "author_proxy_provenance": [{
+            "provenance": "inferred_from_draft",
+            "target_text": "exact bridge wording used in text",
+            "anchor_text": "submitted text or proxy_pack bridge that supports it",
+        }],
+        "author_review_items": [{
+            "provenance": "inferred_from_draft",
+            "target_text": "exact generated wording requiring author review",
+            "user_input_needed": "confirm, replace, or remove before final submission",
+        }],
     }
 
 

@@ -25,7 +25,7 @@ def writer_progress_message(paragraph_id: str, plan: Plan, *, window: str | None
 
 def author_proxy_grounding_required(plan: Plan) -> bool:
     grounding = plan.paragraph_strategy.get("author_proxy_grounding", {})
-    return isinstance(grounding, dict) and bool(grounding.get("required"))
+    return isinstance(grounding, dict) and bool(grounding.get("required")) and not plan.paragraph_strategy.get("author_proxy_pack")
 
 
 def emit_progress(callback: Callable[[int, str], None] | None, percent: int | None, message: str) -> None:

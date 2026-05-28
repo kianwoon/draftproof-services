@@ -25,7 +25,8 @@ def missing_required_source_term_details(text: str, paragraph: Paragraph) -> lis
         if not terms:
             continue
         covered = sum(1 for term in terms if _word_base(term) in candidate_terms)
-        if covered / len(terms) < 0.75:
+        required_ratio = 1.0 if len(terms) <= 4 else 0.75
+        if covered / len(terms) < required_ratio:
             missing.extend(term for term in terms if _word_base(term) not in candidate_terms)
     return list(dict.fromkeys(missing))
 

@@ -8,21 +8,51 @@ from typing import Any, Callable
 
 from poc.llm.gateway import LLMConfig, LLMGateway
 
+from .author_proxy import attach_author_proxy_pack, author_proxy_required
 from .plan import Plan, build_plan
-from .planner_llm import run_planner_llm
 from .progress import emit_progress as _emit_progress
 from .progress import stage_progress_percent as _stage_progress_percent
 from .progress import writer_progress_message as _writer_progress_message
+from .prose_repair_rules import prose_repair_rule_summary, selector_agent_profile
 from .repair_windows import RepairWindow, compose_window_rewrite, select_repair_window
 from .report_contracts import apply_report_signal_contracts
+from .runtime import acceptable_progress as _acceptable_progress
+from .runtime import can_start_llm_request as _has_runtime_for_llm
+from .runtime import compose as _compose
+from .runtime import cross_paragraph_regression as _cross_paragraph_regression
+from .runtime import improved as _improved
+from .runtime import rewrite_progress_percent as _rewrite_progress_percent
+from .runtime import same_text as _same_text
 from .scan import Scan, findings_for_paragraph, scan_text
 from .json_io import parse_json
+from .llm_config import (
+    planner_extra_body as _planner_extra_body,
+    planner_gateway as _planner_gateway,
+    planner_llm_profile as _planner_llm_profile,
+    planner_model as _planner_model,
+    provider_from_env as _provider_from_env,
+    resolve_v6_api_key as _resolve_v6_api_key,
+    resolve_v6_base_url as _resolve_v6_base_url,
+    resolve_v6_model as _resolve_v6_model,
+    selector_extra_body as _selector_extra_body,
+    selector_gateway as _selector_gateway,
+    selector_llm_profile as _selector_llm_profile,
+    writer_extra_body as _writer_extra_body,
+    writer_llm_profile as _writer_llm_profile,
+    writer_model as _writer_model,
+)
 from .naturalisation import NaturalisationResult, run_naturalisation_repair_once
 from .no_change_policy import no_change_retry_message, no_change_retry_status, retryable_no_change_result
 from .paragraph_layout import restore_original_paragraph_layout
+from .planner_llm import run_planner_llm
 from .quality_repair import QualityRepairResult, _grammer_extra_body, _grammer_model, run_quality_repair_once
 from .selector_diagnostics import selection_diagnostics
 from .write import Variant, _annotate_selected_variant, write_variants
+from .writer_feedback import needs_writer_feedback_retry, plan_with_writer_feedback
+
+
+def _writer_provider(model: str) -> dict[str, Any] | None:
+    return _provider_from_env("WRITER", model)
 
 
 @dataclass(frozen=True)
@@ -90,6 +120,9 @@ def run_v6_rewrite(
     priority_paragraph_ids: set[str] | None = None,
 ) -> Result:
     _raise_if_canceled(cancellation_check)
+    api_key = _resolve_v6_api_key(api_key)
+    base_url = _resolve_v6_base_url(base_url)
+    model = _resolve_v6_model(model)
     scan = scan_text(text)
     paragraph, plan = build_plan(scan, excluded_paragraph_ids, priority_paragraph_ids)
     plan = apply_report_signal_contracts(plan, report_signal_contracts)
@@ -280,17 +313,21 @@ def _run_v6_full_paragraph_rewrite(
     target_findings = findings_for_paragraph(scan, paragraph.id)
     _emit_progress(progress_callback, progress_percent, f"Planning V6 paragraph {paragraph.id}")
     _raise_if_canceled(cancellation_check)
-    if planner_client is not None or writer_client is None:
-        plan = run_planner_llm(
-            paragraph,
-            plan,
-            target_findings,
-            client=planner_client or _planner_gateway(
-                api_key=api_key,
-                base_url=base_url,
-                cancellation_check=cancellation_check,
-            ),
-        )
+    plan = _run_planner_with_author_proxy(
+        paragraph=paragraph,
+        plan=plan,
+        findings=target_findings,
+        source_text=paragraph.text,
+        planner_client=planner_client,
+        writer_client=writer_client,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        cancellation_check=cancellation_check,
+        progress_callback=progress_callback,
+        progress_percent=_stage_progress_percent(progress_percent, progress_end_percent, 1),
+        progress_message=f"Building V6 paragraph {paragraph.id} Author-proxy pack",
+    )
     _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 1), _writer_progress_message(paragraph.id, plan))
     _raise_if_canceled(cancellation_check)
     client = writer_client or LLMGateway(
@@ -301,6 +338,8 @@ def _run_v6_full_paragraph_rewrite(
             **_writer_llm_profile(model or _writer_model(), paragraph.text),
             provider=_writer_provider(model or _writer_model()),
             extra_body=_writer_extra_body(model or _writer_model()),
+            max_retries=1,
+            timeout=60,
             cancellation_check=cancellation_check,
         )
     )
@@ -308,6 +347,11 @@ def _run_v6_full_paragraph_rewrite(
     _raise_if_canceled(cancellation_check)
     _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 2), f"Scoring V6 paragraph {paragraph.id} candidate")
     diagnostics = selection_diagnostics(variants, paragraph)
+    if needs_writer_feedback_retry(diagnostics):
+        _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 2), f"Rewriting V6 paragraph {paragraph.id} with diagnostics feedback")
+        plan = plan_with_writer_feedback(plan, diagnostics)
+        variants = write_variants(paragraph, plan, client=client)
+        diagnostics = selection_diagnostics(variants, paragraph)
     _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 3), f"Selecting V6 paragraph {paragraph.id} candidate")
     selected, diagnostics = _select_variant(
         paragraph=paragraph,
@@ -346,18 +390,22 @@ def _run_v6_window_rewrite(
         f"Planning V6 paragraph {paragraph.id} window {window.start_sentence_index + 1}-{window.end_sentence_index + 1}",
     )
     _raise_if_canceled(cancellation_check)
-    if planner_client is not None or writer_client is None:
-        window_plan = run_planner_llm(
-            window_paragraph,
-            window_plan,
-            findings_for_paragraph(window_scan, window_paragraph.id),
-            client=planner_client or _planner_gateway(
-                api_key=api_key,
-                base_url=base_url,
-                cancellation_check=cancellation_check,
-            ),
-        )
-        window_plan = _attach_window_context(window_plan, parent_plan, window)
+    window_findings = findings_for_paragraph(window_scan, window_paragraph.id)
+    window_plan = _run_planner_with_author_proxy(
+        paragraph=window_paragraph,
+        plan=window_plan,
+        findings=window_findings,
+        source_text=window.source_text,
+        planner_client=planner_client,
+        writer_client=writer_client,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        cancellation_check=cancellation_check,
+        progress_callback=progress_callback,
+        progress_percent=_stage_progress_percent(progress_percent, progress_end_percent, 1),
+        progress_message=f"Building V6 paragraph {paragraph.id} window Author-proxy pack",
+    )
     _emit_progress(
         progress_callback,
         _stage_progress_percent(progress_percent, progress_end_percent, 1),
@@ -372,6 +420,8 @@ def _run_v6_window_rewrite(
             **_writer_llm_profile(model or _writer_model(), window.source_text),
             provider=_writer_provider(model or _writer_model()),
             extra_body=_writer_extra_body(model or _writer_model()),
+            max_retries=1,
+            timeout=60,
             cancellation_check=cancellation_check,
         )
     )
@@ -383,6 +433,11 @@ def _run_v6_window_rewrite(
         f"Scoring V6 paragraph {paragraph.id} window candidate",
     )
     diagnostics = selection_diagnostics(variants, window_paragraph)
+    if needs_writer_feedback_retry(diagnostics):
+        _emit_progress(progress_callback, _stage_progress_percent(progress_percent, progress_end_percent, 2), f"Rewriting V6 paragraph {paragraph.id} window with diagnostics feedback")
+        window_plan = plan_with_writer_feedback(window_plan, diagnostics)
+        variants = write_variants(window_paragraph, window_plan, client=client)
+        diagnostics = selection_diagnostics(variants, window_paragraph)
     _emit_progress(
         progress_callback,
         _stage_progress_percent(progress_percent, progress_end_percent, 3),
@@ -426,6 +481,43 @@ def _run_v6_window_rewrite(
     )
 
 
+def _run_planner_with_author_proxy(
+    *, paragraph: Any, plan: Plan, findings: list[Any], source_text: str, planner_client: Any | None,
+    writer_client: Any | None, model: str | None, api_key: str | None, base_url: str | None,
+    cancellation_check: Callable[[], None] | None, progress_callback: Callable[[int, str], None] | None,
+    progress_percent: int | None, progress_message: str,
+) -> Plan:
+    planned = _run_planner_step(paragraph=paragraph, plan=plan, findings=findings, planner_client=planner_client, writer_client=writer_client, api_key=api_key, base_url=base_url, cancellation_check=cancellation_check)
+    if not author_proxy_required(planned) or writer_client is not None:
+        return planned
+    _emit_progress(progress_callback, progress_percent, progress_message)
+    _raise_if_canceled(cancellation_check)
+    writer_model = model or _writer_model()
+    planned = attach_author_proxy_pack(paragraph, planned, findings, client=LLMGateway(LLMConfig(
+        model=writer_model, api_key=api_key, base_url=base_url, **_writer_llm_profile(writer_model, source_text),
+        provider=_writer_provider(writer_model), extra_body=_writer_extra_body(writer_model),
+        max_retries=1, timeout=60, cancellation_check=cancellation_check,
+    )))
+    return _run_planner_step(paragraph=paragraph, plan=planned, findings=findings, planner_client=planner_client, writer_client=writer_client, api_key=api_key, base_url=base_url, cancellation_check=cancellation_check)
+
+
+def _run_planner_step(
+    *,
+    paragraph: Any,
+    plan: Plan,
+    findings: list[Any],
+    planner_client: Any | None,
+    writer_client: Any | None,
+    api_key: str | None,
+    base_url: str | None,
+    cancellation_check: Callable[[], None] | None,
+) -> Plan:
+    client = planner_client
+    if client is None and writer_client is None:
+        client = _planner_gateway(api_key=api_key, base_url=base_url, cancellation_check=cancellation_check)
+    return plan if client is None else run_planner_llm(paragraph, plan, findings, client=client)
+
+
 def _select_variant(
     *,
     paragraph: Any,
@@ -439,14 +531,28 @@ def _select_variant(
         if generated:
             return None, _mark_selector_decision(diagnostics, None, "selector_required_missing", "")
         return source, _mark_selector_decision(diagnostics, source.id if source else None, "no_generated_variants_source_preserved", "")
+    eligible_ids = {
+        str(row.get("variant_id"))
+        for row in diagnostics
+        if row.get("accepted_by_selector") and not row.get("blockers")
+    }
+    if not eligible_ids:
+        return source, _mark_selector_decision(diagnostics, source.id if source else None, "no_valid_generated_variants_source_preserved", "")
     selected_id, rationale = _selector_llm_choice(paragraph, variants, diagnostics, selector_client)
+    metric_id = _metric_preferred_variant_id(diagnostics, eligible_ids)
+    if metric_id and selected_id != metric_id:
+        selected_id = metric_id
+        rationale = (
+            f"selector_metric_contract: selected lowest candidate_findings, then lowest candidate_mean_risk, "
+            f"then highest risk_drop among eligible variants. LLM rationale was: {rationale}"
+        ).strip()
     selected = _variant_by_id(variants, selected_id)
-    if selected is None or selected.source == "source_preserved":
+    if selected is None or selected.source == "source_preserved" or selected.id not in eligible_ids:
         return source, _mark_selector_decision(diagnostics, source.id if source else None, "invalid_selector_source_preserved", rationale)
     selected_row = next((row for row in diagnostics if row.get("variant_id") == selected.id), {})
-    hard_blockers = set(selected_row.get("blockers") or []) & _selector_hard_blockers()
-    if hard_blockers:
-        return source, _mark_selector_decision(diagnostics, source.id if source else None, f"blocked_selector_source_preserved:{','.join(sorted(hard_blockers))}", rationale)
+    hard_blockers = set(selected_row.get("blockers") or [])
+    if hard_blockers or not selected_row.get("accepted_by_selector"):
+        return source, _mark_selector_decision(diagnostics, source.id if source else None, f"blocked_selector_source_preserved:{','.join(sorted(hard_blockers)) or 'not_accepted'}", rationale)
     return _annotate_selected_variant(selected, paragraph), _mark_selector_decision(diagnostics, selected.id, "selector_llm", rationale)
 
 
@@ -476,12 +582,40 @@ def _selector_llm_choice(
     return selected_id or None, rationale
 
 
+def _metric_preferred_variant_id(diagnostics: list[dict[str, Any]], eligible_ids: set[str]) -> str | None:
+    rows = [
+        row for row in diagnostics
+        if str(row.get("variant_id")) in eligible_ids and not row.get("blockers")
+    ]
+    if not rows:
+        return None
+    best = min(
+        rows,
+        key=lambda row: (
+            _numeric_metric(row.get("candidate_findings"), 10_000.0),
+            _numeric_metric(row.get("candidate_mean_risk"), 10_000.0),
+            -_numeric_metric(row.get("risk_drop"), -10_000.0),
+            str(row.get("variant_id") or ""),
+        ),
+    )
+    return str(best.get("variant_id") or "").strip() or None
+
+
+def _numeric_metric(value: Any, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _selector_prompt(paragraph: Any, variants: list[Variant], diagnostics: list[dict[str, Any]]) -> str:
     generated = [variant for variant in variants if variant.source != "source_preserved"]
     rows = []
     diagnostics_by_id = {str(row.get("variant_id")): row for row in diagnostics}
     for variant in generated:
         row = diagnostics_by_id.get(variant.id, {})
+        if row.get("blockers") or not row.get("accepted_by_selector"):
+            continue
         rows.append({
             "id": variant.id,
             "mode": variant.mode,
@@ -491,26 +625,30 @@ def _selector_prompt(paragraph: Any, variants: list[Variant], diagnostics: list[
             "candidate_findings": row.get("candidate_findings"),
             "candidate_mean_risk": row.get("candidate_mean_risk"),
             "risk_drop": row.get("risk_drop"),
+            "accepted_by_selector": row.get("accepted_by_selector"),
             "missing_required_terms": row.get("missing_required_terms", []),
         })
     payload = {
         "task": "select_existing_v6_rewrite_variant",
+        "selector_agent_profile": selector_agent_profile(),
         "source_paragraph": paragraph.text,
         "variants": rows,
         "rules": [
             "Return only selected_id and rationale.",
             "Select exactly one existing variant id from variants.",
+            "Every variant shown is pre-validated by diagnostics; select only from the shown variants.",
             "Do not rewrite, repair, merge, or create any text.",
             "Reject variants with hard blockers: grammar corruption, sentence fragments, keyword dumps, misplaced source terms, broken lists, or malformed parallelism.",
-            "Choose the best overall variant, not automatically the lowest scanner score.",
-            "Use candidate_findings, candidate_mean_risk, and risk_drop as evidence, but do not let them override obvious prose defects.",
+            "Choose by metrics among the shown variants: lowest candidate_findings first, then lowest candidate_mean_risk, then highest risk_drop.",
+            "All shown variants have already passed hard blockers; do not choose a worse-scoring variant for subjective polish.",
             "Prefer the variant that preserves the full source route, reads directly, and needs only light punctuation or flow cleanup.",
             "Reject or downgrade variants with forced connectors such as Consequently, Thus, Similarly, Ultimately, or Moreover when those connectors make the paragraph sound engineered.",
             "Reject or downgrade variants that change a possible risk into something already happening, such as 'A danger emerges as students become...' when the source frames dependency as a risk.",
             "Downgrade clunky wording such as 'by enabling them to', vague danger openings, and unnecessarily formal substitutions when a plainer variant is available.",
-            "If one variant has slightly worse findings but clearly better source coverage, route, and prose quality, select that better variant.",
-            "If variants are equally good by prose and coverage, then use lower candidate_findings, lower candidate_mean_risk, and higher risk_drop as tie-breakers.",
+            "Do not select a variant with more candidate_findings than another shown variant.",
+            "If candidate_findings tie, do not select a variant with higher candidate_mean_risk than another shown variant.",
         ],
+        "global_prose_repair_rules": prose_repair_rule_summary(),
         "output_schema": {"selected_id": "existing variant id", "rationale": "brief reason for the selected existing variant"},
     }
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
@@ -532,34 +670,6 @@ def _mark_selector_decision(diagnostics: list[dict[str, Any]], selected_id: str 
             updated["selector_rationale"] = rationale
         rows.append(updated)
     return rows
-
-
-def _selector_hard_blockers() -> set[str]:
-    return {
-        "planner_language_leakage",
-        "external_narrator_reporting_chain",
-        "malformed_serial_verb_chain",
-        "malformed_nominal_stack",
-        "malformed_learning_predicate",
-        "malformed_telegraphic_predicate",
-        "unnatural_completion_phrase",
-        "dangling_consequence_tail",
-        "dangling_additive_tail",
-        "standalone_additive_fragment",
-        "misplaced_channel_in_challenge",
-        "malformed_parallel_connector_list",
-        "malformed_parallel_verb_tail",
-        "redundant_trust_phrase",
-        "keyword_dump_sequence",
-        "lost_serial_punctuation",
-        "capitalized_common_noun_mid_sentence",
-        "repeated_platform_catalogue",
-        "repeated_subject_start",
-        "vague_unintroduced_reliance",
-        "malformed_tool_student_relation",
-        "tool_practise_skills_predicate",
-        "fragment_or_trace_sentence",
-    }
 
 
 def run_v6_rewrite_all(
@@ -628,8 +738,8 @@ def run_v6_rewrite_all(
             )
             break
         end_percent = _rewrite_progress_percent(pass_index + 1, limit)
-        result = run_v6_rewrite(
-            current,
+        source_result = run_v6_rewrite(
+            text,
             planner_client=planner_client,
             writer_client=writer_client,
             selector_client=selector_client,
@@ -644,10 +754,12 @@ def run_v6_rewrite_all(
             report_signal_contracts=report_signal_contracts,
             priority_paragraph_ids=finding_paragraph_ids - exhausted,
         )
+        result = _project_source_result_to_current(source_result, before)
         if _same_text(result.rewritten_text, current):
             attempts[result.plan.paragraph_id] = attempts.get(result.plan.paragraph_id, 0) + 1
             retryable_no_change = retryable_no_change_result(result)
-            will_retry = retryable_no_change and attempts[result.plan.paragraph_id] < _no_change_retry_limit()
+            finding_target = result.plan.paragraph_id in finding_paragraph_ids
+            will_retry = (retryable_no_change or finding_target) and attempts[result.plan.paragraph_id] < _no_change_retry_limit()
             if not will_retry:
                 exhausted.add(result.plan.paragraph_id)
             pass_trace.append(
@@ -666,9 +778,13 @@ def run_v6_rewrite_all(
             continue
         after = scan_text(result.rewritten_text)
         result_targets = _target_paragraph_ids_after_rewrite(before, after, result)
-        if _cross_paragraph_regression(before, after, result.plan.paragraph_id, target_after_ids=result_targets) or not _acceptable_progress(before, after, report_targeted=result.plan.paragraph_id in report_target_ids):
+        if (
+            not _target_paragraph_acceptance_ok(before, after, result.plan.paragraph_id, result_targets)
+            or _cross_paragraph_regression(before, after, result.plan.paragraph_id, target_after_ids=result_targets)
+            or not _acceptable_progress(before, after, report_targeted=result.plan.paragraph_id in report_target_ids)
+        ):
             attempts[result.plan.paragraph_id] = attempts.get(result.plan.paragraph_id, 0) + 1
-            if attempts[result.plan.paragraph_id] >= 4:
+            if attempts[result.plan.paragraph_id] >= _not_improved_retry_limit():
                 exhausted.add(result.plan.paragraph_id)
             pass_trace.append(
                 _pass_trace_row(
@@ -945,6 +1061,10 @@ def _no_change_retry_limit() -> int:
     return _bounded_int_env("DRAFTPROOF_V6_NO_CHANGE_RETRY_LIMIT", 2, minimum=1, maximum=4)
 
 
+def _not_improved_retry_limit() -> int:
+    return _bounded_int_env("DRAFTPROOF_V6_NOT_IMPROVED_RETRY_LIMIT", 2, minimum=1, maximum=4)
+
+
 def _dynamic_pass_limit(scan: Scan, report_signal_contracts: list[dict[str, Any]] | None = None) -> int:
     active_paragraphs = _finding_paragraph_ids(scan) | _report_target_paragraph_ids(scan, report_signal_contracts)
     if not active_paragraphs:
@@ -986,11 +1106,11 @@ def _residual_followup_limit(value: int | None) -> int:
         return max(0, min(3, int(value)))
     import os
 
-    raw = os.environ.get("DRAFTPROOF_V6_RESIDUAL_FOLLOWUP_PASSES", "1")
+    raw = os.environ.get("DRAFTPROOF_V6_RESIDUAL_FOLLOWUP_PASSES", "0")
     try:
         return max(0, min(3, int(raw)))
     except ValueError:
-        return 1
+        return 0
 
 
 def _target_paragraph_ids_after_rewrite(before: Scan, after: Scan, result: Result) -> set[str]:
@@ -1020,6 +1140,41 @@ def _target_paragraph_ids_after_rewrite(before: Scan, after: Scan, result: Resul
     if rows:
         return {paragraph_id for _, paragraph_id in rows}
     return {after.paragraphs[min(target.index, len(after.paragraphs) - 1)].id} if after.paragraphs else {result.plan.paragraph_id}
+
+
+def _project_source_result_to_current(source_result: Result, current_scan: Scan) -> Result:
+    """Compose an original-context paragraph candidate into current text."""
+    return replace(
+        source_result,
+        scan=current_scan,
+        rewritten_text=_compose(current_scan, source_result.plan.paragraph_id, source_result.selected),
+    )
+
+
+def _target_paragraph_acceptance_ok(
+    before: Scan,
+    after: Scan,
+    target_paragraph_id: str,
+    target_after_ids: set[str],
+) -> bool:
+    before_counts = _finding_counts_by_paragraph(before)
+    after_counts = _finding_counts_by_paragraph(after)
+    before_target_count = before_counts.get(target_paragraph_id, 0)
+    after_target_count = sum(after_counts.get(paragraph_id, 0) for paragraph_id in target_after_ids)
+    if after_target_count > before_target_count:
+        return False
+    if after_target_count < before_target_count:
+        return True
+    return _paragraph_mean_severity(after, target_after_ids) <= _paragraph_mean_severity(before, {target_paragraph_id})
+
+
+def _paragraph_mean_severity(scan: Scan, paragraph_ids: set[str]) -> float:
+    values = [
+        float(finding.severity)
+        for finding in scan.findings
+        if finding.paragraph_id in paragraph_ids
+    ]
+    return sum(values) / len(values) if values else 0.0
 
 
 def _residual_trace_row(
@@ -1189,307 +1344,3 @@ def _window_payload(window: RepairWindow) -> dict[str, Any]:
 def _raise_if_canceled(cancellation_check: Callable[[], None] | None) -> None:
     if cancellation_check is not None:
         cancellation_check()
-
-
-def _has_runtime_for_llm(
-    *,
-    started_at: float,
-    runtime_budget_seconds: float | None,
-    min_llm_request_seconds: float,
-) -> bool:
-    if runtime_budget_seconds is None or runtime_budget_seconds <= 0:
-        return True
-    elapsed = time.monotonic() - started_at
-    remaining = float(runtime_budget_seconds) - elapsed
-    return remaining >= max(1.0, float(min_llm_request_seconds or 0.0))
-
-
-def _compose(scan: Scan, target_paragraph_id: str, selected: Variant | None) -> str:
-    blocks = []
-    for paragraph in scan.paragraphs:
-        blocks.append(selected.text if selected and paragraph.id == target_paragraph_id else paragraph.text)
-    return "\n\n".join(blocks)
-
-
-def _same_text(left: str, right: str) -> bool:
-    return re.sub(r"\s+", " ", str(left or "").strip()) == re.sub(r"\s+", " ", str(right or "").strip())
-
-
-def _improved(before: Scan, after: Scan) -> bool:
-    return (
-        after.scores["finding_count"] < before.scores["finding_count"]
-        or after.scores["mean_sentence_shape_risk"] < before.scores["mean_sentence_shape_risk"]
-    )
-
-
-def _acceptable_progress(before: Scan, after: Scan, *, report_targeted: bool) -> bool:
-    if _improved(before, after):
-        return True
-    return bool(report_targeted) and after.scores["finding_count"] <= before.scores["finding_count"] and after.scores["mean_sentence_shape_risk"] <= before.scores["mean_sentence_shape_risk"]
-
-
-def _cross_paragraph_regression(
-    before: Scan,
-    after: Scan,
-    target_paragraph_id: str,
-    *,
-    target_after_ids: set[str] | None = None,
-) -> bool:
-    before_counts = _paragraph_counts(before)
-    after_counts = _paragraph_counts(after)
-    target_after_ids = target_after_ids or {target_paragraph_id}
-    target = next((paragraph for paragraph in before.paragraphs if paragraph.id == target_paragraph_id), None)
-    if target is not None and len(after.paragraphs) != len(before.paragraphs):
-        delta = len(after.paragraphs) - len(before.paragraphs)
-        target_after_count = sum(after_counts.get(paragraph_id, 0) for paragraph_id in target_after_ids)
-        target_drop = before_counts.get(target_paragraph_id, 0) - target_after_count
-        total_drop = int(before.scores.get("finding_count") or 0) - int(after.scores.get("finding_count") or 0)
-        max_non_target_regression = 0
-        for paragraph in before.paragraphs:
-            if paragraph.id == target_paragraph_id:
-                continue
-            after_index = paragraph.index if paragraph.index < target.index else paragraph.index + delta
-            if 0 <= after_index < len(after.paragraphs):
-                after_id = after.paragraphs[after_index].id
-                max_non_target_regression = max(max_non_target_regression, after_counts.get(after_id, 0) - before_counts.get(paragraph.id, 0))
-                if after_id in target_after_ids:
-                    continue
-                if after_counts.get(after_id, 0) > before_counts.get(paragraph.id, 0) and not (target_drop >= 2 and total_drop > 0 and max_non_target_regression <= 1):
-                    return True
-        return False
-    return any(
-        paragraph_id not in target_after_ids and count > before_counts.get(paragraph_id, 0)
-        for paragraph_id, count in after_counts.items()
-    )
-
-
-def _paragraph_counts(scan: Scan) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for finding in scan.findings:
-        counts[finding.paragraph_id] = counts.get(finding.paragraph_id, 0) + 1
-    return counts
-
-
-def _rewrite_progress_percent(step: int, limit: int) -> int:
-    span_start = 63
-    span_end = 87
-    bounded_limit = max(1, int(limit or 1))
-    bounded_step = max(0, min(bounded_limit, int(step or 0)))
-    return span_start + int(round((span_end - span_start) * (bounded_step / bounded_limit)))
-
-
-DEFAULT_V6_MODEL = "openai/gpt-oss-120b"
-
-
-def _writer_model() -> str:
-    import os
-
-    return os.environ.get("DRAFTPROOF_V6_WRITER_MODEL") or os.environ.get("LLM_MODEL") or DEFAULT_V6_MODEL
-
-
-def _selector_model() -> str:
-    import os
-
-    return (
-        os.environ.get("DRAFTPROOF_V6_SELECTOR_MODEL")
-        or os.environ.get("DRAFTPROOF_V6_PLANNER_MODEL")
-        or os.environ.get("DRAFTPROOF_PLANNER_MODEL")
-        or os.environ.get("LLM_MODEL")
-        or DEFAULT_V6_MODEL
-    )
-
-
-def _planner_model() -> str:
-    import os
-
-    return (
-        os.environ.get("DRAFTPROOF_V6_PLANNER_MODEL")
-        or os.environ.get("DRAFTPROOF_PLANNER_MODEL")
-        or os.environ.get("DRAFTPROOF_REWRITE_V5_PLANNER_MODEL")
-        or os.environ.get("LLM_MODEL")
-        or DEFAULT_V6_MODEL
-    )
-
-
-def _planner_gateway(
-    *,
-    api_key: str | None,
-    base_url: str | None,
-    cancellation_check: Callable[[], None] | None = None,
-) -> LLMGateway:
-    model = _planner_model()
-    return LLMGateway(
-        LLMConfig(
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            **_planner_llm_profile(model),
-            provider=_planner_provider(model),
-            extra_body=_planner_extra_body(model),
-            cancellation_check=cancellation_check,
-        )
-    )
-
-
-def _selector_gateway(
-    *,
-    api_key: str | None,
-    base_url: str | None,
-    cancellation_check: Callable[[], None] | None = None,
-) -> LLMGateway:
-    model = _selector_model()
-    return LLMGateway(
-        LLMConfig(
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            **_selector_llm_profile(model),
-            provider=_selector_provider(model),
-            extra_body=_selector_extra_body(model),
-            cancellation_check=cancellation_check,
-        )
-    )
-
-
-def _planner_provider(model: str) -> dict[str, Any] | None:
-    return _provider_from_env("PLANNER", model)
-
-
-def _selector_provider(model: str) -> dict[str, Any] | None:
-    return _provider_from_env("SELECTOR", model)
-
-
-def _writer_provider(model: str) -> dict[str, Any] | None:
-    return _provider_from_env("WRITER", model)
-
-
-def _provider_from_env(role: str, model: str) -> dict[str, Any] | None:
-    prefix = f"DRAFTPROOF_V6_{role}_PROVIDER"
-    raw_json = _first_env(f"{prefix}_ROUTING_JSON")
-    if raw_json:
-        parsed = json.loads(raw_json)
-        if not isinstance(parsed, dict):
-            raise ValueError(f"V6 {role.casefold()} provider routing JSON must be an object")
-        return parsed
-
-    provider: dict[str, Any] = {}
-    order = _csv_env(f"{prefix}_ORDER")
-    only = _csv_env(f"{prefix}_ONLY")
-    ignore = _csv_env(f"{prefix}_IGNORE")
-    if not order and str(model or "").casefold() == "z-ai/glm-4.7":
-        order = ["Cerebras"]
-    if order:
-        provider["order"] = order
-    if only:
-        provider["only"] = only
-    if ignore:
-        provider["ignore"] = ignore
-
-    allow_fallbacks = _bool_env(f"{prefix}_ALLOW_FALLBACKS")
-    if allow_fallbacks is None:
-        allow_fallbacks = _bool_env(f"DRAFTPROOF_V6_{role}_ALLOW_FALLBACKS")
-    if allow_fallbacks is None and order:
-        allow_fallbacks = True
-    if allow_fallbacks is not None:
-        provider["allow_fallbacks"] = allow_fallbacks
-
-    sort = _first_env(f"{prefix}_SORT")
-    if sort:
-        provider["sort"] = sort
-    return provider or None
-
-
-def _planner_extra_body(model: str) -> dict[str, Any] | None:
-    normalized = str(model or "").casefold()
-    if "gpt-oss" in normalized:
-        return {"reasoning": {"effort": "medium", "exclude": True}, "include_reasoning": False}
-    if "thinking" in normalized:
-        return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 128}, "include_reasoning": False}
-    return {"reasoning": {"enabled": False}, "include_reasoning": False}
-
-
-def _selector_extra_body(model: str) -> dict[str, Any] | None:
-    normalized = str(model or "").casefold()
-    if "gpt-oss" in normalized:
-        return {"reasoning": {"effort": "low", "exclude": True}, "include_reasoning": False}
-    if "thinking" in normalized:
-        return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 32}, "include_reasoning": False}
-    return {"reasoning": {"enabled": False}, "include_reasoning": False}
-
-
-def _writer_extra_body(model: str) -> dict[str, Any] | None:
-    normalized = str(model or "").casefold()
-    if "gpt-oss" in normalized:
-        return {"reasoning": {"effort": "medium", "exclude": True}, "include_reasoning": False}
-    if "thinking" not in normalized:
-        return None
-    return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 64}, "include_reasoning": False}
-
-
-def _planner_llm_profile(model: str) -> dict[str, Any]:
-    if "gpt-oss" in str(model or "").casefold():
-        return {
-            "max_tokens": None,
-            "temperature": 0.2,
-            "top_p": 0.9,
-            "top_k": 0,
-            "presence_penalty": 0,
-            "frequency_penalty": 0,
-            "repetition_penalty": 1.0,
-        }
-    return {"max_tokens": None, "temperature": 0.1, "top_p": 0.75}
-
-
-def _selector_llm_profile(model: str) -> dict[str, Any]:
-    profile = dict(_planner_llm_profile(model))
-    profile["temperature"] = 0.0
-    profile["top_p"] = 1.0
-    return profile
-
-
-def _writer_llm_profile(model: str, text: str = "") -> dict[str, Any]:
-    if "gpt-oss" not in str(model or "").casefold():
-        return {"max_tokens": None, "temperature": 0.12, "top_p": 0.75}
-    source_sensitive = _source_sensitive_text(text)
-    return {
-        "max_tokens": None,
-        "temperature": 0.45 if source_sensitive else 0.65,
-        "top_p": 0.9 if source_sensitive else 0.95,
-        "top_k": 0,
-        "presence_penalty": 0,
-        "frequency_penalty": 0.1 if source_sensitive else 0.15,
-        "repetition_penalty": 1.03 if source_sensitive else 1.05,
-    }
-
-
-def _source_sensitive_text(text: str) -> bool:
-    return bool(re.search(r"\([A-Z][A-Za-z .,&;'-]*\b\d{4}\)|\b(?:Act|Standards?|assessment|competency|citation|legal|VET|TAFE|unit)\b", str(text or ""), flags=re.I))
-
-
-def _first_env(*names: str) -> str | None:
-    import os
-
-    for name in names:
-        value = os.environ.get(name)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return None
-
-
-def _csv_env(name: str) -> list[str]:
-    value = _first_env(name)
-    if not value:
-        return []
-    return [item.strip() for item in value.split(",") if item.strip()]
-
-
-def _bool_env(name: str) -> bool | None:
-    value = _first_env(name)
-    if value is None:
-        return None
-    normalized = value.casefold()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    return None

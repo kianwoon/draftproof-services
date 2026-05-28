@@ -147,28 +147,7 @@ def _source_anchor_sentence(source_texts: list[str], missing_terms: list[str]) -
 
 
 def _decompress_comma_heavy_sentences(text: str) -> str:
-    paragraphs: list[str] = []
-    for paragraph in split_paragraphs(text):
-        sentences: list[str] = []
-        for sentence in split_sentences(paragraph.text, paragraph_id="candidate"):
-            sentences.extend(_split_comma_sentence(sentence.text))
-        paragraphs.append(" ".join(sentences).strip())
-    return "\n\n".join(paragraph for paragraph in paragraphs if paragraph)
-
-
-def _split_comma_sentence(sentence: str) -> list[str]:
-    value = str(sentence or "").strip()
-    if value.count(",") < 3:
-        return [value]
-    parts = [part.strip(" .,:;") for part in value.rstrip(".!?").split(",") if part.strip(" .,:;")]
-    if len(parts) < 3:
-        return [value]
-    return [_sentence(part) for part in parts]
-
-
-def _sentence(fragment: str) -> str:
-    value = re.sub(r"\s+", " ", str(fragment or "").strip(" .,:;"))
-    return value[:1].upper() + value[1:] + "."
+    return text
 
 
 def _word_base(value: str) -> str:

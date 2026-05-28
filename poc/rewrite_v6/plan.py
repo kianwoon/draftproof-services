@@ -42,6 +42,7 @@ class Plan:
             "paragraph_strategy": dict(self.paragraph_strategy),
             "author_proxy_context": dict(self.author_proxy_context),
             "ai_safe_route": dict(self.ai_safe_route),
+            "handoff_validation": _plan_handoff_validation(self.actions),
         }
 
 
@@ -63,7 +64,7 @@ def build_plan(
                 tags=tags,
                 operation=_operation(tags),
                 method=_method(tags),
-                preserve_terms=source_anchor_terms(_strip_leading_heading(sentence.text), term_limit=24),
+                preserve_terms=_source_contract_terms(sentence.text, term_limit=24),
                 do_not=_do_not(tags),
             )
         )
@@ -72,10 +73,9 @@ def build_plan(
     plan = Plan(
         paragraph_id=paragraph.id,
         route_goal="change sentence route while preserving source meaning and reducing packed or predictable shape",
-        opening_terms=source_anchor_terms(
-            _strip_leading_heading(paragraph.sentences[0].text if paragraph.sentences else paragraph.text),
+        opening_terms=_source_contract_terms(
+            paragraph.sentences[0].text if paragraph.sentences else paragraph.text,
             term_limit=12,
-            phrase_limit=4,
         )[:6],
         actions=actions,
         paragraph_strategy=paragraph_strategy,
@@ -83,6 +83,48 @@ def build_plan(
         ai_safe_route=_ai_safe_route(paragraph, actions, author_proxy_context, paragraph_strategy),
     )
     return paragraph, plan
+
+
+def _source_contract_terms(text: str, *, term_limit: int) -> list[str]:
+    cleaned = _strip_leading_heading(text)
+    return _dedupe([*_scope_contract_markers(cleaned), *source_anchor_terms(cleaned, term_limit=term_limit, phrase_limit=4)])[:term_limit]
+
+
+def _scope_contract_markers(text: str) -> list[str]:
+    value = str(text or "")
+    lowered = value.casefold()
+    markers: list[str] = []
+    for phrase in (
+        "not always",
+        "not only",
+        "no longer",
+        "rather than",
+        "instead of",
+        "without",
+    ):
+        if phrase in lowered:
+            markers.append(phrase)
+    for match in re.finditer(r"\b(?:may|might|could|can)\s+(?:become|submit|depend|rely|learn|encourage|create|support|raise|make)\b", value, flags=re.I):
+        markers.append(match.group(0).lower())
+    return _dedupe(markers)
+
+
+def _plan_handoff_validation(actions: list[PlanAction]) -> dict[str, Any]:
+    rows = []
+    for action in actions:
+        markers = _scope_contract_markers(action.source_text)
+        missing = [marker for marker in markers if marker not in [term.casefold() for term in action.preserve_terms]]
+        if markers or missing:
+            rows.append({
+                "sentence_id": action.sentence_id,
+                "source_scope_markers": markers,
+                "missing_from_preserve_terms": missing,
+                "status": "passed" if not missing else "failed",
+            })
+    return {
+        "planner_to_writer_contract": "passed" if not any(row["missing_from_preserve_terms"] for row in rows) else "failed",
+        "scope_rows": rows,
+    }
 
 
 def _author_proxy_context(scan: Scan, paragraph: Paragraph) -> dict[str, Any]:
@@ -1022,11 +1064,7 @@ def _author_proxy_grounding_plan(paragraph: Paragraph, actions: list[PlanAction]
     claim_needs_grounding = (
         bool(tag_set & {"author_anchor_gap", "unsupported_claim_gap"})
         and (starts_with_context_pointer or local_anchor_count <= 12)
-    ) or ("broad_claim" in tag_set and local_anchor_count <= 8)
-    context_claim_bridge = any(
-        "context_anchor_gap" in action.tags and set(action.tags) & {"author_anchor_gap", "unsupported_claim_gap", "broad_claim"}
-        for action in actions
-    )
+    ) or ("broad_claim" in tag_set and (local_anchor_count <= 8 or "context_anchor_gap" in tag_set))
     required = bool(
         bridge_anchors
         and has_anchor_gap
@@ -1034,7 +1072,6 @@ def _author_proxy_grounding_plan(paragraph: Paragraph, actions: list[PlanAction]
             quoted
             or abstract_or_pointer
             or claim_needs_grounding
-            or context_claim_bridge
         )
     )
     return {
@@ -1152,79 +1189,24 @@ def _dense_paragraph_plan(
 
 
 def _human_route(actions: list[PlanAction], semantic_roles: dict[str, Any]) -> dict[str, Any]:
-    text = " ".join(action.source_text for action in actions).casefold()
-    if (
-        re.search(r"\b(?:students?|learners?)\b", text)
-        and re.search(r"\b(?:teachers?|classroom|youtube|tiktok|online|ai|search|social|peer)\b", text)
-        and re.search(r"\b(?:knowledge|access|accurate|useful|trust)\b", text)
-    ):
-        return {
-            "route_type": "INFORMATION_ENVIRONMENT_TO_TRUST_PROBLEM",
-            "movement": "teacher remains -> outside sources expand -> access is easier -> trust becomes harder",
-            "human_logic": "The writer is explaining how learning moved beyond the classroom and why judgement now matters more than access.",
-            "sentence_jobs": [
-                "Name that students still learn from teachers but no longer rely only on the classroom.",
-                "Show the outside sources as a lived learning situation, not as a platform catalogue.",
-                "Connect the wider source mix to the new learning environment.",
-                "Merge knowledge/access into one contrast, then close on trust and accuracy.",
-            ],
-            "allowed_texture": {
-                "compact_list": 1,
-                "short_sentences": 0,
-                "compound_sentences": 2,
-                "direct_contrast": True,
-            },
-            "avoid": [
-                "platform catalogue",
-                "one sentence per channel",
-                "formal substitute words",
-                "completes the challenge",
-                "forced transition chain",
-            ],
-        }
-    if re.search(r"\b(?:ai|technology|tools?)\b", text) and re.search(r"\b(?:risk|danger|depend|assessment)\b", text):
-        return {
-            "route_type": "USEFUL_TOOL_TO_DEPENDENCY_RISK",
-            "movement": "useful support -> over-reliance risk -> assessment consequence",
-            "human_logic": "The writer is showing when a helpful tool becomes a learning risk.",
-            "sentence_jobs": [
-                "Start with practical help, not a balanced topic sentence.",
-                "Show the risk as dependence on answers.",
-                "Connect polished work to hidden understanding.",
-                "Close on assessment difficulty.",
-            ],
-            "allowed_texture": {"compact_list": 1, "short_sentences": 1, "compound_sentences": 2, "direct_contrast": True},
-            "avoid": ["opportunities and risks template", "on one hand", "on the other hand", "raises questions about"],
-        }
     return {
-        "route_type": "PRESSURE_EXAMPLE_CONSEQUENCE",
-        "movement": "pressure/problem -> concrete shape -> practical consequence",
-        "human_logic": "The writer should reason through the paragraph instead of arranging terms.",
-        "sentence_jobs": [
-            "Start from the pressure or problem.",
-            "Show what it looks like using source terms.",
-            "Explain why it matters.",
-            "Close with the practical consequence.",
-        ],
+        "route_type": "SOURCE_ORDER_PARAGRAPH_REBUILD",
+        "movement": "opening source beat -> grouped development beats -> closing source beat",
+        "human_logic": "The writer should rebuild the paragraph from its own source order instead of following sentence findings or importing a topic template.",
+        "paragraph_jobs": ["Carry the opening source beat.", "Group middle source beats by meaning.", "Carry the closing source beat as the paragraph's own limit or contrast."],
         "allowed_texture": {"compact_list": 1, "short_sentences": 1, "compound_sentences": 2, "direct_contrast": True},
-        "avoid": ["list-and-explain route", "forced transition chain", "abstract conclusion"],
+        "avoid": ["sentence-by-sentence repair", "new claims", "neighbor paragraph topics", "policy recommendation"],
     }
 
 
 def _semantic_role_map(actions: list[PlanAction]) -> dict[str, Any]:
-    paragraph_text = " ".join(action.source_text for action in actions)
-    rows: dict[str, Any] = {
-        "primary_actor": _first_matching_term(paragraph_text, ["students", "learners", "teachers", "people", "teams"]),
-        "main_condition": _condition_phrase(paragraph_text),
-        "source_channels": _source_channels(paragraph_text),
-        "result_relation": _result_relation(actions),
-        "contrast_relation": _contrast_relation(actions),
-        "challenge_relation": _challenge_relation(actions),
-        "role_instruction": (
-            "Use these roles to build paragraph movement. Do not allocate one final sentence to each term inside a role."
-        ),
+    return {
+        "source_order_rule": "Use only selected paragraph source beats in their original order.",
+        "opening_terms": actions[0].preserve_terms[:8] if actions else [],
+        "development_terms": _dedupe([term for action in actions[1:-1] for term in action.preserve_terms[:4]])[:16],
+        "closing_terms": actions[-1].preserve_terms[:8] if actions else [],
+        "role_instruction": "Use these source-order roles to build paragraph movement. Do not allocate one final sentence to each term.",
     }
-    return {key: value for key, value in rows.items() if value}
 
 
 def _first_matching_term(text: str, candidates: list[str]) -> str:

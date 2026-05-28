@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .coverage_guard import missing_required_source_term_details
@@ -7,6 +8,7 @@ from .integrity_guard import candidate_integrity_blockers
 from .prose_quality import has_fragment_or_trace_sentences
 from .prose_quality import catalogue_sentence_chain, robotic_sentence_chain
 from .scan import scan_text
+from .source_quality import scope_marker_reused_as_content, source_quality_blockers, unsupported_semantic_padding
 from .text import Paragraph
 from .write import (
     Variant,
@@ -16,6 +18,7 @@ from .write import (
     _has_meaningful_movement,
     _over_decomposition_review_reasons,
     _polarity_violation,
+    _repeats_sentence_intent,
     _replaces_final_source_beat_with_conclusion,
     _route_quality_penalty,
 )
@@ -25,10 +28,12 @@ def selection_diagnostics(variants: list[Variant], paragraph: Paragraph) -> list
     source = next((variant for variant in variants if variant.source == "source_preserved"), None)
     if source is None:
         return [_variant_diagnostics(variant, None, paragraph) for variant in variants]
+    generated = [variant for variant in variants if variant.source != "source_preserved"]
+    if not generated:
+        return [_generation_failure_diagnostic(source, paragraph)]
     return [
         _variant_diagnostics(variant, source, paragraph)
-        for variant in variants
-        if variant.source != "source_preserved"
+        for variant in generated
     ]
 
 
@@ -61,12 +66,96 @@ def _variant_diagnostics(
         "candidate_mean_risk": candidate_scan.scores["mean_sentence_shape_risk"],
         "source_mean_risk": source_scan.scores["mean_sentence_shape_risk"],
         "risk_drop": round(float(risk_drop), 3),
+        "candidate_text": variant.text[:1200],
+        "candidate_finding_details": _finding_details(candidate_scan),
         "blockers": blockers,
         "quality_warnings": quality_warnings,
         "missing_required_terms": missing_terms[:20],
         "integrity_blockers": integrity_blockers,
+        "handoff_validation": _handoff_validation(
+            variant=variant,
+            paragraph=paragraph,
+            blockers=blockers,
+            missing_terms=missing_terms,
+            integrity_blockers=integrity_blockers,
+            finding_drop=finding_drop,
+            risk_drop=risk_drop,
+        ),
         "accepted_by_selector": not blockers and source is not None and _has_meaningful_movement(variant, source, paragraph),
     }
+
+
+def _generation_failure_diagnostic(source: Variant, paragraph: Paragraph) -> dict[str, Any]:
+    source_scan = scan_text(source.text or paragraph.text)
+    return {
+        "variant_id": "writer_generation",
+        "source": "writer_generation",
+        "candidate_findings": int(source_scan.scores["finding_count"]),
+        "source_findings": int(source_scan.scores["finding_count"]),
+        "finding_drop": 0,
+        "candidate_mean_risk": source_scan.scores["mean_sentence_shape_risk"],
+        "source_mean_risk": source_scan.scores["mean_sentence_shape_risk"],
+        "risk_drop": 0.0,
+        "candidate_text": "",
+        "candidate_finding_details": [],
+        "blockers": ["writer_generation_failed"],
+        "quality_warnings": ["writer_generation_failed_review_required"],
+        "missing_required_terms": [],
+        "integrity_blockers": [],
+        "handoff_validation": {
+            "planner_to_writer_contract": "not_validated_no_candidate",
+            "writer_to_selector_candidate": "failed",
+            "selector_gate": "blocked",
+            "evidence": ["writer_generation_failed"],
+        },
+        "accepted_by_selector": False,
+    }
+
+
+def _handoff_validation(
+    *,
+    variant: Variant,
+    paragraph: Paragraph,
+    blockers: list[str],
+    missing_terms: list[str],
+    integrity_blockers: list[str],
+    finding_drop: float,
+    risk_drop: float,
+) -> dict[str, Any]:
+    source_markers = _source_scope_markers(paragraph.text)
+    candidate_text = str(variant.text or "").casefold()
+    missing_scope = [marker for marker in source_markers if not _scope_marker_preserved(marker, candidate_text)]
+    return {
+        "planner_to_writer_contract": "validated" if source_markers else "not_required",
+        "writer_to_selector_candidate": "passed" if not blockers else "failed",
+        "selector_gate": "eligible" if not blockers else "blocked",
+        "source_scope_markers": source_markers,
+        "missing_scope_markers": missing_scope,
+        "scanner_movement": {
+            "finding_drop": int(finding_drop),
+            "risk_drop": round(float(risk_drop), 3),
+        },
+        "evidence": [*blockers, *missing_terms[:8], *integrity_blockers[:8]],
+    }
+
+
+def _source_scope_markers(text: str) -> list[str]:
+    lowered = str(text or "").casefold()
+    return [
+        marker
+        for marker in ("not always", "not only", "no longer", "rather than", "instead of", "without")
+        if marker in lowered
+    ]
+
+
+def _scope_marker_preserved(marker: str, candidate_text: str) -> bool:
+    if marker in candidate_text:
+        return True
+    if marker == "not only":
+        return bool(re.search(r"\b(?:as well as|also|too|both)\b", candidate_text))
+    if marker == "rather than":
+        return bool(re.search(r"\b(?:instead of|over)\b", candidate_text))
+    return False
 
 
 def _blockers(
@@ -84,6 +173,7 @@ def _blockers(
         if blocker in {
             "planner_language_leakage",
             "external_narrator_reporting_chain",
+            "malformed_negation_order",
             "malformed_serial_verb_chain",
             "malformed_nominal_stack",
             "malformed_learning_predicate",
@@ -103,13 +193,37 @@ def _blockers(
             "repeated_subject_start",
             "vague_unintroduced_reliance",
             "malformed_tool_student_relation",
+            "malformed_with_finite_clause",
             "tool_practise_skills_predicate",
+            "demonstrative_agreement_error",
+            "semantic_anchor_corruption",
+            "sentence_starts_with_conjunction",
+            "stranded_prepositional_fragment",
+            "malformed_connector_fragment",
+            "malformed_contrast_pair",
+            "malformed_additive_predicate",
+            "proxy_context_adjective_stack",
+            "generic_role_inflation",
+            "unsupported_evidence_tail",
+            "awkward_modal_double_hedge",
+            "vague_danger_opener",
+            "duplicated_assessment_consequence",
+            "premature_assessment_consequence",
         }
     )
-    if source is not None and finding_drop < 1 and risk_drop < 8.0:
+    if source is not None and finding_drop < 1 and risk_drop < 5.0:
         blockers.append("insufficient_scanner_movement")
     if source is not None and finding_drop == 0 and risk_drop < 0:
         blockers.append("sentence_shape_risk_regression")
+    if missing_terms:
+        blockers.append("required_source_terms_missing")
+    if _repeats_sentence_intent(variant.text):
+        blockers.append("repeated_sentence_intent")
+    if robotic_sentence_chain(variant.text):
+        blockers.append("mechanical_sentence_chain")
+    if _not_always_scope_inverted(variant.text, paragraph):
+        blockers.append("not_always_scope_inversion")
+    blockers.extend(source_quality_blockers(variant.text, paragraph))
     if has_fragment_or_trace_sentences(variant.text):
         blockers.append("fragment_or_trace_sentence")
     return blockers
@@ -144,4 +258,33 @@ def _quality_warnings(variant: Variant, paragraph: Paragraph) -> list[str]:
         warnings.append("engineered_route_quality_review_required")
     if _polarity_violation(variant.text, paragraph):
         warnings.append("source_polarity_changed_review_required")
+    if scope_marker_reused_as_content(variant.text, paragraph):
+        warnings.append("source_scope_marker_reused_as_content_review_required")
+    if unsupported_semantic_padding(variant.text, paragraph):
+        warnings.append("unsupported_semantic_padding_review_required")
     return warnings
+
+
+def _finding_details(scan: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "sentence_id": finding.sentence_id,
+            "tags": list(finding.tags),
+            "text": str(finding.evidence.get("text") or "")[:260],
+        }
+        for finding in scan.findings[:8]
+    ]
+
+
+
+
+def _not_always_scope_inverted(candidate: str, paragraph: Paragraph) -> bool:
+    source = str(paragraph.text or "").casefold()
+    if "not always" not in source:
+        return False
+    return bool(
+        re.search(
+            r"(?:\b(?:may|might|could)\s+always|(?<!not\s)\balways)\s+(?:learn|pass|think|solve|connect|develop|show|reflect)\b",
+            str(candidate or "").casefold(),
+        )
+    )

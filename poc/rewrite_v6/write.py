@@ -17,8 +17,9 @@ from .prose_quality import (
 )
 from .review_provenance import annotate_review_items
 from .scan import scan_text
+from .source_quality import source_quality_blockers
 from .text import Paragraph, source_terms, split_paragraphs, word_count
-from .writer_prompt import build_prompt
+from .writer_brief_prompt import build_writer_brief_prompt
 
 _SENTENCE_EXPANSION_REVIEW_RATIO = 1.5
 _SHORT_SENTENCE_CHAIN_RATIO = 0.35
@@ -31,6 +32,11 @@ _TRANSITION_STACK_REVIEW_RATIO = 0.25
 class ChatClient(Protocol):
     def chat(self, prompt: str, *, system: str | None = None, **kwargs: Any) -> Any:
         ...
+
+
+def build_prompt(paragraph: Paragraph, plan: Plan) -> str:
+    return build_writer_brief_prompt(paragraph, plan)
+
 
 @dataclass(frozen=True)
 class Variant:
@@ -47,37 +53,48 @@ class Variant:
 
 def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> list[Variant]:
     variants, split_contract = [source_preserved_variant(paragraph)], architecture_split_contract(paragraph, plan)
-    try:
-        response = client.chat(
-            build_prompt(paragraph, plan),
-            system=(
-                "Return valid JSON only with a variants array matching the requested variant ids. "
-                "If list_contract_active is true, no final text sentence may contain two or more commas. "
-                "If list_contract_active is false, compact natural lists are allowed when the listed terms share one semantic role. "
-                "When the source uses not only / but also inside an overloaded sentence, preserve both sides in separate ordinary sentences; do not keep one long not-only sentence. "
-                "Do not use pronoun-led also wrappers such as It also or This also for concrete source work; name the subject and split the consequence. "
-                "Avoid repeated sentence starts; do not use summary-noun wrappers such as The example or The result as the route. "
-                "Use source_units as the only source text; writer_execution_contract rows reference source_sentence_id and must drive the final text. "
-                "Write complete grammatical sentences with normal articles, prepositions, subjects, and objects; never split an action from its object into adjacent fragments. Preserve paired alternatives when the source uses either/or or not-yet wording. Preserve submitted meaning, coverage, and first-person voice when present, but do not preserve submitted wording, order, "
-                "list rhythm, opener, or closure shape. Never return a final sentence that starts with And, But, Or, Which, Where, In, Through, During, From, This, That, These, Those, As, or Thereby. Keep citations parenthetical; do not create citation report sentences."
-            ),
-            temperature=0.12,
-            top_p=0.75,
-            max_tokens=None,
-            response_format={"type": "json_object"},
-            app_label=_writer_app_label(plan),
-        )
-        variants.extend(replace(v, text=repair_generated_prose(apply_architecture_split_text(v.text, split_contract), paragraph.text)) for v in parse_variants(parse_json(getattr(response, "raw_content", "") or response.content)))
-    except (Exception, ValueError):
-        pass
+    rows: list[Variant] = []
+    for _ in range(2):
+        try:
+            rows = _request_variants(paragraph, plan, client)
+        except (Exception, ValueError):
+            rows = []
+        if len(rows) >= _requested_variant_count():
+            break
+    variants.extend(replace(v, text=repair_generated_prose(apply_architecture_split_text(v.text, split_contract), paragraph.text)) for v in rows)
     return _dedupe_variants(variants)
 
 
+def _request_variants(paragraph: Paragraph, plan: Plan, client: ChatClient) -> list[Variant]:
+    response = client.chat(
+        build_writer_brief_prompt(paragraph, plan),
+        system=(
+            "Return valid JSON only. Rewrite from the curated writer brief, not from hidden assumptions. "
+            "Preserve submitted meaning and required terms. Write complete grammatical sentences. "
+            "Follow writer_execution_plan in order and obey route_sequence_guards. "
+            "Use proxy or neighbor context only when the brief says it resolves a local anchor gap. "
+            "Return every requested variant id. Reject your own variant if it has fragments, repeated and-chains, "
+            "keyword dumps, malformed connectors, premature assessment consequences, duplicated consequences, or generic added claims."
+        ),
+        temperature=0.12,
+        top_p=0.75,
+        max_tokens=None,
+        response_format={"type": "json_object"},
+        app_label=_writer_app_label(plan),
+    )
+    return parse_variants(parse_json(getattr(response, "raw_content", "") or response.content))
+
+
+def _requested_variant_count() -> int:
+    try:
+        count = int(__import__("os").environ.get("DRAFTPROOF_V6_WRITER_VARIANTS", "3"))
+    except ValueError:
+        count = 3
+    return max(1, min(3, count))
+
+
 def _writer_app_label(plan: Plan) -> str:
-    grounding = plan.paragraph_strategy.get("author_proxy_grounding", {})
-    if isinstance(grounding, dict) and grounding.get("required"):
-        return "Author-proxy"
-    return "writer"
+    return "Writer"
 
 
 def source_preserved_variant(paragraph: Paragraph) -> Variant:
@@ -166,6 +183,8 @@ def choose_variant(variants: list[Variant], paragraph: Paragraph) -> Variant | N
 def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragraph: Paragraph) -> bool:
     if _hard_integrity_blockers(candidate.text):
         return False
+    if source_quality_blockers(candidate.text, paragraph):
+        return False
     if has_fragment_or_trace_sentences(candidate.text):
         return False
     before = scan_text(source_variant.text)
@@ -180,8 +199,10 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
         return True
     if finding_drop >= 1 and risk_drop >= 0.0:
         return True
-    if finding_drop >= 0 and risk_drop >= 8.0:
-        return not _candidate_contract_violation(candidate.text, paragraph) and not _over_decomposition_review_reasons(candidate.text, paragraph)
+    if finding_drop >= 0 and risk_drop >= 10.0 and not _severe_route_quality_penalty(candidate.text):
+        return True
+    if before.scores["finding_count"] <= 1 and finding_drop >= 0 and risk_drop >= 5.0:
+        return not _over_decomposition_review_reasons(candidate.text, paragraph)
     return False
 
 
@@ -199,6 +220,7 @@ def _annotate_selected_variant(variant: Variant, paragraph: Paragraph) -> Varian
     if has_fragment_or_trace_sentences(annotated.text):
         review_reasons.append("sentence_quality_warning")
     review_reasons.extend(candidate_integrity_blockers(annotated.text))
+    review_reasons.extend(source_quality_blockers(annotated.text, paragraph))
     if not review_reasons:
         return annotated
     review_items.append({
@@ -433,7 +455,7 @@ def _keeps_forbidden_list_contract(text: str, source_paragraph: Paragraph) -> bo
         return False
     for paragraph in split_paragraphs(text):
         for sentence in paragraph.sentences:
-            if _without_parentheticals(sentence.text).count(",") >= 2:
+            if _without_parentheticals(sentence.text).count(",") >= 3:
                 return True
     return False
 
@@ -448,7 +470,7 @@ def _natural_compact_list_allowed(text: str, source_paragraph: Paragraph) -> boo
         return False
     comma_list_sentences = [
         sentence for sentence in candidate_sentences
-        if _without_parentheticals(sentence.text).count(",") >= 2
+        if _without_parentheticals(sentence.text).count(",") >= 3
     ]
     if len(comma_list_sentences) != 1:
         return False
@@ -537,10 +559,30 @@ def _polarity_violation(text: str, source_paragraph: Paragraph) -> bool:
         return True
     if "not only" in source and _malformed_not_only(candidate):
         return True
+    if _modal_risk_hardened(source, candidate):
+        return True
     if _reverses_rather_than(source, candidate):
         return True
     if _moves_not_always_to_positive_side(source, candidate):
         return True
+    if _not_always_scope_inverted(source, candidate):
+        return True
+    return False
+
+
+def _modal_risk_hardened(source: str, candidate: str) -> bool:
+    modal_shapes = (
+        ("may become", "become"),
+        ("might become", "become"),
+        ("could become", "become"),
+        ("may submit", "submit"),
+        ("might submit", "submit"),
+        ("could submit", "submit"),
+    )
+    for modal, bare in modal_shapes:
+        if modal in source and modal not in candidate:
+            if re.search(rf"\b(?:students|learners|people|users|they)\s+{bare}\b", candidate):
+                return True
     return False
 
 
@@ -604,6 +646,12 @@ def _moves_not_always_to_positive_side(source: str, candidate: str) -> bool:
     return False
 
 
+def _not_always_scope_inverted(source: str, candidate: str) -> bool:
+    if "not always" not in source:
+        return False
+    return bool(re.search(r"(?:\b(?:may|might|could)\s+always|(?<!not\s)\balways)\s+(?:learn|pass|think|solve|connect|develop|show|reflect)\b", candidate))
+
+
 def _conclusion_like_start(text: str) -> bool:
     lowered = str(text or "").strip().casefold()
     return lowered.startswith((
@@ -663,6 +711,7 @@ def _hard_integrity_blockers(text: str) -> list[str]:
         if blocker in {
             "planner_language_leakage",
             "external_narrator_reporting_chain",
+            "malformed_negation_order",
             "malformed_serial_verb_chain",
             "malformed_nominal_stack",
             "malformed_learning_predicate",
@@ -682,7 +731,16 @@ def _hard_integrity_blockers(text: str) -> list[str]:
             "repeated_subject_start",
             "vague_unintroduced_reliance",
             "malformed_tool_student_relation",
+            "malformed_with_finite_clause",
             "tool_practise_skills_predicate",
+            "malformed_contrast_pair",
+            "malformed_additive_predicate",
+            "proxy_context_adjective_stack",
+            "generic_role_inflation",
+            "unsupported_evidence_tail",
+            "awkward_modal_double_hedge",
+            "duplicated_assessment_consequence",
+            "premature_assessment_consequence",
         }
     ]
 
