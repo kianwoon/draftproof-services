@@ -1,12 +1,11 @@
 """Ephemeral progress publishing for worker jobs."""
 
 import logging
-import ssl
 from datetime import datetime, timezone
 
 import redis
 
-from .config import settings
+from .redis_config import redis_connection_options
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +17,12 @@ _STREAM_MAXLEN = 100
 def _redis_client():
     global _client
     if _client is None:
-        kwargs = {"decode_responses": True}
-        if settings.REDIS_URL.startswith("rediss://"):
-            kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
-        _client = redis.Redis.from_url(settings.REDIS_URL, **kwargs)
+        from .config import settings
+
+        _client = redis.Redis.from_url(
+            settings.REDIS_URL,
+            **redis_connection_options(decode_responses=True),
+        )
     return _client
 
 

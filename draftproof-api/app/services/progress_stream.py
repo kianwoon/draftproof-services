@@ -1,11 +1,11 @@
 """Redis-backed progress streams for live job updates."""
 
 import logging
-import ssl
 
 import redis.asyncio as redis
 
 from app.config import REDIS_URL
+from app.services.redis_config import redis_connection_options
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +23,10 @@ def rewrite_progress_key(rewrite_id: str) -> str:
 def _redis_client():
     global _client
     if _client is None:
-        kwargs = {"decode_responses": True}
-        if REDIS_URL.startswith("rediss://"):
-            kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
-        _client = redis.Redis.from_url(REDIS_URL, **kwargs)
+        _client = redis.Redis.from_url(
+            REDIS_URL,
+            **redis_connection_options(decode_responses=True),
+        )
     return _client
 
 

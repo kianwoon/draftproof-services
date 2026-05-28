@@ -1,4 +1,6 @@
+from app import config
 from app.services import celery_client, report_service, rewrite_service
+from app.services.redis_config import redis_connection_options
 
 
 def test_rewrite_status_normalizes_legacy_document_progress_message():
@@ -139,6 +141,35 @@ def test_cancel_rewrite_task_is_best_effort(monkeypatch):
     monkeypatch.setattr(celery_client.celery_app.control, "revoke", fake_revoke)
 
     assert celery_client.cancel_rewrite_task("rewrite-123") is False
+
+
+def test_api_celery_client_uses_resilient_redis_transport_options():
+    options = celery_client.celery_app.conf.broker_transport_options
+
+    assert options["visibility_timeout"] == config.CELERY_VISIBILITY_TIMEOUT_SECONDS
+    assert options["socket_timeout"] == config.REDIS_SOCKET_TIMEOUT_SECONDS
+    assert options["socket_connect_timeout"] == config.REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS
+    assert options["socket_keepalive"] is config.REDIS_SOCKET_KEEPALIVE
+    assert options["health_check_interval"] == config.REDIS_HEALTH_CHECK_INTERVAL_SECONDS
+    assert options["retry_on_timeout"] is True
+
+
+def test_api_celery_client_retries_broker_connections():
+    assert celery_client.celery_app.conf.task_publish_retry is True
+    assert celery_client.celery_app.conf.broker_connection_retry is True
+    assert celery_client.celery_app.conf.broker_connection_retry_on_startup is True
+    assert celery_client.celery_app.conf.broker_connection_max_retries is None
+    assert celery_client.celery_app.conf.broker_channel_error_retry is True
+
+
+def test_api_progress_client_uses_same_redis_socket_policy():
+    options = redis_connection_options(decode_responses=True)
+
+    assert options["decode_responses"] is True
+    assert options["socket_timeout"] == config.REDIS_SOCKET_TIMEOUT_SECONDS
+    assert options["socket_connect_timeout"] == config.REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS
+    assert options["socket_keepalive"] is config.REDIS_SOCKET_KEEPALIVE
+    assert options["health_check_interval"] == config.REDIS_HEALTH_CHECK_INTERVAL_SECONDS
 
 
 def test_saved_rewrite_checkpoint_with_changed_text_is_delivered_content():

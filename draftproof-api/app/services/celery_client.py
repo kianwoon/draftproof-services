@@ -1,7 +1,6 @@
 """Celery client — lets the API enqueue and control tasks on the worker broker."""
 
 import logging
-import ssl
 
 from celery import Celery
 from app.config import (
@@ -10,30 +9,31 @@ from app.config import (
     REWRITE_CANCEL_TERMINATE,
     REWRITE_CANCEL_TERMINATE_SIGNAL,
 )
+from app.services.redis_config import redis_broker_transport_options, redis_ssl_options
 
 logger = logging.getLogger("celery_client")
 
 celery_app = Celery("draftproof-api", broker=REDIS_URL, backend=None)
 
-if REDIS_URL.startswith("rediss://"):
-    celery_app.conf.update(
-        broker_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
-    )
+broker_ssl_options = redis_ssl_options(REDIS_URL)
+if broker_ssl_options:
+    celery_app.conf.update(broker_use_ssl=broker_ssl_options)
 
 celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
+    task_publish_retry=True,
+    broker_connection_retry=True,
+    broker_connection_retry_on_startup=True,
+    broker_connection_max_retries=None,
+    broker_channel_error_retry=True,
     task_routes={
         "app.tasks.scan_document": {"queue": "scan"},
         "app.tasks.run_rewrite": {"queue": "scan"},
         "app.tasks.regenerate_rewrite_report_assets": {"queue": "scan"},
     },
-    broker_transport_options={
-        "visibility_timeout": CELERY_VISIBILITY_TIMEOUT_SECONDS,
-        # API is a producer only — no need for frequent health checks.
-        "health_check_interval": 120,
-    },
+    broker_transport_options=redis_broker_transport_options(CELERY_VISIBILITY_TIMEOUT_SECONDS),
 )
 
 # The actual task lives in worker/app/tasks.py — same broker, same serializer

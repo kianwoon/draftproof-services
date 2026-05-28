@@ -1,10 +1,9 @@
-"""Celery application — broker via Upstash Redis (TLS)."""
-
-import ssl
+"""Celery application — broker via Redis."""
 
 from celery import Celery
 
 from .config import settings
+from .redis_config import redis_broker_transport_options, redis_ssl_options
 
 app = Celery(
     "draftproof",
@@ -13,11 +12,9 @@ app = Celery(
     include=["app.tasks"],
 )
 
-# Upstash requires TLS
-if settings.REDIS_URL.startswith("rediss://"):
-    app.conf.update(
-        broker_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
-    )
+broker_ssl_options = redis_ssl_options(settings.REDIS_URL)
+if broker_ssl_options:
+    app.conf.update(broker_use_ssl=broker_ssl_options)
 
 app.conf.update(
     task_serializer="json",
@@ -30,6 +27,10 @@ app.conf.update(
     # Disable Celery's internal event stream — single worker, no monitoring.
     # Event polling was generating ~11K reads/sec on Redis.
     worker_send_task_events=False,
+    broker_connection_retry=True,
+    broker_connection_retry_on_startup=True,
+    broker_connection_max_retries=None,
+    broker_channel_error_retry=True,
     task_ignore_result=True,
     task_routes={
         "app.tasks.scan_document": {"queue": "scan"},
@@ -40,18 +41,5 @@ app.conf.update(
     # Keep the visibility timeout longer than the longest task. Re-delivering
     # a live rewrite task causes duplicate executions while the first worker is
     # still doing final detector scans.
-    broker_transport_options={
-        "visibility_timeout": max(
-            settings.CELERY_VISIBILITY_TIMEOUT_SECONDS,
-            settings.REWRITE_TIME_LIMIT_SECONDS + 120,
-        ),
-        # Reduce broker heartbeats from default 2s → 120s.
-        # Single-worker setup doesn't need frequent health checks.
-        # Saves ~40K Redis commands/day.
-        "health_check_interval": 120,
-        # BRPOP polling interval. Default 1s = ~86K commands/day.
-        # 10s = ~8.6K/day. Adds up to 9s latency on task pickup — acceptable
-        # for scan/rewrite jobs that run for minutes.
-        "polling_interval": 10,
-    },
+    broker_transport_options=redis_broker_transport_options(),
 )
