@@ -59,6 +59,7 @@ _SYSTEM = (
 def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags: list[str]) -> str:
     source_words = len(str(paragraph_text or "").split())
     word_budget = max(40, int(source_words * 1.3))
+    predictable_phrases = list((diagnosis or {}).get("predictable_phrases") or [])
     payload: dict[str, Any] = {
         "paragraph": paragraph_text,
         "scanner_diagnosis": {
@@ -68,6 +69,7 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "rewrite_hint_for_shape_only": diagnosis.get("rewrite_hint"),
         } if diagnosis else None,
         "flagged_issue_types": finding_tags,
+        "predictable_phrases": predictable_phrases,
         "rewrite_examples": playbook_entries(finding_tags, paragraph_text),
         "length_budget": {
             "source_words": source_words,
@@ -80,6 +82,14 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "word choice. Ground generic claims by REWRITING the existing sentence to be specific -- "
             "swap a vague statement for a concrete one of similar length. Do NOT keep the vague "
             "sentence and append an extra example after it; that bloats the paragraph.",
+            "predictable_phrases are the EXACT wordings the detector scored most statistically "
+            "predictable -- the single strongest AI signal. Rewrite EACH one out: replace it with "
+            "more particular, less-expected wording by changing the sentence route around it, not by "
+            "swapping in a synonym. None of these phrases should survive verbatim.",
+            "Turn every broad or generic assertion into a concrete, specific claim -- name the actor, "
+            "mechanism, condition, or case. A sentence that could sit unchanged in any essay on this "
+            "topic is the strongest generic-assertion signal; make it one only THIS paragraph could "
+            "contain.",
             "rewrite_examples shows the SHAPE of each fix (before -> better) -- note they REPLACE, "
             "they don't add on top. Apply the same kind of transformation to THIS paragraph; do not "
             "copy the example wording.",

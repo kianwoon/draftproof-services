@@ -16,14 +16,19 @@ _PARAGRAPH_DIAGNOSES: ContextVar[dict[str, dict[str, Any]]] = ContextVar(
 
 
 def extract_paragraph_diagnoses(report: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    """Pull the report explainer's per-paragraph diagnosis (main_issue, why_flagged, recommendation,
-    rewrite_hint) keyed by paragraph_id, for the planner to act on."""
+    """Pull the per-paragraph scanner diagnosis keyed by paragraph_id, for the writer to act on.
+
+    Carries the explainer's prose diagnosis (main_issue, why_flagged, recommendation, rewrite_hint)
+    AND ``predictable_phrases`` -- the exact token spans the detector scored most statistically
+    predictable (the dominant topk_pattern/predictability signal). Relaying those exact phrases lets
+    the writer change the specific flagged wording instead of guessing what reads as generic.
+    """
     if not isinstance(report, dict):
         return {}
+    phrases_by_paragraph = _paragraph_predictable_phrases(report)
     explanations = report.get("paragraph_explanations")
     rows = explanations.get("paragraphs") if isinstance(explanations, dict) else None
-    if not isinstance(rows, list):
-        return {}
+    rows = rows if isinstance(rows, list) else []
     diagnoses: dict[str, dict[str, Any]] = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -36,10 +41,55 @@ def extract_paragraph_diagnoses(report: dict[str, Any] | None) -> dict[str, dict
             "why_flagged": row.get("why_flagged"),
             "recommendation": row.get("recommendation"),
             "rewrite_hint": row.get("rewrite_hint"),
+            "predictable_phrases": phrases_by_paragraph.get(paragraph_id, []),
         }
         if any(diagnosis.values()):
             diagnoses[paragraph_id] = diagnosis
+    # A paragraph the explainer skipped can still have flagged predictable phrases -- keep them so
+    # the writer is told what to change even without a prose diagnosis.
+    for paragraph_id, phrases in phrases_by_paragraph.items():
+        if phrases and paragraph_id not in diagnoses:
+            diagnoses[paragraph_id] = {
+                "main_issue": None,
+                "why_flagged": None,
+                "recommendation": None,
+                "rewrite_hint": None,
+                "predictable_phrases": phrases,
+            }
     return diagnoses
+
+
+def _paragraph_predictable_phrases(
+    report: dict[str, Any], *, per_paragraph_limit: int = 10
+) -> dict[str, list[str]]:
+    """Group the detector's predictable_token_spans by paragraph_id (deduped, in order).
+
+    Source of truth is the raw per-sentence detector output on ``highlight_segments`` (always
+    populated), not the LLM explainer prose -- so the writer gets the exact flagged wording.
+    """
+    segments = report.get("highlight_segments")
+    if not isinstance(segments, list):
+        return {}
+    by_paragraph: dict[str, list[str]] = {}
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        paragraph_id = str(segment.get("paragraph_id") or "").strip()
+        if not paragraph_id:
+            continue
+        predictability = segment.get("predictability")
+        spans = predictability.get("predictable_token_spans") if isinstance(predictability, dict) else None
+        if not isinstance(spans, list):
+            continue
+        bucket = by_paragraph.setdefault(paragraph_id, [])
+        for span in spans:
+            phrase = " ".join(str(span or "").split()).strip()
+            # drop trivial / punctuation-only spans -- they aren't actionable for the writer
+            if len(phrase) < 3 or not any(ch.isalpha() for ch in phrase):
+                continue
+            if phrase not in bucket:
+                bucket.append(phrase)
+    return {pid: phrases[:per_paragraph_limit] for pid, phrases in by_paragraph.items() if phrases}
 
 
 @contextlib.contextmanager
