@@ -554,6 +554,18 @@ img[src^="https://img.shields.io"] { height: 18px; }
     padding: 10pt 13pt 12pt;
 }
 
+.dp-finding-paragraph {
+    margin: 0 0 8pt;
+    padding: 7pt 10pt;
+    background: #f1f5f9;
+    border-left: 3pt solid #cbd5e1;
+    border-radius: 0 4pt 4pt 0;
+    color: #374151;
+    font-size: 8.5pt;
+    font-style: italic;
+    line-height: 1.5;
+}
+
 .dp-finding-description {
     margin: 0 0 8pt;
     color: #374151;

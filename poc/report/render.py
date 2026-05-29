@@ -1040,6 +1040,7 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
     <div class="dp-finding-count">#{finding_num}</div>
   </div>
   <div class="dp-finding-body">
+    {(f'<blockquote class="dp-finding-paragraph">{_e(_truncate(group.get("text") or "", 400))}</blockquote>') if group.get("text") else ""}
     {(f'<p class="dp-finding-description">{_e(summary)}</p>') if summary else ""}
     <div class="dp-finding-strength-row">
       <span class="dp-finding-strength-label">SIGNAL STRENGTH</span>
@@ -1383,21 +1384,24 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     lines.append("")
 
     finding_num = 0
-    has_any = False
     used_scanners = set()
     used_signals = set()
-    for tier_level in [Tier.CRITICAL, Tier.HIGH, Tier.MEDIUM, Tier.LOW]:
-        findings = fb.get(tier_level.value, [])
-        if not findings:
-            continue
-        has_any = True
 
-        label = tier_level.value.capitalize()
-        paragraph_groups = _paragraph_finding_groups(findings, data)
+    # Collect all findings across tiers into one list, then group by paragraph
+    # in document order — mirrors the /report page layout.
+    all_findings_flat = [
+        f for tier_level in [Tier.CRITICAL, Tier.HIGH, Tier.MEDIUM, Tier.LOW]
+        for f in fb.get(tier_level.value, [])
+    ]
+    _tier_order = [Tier.CRITICAL, Tier.HIGH, Tier.MEDIUM, Tier.LOW, Tier.CLEAN]
+
+    if all_findings_flat:
+        paragraph_groups = _paragraph_finding_groups(all_findings_flat, data)
         paragraph_count = len(paragraph_groups)
+        total_findings = len(all_findings_flat)
         group_label = "paragraph" if paragraph_count == 1 else "paragraphs"
-        finding_label = "finding" if len(findings) == 1 else "findings"
-        lines.append(f"### {label} ({paragraph_count} {group_label}, {len(findings)} {finding_label})")
+        finding_label = "finding" if total_findings == 1 else "findings"
+        lines.append(f"*{paragraph_count} {group_label}, {total_findings} {finding_label}*")
         lines.append("")
 
         for group in paragraph_groups:
@@ -1405,10 +1409,15 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             for f in group["findings"]:
                 used_scanners.add(f.scanner)
                 used_signals.add(f.title)
-            lines.append(_render_finding_card(finding_num, tier_level, group))
+            # Worst tier among this paragraph's findings
+            worst_tier = next(
+                (t for t in _tier_order if any(f.tier == t for f in group["findings"])),
+                Tier.LOW,
+            )
+            lines.append(_render_finding_card(finding_num, worst_tier, group))
             lines.append("")
 
-    if not has_any:
+    if not all_findings_flat:
         lines.append("*No findings detected. Text appears clean.*")
         lines.append("")
 
