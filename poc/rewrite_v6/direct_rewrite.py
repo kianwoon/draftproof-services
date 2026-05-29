@@ -56,6 +56,8 @@ _SYSTEM = (
 
 
 def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags: list[str]) -> str:
+    source_words = len(str(paragraph_text or "").split())
+    word_budget = max(40, int(source_words * 1.3))
     payload: dict[str, Any] = {
         "paragraph": paragraph_text,
         "scanner_diagnosis": {
@@ -66,13 +68,20 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
         } if diagnosis else None,
         "flagged_issue_types": finding_tags,
         "rewrite_examples": playbook_entries(finding_tags, paragraph_text),
+        "length_budget": {
+            "source_words": source_words,
+            "max_words": word_budget,
+            "rule": f"Keep the rewrite to AT MOST ~{word_budget} words (about 1.3x the source). Do NOT "
+                    "roughly double it.",
+        },
         "instructions": [
             "Most AI-detection risk here comes from CONTENT that is generic and unanchored, not from "
-            "word choice. So the main fix is to ADD concrete grounding: where a claim is broad, attach "
-            "a specific scenario, actor, setting, mechanism, or illustrative example that makes it "
-            "particular. The student will review and replace these with their own real material.",
-            "rewrite_examples shows the SHAPE of each fix (before -> better). Apply the same kind of "
-            "transformation to THIS paragraph's content -- do not copy the example wording.",
+            "word choice. Ground generic claims by REWRITING the existing sentence to be specific -- "
+            "swap a vague statement for a concrete one of similar length. Do NOT keep the vague "
+            "sentence and append an extra example after it; that bloats the paragraph.",
+            "rewrite_examples shows the SHAPE of each fix (before -> better) -- note they REPLACE, "
+            "they don't add on top. Apply the same kind of transformation to THIS paragraph; do not "
+            "copy the example wording.",
             "Rewrite the WHOLE paragraph. Across EVERY sentence, replace generic or predictable "
             "phrasing with concrete, specific wording. Change the sentence ROUTE, not just synonyms.",
             "Vary sentence length HARD: include at least one short sentence (4-8 words) and at least "
@@ -80,12 +89,11 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "frame. Cut hedging (may, might, can, could, should, often, generally) and generic filler.",
             "Preserve the student's actual argument and meaning. Do not shift a balanced 'not only X "
             "but also Y' into 'Y over X', and do not drop their existing ideas.",
-            "Where a claim is generic or unanchored, ADD a concrete grounding detail to fix it -- a "
-            "specific scenario, actor, setting, or illustrative example. The student reviews every "
-            "addition in the diff, so concrete suggestions are the point.",
-            "Prefer concrete scenarios and examples over precise invented statistics; keep any figure "
-            "clearly illustrative. List everything you add in author_review_items.",
-            "Use rewrite_hint only as the shape of the fix, never as wording to copy.",
+            "Respect length_budget: stay close to the source length. Add a NEW sentence only when a "
+            "claim genuinely cannot be grounded by rewriting an existing one. List anything you add "
+            "in author_review_items.",
+            "Prefer concrete scenarios over precise invented statistics; keep any figure clearly "
+            "illustrative. Use rewrite_hint only as the shape of the fix, never as wording to copy.",
         ],
     }
     return "Return JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
