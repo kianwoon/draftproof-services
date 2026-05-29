@@ -32,6 +32,35 @@ def missing_required_source_term_details(text: str, paragraph: Paragraph) -> lis
     return list(dict.fromkeys(missing))
 
 
+def missing_required_source_beat_groups(text: str, paragraph: Paragraph) -> list[dict[str, object]]:
+    candidate_terms = _term_bases(source_terms(text, limit=160))
+    rows: list[dict[str, object]] = []
+    for sentence in paragraph.sentences:
+        terms = _required_list_terms(_strip_leading_heading(sentence.text))
+        if not terms:
+            continue
+        covered = [term for term in terms if _word_base(term) in candidate_terms]
+        missing = [term for term in terms if _word_base(term) not in candidate_terms]
+        if not missing:
+            continue
+        rows.append({
+            "sentence_id": sentence.id,
+            "source_text": sentence.text,
+            "terms": terms,
+            "covered_terms": covered,
+            "missing_terms": missing,
+            "coverage_ratio": round(len(covered) / len(terms), 3) if terms else 1.0,
+        })
+    return rows
+
+
+def has_required_source_beat_loss(text: str, paragraph: Paragraph) -> bool:
+    return any(
+        float(row.get("coverage_ratio") or 0.0) <= 0.4 and len(row.get("missing_terms") or []) >= 2
+        for row in missing_required_source_beat_groups(text, paragraph)
+    )
+
+
 def _number_anchors(text: str) -> list[str]:
     pattern = r"\b\d+(?:\.\d+)?\b"
     return [match.group(0).casefold() for match in re.finditer(pattern, str(text or ""), flags=re.I)]
@@ -67,26 +96,8 @@ def _required_list_terms(text: str) -> list[str]:
         term
         for terms in part_terms
         for term in terms
-        if not _low_value_required_term(term)
-        and not _term_only_inside_copy_blocked_phrase(term, visible)
+        if not _term_only_inside_copy_blocked_phrase(term, visible)
     ]
-
-
-def _low_value_required_term(term: str) -> bool:
-    return _word_base(term) in {
-        "also",
-        "another",
-        "beginning",
-        "call",
-        "each",
-        "know",
-        "later",
-        "one",
-        "quite",
-        "some",
-        "still",
-        "will",
-    }
 
 
 def _term_only_inside_copy_blocked_phrase(term: str, source_text: str) -> bool:
@@ -108,14 +119,11 @@ def _term_only_inside_copy_blocked_phrase(term: str, source_text: str) -> bool:
 
 def _word_base(word: str) -> str:
     value = _normalize_hyphen(str(word or "")).casefold().removesuffix("'s").strip("-")
-    irregular = {
-        "found": "find",
-        "learnt": "learn",
-        "learned": "learn",
-    }
-    if value in irregular:
-        return irregular[value]
-    if len(value) > 5 and value.endswith("ing"):
+    if len(value) > 6 and value.endswith("ness"):
+        value = value[:-4]
+    elif len(value) > 6 and value.endswith("ity"):
+        value = value[:-3]
+    elif len(value) > 5 and value.endswith("ing"):
         value = value[:-3]
     elif len(value) > 4 and value.endswith("ied"):
         value = value[:-3] + "y"

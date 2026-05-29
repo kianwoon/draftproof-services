@@ -5,6 +5,7 @@ from poc.rewrite_v6.prose_quality import has_fragment_or_trace_sentences
 from poc.rewrite_v6.scan import scan_text
 from poc.rewrite_v6.selector_diagnostics import selection_diagnostics
 from poc.rewrite_v6.integrity_guard import candidate_integrity_blockers, candidate_integrity_warnings
+from poc.rewrite_v6.source_quality import source_quality_blockers
 from poc.rewrite_v6.write import Variant, _candidate_contract_violation, choose_variant
 
 
@@ -57,6 +58,63 @@ def test_v6_writer_quality_blocks_external_narrator_reporting_chains():
     diagnostics = selection_diagnostics(variants, paragraph)[0]
     assert "external_narrator_reporting_chain" in diagnostics["blockers"]
     assert choose_variant(variants, paragraph).source == "source_preserved"
+
+
+def test_v6_integrity_guard_allows_participle_adjective_learning_phrase():
+    text = "AI tools can support personalised learning and reduce barriers for students who need extra help."
+
+    assert "malformed_verb_complement" not in candidate_integrity_blockers(text)
+    assert "malformed_verb_complement" in candidate_integrity_blockers("Learners learned accepting feedback.")
+
+
+def test_v6_source_quality_blocks_reified_created_effect_frame():
+    source = "Technology has also created both opportunities and risks. AI tools can support learning."
+    candidate = "Technology has created AI tools that support learning."
+    paragraph = scan_text(source).paragraphs[0]
+
+    assert "source_frame_reified_as_entity" in source_quality_blockers(candidate, paragraph)
+    assert "source_frame_reified_as_entity" in source_quality_blockers("Technology created AI tools that support learning.", paragraph)
+
+
+def test_v6_source_quality_blocks_earlier_beat_after_closing_consequence():
+    source = (
+        "Technology has also created both opportunities and risks. "
+        "AI tools can help students brainstorm ideas, explain difficult topics, improve writing, and practise skills. "
+        "Used well, technology can support personalised learning and reduce barriers for students who need extra help. "
+        "Students may become too dependent on AI-generated answers without understanding the work behind them. "
+        "This makes assessment more difficult and raises questions about fairness, originality, and learning integrity."
+    )
+    candidate = (
+        "Technology can support personalised learning by offering new opportunities while also bringing risks. "
+        "AI tools can help students brainstorm ideas and explain difficult topics. "
+        "Students may become dependent on AI-generated answers without understanding the work behind them. "
+        "That can make assessment harder and raise concerns about fairness, originality, and learning integrity. "
+        "Technology can support personalised learning and reduce barriers for students who need extra help."
+    )
+    paragraph = scan_text(source).paragraphs[0]
+
+    assert "source_beat_reintroduced_after_closing" in source_quality_blockers(candidate, paragraph)
+
+
+def test_v6_selector_blocks_missing_required_source_beat():
+    source = (
+        "AI tools can help students brainstorm ideas, explain difficult topics, improve writing, and practise skills. "
+        "This makes assessment more difficult and raises questions about fairness, originality, and learning integrity."
+    )
+    candidate = Variant(
+        id="v1",
+        source="llm",
+        text=(
+            "AI tools can help students brainstorm ideas and explain difficult topics. "
+            "They also improve writing and support practice. "
+            "This makes assessment more difficult."
+        ),
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    row = selection_diagnostics([Variant(id="source_preserved", text=source, source="source_preserved"), candidate], paragraph)[0]
+
+    assert "required_source_beat_missing" in row["blockers"]
+    assert row["source_beat_coverage_gaps"]
 
 
 def test_v6_writer_quality_blocks_unsupported_semantic_padding():
@@ -223,6 +281,29 @@ def test_v6_writer_quality_blocks_malformed_parallel_verb_tail():
     assert "malformed_parallel_verb_tail" in candidate_integrity_blockers(text)
 
 
+def test_v6_writer_quality_blocks_catalogue_attached_relative_result_clause():
+    source = (
+        "Students learn from teachers, YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities. "
+        "This has created a new kind of learning environment."
+    )
+    candidate = (
+        "Students learn from teachers, YouTube, TikTok, online courses, AI tools, search engines, "
+        "social media, and peer communities, which has created a new kind of learning environment."
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    row = selection_diagnostics(
+        [
+            Variant(id="source_preserved", text=source, source="source_preserved"),
+            Variant(id="v1", text=candidate, source="llm"),
+        ],
+        paragraph,
+    )[0]
+
+    assert "relative_result_clause_after_catalogue" in candidate_integrity_blockers(candidate)
+    assert "relative_result_clause_after_catalogue" in row["blockers"]
+    assert row["accepted_by_selector"] is False
+
+
 def test_v6_writer_quality_blocks_repeated_subject_and_unintroduced_reliance():
     text = (
         "AI tools help students brainstorm ideas. "
@@ -318,6 +399,18 @@ def test_v6_writer_quality_blocks_keyword_dump_sequences():
     assert "repeated_platform_catalogue" in warnings
 
 
+def test_v6_writer_quality_allows_named_examples_inside_normal_sentence():
+    text = (
+        "Video platforms such as YouTube and TikTok also serve as learning sources. "
+        "Online courses, AI tools, search engines, social media, and peer communities expand access to knowledge."
+    )
+
+    blockers = candidate_integrity_blockers(text)
+
+    assert "keyword_dump_sequence" not in blockers
+    assert "lost_serial_punctuation" not in blockers
+
+
 def test_v6_writer_quality_blocks_capitalized_common_noun_mid_sentence():
     text = "Knowledge is no longer scarce and Access is no longer the biggest problem."
 
@@ -370,7 +463,7 @@ def test_v6_selector_rejects_surface_corruption_before_scoring():
     assert choose_variant([Variant(id="source_preserved", text=source, source="source_preserved"), corrupted, clean], paragraph).id == "v1"
 
 
-def test_v6_selector_prefers_cleaner_route_over_forced_connector_variant():
+def test_v6_selector_requires_scanner_movement_before_subjective_cleaner_route():
     source = (
         "Now, students are surrounded by information. "
         "They learn from teachers, but also from YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities. "
@@ -416,10 +509,13 @@ def test_v6_selector_prefers_cleaner_route_over_forced_connector_variant():
     diagnostics = selection_diagnostics(variants, paragraph)
     weaker_row = next(row for row in diagnostics if row["variant_id"] == "v1")
     engineered_row = next(row for row in diagnostics if row["variant_id"] == "v2")
+    cleaner_row = next(row for row in diagnostics if row["variant_id"] == "v3")
 
     assert "engineered_route_quality_review_required" in weaker_row["quality_warnings"]
     assert "engineered_route_quality_review_required" in engineered_row["quality_warnings"]
-    assert choose_variant(variants, paragraph).id == "v3"
+    assert cleaner_row["risk_drop"] < 0
+    assert cleaner_row["accepted_by_selector"] is False
+    assert choose_variant(variants, paragraph).id == "v1"
 
 
 def test_v6_writer_quality_prefers_compact_role_list_over_catalogue_chain():
@@ -604,6 +700,69 @@ def test_v6_selector_allows_large_risk_drop_without_finding_drop_for_review():
 
     assert row["finding_drop"] >= 0
     assert row["risk_drop"] >= 10.0
+    assert row["accepted_by_selector"] is True
+
+
+def test_v6_selector_allows_moderate_risk_drop_without_hard_blockers():
+    source = (
+        "Now, students are surrounded by information. "
+        "They learn from teachers, but also from YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities. "
+        "This has created a new kind of learning environment. "
+        "Knowledge is no longer scarce. "
+        "Access is no longer the biggest problem. "
+        "The real challenge is knowing what is accurate, useful, ethical, and worth trusting."
+    )
+    candidate = Variant(
+        id="v1",
+        source="llm",
+        text=(
+            "Students are surrounded by information. "
+            "They learn from teachers and from video platforms such as YouTube and TikTok. "
+            "They also use online courses and AI tools. "
+            "Search engines support their queries, while social media offers additional content. "
+            "Peer communities further enrich their learning experience. "
+            "This abundance has created a new kind of learning environment where knowledge is no longer scarce. "
+            "Access is no longer the biggest problem. "
+            "The real challenge now is knowing which information is accurate, useful, ethical, and worth trusting."
+        ),
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    variants = [Variant(id="source_preserved", text=source, source="source_preserved"), candidate]
+    row = selection_diagnostics(variants, paragraph)[0]
+
+    assert row["blockers"] == []
+    assert row["finding_drop"] >= 0
+    assert row["risk_drop"] >= 5.0
+    assert row["accepted_by_selector"] is True
+
+
+def test_v6_selector_preserves_clean_finding_drop_with_risk_progress():
+    source = (
+        "Technology has also created both opportunities and risks. "
+        "AI tools can help students brainstorm ideas, explain difficult topics, improve writing, and practise skills. "
+        "Used well, technology can support personalised learning and reduce barriers for students who need extra help. "
+        "But there is also a danger. "
+        "Students may become too dependent on AI-generated answers without understanding the work behind them. "
+        "They may submit polished work that does not reflect their real ability. "
+        "This makes assessment more difficult and raises questions about fairness, originality, and learning integrity."
+    )
+    candidate = Variant(
+        id="v1",
+        source="llm",
+        text=(
+            "AI tools can help students brainstorm ideas and explain difficult topics. "
+            "They can also improve writing, support practice, and make learning more personal for students who need extra help. "
+            "The risk begins when students depend on AI-generated answers without understanding the work behind them. "
+            "A polished submission may not reflect real ability. "
+            "Teachers then have a harder time judging fairness, originality, and learning integrity."
+        ),
+    )
+    paragraph = scan_text(source).paragraphs[0]
+    row = selection_diagnostics([Variant(id="source_preserved", text=source, source="source_preserved"), candidate], paragraph)[0]
+
+    assert row["blockers"] == []
+    assert row["candidate_findings"] < row["source_findings"]
+    assert row["risk_drop"] > 0.0
     assert row["accepted_by_selector"] is True
 
 

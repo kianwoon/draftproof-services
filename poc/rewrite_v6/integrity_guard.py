@@ -60,6 +60,8 @@ def candidate_integrity_blockers(text: str) -> list[str]:
         blockers.append("malformed_parallel_connector_list")
     if _malformed_parallel_verb_tail(visible):
         blockers.append("malformed_parallel_verb_tail")
+    if _relative_result_clause_after_catalogue(visible):
+        blockers.append("relative_result_clause_after_catalogue")
     if _redundant_trust_phrase(visible):
         blockers.append("redundant_trust_phrase")
     if _keyword_dump_sequence(visible):
@@ -291,15 +293,51 @@ def _missing_verb_after_negation_scope(text: str) -> bool:
     return bool(re.search(r"\b(?:do|does|did)\s+not\s+always\s+(?:how|what|when|where|why|whether)\b", str(text or ""), flags=re.I))
 
 
+# Prepositions whose presence immediately before the ed-word signals a legitimate gerund phrase
+# (e.g. "by completing", "without understanding"). The original regex used a lookahead for
+# these, but lookaheads are forward-looking and could not check the preceding word — so the
+# check is done here in the loop body instead.
+_PREPOSITIONS_BEFORE_ED = frozenset({
+    "after", "before", "by", "during", "for", "from", "in", "of",
+    "on", "through", "to", "when", "while", "with", "without",
+})
+
+
 def _malformed_verb_complement(text: str) -> bool:
-    malformed = re.search(
-        r"\b(?!after\b|before\b|by\b|during\b|for\b|from\b|through\b|when\b|while\b|with\b|without\b)"
-        r"[A-Za-z][A-Za-z'’-]*ed\s+[a-z]{4,}ing\b",
+    progressive = re.search(r"\b(?:am|are|is|was|were|be|being|been)\s+[a-z]{4,}ing\b", text, flags=re.I)
+    if progressive:
+        return False
+    # Simplified regex: the original (?!after\b|before\b|...) lookahead checked whether the
+    # ed-word *itself* starts with one of those prepositions — none of them end in 'ed', so
+    # the lookahead was a no-op. Preposition context is checked in the loop body instead.
+    for match in re.finditer(
+        r"\b([A-Za-z][A-Za-z'’-]*ed)\s+([a-z]{4,}ing)\b",
         text,
         flags=re.I,
-    )
-    progressive = re.search(r"\b(?:am|are|is|was|were|be|being|been)\s+[a-z]{4,}ing\b", text, flags=re.I)
-    return bool(malformed and not progressive)
+    ):
+        prefix = text[:match.start()].strip()
+        previous = re.findall(r"[A-Za-z][A-Za-z'’-]*", prefix)
+        previous_word = previous[-1].casefold() if previous else ""
+        ed_word = match.group(1).casefold()
+        # British/American passive-adjective morphology before a gerund is treated as a modifier,
+        # not as a past-tense verb complement. Avoid a lexical adjective whitelist here.
+        if ed_word.endswith(("ised", "ized")):
+            continue
+        # If a preposition immediately precedes the ed-word, this is a prepositional gerund
+        # phrase (e.g. "by completing", "without understanding"), not a malformed complement.
+        if previous_word in _PREPOSITIONS_BEFORE_ED:
+            continue
+        if previous_word.endswith("ing"):
+            continue
+        if previous_word and not _subject_like_word(previous_word):
+            continue
+        return True
+    return False
+
+
+def _subject_like_word(word: str) -> bool:
+    value = str(word or "").casefold()
+    return value in {"i", "we", "you", "he", "she", "they", "it"} or value.endswith("s")
 
 
 def _malformed_with_finite_clause(text: str) -> bool:
@@ -540,14 +578,26 @@ def _malformed_parallel_verb_tail(text: str) -> bool:
     )
 
 
+def _relative_result_clause_after_catalogue(text: str) -> bool:
+    result_clause = re.compile(
+        r",\s*which\s+(?:has|have|had|created?|produced?|made|makes?|forms?|becomes?)\b",
+        flags=re.I,
+    )
+    return any(
+        _catalogue_item_count(sentence[: match.start()]) >= 4
+        for sentence in _sentences(text)
+        for match in result_clause.finditer(sentence)
+    )
+
+
 def _redundant_trust_phrase(text: str) -> bool:
     return bool(re.search(r"\btrustworthy\s+and\s+worth\s+trusting\b|\bworth\s+trusting\s+and\s+trustworthy\b", text, flags=re.I))
 
 
 def _keyword_dump_sequence(text: str) -> bool:
     for sentence in _sentences(text):
-        hits = _catalogue_item_count(sentence)
-        if hits >= 4 and sentence.count(",") == 0 and sentence.casefold().count(" and ") <= 1:
+        hits = _undelimited_catalogue_count(sentence)
+        if hits >= 4 and _distinctive_token_count(sentence) >= 3 and sentence.count(",") == 0 and sentence.casefold().count(" and ") <= 1:
             return True
     return False
 
@@ -560,7 +610,7 @@ def _lost_serial_punctuation(text: str) -> bool:
             flags=re.I,
         ) and sentence.count(",") == 0:
             return True
-        if _catalogue_item_count(sentence) >= 4 and sentence.count(",") == 0:
+        if _undelimited_catalogue_count(sentence) >= 4 and _distinctive_token_count(sentence) >= 3 and sentence.count(",") == 0:
             return True
     return False
 
@@ -734,6 +784,10 @@ def _undelimited_catalogue_count(text: str) -> int:
 def _distinctive_token(token: str) -> bool:
     value = str(token or "")
     return value.isupper() or bool(re.search(r"[A-Z].*[A-Z]|[a-z][A-Z]", value))
+
+
+def _distinctive_token_count(text: str) -> int:
+    return sum(1 for token in re.findall(r"[A-Za-z][A-Za-z0-9'’-]*", str(text or "")) if _distinctive_token(token))
 
 
 def _sentences(text: str) -> list[str]:

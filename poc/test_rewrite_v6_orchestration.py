@@ -148,7 +148,6 @@ def test_v6_planner_prompt_uses_schema_contract_without_fixture_specific_risky_s
     assert "Do not use the field name sentence_jobs." not in rule_text_full
     assert "Use validated_construction_route.sentence_jobs only for ordered route logic" in rule_text_full
 
-
 def test_v6_planner_merge_keeps_llm_flow_plan_source_scoped():
     source = "The process helps teams review decisions. Repeated checks can weaken judgement."
     scan = scan_text(source)
@@ -307,6 +306,73 @@ def test_v6_planner_merge_builds_validated_construction_route_from_planner_shape
     assert "safe_sentence_shape" not in json.dumps(merged)
 
 
+def test_v6_planner_sanitizes_packed_list_enumeration_handoff():
+    source = (
+        "Students learn from teachers, videos, online courses, tools, search engines, social media, and peer communities. "
+        "This creates a new learning environment."
+    )
+    scan = scan_text(source)
+    paragraph, plan = build_plan(scan)
+    decision = _planner_decision()
+    decision["validated_construction_route"] = {
+        "route_id": "planner_route",
+        "movement": "source list -> result",
+        "sentence_jobs": [
+            {
+                "job_id": "sources",
+                "job": "Enumerate the diverse learning sources.",
+                "source_basis": ["p001_s001"],
+                "must_use_meaning": ["students", "teachers", "videos", "online courses", "tools", "search engines", "social media", "peer communities"],
+                "must_not_use": [],
+            },
+            {
+                "job_id": "result",
+                "job": "Show the resulting learning environment.",
+                "source_basis": ["p001_s002"],
+                "must_use_meaning": ["new learning environment"],
+                "must_not_use": [],
+            },
+        ],
+        "do_not_copy": [],
+        "validation_rules": ["All meaning anchors listed in must_use_meaning must appear in the final paragraph."],
+    }
+    planner = StaticJsonClient(json.dumps({"planner_decision": decision}))
+
+    planned = run_planner_llm(paragraph, plan, scan.findings, client=planner)
+    route = planned.ai_safe_route["llm_planner_decision"]["validated_construction_route"]
+    route_text = json.dumps(route, ensure_ascii=False).casefold()
+
+    assert "enumerate" not in route_text
+    assert "all meaning anchors" not in route_text
+    assert "list_coverage_requirements" in route_text
+
+
+def test_v6_planner_blocks_author_proxy_for_local_packed_list_context_gap():
+    source = (
+        "Students are surrounded by information. "
+        "They learn from teachers, videos, online courses, tools, search engines, social media, and peer communities. "
+        "This creates a new learning environment. "
+        "The real challenge is knowing what is accurate, useful, ethical, and worth trusting."
+    )
+    scan = scan_text(source)
+    paragraph, plan = build_plan(scan)
+    decision = _planner_decision(
+        author_proxy_request={
+            "required": True,
+            "reason": "context_anchor_gap and broad_claim need a bridge",
+            "target_sentence_ids": ["p001_s003"],
+            "finding_basis": ["context_anchor_gap", "broad_claim"],
+        }
+    )
+    planner = StaticJsonClient(json.dumps({"planner_decision": decision}))
+
+    planned = run_planner_llm(paragraph, plan, scan.findings, client=planner)
+    request = planned.ai_safe_route["llm_planner_decision"]["author_proxy_request"]
+
+    assert request["required"] is False
+    assert request["reason"] == "local_source_sufficient_for_planner"
+
+
 def test_v6_planner_route_alignment_tracks_raw_to_merged_intent():
     source = "The process helps teams review decisions. Repeated checks can weaken judgement."
     scan = scan_text(source)
@@ -439,7 +505,6 @@ def test_v6_writer_prompt_uses_planner_coverage_beats_as_meaning_obligations():
         "do_not_copy_route",
         "route_rewrite_guidance",
         "coverage_terms",
-        "author_proxy_request",
     }
     assert "raw_merged_route_alignment" not in payload["planner_brief"]
     assert "coverage_beat_gaps" not in payload["planner_brief"]
@@ -447,6 +512,8 @@ def test_v6_writer_prompt_uses_planner_coverage_beats_as_meaning_obligations():
         "writer_execution_plan",
         "validated_construction_route.sentence_jobs",
         "coverage_beats",
+        "list_coverage_requirements",
+        "source_frame_constraints",
         "coverage_beats.must_not_copy",
         "planner_brief.do_not_copy_route",
         "planner_brief.route_rewrite_guidance",
@@ -462,6 +529,116 @@ def test_v6_writer_prompt_uses_planner_coverage_beats_as_meaning_obligations():
     assert "team_action" in payload["route_sequence_guards"][0]["must_appear_after_route_jobs"]
     assert any("checklists" in row["meaning"] for row in payload["coverage_beats"])
     assert all(len(row["meaning"].split()) > 2 for row in payload["coverage_beats"])
+
+
+def test_v6_writer_prompt_does_not_force_every_packed_list_item_as_keep_term():
+    source = (
+        "Now, students are surrounded by information. "
+        "They learn from teachers, but also from YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities. "
+        "This has created a new kind of learning environment. "
+        "Knowledge is no longer scarce. Access is no longer the biggest problem. "
+        "The real challenge is knowing what is accurate, useful, ethical, and worth trusting."
+    )
+    paragraph, plan = build_plan(scan_text(source))
+
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+    keep_terms = {str(term).casefold() for term in payload["must_keep_terms"]}
+    packed_terms = {
+        "youtube",
+        "tiktok",
+        "online",
+        "courses",
+        "ai",
+        "tools",
+        "search",
+        "engines",
+        "social",
+        "media",
+        "peer",
+        "communities",
+    }
+
+    assert len(keep_terms & packed_terms) <= 3
+    assert payload["list_coverage_requirements"]
+    assert payload["list_coverage_requirements"][0]["minimum_coverage"].startswith("preserve the source-list role")
+    assert payload["list_coverage_requirements"][0]["distribution_rule"].startswith("use grouping")
+    assert payload["list_coverage_requirements"][0]["semantic_grouping_rule"].startswith("when requested")
+    assert "YouTube" in payload["list_coverage_requirements"][0]["items"]
+    assert "peer communities" in payload["list_coverage_requirements"][0]["items"]
+    assert payload["variant_requirements"][1]["mode"] == "semantic_list_grouping"
+    assert "distribute them across adjacent source-list sentences" in payload["variant_requirements"][1]["instruction"]
+    assert any("semantic_list_grouping" in rule and "invalid" in rule for rule in payload["output_rules"])
+    assert "Use coverage_beats as meaning obligations; coverage_terms are backup anchors only." in payload["style_contract"]
+
+
+def test_v6_writer_prompt_exposes_created_effect_frame_constraints():
+    source = (
+        "Technology has also created both opportunities and risks. "
+        "AI tools can help students brainstorm ideas."
+    )
+    paragraph, plan = build_plan(scan_text(source))
+
+    payload = json.loads(build_prompt(paragraph, plan).split("\n", 1)[1])
+
+    assert payload["source_frame_constraints"]
+    assert payload["source_frame_constraints"][0]["subject"] == "Technology"
+    assert "risk" in payload["source_frame_constraints"][0]["source_object_terms"]
+
+def test_v6_writer_prompt_compacts_overlong_route_list_obligations_to_coverage_beats():
+    source = (
+        "Students learn from teachers, YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities. "
+        "This has created a new kind of learning environment."
+    )
+    scan = scan_text(source)
+    paragraph, plan = build_plan(scan)
+    decision = _planner_decision()
+    decision["validated_construction_route"] = {
+        "route_id": "list_route",
+        "movement": "source list -> result",
+        "sentence_jobs": [
+            {
+                "job_id": "source_mix",
+                "job": "Group the learning source mix.",
+                "source_basis": ["p001_s001"],
+                "must_use_meaning": [
+                    "learn",
+                    "teachers",
+                    "YouTube",
+                    "TikTok",
+                    "online courses",
+                    "AI tools",
+                    "search engines",
+                    "social media",
+                    "peer communities",
+                ],
+                "must_not_use": [],
+            }
+        ],
+        "do_not_copy": [],
+        "validation_rules": [],
+    }
+    decision["coverage_beats"] = [
+        {
+            "beat_id": "cb001",
+            "route_job_id": "source_mix",
+            "source_basis": ["p001_s001"],
+            "meaning": "students learn from teachers and a wider digital or peer source mix",
+            "must_cover": ["learn from teachers", "digital source mix", "peer communities"],
+            "must_not_copy": [],
+        }
+    ]
+    planned = replace(plan, ai_safe_route={**plan.ai_safe_route, "llm_planner_decision": decision})
+
+    payload = json.loads(build_prompt(paragraph, planned).split("\n", 1)[1])
+    job = payload["validated_construction_route"]["sentence_jobs"][0]
+    list_step = next(row for row in payload["writer_execution_plan"] if row.get("list_coverage_items"))
+
+    assert job["must_use_meaning"] == ["learn from teachers", "digital source mix", "peer communities"]
+    assert "search engines" not in job["must_use_meaning"]
+    assert "YouTube" in list_step["list_coverage_items"]
+    assert "peer communities" in list_step["list_coverage_items"]
+    assert "For semantic_list_grouping variants" in list_step["list_distribution_rule"]
+    assert "exact items may be named when needed for coverage" in list_step["list_distribution_rule"]
 
 
 def test_v6_selector_prompt_carries_consolidated_prose_rules():

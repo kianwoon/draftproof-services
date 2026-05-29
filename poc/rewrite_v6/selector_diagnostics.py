@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .coverage_guard import missing_required_source_term_details
+from .coverage_guard import has_required_source_beat_loss, missing_required_source_beat_groups, missing_required_source_term_details
 from .integrity_guard import candidate_integrity_blockers, candidate_integrity_warnings
 from .prose_quality import has_fragment_or_trace_sentences
 from .prose_quality import catalogue_sentence_chain, robotic_sentence_chain
@@ -60,6 +60,7 @@ def _variant_diagnostics(
     finding_drop = source_scan.scores["finding_count"] - candidate_scan.scores["finding_count"]
     risk_drop = source_scan.scores["mean_sentence_shape_risk"] - candidate_scan.scores["mean_sentence_shape_risk"]
     missing_terms = missing_required_source_term_details(variant.text, paragraph)
+    source_beat_gaps = missing_required_source_beat_groups(variant.text, paragraph)
     integrity_blockers = candidate_integrity_blockers(variant.text)
     blockers = _blockers(variant, source, paragraph, finding_drop, risk_drop, missing_terms, integrity_blockers, copy_blockers)
     quality_warnings = _quality_warnings(variant, paragraph)
@@ -77,6 +78,7 @@ def _variant_diagnostics(
         "blockers": blockers,
         "quality_warnings": quality_warnings,
         "missing_required_terms": missing_terms[:20],
+        "source_beat_coverage_gaps": source_beat_gaps[:6],
         "integrity_blockers": integrity_blockers,
         "handoff_validation": _handoff_validation(
             variant=variant,
@@ -182,6 +184,8 @@ def _blockers(
         blockers.append("sentence_shape_risk_regression")
     if missing_terms and not _missing_terms_are_reviewable(finding_drop, risk_drop, integrity_blockers):
         blockers.append("required_source_terms_missing")
+    if has_required_source_beat_loss(variant.text, paragraph):
+        blockers.append("required_source_beat_missing")
     if _copy_blocker_violations(variant.text, copy_blockers):
         blockers.append("copy_blocked_source_phrase")
     if _repeats_sentence_intent(variant.text):

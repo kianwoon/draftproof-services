@@ -19,6 +19,12 @@ from .prose_repair_rules import (
     risky_source_terms,
 )
 from .scan import Finding
+from .source_quality import (
+    created_effect_frame_anchor_blockers,
+    created_effect_frame_anchor_constraints,
+    created_effect_frame_constraints,
+    created_effect_frame_meanings,
+)
 from .text import Paragraph
 from .writer_prompt_compact import compact_document_signal_contracts
 
@@ -117,9 +123,14 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             "risky_copy_phrases_in_this_paragraph": risky_source_copy_phrases(paragraph.text),
             "route_rewrite_guidance": risky_source_rewrite_guidance(paragraph.text),
             "risky_terms_not_wording_requirements": sorted(risky_source_terms(paragraph.text)),
+            "source_frame_constraints": created_effect_frame_constraints(paragraph.text),
             "planner_rule": (
                 "Preserve the source meaning behind risky shapes, but do not put risky terms into flow_plan.must_include "
                 "or coverage_terms as exact wording requirements."
+            ),
+            "source_frame_rule": (
+                "When a created-effect frame has abstract object terms, plan it as a frame, tension, condition, "
+                "opportunity, or risk. Do not turn the subject/create relation into a concrete entity-creation route."
             ),
         },
         "route_skeleton": {
@@ -218,6 +229,7 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             "Use validated_construction_route.sentence_jobs only for ordered route logic.",
             "Put risky exact wording into do_not_copy_route and validated_construction_route.do_not_copy.",
             "Keep risky wording out of flow_plan.must_include, coverage_terms, and sentence_jobs.must_use_meaning.",
+            "For created-effect source frames with abstract objects, keep only the abstract frame meaning; do not make the source subject create a later concrete entity.",
             "Preserve source meaning, modality, and closing consequence.",
             "Request Author-proxy only for a real grounding gap that local source terms cannot solve.",
             "If author_proxy_pack exists, integrate its usable bridge as grounding in flow_plan and validated_construction_route, not as prose.",
@@ -269,6 +281,7 @@ def _with_source_order_planner(paragraph: Paragraph, plan: Plan, reason: str) ->
         build_validated_construction_route(paragraph, plan),
         plan,
     )
+    construction_route = _source_frame_safe_construction_route(construction_route, plan)
     coverage_beats = _coverage_beats(plan, construction_route)
     route["llm_planner_decision"] = {
         "status": "fallback",
@@ -279,7 +292,7 @@ def _with_source_order_planner(paragraph: Paragraph, plan: Plan, reason: str) ->
         "do_not_copy_route": _copy_blockers(plan, construction_route, {}),
         "route_rewrite_guidance": _route_rewrite_guidance(plan, construction_route, {}),
         "coverage_beats": coverage_beats,
-        "coverage_terms": _coverage_terms(plan),
+        "coverage_terms": _source_frame_safe_coverage_terms(_coverage_terms(plan), plan),
         "raw_merged_route_alignment": False,
         "coverage_beat_gaps": _coverage_beat_gaps(coverage_beats, construction_route, plan),
         "author_proxy_request": _author_proxy_request({}, plan),
@@ -315,6 +328,7 @@ def _merge_decision(paragraph: Paragraph, plan: Plan, decision: dict[str, Any]) 
         _recipe_rows(decision.get("flow_plan")) or _recipe_rows(paragraph_fallback.get("flow_plan")),
         plan,
     )
+    flow_plan = _source_frame_safe_flow_plan(flow_plan, plan)
     fallback_flow_plan = _recipe_rows(paragraph_fallback.get("flow_plan"))
     paragraph_problem = decision.get("paragraph_problem") or paragraph_fallback.get("paragraph_diagnosis", "")
     paragraph_route = decision.get("paragraph_route") or paragraph_fallback.get("paragraph_route", "")
@@ -324,12 +338,14 @@ def _merge_decision(paragraph: Paragraph, plan: Plan, decision: dict[str, Any]) 
         decision.get("validated_construction_route") if isinstance(decision.get("validated_construction_route"), dict) else None,
     )
     construction_route = _sanitize_construction_route_anchors(construction_route, plan)
+    construction_route = _source_frame_safe_construction_route(construction_route, plan)
     if unsafe_contracts:
-        flow_plan = fallback_flow_plan
+        flow_plan = _source_frame_safe_flow_plan(fallback_flow_plan, plan)
         construction_route = _sanitize_construction_route_anchors(
             build_validated_construction_route(paragraph, plan, None),
             plan,
         )
+        construction_route = _source_frame_safe_construction_route(construction_route, plan)
     coverage_beats = _coverage_beats(plan, construction_route, decision)
     coverage_beat_gaps = _coverage_beat_gaps(coverage_beats, construction_route, plan)
     if coverage_beat_gaps:
@@ -337,10 +353,11 @@ def _merge_decision(paragraph: Paragraph, plan: Plan, decision: dict[str, Any]) 
             build_validated_construction_route(paragraph, plan, None),
             plan,
         )
+        fallback_route = _source_frame_safe_construction_route(fallback_route, plan)
         fallback_beats = _coverage_beats(plan, fallback_route, decision)
         fallback_gaps = _coverage_beat_gaps(fallback_beats, fallback_route, plan)
         if len(fallback_gaps) <= len(coverage_beat_gaps):
-            flow_plan = _sanitize_flow_plan(fallback_flow_plan, plan)
+            flow_plan = _source_frame_safe_flow_plan(_sanitize_flow_plan(fallback_flow_plan, plan), plan)
             construction_route = fallback_route
             coverage_beats = fallback_beats
             coverage_beat_gaps = fallback_gaps
@@ -359,7 +376,7 @@ def _merge_decision(paragraph: Paragraph, plan: Plan, decision: dict[str, Any]) 
         "do_not_copy_route": _copy_blockers(plan, construction_route, decision),
         "route_rewrite_guidance": _route_rewrite_guidance(plan, construction_route, decision),
         "coverage_beats": coverage_beats,
-        "coverage_terms": _coverage_terms(plan, decision),
+        "coverage_terms": _source_frame_safe_coverage_terms(_coverage_terms(plan, decision), plan),
         "raw_merged_route_alignment": _raw_merged_route_alignment(decision.get("validated_construction_route"), construction_route),
         "coverage_beat_gaps": coverage_beat_gaps,
         "author_proxy_request": request,
@@ -392,6 +409,13 @@ def _author_proxy_request(decision: dict[str, Any], plan: Plan) -> dict[str, Any
         }
     grounding_required = bool(grounding.get("required")) if isinstance(grounding, dict) else False
     required = request.get("required") if "required" in request else grounding_required
+    if required and not _plan_allows_author_proxy_request(plan):
+        return {
+            "required": False,
+            "reason": "local_source_sufficient_for_planner",
+            "target_sentence_ids": [],
+            "finding_basis": [],
+        }
     target_ids = request.get("target_sentence_ids")
     basis = request.get("finding_basis")
     return {
@@ -400,6 +424,18 @@ def _author_proxy_request(decision: dict[str, Any], plan: Plan) -> dict[str, Any
         "target_sentence_ids": [str(item).strip() for item in target_ids if str(item).strip()][:4] if isinstance(target_ids, list) else [],
         "finding_basis": [str(item).strip() for item in basis if str(item).strip()][:6] if isinstance(basis, list) else [],
     }
+
+
+def _plan_allows_author_proxy_request(plan: Plan) -> bool:
+    tags = {str(tag).casefold() for action in plan.actions for tag in action.tags}
+    if tags & {"author_anchor_gap", "unsupported_claim_gap", "semantic_bridge_gap"}:
+        return True
+    if "broad_claim" not in tags:
+        return False
+    if tags <= {"packed_list", "predictable_start", "context_anchor_gap", "paragraph_rhythm", "sentence_overload", "broad_claim"}:
+        return False
+    local_anchor_count = sum(len(getattr(action, "preserve_terms", []) or []) for action in plan.actions)
+    return local_anchor_count <= 8
 
 
 def _copy_blockers(plan: Plan, construction_route: dict[str, Any], decision: dict[str, Any]) -> list[str]:
@@ -448,6 +484,8 @@ def _guidance_text(value: str) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     if text.casefold().startswith("do not "):
         return "Preserve source meaning through the planned route without copying blocked source wording."
+    if re.search(r"\bseparate\s+statements?\b", text, flags=re.I):
+        return "Preserve the relation without copying blocked source wording; group same-role items into one natural source beat instead of separate sentences."
     text = re.sub(r"\s*\((?:e\.g\.|for example)[^)]*\)", "", text, flags=re.I).strip()
     return text
 
@@ -474,10 +512,54 @@ def _sanitize_construction_route_anchors(construction_route: dict[str, Any], pla
             if not isinstance(job, dict):
                 continue
             sanitized = dict(job)
+            packed_basis = _job_has_packed_basis(job, plan)
+            if packed_basis:
+                sanitized["job"] = _sanitize_packed_list_job_text(str(sanitized.get("job") or ""))
             sanitized["must_use_meaning"] = _safe_anchor_values(_string_rows(job.get("must_use_meaning")), source_text)
             sanitized_jobs.append(sanitized)
         updated["sentence_jobs"] = sanitized_jobs
+    validation_rules = _string_rows(updated.get("validation_rules"))
+    if validation_rules:
+        updated["validation_rules"] = [
+            _sanitize_validation_rule(rule)
+            for rule in validation_rules
+            if _sanitize_validation_rule(rule)
+        ][:16]
     return updated
+
+
+def _job_has_packed_basis(job: dict[str, Any], plan: Plan) -> bool:
+    basis = {str(source_id) for source_id in job.get("source_basis", []) if str(source_id)}
+    for action in plan.actions:
+        if action.sentence_id not in basis:
+            continue
+        tags = {str(tag).casefold() for tag in action.tags}
+        if tags & {"packed_list", "sentence_overload", "paragraph_rhythm"} and _list_item_count(action.source_text) >= 5:
+            return True
+    return False
+
+
+def _list_item_count(text: str) -> int:
+    visible = re.sub(r"\b(?:but\s+also|as\s+well\s+as|along\s+with|together\s+with)\b", ", ", str(text or ""), flags=re.I)
+    visible = re.sub(r",\s+(?:and|or)\s+", ", ", visible, flags=re.I)
+    return len([part for part in re.split(r",\s+|\s+\band\b\s+|\s+\bor\b\s+", visible, flags=re.I) if part.strip(" .,!?:;")])
+
+
+def _sanitize_packed_list_job_text(text: str) -> str:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    if re.search(r"\b(?:enumerate|list|all meaning anchors|all anchors|all source items)\b", value, flags=re.I):
+        return (
+            "Carry the packed source-list role through grouped prose; use the Writer list_coverage_requirements "
+            "to distribute item coverage without recreating one overloaded list or appending leftovers to later beats."
+        )
+    return value
+
+
+def _sanitize_validation_rule(text: str) -> str:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    if re.search(r"\ball\s+(?:meaning\s+)?anchors\b|\ball\s+source\s+items\b", value, flags=re.I):
+        return "Preserve source meaning; for packed lists, use list coverage as grouped source-role coverage rather than forcing every anchor into one sentence."
+    return value
 
 
 def _plan_source_text(plan: Plan) -> str:
@@ -493,6 +575,90 @@ def _coverage_terms(plan: Plan, decision: dict[str, Any] | None = None) -> list[
         ] + _string_rows((decision or {}).get("coverage_terms")) + _author_proxy_coverage_terms(plan),
         source_text,
     )[:40]
+
+
+def _source_frame_safe_flow_plan(flow_plan: list[dict[str, Any]], plan: Plan) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for step in flow_plan:
+        if not isinstance(step, dict):
+            rows.append(step)
+            continue
+        sources = _source_texts_for_basis(plan, _string_rows(step.get("source_basis")))
+        safe_values = _source_frame_safe_anchor_values(_string_rows(step.get("must_include")), sources)
+        if safe_values == _string_rows(step.get("must_include")):
+            rows.append(step)
+            continue
+        safe_step = dict(step)
+        safe_step["must_include"] = safe_values
+        rows.append(safe_step)
+    return rows
+
+
+def _source_frame_safe_construction_route(route: dict[str, Any], plan: Plan) -> dict[str, Any]:
+    jobs = route.get("sentence_jobs") if isinstance(route, dict) else []
+    if not isinstance(jobs, list):
+        return route
+    changed = False
+    safe_jobs: list[Any] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            safe_jobs.append(job)
+            continue
+        sources = _source_texts_for_basis(plan, _string_rows(job.get("source_basis")))
+        values = _string_rows(job.get("must_use_meaning"))
+        safe_values = _source_frame_safe_anchor_values(values, sources)
+        if safe_values == values:
+            safe_jobs.append(job)
+            continue
+        safe_job = dict(job)
+        safe_job["must_use_meaning"] = safe_values
+        safe_jobs.append(safe_job)
+        changed = True
+    if not changed:
+        return route
+    safe_route = dict(route)
+    safe_route["sentence_jobs"] = safe_jobs
+    return safe_route
+
+
+def _source_frame_safe_coverage_terms(values: list[str], plan: Plan) -> list[str]:
+    return _source_frame_safe_anchor_values(values, [action.source_text for action in plan.actions])
+
+
+def _source_frame_safe_anchor_values(values: list[str], sources: list[str]) -> list[str]:
+    constraints = [
+        constraint
+        for source in sources
+        for constraint in created_effect_frame_anchor_constraints(source)
+    ]
+    if not constraints:
+        return values
+    blockers = {
+        str(blocker).casefold()
+        for constraint in constraints
+        for blocker in constraint.get("anchor_blockers", [])
+        if str(blocker).strip()
+    }
+    safe_meanings = _dedupe_strings([
+        str(meaning)
+        for constraint in constraints
+        for meaning in constraint.get("safe_meanings", [])
+        if str(meaning).strip()
+    ])
+    rows = [
+        value
+        for value in values
+        if not _created_effect_anchor_value(value, blockers)
+    ]
+    for meaning in safe_meanings:
+        if meaning not in rows:
+            rows.append(meaning)
+    return _dedupe_strings(rows) or values
+
+
+def _source_texts_for_basis(plan: Plan, basis: list[str]) -> list[str]:
+    source_by_id = {action.sentence_id: action.source_text for action in plan.actions}
+    return [source_by_id[source_id] for source_id in basis if source_id in source_by_id]
 
 
 def _coverage_beats(plan: Plan, construction_route: dict[str, Any], decision: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -520,22 +686,46 @@ def _coverage_beats(plan: Plan, construction_route: dict[str, Any], decision: di
             meaning = "; ".join([*bridge_meanings, meaning])
         must_not_copy = _local_must_not_copy(job, sources)
         meaning = _safe_coverage_meaning(meaning, must_not_copy)
+        must_cover = _source_frame_safe_must_cover(
+            _dedupe_strings([*bridge_meanings, *_short_must_cover(job, meaning)])[:10],
+            sources,
+        )
         rows.append({
             "beat_id": f"cb{index:03d}",
             "route_job_id": str(job.get("job_id") or f"job_{index}"),
             "source_basis": basis,
             "meaning": meaning,
-            "must_cover": _dedupe_strings([*bridge_meanings, *_short_must_cover(job, meaning)])[:6],
+            "must_cover": must_cover,
             "must_not_copy": must_not_copy,
         })
     return _dedupe_coverage_beats(rows)[:10]
 
 
+def _source_frame_safe_must_cover(values: list[str], sources: list[str]) -> list[str]:
+    blockers = created_effect_frame_anchor_blockers(" ".join(sources))
+    if not blockers:
+        return values
+    rows = [
+        value
+        for value in values
+        if not _created_effect_anchor_value(value, blockers)
+    ]
+    return rows or values
+
+
+def _created_effect_anchor_value(value: str, blockers: set[str]) -> bool:
+    bases = {word.casefold() for word in re.findall(r"\b[A-Za-z][A-Za-z'’-]*\b", str(value or ""))}
+    if not bases:
+        return False
+    return bases <= blockers
+
+
 def _short_must_cover(job: dict[str, Any], meaning: str) -> list[str]:
     anchors = _relation_anchors(str(job.get("job_id") or ""), _string_rows(job.get("must_use_meaning")))
+    source_anchors = _short_anchor_phrases(meaning)
     if not anchors:
-        anchors = _short_anchor_phrases(meaning)
-    return [anchor for anchor in _dedupe_strings(anchors) if len(anchor.split()) <= 9][:6]
+        anchors = source_anchors
+    return [anchor for anchor in _dedupe_strings([*anchors, *source_anchors]) if len(anchor.split()) <= 9][:10]
 
 
 def _relation_anchors(job_id: str, anchors: list[str]) -> list[str]:
@@ -630,6 +820,9 @@ def _coverage_meaning(sources: list[str]) -> str:
 def _clean_coverage_phrase(text: str) -> str:
     value = re.sub(r"\s+", " ", str(text or "")).strip(" .")
     value = re.sub(r"^(?:However|But|Also|Moreover|Furthermore|Therefore|Thus|So),?\s+", "", value, flags=re.I)
+    frame_meanings = created_effect_frame_meanings(value)
+    if frame_meanings:
+        return frame_meanings[0]
     if value[:1].isupper() and not _starts_with_proper_or_acronym(value):
         value = value[:1].lower() + value[1:]
     return value.strip()
@@ -787,7 +980,23 @@ def _string_rows(value: Any) -> list[str]:
 
 
 def _unsafe_contract_gaps(gaps: list[str]) -> bool:
-    return bool(gaps)
+    """Return True only for hard structural gaps that require falling back to the deterministic route.
+
+    Soft gaps (e.g. a risky term copied into a meaning anchor) are already handled by the
+    ``_sanitize_*`` family and do not warrant discarding the planner's entire route.
+    Hard gaps mean the route shape itself is broken and cannot be safely forwarded to the writer.
+    """
+    _HARD_MARKERS = (
+        "missing paragraph_problem",
+        "missing paragraph_route",
+        "fewer than",
+        "missing validated_construction_route",
+        "unknown source sentence id",
+    )
+    return any(
+        any(marker in gap for marker in _HARD_MARKERS)
+        for gap in gaps
+    )
 
 
 def _planner_contract_gaps(decision: dict[str, Any], findings: list[Finding], plan: Plan | None = None) -> list[str]:

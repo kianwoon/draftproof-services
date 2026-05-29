@@ -109,6 +109,10 @@ def _required_fix(row: dict[str, Any]) -> str:
     blockers = set(_row_blockers(row))
     warnings = set(row.get("quality_warnings") or [])
     fixes: list[str] = []
+    if "source_frame_reified_as_entity" in blockers:
+        fixes.append("Preserve the source frame as an effect, tension, opportunity, or risk. Do not rewrite it as the topic creating a concrete tool or entity.")
+    if "required_source_beat_missing" in blockers:
+        fixes.append(_source_beat_missing_fix(row))
     if "required_source_terms_missing" in blockers:
         missing = ", ".join(str(term) for term in row.get("missing_required_terms") or [])
         fixes.append(f"Preserve every required source term, especially the paragraph closing beat. Missing terms: {missing}.")
@@ -161,6 +165,10 @@ def _required_fix(row: dict[str, Any]) -> str:
             "Remove repeated intent: do not add a standalone proxy/context sentence and then repeat the same source claim. "
             "Fuse the bridge into the relevant source beat, and do not split quoted concepts into 'the words ...' sentences."
         )
+    if "source_beat_reintroduced_after_closing" in blockers:
+        fixes.append(
+            "Keep source beat order intact. Do not add an earlier support or condition beat after the paragraph has already reached its closing consequence."
+        )
     if fixes:
         return " ".join(_dedupe(fixes))
     if int(row.get("candidate_findings") or 0) > 0:
@@ -179,6 +187,19 @@ def _required_fix(row: dict[str, Any]) -> str:
     if "insufficient_scanner_movement" in blockers:
         return "Change the paragraph route enough to reduce scanner findings; lowering mean risk alone is not enough for this retry."
     return "Rewrite again from the Planner route with cleaner paragraph flow and no new claims."
+
+
+def _source_beat_missing_fix(row: dict[str, Any]) -> str:
+    gaps = row.get("source_beat_coverage_gaps")
+    if not isinstance(gaps, list):
+        return "Restore the missing source beat. Do not delete a source list or closing judgement beat to improve scanner score."
+    missing_terms: list[str] = []
+    for gap in gaps:
+        if isinstance(gap, dict) and float(gap.get("coverage_ratio") or 0.0) <= 0.0:
+            missing_terms.extend(str(term) for term in gap.get("missing_terms") or [] if str(term).strip())
+    if missing_terms:
+        return "Restore the missing source beat with these required terms: " + ", ".join(_dedupe(missing_terms)[:12]) + "."
+    return "Restore the missing source beat. Do not delete a source list or closing judgement beat to improve scanner score."
 
 
 def _failed_sentences(row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -265,6 +286,9 @@ def _do_not_repeat(row: dict[str, Any]) -> list[str]:
     blocked = [sentence[:220] for sentence in finding_texts]
     for sentence in sentences:
         if any(marker in sentence.casefold() for marker in (
+            "created",
+            "produced",
+            "generated",
             "research",
             "evidence",
             "supports this",

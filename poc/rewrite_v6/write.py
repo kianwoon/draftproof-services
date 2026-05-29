@@ -70,9 +70,10 @@ def _request_variants(paragraph: Paragraph, plan: Plan, client: ChatClient) -> l
         build_writer_brief_prompt(paragraph, plan),
         system=(
             "Return valid JSON only. Rewrite from the curated writer brief, not from hidden assumptions. "
-            "Preserve submitted meaning and required terms. Write complete grammatical sentences. "
+            "Preserve submitted meaning, coverage beats, and list coverage requirements. Write complete grammatical sentences. "
             "Follow writer_execution_plan in order and obey route_sequence_guards. "
             "Use proxy or neighbor context only when the brief says it resolves a local anchor gap. "
+            "For packed source lists, cover items in the source-list beat; never append leftover list items to a later challenge or consequence sentence. "
             "Return every requested variant id. Reject your own variant if it has fragments, repeated and-chains, "
             "keyword dumps, malformed connectors, premature assessment consequences, duplicated consequences, or generic added claims."
         ),
@@ -160,7 +161,17 @@ def _review_rows(value: Any, default_provenance: str) -> list[dict[str, Any]]:
                 "author_task": "Verify, replace, or remove before final submission.",
             })
     return rows
+
+
 def choose_variant(variants: list[Variant], paragraph: Paragraph) -> Variant | None:
+    """Offline / test-only variant selector.
+
+    Production selection is handled by ``_select_variant`` in ``pipeline.py``,
+    which calls the selector LLM and then overrides its pick via
+    ``_metric_preferred_variant_id``.  This function is kept as a
+    deterministic, dependency-free fallback for unit tests and local
+    experimentation.
+    """
     if not variants:
         return None
     source_words = max(1, word_count(paragraph.text))
@@ -193,16 +204,27 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
     risk_drop = before.scores["mean_sentence_shape_risk"] - after.scores["mean_sentence_shape_risk"]
     if word_count(candidate.text) < max(8, int(word_count(paragraph.text) * 0.35)):
         return False
-    if finding_drop >= 1 and risk_drop >= -5.0 and not _severe_route_quality_penalty(candidate.text):
-        return True
     if finding_drop >= 2 and risk_drop >= -2.0:
         return True
     if finding_drop >= 1 and risk_drop >= 0.0:
         return True
-    if finding_drop >= 0 and risk_drop >= 10.0 and not _severe_route_quality_penalty(candidate.text):
+    if finding_drop >= 0 and risk_drop >= 5.0 and not _severe_route_quality_penalty(candidate.text):
         return True
     if before.scores["finding_count"] <= 1 and finding_drop >= 0 and risk_drop >= 5.0:
         return not _over_decomposition_review_reasons(candidate.text, paragraph)
+    # Consolidation rewrites reduce sentence count; mean risk naturally rises even when aggregate
+    # paragraph risk drops (fewer, slightly longer sentences score higher per sentence than many
+    # short ones).  The mean-based conditions above cannot credit this, so compare total risk
+    # (mean × sentence_count).
+    # Guard: finding_drop >= 1 AND sentence_count must drop by >= 2 (genuine consolidation, not
+    # just minor 6→5 restructuring) AND total accumulated risk must genuinely fall.
+    if finding_drop >= 1:
+        sentence_drop = before.scores["sentence_count"] - after.scores["sentence_count"]
+        if sentence_drop >= 2:
+            before_total = before.scores["mean_sentence_shape_risk"] * before.scores["sentence_count"]
+            after_total = after.scores["mean_sentence_shape_risk"] * after.scores["sentence_count"]
+            if before_total > after_total:
+                return True
     return False
 
 
@@ -292,12 +314,23 @@ def _mechanical_quality_penalty(text: str, source_paragraph: Paragraph) -> float
 def _route_quality_penalty(text: str) -> float:
     value = str(text or "")
     penalty = 0.0
+    # Forced discourse connectors at sentence starts signal robotic route engineering.
+    # Each occurrence adds a heavy penalty to favour more natural transitions.
     forced_connectors = re.findall(r"(?:^|[.!?]\s+)(?:Moreover|Thus|Consequently|Furthermore|Additionally)\b", value)
     penalty += len(forced_connectors) * 4.0
+    # Domain-specific patterns observed in LLM failure outputs.
+    # Each entry is keyed on the regex that identifies the failure and valued with its penalty weight.
     patterns = {
+        # LLM genre-mixing opener: treats the paragraph subject as a blend of two sources,
+        # which imports an opinionated framing not present in the source.
         r"\bSuch\s+a\s+mix\b": 3.0,
-        r"\bblend\s+of\s+[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2}\s+and\s+[a-z][a-z'’-]*(?:\s+[a-z][a-z'’-]*){0,2}\s+sources\b": 5.0,
+        # Variant of the above — 'blend of X and Y sources' pattern from content-literacy domain failures.
+        r"\bblend\s+of\s+[a-z][a-z''-]*(?:\s+[a-z][a-z''-]*){0,2}\s+and\s+[a-z][a-z''-]*(?:\s+[a-z][a-z''-]*){0,2}\s+sources\b": 5.0,
+        # Observed hallucination: 'difficulty shifts toward assessing' introduces a process
+        # framing not in source paragraphs about static challenges.
         r"\bdifficulty\s+shifts\s+toward\s+assessing\b": 5.0,
+        # Vague evaluative meta-language: 'judging/assessing information quality' is a generic
+        # label that weakens source-specific claims about reliability or credibility.
         r"\bjudging\s+information\s+quality\b": 3.0,
         r"\bassessing\s+information\s+quality\b": 3.0,
     }
@@ -395,7 +428,13 @@ def _compresses_list_repair(text: str, source_paragraph: Paragraph) -> bool:
         for paragraph in split_paragraphs(text)
         for sentence in paragraph.sentences
     ]
-    return len(candidate_sentences) < len(source_sentences)
+    if len(candidate_sentences) >= len(source_sentences):
+        return False
+    # Allow a shorter candidate when it groups list items into a single natural compact
+    # sentence — consistent with the guard applied in _keeps_forbidden_list_contract.
+    if _natural_compact_list_allowed(text, source_paragraph):
+        return False
+    return True
 
 
 def _candidate_contract_violation(text: str, source_paragraph: Paragraph) -> bool:
@@ -498,7 +537,17 @@ def _adds_unsubmitted_success_close(text: str, source_paragraph: Paragraph) -> b
 
 
 def _final_outcome_terms() -> tuple[str, ...]:
-    return ("success", "essential", "readiness", "ready", "complex", "real-world")
+    # These bigrams are deliberately more specific than single words to avoid
+    # false-positives on common neutral terms such as 'complex' or 'real-world'
+    # that appear legitimately in source paragraphs.
+    return (
+        "real-world success",
+        "real-world readiness",
+        "complex skills",
+        "essential skills",
+        "readiness for",
+        "marks success",
+    )
 
 
 def _has_any_terms(text: str, terms: tuple[str, ...]) -> bool:
