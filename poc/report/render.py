@@ -1384,8 +1384,6 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     lines.append("")
 
     finding_num = 0
-    used_scanners = set()
-    used_signals = set()
 
     # Collect all findings across tiers into one list, then group by paragraph
     # in document order — mirrors the /report page layout.
@@ -1406,9 +1404,6 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
         for group in paragraph_groups:
             finding_num += 1
-            for f in group["findings"]:
-                used_scanners.add(f.scanner)
-                used_signals.add(f.title)
             # Worst tier among this paragraph's findings
             worst_tier = next(
                 (t for t in _tier_order if any(f.tier == t for f in group["findings"])),
@@ -1419,34 +1414,6 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
     if not all_findings_flat:
         lines.append("*No findings detected. Text appears clean.*")
-        lines.append("")
-
-    # ── 2b. FALSE POSITIVES ────────────────────────────────────────
-    fp = report.false_positives
-    if fp:
-        lines.append("---")
-        lines.append("")
-        lines.append(f"## False Positives Filtered ({len(fp)})")
-        lines.append("")
-
-        lines.append("| # | Orig | Adj | Reason | Filter | Sentence |")
-        lines.append("|--:|:----:|:---:|--------|:------:|----------|")
-
-        def _fp_cell(text):
-            if not text:
-                return "-"
-            return text.replace("|", "·").replace("\n", " ")
-
-        for i, entry in enumerate(fp, 1):
-            orig = _RISK_CODES.get(entry.get("original_risk", "?").lower(),
-                                   entry.get("original_risk", "?").upper())
-            adj = _RISK_CODES.get(entry.get("adjusted_risk", "?").lower(),
-                                  entry.get("adjusted_risk", "?").upper())
-            reason = _fp_cell(entry.get("reason", ""))
-            filt_full = entry.get("filter", "")
-            filt = _FILTER_CODES.get(filt_full, filt_full)
-            sent = _fp_cell(entry.get("sentence", ""))
-            lines.append(f"| {i} | {orig} | {adj} | {reason} | {filt} | {sent} |")
         lines.append("")
 
     # ── 3. SCANNER BREAKDOWN (hidden from reports — data in JSON) ───
@@ -1499,41 +1466,6 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
                     new_text = sc.get("new_sentence", "").replace("\n", " ").replace("|", "·")
                     tier_change = f"{orig_tier} → {new_tier}" if orig_tier != new_tier else orig_tier
                     lines.append(f"| {i} | {tier_change} | {orig_text} | {new_text} |")
-                lines.append("")
-
-    # ── LEGEND ─────────────────────────────────────────────────────
-    if used_scanners or used_signals or fp:
-        lines.append("---")
-        lines.append("")
-        lines.append("## Legend")
-        lines.append("")
-
-        scanner_legend = {v: k for k, v in _SCANNER_CODES.items() if k in used_scanners}
-        signal_legend = {v: k for k, v in _SIGNAL_CODES.items() if k in used_signals}
-
-        if scanner_legend:
-            lines.append("**Source (Src):**")
-            for code, full in sorted(scanner_legend.items()):
-                lines.append(f"- `{code}` = {full}")
-            lines.append("")
-
-        if signal_legend:
-            lines.append("**Signal (Sig):**")
-            for code, full in sorted(signal_legend.items()):
-                lines.append(f"- `{code}` = {full}")
-            lines.append("")
-
-        if fp:
-            lines.append("**Risk level (Orig / Adj):**")
-            for code, full in sorted(_RISK_CODES.items()):
-                lines.append(f"- `{full}` = {code}")
-            lines.append("")
-            used_filters = {entry.get("filter", "") for entry in fp} - {""}
-            filter_legend = {v: k for k, v in _FILTER_CODES.items() if k in used_filters}
-            if filter_legend:
-                lines.append("**Filter:**")
-                for code, full in sorted(filter_legend.items()):
-                    lines.append(f"- `{code}` = {full}")
                 lines.append("")
 
     # ── FOOTER ────────────────────────────────────────────────────
