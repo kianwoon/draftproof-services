@@ -432,6 +432,48 @@ function SampleReportPreview() {
             </div>
           </div>
         )}
+
+        {activeSection === 'findings' && (
+          <div className="sample-finding-card">
+            <div className="sample-finding-header">
+              <div>
+                <span className="sample-finding-id">{t('landing.findingsSampleId')}</span>
+                <h3 className="sample-finding-type">{t('landing.findingsSampleType')}</h3>
+              </div>
+              <span className="sample-finding-num">#4</span>
+            </div>
+            <div className="sample-finding-body">
+              <blockquote className="sample-finding-paragraph">
+                {t('landing.findingsSampleParagraph')}
+              </blockquote>
+              <p className="sample-finding-description">{t('landing.findingsSampleDescription')}</p>
+              <div className="sample-finding-strength-row">
+                <span>{t('landing.findingsSignalStrength')}</span>
+                <strong>59%</strong>
+              </div>
+              <div className="sample-signal-track">
+                <i className="is-ai" style={{ width: '59%' }} />
+              </div>
+              <div className="sample-finding-chips">
+                <em>{t('landing.findingsSampleChip1')}</em>
+                <em>{t('landing.findingsSampleChip2')}</em>
+                <em>{t('landing.findingsSampleChip3')}</em>
+              </div>
+              <div className="sample-finding-also">
+                <span>{t('landing.findingsAlsoDetected')}</span>
+                <em>{t('landing.findingsSampleAlso')}</em>
+              </div>
+              <div className="sample-finding-subsection">
+                <span>{t('landing.findingsMainIssue')}</span>
+                <p>{t('landing.findingsSampleMainIssue')}</p>
+              </div>
+              <div className="sample-finding-subsection">
+                <span>{t('landing.findingsRewriteHint')}</span>
+                <p>{t('landing.findingsSampleRewriteHint')}</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </article>
   );
