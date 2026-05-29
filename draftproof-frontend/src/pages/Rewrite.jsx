@@ -358,6 +358,7 @@ export default function Rewrite() {
 
         {report?.final_text && (
           <section className="rewritten-document-section">
+            <p className="rewritten-document-remark">{t('rewritePage.rewrittenDocumentRemark')}</p>
             <div className="rewritten-document-heading">
               <div className="rewritten-document-title">
                 <h3>{t('rewritePage.rewrittenDocument')}</h3>

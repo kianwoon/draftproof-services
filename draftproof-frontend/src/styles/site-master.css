@@ -7365,6 +7365,16 @@ th {
   line-height: 1.55;
 }
 
+.rewritten-document-remark {
+  margin: 0 0 .6rem;
+  padding: .5rem .75rem;
+  border-left: 3px solid #e2e8f0;
+  color: #64748b;
+  font-size: .78rem;
+  font-style: italic;
+  line-height: 1.5;
+}
+
 .rewritten-document-heading {
   display: flex;
   align-items: center;
