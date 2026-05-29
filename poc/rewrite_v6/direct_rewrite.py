@@ -314,7 +314,10 @@ def _rewrite_paragraph(
             system=_SYSTEM,
             temperature=0.4,
             top_p=0.9,
-            max_tokens=1600,
+            # gpt-oss spends reasoning tokens that count toward this cap; a content-rich rewrite
+            # plus author_review_items JSON was truncating at 1600 (finish_reason=length) -> invalid
+            # JSON -> dropped -> source_preserved. Give ample headroom so the JSON always closes.
+            max_tokens=4000,
             response_format={"type": "json_object"},
             app_label="DirectRewrite",
         )
