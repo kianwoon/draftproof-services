@@ -35,7 +35,9 @@ from .text import Paragraph
 
 
 def direct_rewrite_enabled() -> bool:
-    return os.environ.get("DRAFTPROOF_V6_DIRECT_REWRITE", "").strip().lower() in {"1", "true", "yes", "on"}
+    # Default ON (the objective-aligned path). Kill switch: set DRAFTPROOF_V6_DIRECT_REWRITE=0 to
+    # fall back to the legacy planner/selector pipeline without a redeploy.
+    return os.environ.get("DRAFTPROOF_V6_DIRECT_REWRITE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 _SYSTEM = (
