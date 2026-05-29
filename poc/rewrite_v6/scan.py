@@ -1,12 +1,30 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from statistics import mean
 from typing import Any
 
+import os
+
 from .paragraph_normalizer import normalize_paragraph_blocks
 from .text import Paragraph, Sentence, split_paragraphs, split_sentences, word_count
+
+
+def _predictability_primary() -> bool:
+    """Whether the graded predictability signal drives severity/targeting (vs structural shape).
+
+    Stage 1 of the scanner fix. Off by default: the token-level predictability detail is always
+    attached to findings (safe enrichment), but making predictability OUTRANK the structural
+    heuristics changes which paragraph is targeted -- a behavior change that only pays off once the
+    planner/selector (Stages 2-3) consume it. Enable with DRAFTPROOF_V6_SCANNER_PREDICTABILITY=1.
+    """
+    return os.environ.get("DRAFTPROOF_V6_SCANNER_PREDICTABILITY", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Severity floor for structural-only findings (not flagged by the graded detector) when
+# predictability is primary -- kept low so they don't drive paragraph targeting.
+_ADVISORY_SEVERITY = 12.0
 
 
 @dataclass(frozen=True)
@@ -234,6 +252,7 @@ def _report_findings(report: dict[str, Any], paragraphs: list[Paragraph]) -> lis
         for paragraph in paragraphs
         for sentence in paragraph.sentences
     }
+    protected_by_finding = _protected_spans_by_finding(report)
     grouped: dict[str, dict[str, Any]] = {}
     for segment in report.get("highlight_segments") or []:
         if not isinstance(segment, dict):
@@ -254,7 +273,14 @@ def _report_findings(report: dict[str, Any], paragraphs: list[Paragraph]) -> lis
             "severity": 0.0,
             "finding_ids": [],
             "actionability": [],
+            "predictability": {},
         })
+        # Token-level predictability detail lives in segment["predictability"] (not in the signal):
+        # which token spans the graded detector found predictable, and the protected spans the
+        # writer must keep. Capturing it here makes the finding actionable downstream.
+        predictability = segment.get("predictability")
+        if isinstance(predictability, dict) and not entry["predictability"]:
+            entry["predictability"] = predictability
         for signal in signals:
             entry["tags"].extend(_report_signal_tags(signal))
             entry["severity"] = max(float(entry["severity"]), _report_signal_severity(signal))
@@ -270,22 +296,72 @@ def _report_findings(report: dict[str, Any], paragraphs: list[Paragraph]) -> lis
         tags = _dedupe([tag for tag in entry["tags"] if tag])
         if not tags:
             continue
+        finding_ids = _dedupe(entry["finding_ids"])[:8]
+        evidence: dict[str, Any] = {
+            "text": sentence.text,
+            "source": "scan_report",
+            "finding_ids": finding_ids,
+            "actionability": _dedupe(entry["actionability"])[:6],
+            "word_count": word_count(sentence.text),
+        }
+        detail = _predictability_detail(entry["predictability"], finding_ids, protected_by_finding)
+        if detail:
+            evidence["predictability"] = detail
         findings.append(
             Finding(
                 sentence_id=sentence_id,
                 paragraph_id=sentence.paragraph_id,
                 tags=tags,
                 severity=round(max(12.0, float(entry["severity"])), 3),
-                evidence={
-                    "text": sentence.text,
-                    "source": "scan_report",
-                    "finding_ids": _dedupe(entry["finding_ids"])[:8],
-                    "actionability": _dedupe(entry["actionability"])[:6],
-                    "word_count": word_count(sentence.text),
-                },
+                evidence=evidence,
             )
         )
     return findings
+
+
+def _predictability_detail(
+    predictability: dict[str, Any],
+    finding_ids: list[str],
+    protected_by_finding: dict[str, list[str]],
+) -> dict[str, Any]:
+    """Token-level predictability targets for a finding: which spans to break, which to keep.
+
+    `predictable_token_spans` / `top_predicted_tokens` come from the detect report's per-sentence
+    predictability block; `protected_spans` from the matching rewrite_edit_brief. This is the data
+    the planner/writer (Stage 2) need to know WHICH tokens to change rather than guessing.
+    """
+    spans = [str(s) for s in (predictability.get("predictable_token_spans") or []) if str(s).strip()]
+    problem_tokens = [
+        str(token.get("token"))
+        for token in (predictability.get("top_predicted_tokens") or [])
+        if isinstance(token, dict) and str(token.get("token") or "").strip()
+    ]
+    protected: list[str] = []
+    for finding_id in finding_ids:
+        protected.extend(protected_by_finding.get(finding_id, []))
+    detail: dict[str, Any] = {}
+    if spans:
+        detail["predictable_token_spans"] = spans[:12]
+    if problem_tokens:
+        detail["problem_tokens"] = _dedupe(problem_tokens)[:16]
+    if protected:
+        detail["protected_spans"] = _dedupe(protected)[:12]
+    for metric in ("score", "risk_label", "top10_ratio", "avg_surprisal"):
+        if predictability.get(metric) is not None:
+            detail[metric] = predictability.get(metric)
+    return detail
+
+
+def _protected_spans_by_finding(report: dict[str, Any]) -> dict[str, list[str]]:
+    rows: dict[str, list[str]] = {}
+    for brief in report.get("rewrite_edit_briefs") or []:
+        if not isinstance(brief, dict):
+            continue
+        finding_id = str(brief.get("finding_id") or "").strip()
+        spans = [str(s) for s in (brief.get("protected_spans") or []) if str(s).strip()]
+        if finding_id and spans:
+            rows.setdefault(finding_id, []).extend(spans)
+    return rows
 
 
 def _report_signal_tags(signal: dict[str, Any]) -> list[str]:
@@ -315,21 +391,41 @@ def _report_signal_severity(signal: dict[str, Any]) -> float:
 
 
 def _merge_findings(base: list[Finding], report_findings: list[Finding]) -> list[Finding]:
-    merged: dict[str, Finding] = {finding.sentence_id: finding for finding in base}
+    predictability_primary = _predictability_primary()
+    report_ids = {finding.sentence_id for finding in report_findings}
+    merged: dict[str, Finding] = {}
+    for finding in base:
+        # A sentence the graded detector did NOT flag is a structural-only finding. When
+        # predictability is primary, demote it so the structural heuristic can't drive targeting
+        # against the graded signal (it stays present as advisory shape evidence).
+        if predictability_primary and finding.sentence_id not in report_ids:
+            merged[finding.sentence_id] = replace(finding, severity=min(finding.severity, _ADVISORY_SEVERITY))
+        else:
+            merged[finding.sentence_id] = finding
     for finding in report_findings:
         current = merged.get(finding.sentence_id)
         if current is None:
             merged[finding.sentence_id] = finding
             continue
+        report_evidence = finding.evidence if isinstance(finding.evidence, dict) else {}
+        merged_evidence = {
+            **current.evidence,
+            "report_evidence": report_evidence,
+        }
+        # Lift the graded predictability detail to the top level so every finding (structural,
+        # report, or merged) exposes its token spans/protected spans at evidence["predictability"].
+        if report_evidence.get("predictability"):
+            merged_evidence["predictability"] = report_evidence["predictability"]
+        # Severity: when predictability is primary the graded score sets the headline (so a sentence
+        # is ranked by how predictable it actually is, not by structural shape like a comma list);
+        # otherwise keep the legacy max() behaviour.
+        severity = finding.severity if predictability_primary else max(current.severity, finding.severity)
         merged[finding.sentence_id] = Finding(
             sentence_id=current.sentence_id,
             paragraph_id=current.paragraph_id,
             tags=_dedupe([*current.tags, *finding.tags]),
-            severity=max(current.severity, finding.severity),
-            evidence={
-                **current.evidence,
-                "report_evidence": finding.evidence,
-            },
+            severity=severity,
+            evidence=merged_evidence,
         )
     return list(merged.values())
 

@@ -12,6 +12,28 @@ DEFAULT_V6_MODEL = "openai/gpt-oss-120b"
 _CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 
 
+def deterministic_mode() -> bool:
+    """Whether to pin sampling to a near-deterministic profile (measurement/eval use).
+
+    The gpt-oss writer normally samples at temperature 0.45-0.65, so a single rewrite run varies
+    by several risk points. Setting DRAFTPROOF_V6_DETERMINISTIC=1 forces temperature 0 / top_p 1
+    so a change can be measured as signal rather than sampling noise. Off (production) by default.
+    """
+    return os.environ.get("DRAFTPROOF_V6_DETERMINISTIC", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _as_deterministic(profile: dict[str, Any]) -> dict[str, Any]:
+    pinned = dict(profile)
+    pinned["temperature"] = 0.0
+    pinned["top_p"] = 1.0
+    for greedy_neutral in ("presence_penalty", "frequency_penalty"):
+        if greedy_neutral in pinned:
+            pinned[greedy_neutral] = 0
+    if "repetition_penalty" in pinned:
+        pinned["repetition_penalty"] = 1.0
+    return pinned
+
+
 def writer_model() -> str:
     return os.environ.get("DRAFTPROOF_V6_WRITER_MODEL") or DEFAULT_V6_MODEL
 
@@ -135,8 +157,10 @@ def writer_extra_body(model: str) -> dict[str, Any] | None:
 
 def planner_llm_profile(model: str) -> dict[str, Any]:
     if "gpt-oss" in str(model or "").casefold():
-        return {"max_tokens": None, "temperature": 0.2, "top_p": 0.9, "top_k": 0, "presence_penalty": 0, "frequency_penalty": 0, "repetition_penalty": 1.0}
-    return {"max_tokens": None, "temperature": 0.1, "top_p": 0.75}
+        profile = {"max_tokens": None, "temperature": 0.2, "top_p": 0.9, "top_k": 0, "presence_penalty": 0, "frequency_penalty": 0, "repetition_penalty": 1.0}
+    else:
+        profile = {"max_tokens": None, "temperature": 0.1, "top_p": 0.75}
+    return _as_deterministic(profile) if deterministic_mode() else profile
 
 
 def selector_llm_profile(model: str) -> dict[str, Any]:
@@ -148,17 +172,19 @@ def selector_llm_profile(model: str) -> dict[str, Any]:
 
 def writer_llm_profile(model: str, text: str = "") -> dict[str, Any]:
     if "gpt-oss" not in str(model or "").casefold():
-        return {"max_tokens": None, "temperature": 0.12, "top_p": 0.75}
-    source_sensitive = _source_sensitive_text(text)
-    return {
-        "max_tokens": None,
-        "temperature": 0.45 if source_sensitive else 0.65,
-        "top_p": 0.9 if source_sensitive else 0.95,
-        "top_k": 0,
-        "presence_penalty": 0,
-        "frequency_penalty": 0.1 if source_sensitive else 0.15,
-        "repetition_penalty": 1.03 if source_sensitive else 1.05,
-    }
+        profile = {"max_tokens": None, "temperature": 0.12, "top_p": 0.75}
+    else:
+        source_sensitive = _source_sensitive_text(text)
+        profile = {
+            "max_tokens": None,
+            "temperature": 0.45 if source_sensitive else 0.65,
+            "top_p": 0.9 if source_sensitive else 0.95,
+            "top_k": 0,
+            "presence_penalty": 0,
+            "frequency_penalty": 0.1 if source_sensitive else 0.15,
+            "repetition_penalty": 1.03 if source_sensitive else 1.05,
+        }
+    return _as_deterministic(profile) if deterministic_mode() else profile
 
 
 def resolve_v6_api_key(api_key: str | None) -> str | None:
