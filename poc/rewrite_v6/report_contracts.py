@@ -1,9 +1,58 @@
 from __future__ import annotations
 
+import contextlib
+from contextvars import ContextVar
 from dataclasses import replace
 from typing import Any
 
 from .plan import Plan
+
+# Per-paragraph scanner diagnosis (the report explainer's main_issue / how-to-fix / rewrite_hint),
+# bound by the production entry so the planner can plan around the concrete fix and direct the
+# writer. Keyed by paragraph_id. Empty unless bound.
+_PARAGRAPH_DIAGNOSES: ContextVar[dict[str, dict[str, Any]]] = ContextVar(
+    "v6_paragraph_diagnoses", default={}
+)
+
+
+def extract_paragraph_diagnoses(report: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Pull the report explainer's per-paragraph diagnosis (main_issue, why_flagged, recommendation,
+    rewrite_hint) keyed by paragraph_id, for the planner to act on."""
+    if not isinstance(report, dict):
+        return {}
+    explanations = report.get("paragraph_explanations")
+    rows = explanations.get("paragraphs") if isinstance(explanations, dict) else None
+    if not isinstance(rows, list):
+        return {}
+    diagnoses: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        paragraph_id = str(row.get("paragraph_id") or "").strip()
+        if not paragraph_id:
+            continue
+        diagnosis = {
+            "main_issue": row.get("main_issue"),
+            "why_flagged": row.get("why_flagged"),
+            "recommendation": row.get("recommendation"),
+            "rewrite_hint": row.get("rewrite_hint"),
+        }
+        if any(diagnosis.values()):
+            diagnoses[paragraph_id] = diagnosis
+    return diagnoses
+
+
+@contextlib.contextmanager
+def paragraph_diagnoses_context(diagnoses: dict[str, dict[str, Any]] | None):
+    token = _PARAGRAPH_DIAGNOSES.set(diagnoses or {})
+    try:
+        yield
+    finally:
+        _PARAGRAPH_DIAGNOSES.reset(token)
+
+
+def paragraph_diagnosis(paragraph_id: str) -> dict[str, Any] | None:
+    return _PARAGRAPH_DIAGNOSES.get().get(str(paragraph_id or ""))
 
 
 def extract_report_signal_contracts(report: dict[str, Any] | None) -> list[dict[str, Any]]:

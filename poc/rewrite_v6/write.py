@@ -4,7 +4,56 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any, Protocol
 
 from .coverage_guard import coverage_ratio, missing_required_source_terms
-from .integrity_guard import candidate_integrity_blockers
+import contextlib
+import os
+from contextvars import ContextVar
+
+from .integrity_guard import ADVISORY_BLOCKERS, candidate_integrity_blockers
+from .structural_metrics import structural_improvement
+
+
+def predictability_mode() -> bool:
+    """Whether the predictability/structural-lever rewrite path is active (Stages 1-3).
+    Shares the Stage 1 switch so the whole path turns on together. Off by default."""
+    return os.environ.get("DRAFTPROOF_V6_SCANNER_PREDICTABILITY", "").strip().lower() in {"1", "true", "yes", "on"}
+
+# Stage 3: the graded predictable token-spans for the paragraph being rewritten. The pipeline binds
+# them (only in predictability mode) so the acceptance gate can judge "movement" by whether the
+# candidate BROKE the flagged predictable wording -- the signal that matches the graded detector --
+# instead of the structural V6 proxy that bounces fluent rewrites. Empty/unset => legacy behaviour.
+_FLAGGED_SPANS: ContextVar[tuple[str, ...]] = ContextVar("v6_flagged_predictable_spans", default=())
+
+# Fraction of the paragraph's flagged spans a candidate must break to count as predictability
+# movement. >=0.5 means the writer substantially rephrased the flagged wording, not a token tweak.
+_SPAN_MOVEMENT_FRACTION = 0.5
+
+
+@contextlib.contextmanager
+def predictable_spans_context(spans):
+    token = _FLAGGED_SPANS.set(tuple(str(span) for span in (spans or []) if str(span).strip()))
+    try:
+        yield
+    finally:
+        _FLAGGED_SPANS.reset(token)
+
+
+def _spans_broken_fraction(candidate_text: str) -> float | None:
+    """Fraction of the bound flagged spans absent from the candidate, or None if none are bound.
+
+    A span is 'broken' when its normalised text no longer appears verbatim in the candidate -- i.e.
+    the writer rephrased that predictable wording.
+    """
+    spans = _FLAGGED_SPANS.get()
+    if not spans:
+        return None
+    candidate = " ".join(str(candidate_text or "").split()).casefold()
+    broken = sum(1 for span in spans if " ".join(str(span).split()).casefold() not in candidate)
+    return broken / len(spans)
+
+
+def _predictability_movement(candidate_text: str) -> bool:
+    fraction = _spans_broken_fraction(candidate_text)
+    return fraction is not None and fraction >= _SPAN_MOVEMENT_FRACTION
 from .json_io import parse_json
 from .paragraph_architecture import apply_architecture_split_text, architecture_split_contract
 from .plan import Plan
@@ -20,6 +69,7 @@ from .scan import scan_text
 from .source_quality import source_quality_blockers
 from .text import Paragraph, source_terms, split_paragraphs, word_count
 from .writer_brief_prompt import build_writer_brief_prompt
+from .writer_lean_prompt import build_lean_finding_prompt
 
 _SENTENCE_EXPANSION_REVIEW_RATIO = 1.5
 _SHORT_SENTENCE_CHAIN_RATIO = 0.35
@@ -65,18 +115,35 @@ def write_variants(paragraph: Paragraph, plan: Plan, *, client: ChatClient) -> l
     return _dedupe_variants(variants)
 
 
+def _lean_writer_enabled() -> bool:
+    return __import__("os").environ.get("DRAFTPROOF_V6_LEAN_WRITER", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_LEAN_WRITER_SYSTEM = (
+    "Return valid JSON only. You rewrite one paragraph to clear its scanner findings while "
+    "preserving the submitted meaning. Resolve every item in findings_to_resolve, keep every "
+    "must_keep_term, and obey meaning_rules. Lower predictability through concrete, specific "
+    "wording -- not by splitting into many short sentences -- and deliberately vary sentence "
+    "length per rewrite_guidance. Return every requested variant id as a complete paragraph."
+)
+
+_BRIEF_WRITER_SYSTEM = (
+    "Return valid JSON only. Rewrite from the curated writer brief, not from hidden assumptions. "
+    "Preserve submitted meaning, coverage beats, and list coverage requirements. Write complete grammatical sentences. "
+    "Follow writer_execution_plan in order and obey route_sequence_guards. "
+    "Use proxy or neighbor context only when the brief says it resolves a local anchor gap. "
+    "For packed source lists, cover items in the source-list beat; never append leftover list items to a later challenge or consequence sentence. "
+    "Return every requested variant id. Reject your own variant if it has fragments, repeated and-chains, "
+    "keyword dumps, malformed connectors, premature assessment consequences, duplicated consequences, or generic added claims."
+)
+
+
 def _request_variants(paragraph: Paragraph, plan: Plan, client: ChatClient) -> list[Variant]:
+    lean = _lean_writer_enabled()
+    prompt = build_lean_finding_prompt(paragraph, plan) if lean else build_writer_brief_prompt(paragraph, plan)
     response = client.chat(
-        build_writer_brief_prompt(paragraph, plan),
-        system=(
-            "Return valid JSON only. Rewrite from the curated writer brief, not from hidden assumptions. "
-            "Preserve submitted meaning, coverage beats, and list coverage requirements. Write complete grammatical sentences. "
-            "Follow writer_execution_plan in order and obey route_sequence_guards. "
-            "Use proxy or neighbor context only when the brief says it resolves a local anchor gap. "
-            "For packed source lists, cover items in the source-list beat; never append leftover list items to a later challenge or consequence sentence. "
-            "Return every requested variant id. Reject your own variant if it has fragments, repeated and-chains, "
-            "keyword dumps, malformed connectors, premature assessment consequences, duplicated consequences, or generic added claims."
-        ),
+        prompt,
+        system=_LEAN_WRITER_SYSTEM if lean else _BRIEF_WRITER_SYSTEM,
         temperature=0.12,
         top_p=0.75,
         max_tokens=None,
@@ -192,7 +259,12 @@ def choose_variant(variants: list[Variant], paragraph: Paragraph) -> Variant | N
 
 
 def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragraph: Paragraph) -> bool:
-    if _hard_integrity_blockers(candidate.text):
+    # Tier the integrity check to match the selector gate: only FATAL integrity blockers
+    # (meaning/validity defects) prove the candidate cannot ship. The advisory grammar
+    # heuristics — chiefly the false-positive-prone malformed_verb_complement, often
+    # self-inflicted by deterministic prose-repair — must not silently re-reject a
+    # genuinely risk-reducing candidate here after the selector already demoted them.
+    if any(blocker not in ADVISORY_BLOCKERS for blocker in _hard_integrity_blockers(candidate.text)):
         return False
     if source_quality_blockers(candidate.text, paragraph):
         return False
@@ -204,6 +276,13 @@ def _has_meaningful_movement(candidate: Variant, source_variant: Variant, paragr
     risk_drop = before.scores["mean_sentence_shape_risk"] - after.scores["mean_sentence_shape_risk"]
     if word_count(candidate.text) < max(8, int(word_count(paragraph.text) * 0.35)):
         return False
+    # Stage 3 (validated lever): meaning/quality guards above already passed. The signals that
+    # actually move the graded score are STRUCTURAL -- varied sentence openings, cut hedging, varied
+    # length (probe: doc 71->43 came from these, not token swaps). A candidate that is meaningfully
+    # more human-structured than the source has moved, even when the V6 finding/risk deltas below
+    # say otherwise (they over-penalise the fluent, varied rewrites that lower the real score).
+    if predictability_mode() and structural_improvement(source_variant.text, candidate.text):
+        return True
     if finding_drop >= 2 and risk_drop >= -2.0:
         return True
     if finding_drop >= 1 and risk_drop >= 0.0:

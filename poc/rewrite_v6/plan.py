@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import re
 from typing import Any
 
@@ -18,6 +18,10 @@ class PlanAction:
     method: str
     preserve_terms: list[str]
     do_not: list[str]
+    # Graded predictability detail (Stage 1): the exact token spans to break and the spans to keep.
+    # Empty unless the scan finding carried predictability evidence.
+    predictable_spans: list[str] = field(default_factory=list)
+    protected_spans: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -57,6 +61,13 @@ def build_plan(
     for sentence in paragraph.sentences:
         finding = findings.get(sentence.id)
         tags = _planning_tags(finding.tags if finding else [], sentence.text)
+        predictability = (
+            finding.evidence.get("predictability")
+            if finding and isinstance(finding.evidence, dict) and isinstance(finding.evidence.get("predictability"), dict)
+            else {}
+        )
+        predictable_spans = [str(span) for span in (predictability.get("predictable_token_spans") or []) if str(span).strip()]
+        protected_spans = [str(span) for span in (predictability.get("protected_spans") or []) if str(span).strip()]
         actions.append(
             PlanAction(
                 sentence_id=sentence.id,
@@ -66,6 +77,8 @@ def build_plan(
                 method=_method(tags),
                 preserve_terms=_source_contract_terms(sentence.text, term_limit=24),
                 do_not=_do_not(tags),
+                predictable_spans=predictable_spans,
+                protected_spans=protected_spans,
             )
         )
     author_proxy_context = _author_proxy_context(scan, paragraph)

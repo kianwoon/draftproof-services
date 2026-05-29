@@ -122,34 +122,58 @@ def provider_from_env(role: str, model: str) -> dict[str, Any] | None:
     return provider or None
 
 
-def planner_extra_body(model: str) -> dict[str, Any] | None:
+# gpt-oss reasoning depth per role. The complex restructure-while-preserving-meaning task the
+# writer/planner do benefits from deeper reasoning; the selector only picks an id, so it stays low.
+# Cerebras (OpenAI-compatible) takes a TOP-LEVEL `reasoning_effort`; OpenRouter takes nested
+# `reasoning.effort`. Both were previously OFF on Cerebras (returned None + gateway force-disable).
+# reasoning_effort is OPT-IN on Cerebras (env only) -- gpt-oss spends its token budget on reasoning,
+# which truncates output unless max_completion_tokens is raised accordingly, so it must be enabled
+# deliberately. OpenRouter keeps its prior medium default. Set DRAFTPROOF_V6_<ROLE>_REASONING_EFFORT.
+_OPENROUTER_REASONING_EFFORT = {"planner": "medium", "writer": "medium", "selector": "low"}
+
+
+def _reasoning_effort(role: str, default: str) -> str | None:
+    raw = os.environ.get(f"DRAFTPROOF_V6_{role.upper()}_REASONING_EFFORT")
+    value = (raw if raw is not None else default).strip().lower()
+    return value if value in {"low", "medium", "high"} else None
+
+
+def _gpt_oss_reasoning_extra(role: str) -> dict[str, Any] | None:
     if using_cerebras_direct():
-        return None
+        effort = _reasoning_effort(role, "")  # opt-in: only when env explicitly sets it
+        return {"reasoning_effort": effort} if effort else None
+    effort = _reasoning_effort(role, _OPENROUTER_REASONING_EFFORT.get(role, "medium"))
+    return {"reasoning": {"effort": effort, "exclude": True}, "include_reasoning": False} if effort else None
+
+
+def planner_extra_body(model: str) -> dict[str, Any] | None:
     normalized = str(model or "").casefold()
     if "gpt-oss" in normalized:
-        return {"reasoning": {"effort": "medium", "exclude": True}, "include_reasoning": False}
+        return _gpt_oss_reasoning_extra("planner")
+    if using_cerebras_direct():
+        return None
     if "thinking" in normalized:
         return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 128}, "include_reasoning": False}
     return {"reasoning": {"enabled": False}, "include_reasoning": False}
 
 
 def selector_extra_body(model: str) -> dict[str, Any] | None:
-    if using_cerebras_direct():
-        return None
     normalized = str(model or "").casefold()
     if "gpt-oss" in normalized:
-        return {"reasoning": {"effort": "low", "exclude": True}, "include_reasoning": False}
+        return _gpt_oss_reasoning_extra("selector")
+    if using_cerebras_direct():
+        return None
     if "thinking" in normalized:
         return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 32}, "include_reasoning": False}
     return {"reasoning": {"enabled": False}, "include_reasoning": False}
 
 
 def writer_extra_body(model: str) -> dict[str, Any] | None:
-    if using_cerebras_direct():
-        return None
     normalized = str(model or "").casefold()
     if "gpt-oss" in normalized:
-        return {"reasoning": {"effort": "medium", "exclude": True}, "include_reasoning": False}
+        return _gpt_oss_reasoning_extra("writer")
+    if using_cerebras_direct():
+        return None
     if "thinking" not in normalized:
         return None
     return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 64}, "include_reasoning": False}

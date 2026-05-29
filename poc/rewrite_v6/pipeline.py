@@ -48,7 +48,11 @@ from .paragraph_layout import restore_original_paragraph_layout
 from .planner_llm import run_planner_llm
 from .quality_repair import QualityRepairResult, _grammer_extra_body, _grammer_model, run_quality_repair_once
 from .selector_diagnostics import selection_diagnostics
-from .write import Variant, _annotate_selected_variant, write_variants
+from .write import Variant, _annotate_selected_variant, predictable_spans_context, write_variants
+
+
+def _predictability_mode() -> bool:
+    return os.environ.get("DRAFTPROOF_V6_SCANNER_PREDICTABILITY", "").strip().lower() in {"1", "true", "yes", "on"}
 from .writer_feedback import needs_writer_feedback_retry, plan_with_writer_feedback
 
 
@@ -130,12 +134,35 @@ def run_v6_rewrite(
     plan = apply_report_signal_contracts(plan, report_signal_contracts)
     target_findings = findings_for_paragraph(scan, paragraph.id)
     window = select_repair_window(paragraph, target_findings)
-    if window is not None:
-        return _run_v6_window_rewrite(
+    # Stage 3: bind this paragraph's flagged predictable spans (predictability mode only) so the
+    # acceptance gate judges movement by whether the candidate broke that wording.
+    flagged_spans: list[str] = []
+    if _predictability_mode():
+        for action in plan.actions:
+            flagged_spans.extend(action.predictable_spans or [])
+    with predictable_spans_context(flagged_spans):
+        if window is not None:
+            return _run_v6_window_rewrite(
+                scan=scan,
+                paragraph=paragraph,
+                parent_plan=plan,
+                window=window,
+                planner_client=planner_client,
+                writer_client=writer_client,
+                selector_client=selector_client,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                progress_callback=progress_callback,
+                progress_percent=progress_percent,
+                progress_end_percent=progress_end_percent,
+                cancellation_check=cancellation_check,
+                report_signal_contracts=report_signal_contracts,
+            )
+        return _run_v6_full_paragraph_rewrite(
             scan=scan,
             paragraph=paragraph,
-            parent_plan=plan,
-            window=window,
+            plan=plan,
             planner_client=planner_client,
             writer_client=writer_client,
             selector_client=selector_client,
@@ -146,23 +173,7 @@ def run_v6_rewrite(
             progress_percent=progress_percent,
             progress_end_percent=progress_end_percent,
             cancellation_check=cancellation_check,
-            report_signal_contracts=report_signal_contracts,
         )
-    return _run_v6_full_paragraph_rewrite(
-        scan=scan,
-        paragraph=paragraph,
-        plan=plan,
-        planner_client=planner_client,
-        writer_client=writer_client,
-        selector_client=selector_client,
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        progress_callback=progress_callback,
-        progress_percent=progress_percent,
-        progress_end_percent=progress_end_percent,
-        cancellation_check=cancellation_check,
-    )
 
 
 def run_v6_rewrite_with_residuals(
@@ -671,7 +682,7 @@ def _select_variant(
     eligible_ids = {
         str(row.get("variant_id"))
         for row in diagnostics
-        if row.get("accepted_by_selector") and not row.get("blockers")
+        if row.get("accepted_by_selector") and not row.get("fatal_blockers")
     }
     if not eligible_ids:
         return source, _mark_selector_decision(diagnostics, source.id if source else None, "no_valid_generated_variants_source_preserved", "")
@@ -687,7 +698,7 @@ def _select_variant(
     if selected is None or selected.source == "source_preserved" or selected.id not in eligible_ids:
         return source, _mark_selector_decision(diagnostics, source.id if source else None, "invalid_selector_source_preserved", rationale)
     selected_row = next((row for row in diagnostics if row.get("variant_id") == selected.id), {})
-    hard_blockers = set(selected_row.get("blockers") or [])
+    hard_blockers = set(selected_row.get("fatal_blockers") or [])
     if hard_blockers or not selected_row.get("accepted_by_selector"):
         return source, _mark_selector_decision(diagnostics, source.id if source else None, f"blocked_selector_source_preserved:{','.join(sorted(hard_blockers)) or 'not_accepted'}", rationale)
     return _annotate_selected_variant(selected, paragraph), _mark_selector_decision(diagnostics, selected.id, "selector_llm", rationale)

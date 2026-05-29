@@ -4,12 +4,13 @@ import re
 from typing import Any
 
 from .coverage_guard import has_required_source_beat_loss, missing_required_source_beat_groups, missing_required_source_term_details
-from .integrity_guard import candidate_integrity_blockers, candidate_integrity_warnings
+from .integrity_guard import ADVISORY_BLOCKERS, _split_blocker_tiers, candidate_integrity_blockers, candidate_integrity_warnings
 from .prose_quality import has_fragment_or_trace_sentences
 from .prose_quality import catalogue_sentence_chain, robotic_sentence_chain
 from .scan import scan_text
 from .source_quality import scope_marker_reused_as_content, source_quality_blockers, unsupported_semantic_padding
 from .text import Paragraph, source_terms
+from .structural_metrics import structural_improvement
 from .write import (
     Variant,
     _candidate_contract_violation,
@@ -21,9 +22,23 @@ from .write import (
     _repeats_sentence_intent,
     _replaces_final_source_beat_with_conclusion,
     _route_quality_penalty,
+    predictability_mode,
 )
 
 
+# Guard tiering — ADVISORY_BLOCKERS and _split_blocker_tiers now live in integrity_guard so
+# write._has_meaningful_movement can share the same tiering without a circular import. They are
+# imported above and re-exported here for backward compatibility with existing readers.
+#
+# FATAL blockers change meaning/validity or prove the candidate did not improve — a
+# candidate carrying one must never ship, so the selector rejects it. ADVISORY blockers
+# are heuristic/cosmetic shape flags that are false-positive prone (and several are
+# self-inflicted by deterministic prose-repair); they are recorded for review but must not
+# force a source_preserved fallback on their own.
+#
+# Only the flags listed here are advisory. Everything else — including every meaning guard
+# (polarity/scope inversion, beat loss, unsupported padding, copy-blocked phrase) and every
+# unenumerated/new blocker — defaults to FATAL so meaning safety is preserved by default.
 def selection_diagnostics(
     variants: list[Variant],
     paragraph: Paragraph,
@@ -63,6 +78,7 @@ def _variant_diagnostics(
     source_beat_gaps = missing_required_source_beat_groups(variant.text, paragraph)
     integrity_blockers = candidate_integrity_blockers(variant.text)
     blockers = _blockers(variant, source, paragraph, finding_drop, risk_drop, missing_terms, integrity_blockers, copy_blockers)
+    fatal_blockers, advisory_blockers = _split_blocker_tiers(blockers)
     quality_warnings = _quality_warnings(variant, paragraph)
     return {
         "variant_id": variant.id,
@@ -76,6 +92,8 @@ def _variant_diagnostics(
         "candidate_text": variant.text[:1200],
         "candidate_finding_details": _finding_details(candidate_scan),
         "blockers": blockers,
+        "fatal_blockers": fatal_blockers,
+        "advisory_blockers": advisory_blockers,
         "quality_warnings": quality_warnings,
         "missing_required_terms": missing_terms[:20],
         "source_beat_coverage_gaps": source_beat_gaps[:6],
@@ -84,12 +102,13 @@ def _variant_diagnostics(
             variant=variant,
             paragraph=paragraph,
             blockers=blockers,
+            fatal_blockers=fatal_blockers,
             missing_terms=missing_terms,
             integrity_blockers=integrity_blockers,
             finding_drop=finding_drop,
             risk_drop=risk_drop,
         ),
-        "accepted_by_selector": not blockers and source is not None and _has_meaningful_movement(variant, source, paragraph),
+        "accepted_by_selector": not fatal_blockers and source is not None and _has_meaningful_movement(variant, source, paragraph),
     }
 
 
@@ -107,6 +126,8 @@ def _generation_failure_diagnostic(source: Variant, paragraph: Paragraph) -> dic
         "candidate_text": "",
         "candidate_finding_details": [],
         "blockers": ["writer_generation_failed"],
+        "fatal_blockers": ["writer_generation_failed"],
+        "advisory_blockers": [],
         "quality_warnings": ["writer_generation_failed_review_required"],
         "missing_required_terms": [],
         "integrity_blockers": [],
@@ -125,6 +146,7 @@ def _handoff_validation(
     variant: Variant,
     paragraph: Paragraph,
     blockers: list[str],
+    fatal_blockers: list[str],
     missing_terms: list[str],
     integrity_blockers: list[str],
     finding_drop: float,
@@ -135,8 +157,8 @@ def _handoff_validation(
     missing_scope = [marker for marker in source_markers if not _scope_marker_preserved(marker, candidate_text)]
     return {
         "planner_to_writer_contract": "validated" if source_markers else "not_required",
-        "writer_to_selector_candidate": "passed" if not blockers else "failed",
-        "selector_gate": "eligible" if not blockers else "blocked",
+        "writer_to_selector_candidate": "passed" if not fatal_blockers else "failed",
+        "selector_gate": "eligible" if not fatal_blockers else "blocked",
         "source_scope_markers": source_markers,
         "missing_scope_markers": missing_scope,
         "scanner_movement": {
@@ -178,9 +200,18 @@ def _blockers(
 ) -> list[str]:
     blockers: list[str] = []
     blockers.extend(candidate_integrity_blockers(variant.text))
-    if source is not None and finding_drop < 1 and risk_drop < 5.0:
+    # Stage 3 (validated lever): a candidate that is meaningfully more human-structured than the
+    # source (varied openings, cut hedging, varied length) has moved toward the graded score -- do
+    # not bounce it on the V6 structural-proxy flags, which over-penalise exactly those rewrites.
+    # Meaning/integrity blockers stay fatal.
+    predictability_moved = (
+        predictability_mode()
+        and source is not None
+        and structural_improvement(source.text, variant.text)
+    )
+    if source is not None and not predictability_moved and finding_drop < 1 and risk_drop < 5.0:
         blockers.append("insufficient_scanner_movement")
-    if source is not None and finding_drop == 0 and risk_drop < 0:
+    if source is not None and not predictability_moved and finding_drop == 0 and risk_drop < 0:
         blockers.append("sentence_shape_risk_regression")
     if missing_terms and not _missing_terms_are_reviewable(finding_drop, risk_drop, integrity_blockers):
         blockers.append("required_source_terms_missing")
@@ -207,7 +238,13 @@ def _missing_terms_are_reviewable(
     risk_drop: float,
     integrity_blockers: list[str],
 ) -> bool:
-    if integrity_blockers:
+    # Advisory grammar heuristics (e.g. the false-positive-prone malformed_verb_complement)
+    # must NOT disable the missing-terms escape — that was the double-block that forced
+    # risk-reducing candidates into source_preserved. Genuine content loss is still caught by
+    # the FATAL required_source_beat_missing guard, and required_source_terms_missing is itself
+    # advisory now, so this gate is primarily diagnostic. Any FATAL integrity blocker present
+    # still rejects the candidate independently of this function.
+    if any(blocker not in ADVISORY_BLOCKERS for blocker in integrity_blockers):
         return False
     if finding_drop >= 2 and risk_drop >= -2.0:
         return True

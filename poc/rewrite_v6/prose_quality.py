@@ -3,13 +3,16 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+from .integrity_guard import _malformed_verb_complement
+from .text import source_terms
+
 
 def repair_generated_prose(text: str, source_text: str = "") -> str:
     value = _repair_gerund_evidence_fragments(text)
     value = _repair_malformed_not_always_order(value)
     value = _repair_missing_verb_after_not_always(value)
     value = _repair_repeated_auxiliary_negation(value)
-    value = _merge_source_term_fragments(value)
+    value = _apply_non_regressive(value, _merge_source_term_fragments, source_text=source_text)
     value = _restore_not_only_polarity(value, source_text)
     value = _repair_quoted_concept_literalization(value)
     value = _revoice_displayed_quality(value)
@@ -21,7 +24,38 @@ def repair_generated_prose(text: str, source_text: str = "") -> str:
     value = _repair_pronoun_simplification(value)
     value = _remove_meta_reference_padding(value)
     value = _repair_parenthetical_citation_wrappers(value, source_text)
-    return drop_redundant_adjacent_sentence_intent(value)
+    return _apply_non_regressive(value, drop_redundant_adjacent_sentence_intent, source_text=source_text)
+
+
+def _apply_non_regressive(before: str, fn: Callable[[str], str], *, source_text: str) -> str:
+    """Run a deterministic repair, but discard its result if it regresses the candidate.
+
+    Two destructive steps (``_merge_source_term_fragments`` and
+    ``drop_redundant_adjacent_sentence_intent``) concatenate or delete sentences with no
+    grammatical validation. In practice they sometimes *manufacture* the malformed
+    ``[ed-word] [ing-word]`` shape that the integrity guard then flags, or drop a required
+    source term — turning a good LLM candidate into a rejected one. This wrapper keeps the
+    transform only when it neither introduces a new malformation nor loses a source term that
+    was present before the step.
+    """
+    after = fn(before)
+    if after == before:
+        return after
+    if _malformed_verb_complement(after) and not _malformed_verb_complement(before):
+        return before
+    if source_text and _drops_required_source_term(before, after, source_text):
+        return before
+    return after
+
+
+def _drops_required_source_term(before: str, after: str, source_text: str) -> bool:
+    after_lower = after.casefold()
+    before_lower = before.casefold()
+    for term in source_terms(source_text):
+        key = term.casefold()
+        if key in before_lower and key not in after_lower:
+            return True
+    return False
 
 
 def _repair_quoted_concept_literalization(text: str) -> str:

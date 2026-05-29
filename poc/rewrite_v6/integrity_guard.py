@@ -3,6 +3,35 @@ from __future__ import annotations
 import re
 
 
+# Guard tiering (shared by selector_diagnostics and write).
+#
+# FATAL blockers change meaning/validity or prove the candidate did not improve — a candidate
+# carrying one must never ship, so every selector gate rejects it. ADVISORY blockers are
+# heuristic/cosmetic (the false-positive-prone grammar checks, plus minor term/intent/chain
+# heuristics) — record them for author review but do not force a source_preserved fallback.
+# Everything not enumerated here (polarity/scope inversion, beat loss, unsupported padding,
+# copy-blocked phrase, insufficient_scanner_movement, and every new/unenumerated blocker)
+# defaults to FATAL so meaning safety is preserved by default.
+ADVISORY_BLOCKERS: frozenset[str] = frozenset({
+    "malformed_verb_complement",
+    "required_source_terms_missing",
+    "repeated_sentence_intent",
+    "mechanical_sentence_chain",
+    "fragment_or_trace_sentence",
+})
+
+
+def _split_blocker_tiers(blockers: list[str]) -> tuple[list[str], list[str]]:
+    fatal = [blocker for blocker in blockers if blocker not in ADVISORY_BLOCKERS]
+    advisory = [blocker for blocker in blockers if blocker in ADVISORY_BLOCKERS]
+    return fatal, advisory
+
+
+def fatal_integrity_blockers(text: str) -> list[str]:
+    """Integrity blockers that must reject a candidate, excluding the advisory heuristics."""
+    return [blocker for blocker in candidate_integrity_blockers(text) if blocker not in ADVISORY_BLOCKERS]
+
+
 def candidate_integrity_blockers(text: str) -> list[str]:
     blockers: list[str] = []
     visible = _normalize(text)

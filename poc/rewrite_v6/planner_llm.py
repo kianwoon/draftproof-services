@@ -10,6 +10,7 @@ from .finding_pattern import classify_finding_pattern
 from .json_io import parse_json
 from .paragraph_planner import build_paragraph_planner_brief
 from .plan import Plan
+from .report_contracts import paragraph_diagnosis as _paragraph_diagnosis
 from .prose_repair_rules import (
     consolidated_prose_repair_rules,
     planner_agent_profile,
@@ -67,10 +68,31 @@ def _request_planner_decision(prompt: str, client: PlannerClient) -> dict[str, A
     return _planner_decision(parse_json(raw))
 
 
+def _planner_paragraph_diagnosis(paragraph_id: str) -> dict[str, Any] | None:
+    """The report explainer's plain-language diagnosis for this paragraph, packaged for the planner
+    with a directive to plan the route around the named fix."""
+    diagnosis = _paragraph_diagnosis(paragraph_id)
+    if not diagnosis:
+        return None
+    return {
+        "main_issue": diagnosis.get("main_issue"),
+        "why_flagged": diagnosis.get("why_flagged"),
+        "recommendation": diagnosis.get("recommendation"),
+        "rewrite_hint": diagnosis.get("rewrite_hint"),
+        "planner_use": (
+            "Scanner's plain-language diagnosis of this paragraph's main AI-risk problem. Plan the "
+            "route to fix main_issue and recommendation: turn them into flow_plan beats and "
+            "route_rewrite_guidance the writer can execute. Use rewrite_hint only as the shape of "
+            "the fix, never as wording to copy."
+        ),
+    }
+
+
 def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Finding]) -> str:
     dense_plan = plan.paragraph_strategy.get("dense_paragraph_plan", {}) if isinstance(plan.paragraph_strategy, dict) else {}
     grounding = plan.paragraph_strategy.get("author_proxy_grounding", {}) if isinstance(plan.paragraph_strategy, dict) else {}
     finding_pattern = classify_finding_pattern(plan)
+    _planner_diagnosis = _planner_paragraph_diagnosis(paragraph.id)
     payload = {
         "task": "v6_curated_writer_brief_plan",
         "planner_role": "Decide the paragraph route and discard irrelevant or harmful context before the writer sees it.",
@@ -89,6 +111,7 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             }
             for finding in findings
         ],
+        **({"paragraph_diagnosis": _planner_diagnosis} if _planner_diagnosis else {}),
         "source_sentence_contracts": [
             {
                 "sentence_id": action.sentence_id,
@@ -222,6 +245,7 @@ def build_planner_prompt(paragraph: Paragraph, plan: Plan, findings: list[Findin
             ],
         },
         "rules": [
+            "If paragraph_diagnosis is present, treat its main_issue and recommendation as the primary fix to plan around; build flow_plan beats and route_rewrite_guidance that make the writer achieve it.",
             "Do not write replacement paragraph prose or final sentence shapes.",
             "Return only the fields in output_contract.required_keys.",
             "Use only claims, actors, objects, and relations present in the selected paragraph unless author_proxy_request is required.",

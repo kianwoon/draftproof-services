@@ -20,7 +20,8 @@ except ModuleNotFoundError:
     from poc.rewrite_v3.pipeline import _scan_report
 
 from .pipeline import _planner_model, _writer_model, run_v6_rewrite_all
-from .report_contracts import extract_report_signal_contracts
+from .direct_rewrite import direct_rewrite_enabled, run_direct_rewrite_all
+from .report_contracts import extract_paragraph_diagnoses, extract_report_signal_contracts, paragraph_diagnoses_context
 from .scan import scan_text_with_report
 
 
@@ -58,19 +59,33 @@ def run_rewrite_pipeline_v6(
     max_passes = _v6_max_passes()
     source_scan = scan_text_with_report(original_text, effective_detect_json)
 
-    document = run_v6_rewrite_all(
-        original_text,
-        max_passes=max_passes,
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        progress_callback=progress,
-        cancellation_check=raise_if_canceled,
-        runtime_budget_seconds=_v6_runtime_budget_seconds(started),
-        min_llm_request_seconds=_v6_min_llm_request_seconds(),
-        report_signal_contracts=extract_report_signal_contracts(effective_detect_json),
-        source_scan=source_scan,
-    )
+    # Bind the report explainer's per-paragraph diagnosis so the rewrite acts on the concrete named
+    # fix. The lean direct path (flag) uses it straight; the legacy planner path translates it.
+    with paragraph_diagnoses_context(extract_paragraph_diagnoses(effective_detect_json)):
+        if direct_rewrite_enabled():
+            document = run_direct_rewrite_all(
+                original_text,
+                source_scan=source_scan,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                progress_callback=progress,
+                cancellation_check=raise_if_canceled,
+            )
+        else:
+            document = run_v6_rewrite_all(
+                original_text,
+                max_passes=max_passes,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                progress_callback=progress,
+                cancellation_check=raise_if_canceled,
+                runtime_budget_seconds=_v6_runtime_budget_seconds(started),
+                min_llm_request_seconds=_v6_min_llm_request_seconds(),
+                report_signal_contracts=extract_report_signal_contracts(effective_detect_json),
+                source_scan=source_scan,
+            )
     stage_timings: list[dict[str, Any]] = []
 
     def timed_stage(name: str, percent: int, message: str, fn):
