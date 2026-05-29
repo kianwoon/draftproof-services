@@ -43,14 +43,15 @@ def direct_rewrite_enabled() -> bool:
 
 
 _SYSTEM = (
-    "You produce a SUGGESTED rewrite of a flagged paragraph for a student to review and edit. The "
-    "student sees your changes in a before/after diff, so adding new content to fix the problem is "
+    "You produce a SUGGESTED rewrite of a flagged paragraph for the author to review and edit. The "
+    "author sees your changes in a before/after diff, so adding new content to fix the problem is "
     "expected and encouraged -- that is the mitigation. Your goal: lower AI-detection risk by making "
-    "the writing specific, concrete, and human. Where the paragraph is generic or lacks a concrete "
-    "anchor, ADD one: a concrete scenario, actor, setting, or illustrative example that grounds the "
-    "claim. Preserve the student's actual ARGUMENT and meaning -- do NOT flip a balanced 'not only X "
-    "but also Y' into 'Y over X', and do not drop the student's existing ideas. List what you added "
-    "in author_review_items so the student can confirm or replace it. "
+    "the writing specific, concrete, and human, while staying in the same subject, register, and tone "
+    "as the source. Where the paragraph is generic or lacks a concrete anchor, ADD one: a concrete "
+    "scenario, actor, setting, or illustrative example that grounds the claim and fits the document's "
+    "topic. Preserve the author's actual ARGUMENT and meaning -- do NOT flip a balanced 'not only X "
+    "but also Y' into 'Y over X', and do not drop the author's existing ideas. List what you added "
+    "in author_review_items so the author can confirm or replace it. "
     'Return JSON only: {"rewrite": "...", "author_review_items": [{"added": "...", "why": "..."}]}.'
 )
 
@@ -87,8 +88,9 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "Vary sentence length HARD: include at least one short sentence (4-8 words) and at least "
             "one long one (20-35 words). Start each sentence differently; never repeat an opening "
             "frame. Cut hedging (may, might, can, could, should, often, generally) and generic filler.",
-            "Preserve the student's actual argument and meaning. Do not shift a balanced 'not only X "
-            "but also Y' into 'Y over X', and do not drop their existing ideas.",
+            "Preserve the author's actual argument and meaning, and stay in the same subject and "
+            "register as the source. Do not shift a balanced 'not only X but also Y' into 'Y over X', "
+            "and do not drop their existing ideas.",
             "Respect length_budget: stay close to the source length. Add a NEW sentence only when a "
             "claim genuinely cannot be grounded by rewriting an existing one. List anything you add "
             "in author_review_items.",
