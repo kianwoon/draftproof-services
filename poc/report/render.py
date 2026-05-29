@@ -14,7 +14,7 @@ from typing import Optional
 from detect.transformation import TRANSFORMATION_SIGNAL_METADATA, transformation_signal_metadata
 from detect.turnitin_like import turnitin_like_ai_profile
 
-from .report import DraftReport, Tier, TIER_ICON, report_to_dict
+from .report import DraftReport, Tier, TIER_ICON, report_to_dict, determine_actionability
 from .paragraph_explainer import explanations_by_paragraph
 
 # ── Scanner & Signal legend codes ──────────────────────────────────────
@@ -876,6 +876,188 @@ _SEVERITY_LABEL = {
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+_SIGNAL_CATEGORY_LABELS = {
+    "authorship_risk": "Authorship Risk",
+    "ai_likelihood": "AI Likelihood",
+    "predictability": "AI Likelihood",
+    "genericity": "Generic Phrasing",
+    "writing_quality": "Writing Quality",
+    "similarity": "Similarity",
+    "citation": "Citation",
+    "structure": "Structure",
+    "rewrite": "Rewrite",
+}
+
+_SIGNAL_CATEGORY_PRIORITY = [
+    "authorship_risk", "ai_likelihood", "predictability",
+    "genericity", "similarity", "citation", "writing_quality", "structure",
+]
+
+_ACTIONABILITY_LABELS = {
+    "review_only": "Review Only",
+    "auto_fixable": "Auto-Fixable",
+    "manual_required": "Manual Required",
+    "citation_repair": "Citation Repair",
+    "optional_structure_review": "Optional Review",
+    "no_action": "No Action",
+}
+
+_ACTIONABILITY_SORT = [
+    "manual_required", "auto_fixable", "citation_repair",
+    "optional_structure_review", "review_only", "no_action",
+]
+
+_TIER_SCORE_DEFAULTS = {"critical": 90, "high": 72, "medium": 52, "low": 28}
+
+
+def _sig_cat_label(cat: str) -> str:
+    return _SIGNAL_CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
+
+
+def _group_signal_strength(group_findings: list) -> int:
+    """Best available score as integer percent for a paragraph group."""
+    scores = []
+    for f in group_findings:
+        meta = f.metadata or {}
+        for key in ("score", "predictability_risk", "ai_likelihood"):
+            v = meta.get(key)
+            if isinstance(v, (int, float)) and 0 < v <= 1:
+                scores.append(float(v))
+                break
+    if scores:
+        return int(max(scores) * 100)
+    return _TIER_SCORE_DEFAULTS.get(group_findings[0].tier.value if group_findings else "medium", 50)
+
+
+def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str:
+    """Return an HTML string for one paragraph finding card."""
+    group_findings = group["findings"]
+    sentence_ids = group.get("sentence_ids") or []
+
+    # Section identifier
+    if len(sentence_ids) > 1:
+        sid_label = f"{sentence_ids[0]}&ndash;{sentence_ids[-1]}"
+    elif sentence_ids:
+        sid_label = sentence_ids[0]
+    else:
+        sid_label = group.get("paragraph_id") or f"#{finding_num}"
+
+    # Primary signal category (highest priority among findings)
+    all_cats = list(dict.fromkeys(
+        f.signal_category or f.category or "predictability"
+        for f in group_findings
+    ))
+    sorted_cats = sorted(
+        all_cats,
+        key=lambda c: _SIGNAL_CATEGORY_PRIORITY.index(c) if c in _SIGNAL_CATEGORY_PRIORITY else 99,
+    )
+    primary_cat = sorted_cats[0] if sorted_cats else "predictability"
+    other_cats = sorted_cats[1:]
+
+    # Signal strength
+    signal_pct = _group_signal_strength(group_findings)
+
+    # Tier / actionability chips
+    tier_label = tier_level.value.upper()
+    all_actions = [determine_actionability(f, group_findings) for f in group_findings]
+    primary_action = min(
+        all_actions,
+        key=lambda a: _ACTIONABILITY_SORT.index(a) if a in _ACTIONABILITY_SORT else 99,
+    )
+    action_label = _ACTIONABILITY_LABELS.get(primary_action, primary_action.replace("_", " ").title())
+
+    # Explanation fields
+    expl = group.get("explanation") or {}
+    if isinstance(expl, dict):
+        summary = expl.get("reader_summary") or expl.get("summary") or ""
+        main_issue = expl.get("main_issue") or ""
+        why_flagged = expl.get("why_flagged") or []
+        recommendation = expl.get("recommendation") or ""
+        rewrite_hint = expl.get("rewrite_hint") or ""
+    else:
+        summary = main_issue = recommendation = rewrite_hint = ""
+        why_flagged = []
+
+    # Fallbacks when explainer hasn't run
+    if not summary:
+        summary = "; ".join(
+            _translate_detail(f.detail) for f in group_findings if f.detail
+        )[:300]
+    if not recommendation:
+        recommendation = "; ".join(
+            _translate_recommendation(f.recommendation)
+            for f in group_findings if f.recommendation
+        )[:300]
+
+    def _e(text: str) -> str:
+        from html import escape
+        return escape(str(text or ""))
+
+    # Build chip HTML
+    chips_html = (
+        f'<span class="dp-tag-chip">{len(group_findings)} Finding{"s" if len(group_findings) != 1 else ""} In Paragraph</span>'
+        f'<span class="dp-tag-chip">{_e(tier_label)} Priority</span>'
+        f'<span class="dp-tag-chip">{_e(action_label)}</span>'
+    )
+
+    also_html = ""
+    if other_cats:
+        also_labels = " ".join(
+            f'<span class="dp-also-chip">{_e(_sig_cat_label(c))}</span>'
+            for c in other_cats
+        )
+        also_html = f"""
+    <div class="dp-also-row">
+      <span class="dp-also-label">ALSO DETECTED</span>
+      {also_labels}
+    </div>"""
+
+    def _subsection(label: str, content: str) -> str:
+        if not content:
+            return ""
+        return f"""
+    <div class="dp-finding-subsection">
+      <div class="dp-finding-subsection-label">{label}</div>
+      <p>{_e(content)}</p>
+    </div>"""
+
+    # "What the reader may notice" as bullet list
+    bullets_html = ""
+    if isinstance(why_flagged, list) and why_flagged:
+        items = "".join(f"<li>{_e(item)}</li>" for item in why_flagged if item)
+        bullets_html = f"""
+    <div class="dp-finding-subsection">
+      <div class="dp-finding-subsection-label">WHAT THE READER MAY NOTICE</div>
+      <ul class="dp-finding-bullets">{items}</ul>
+    </div>"""
+
+    return f"""<div class="dp-signal-card dp-finding-card">
+  <div class="dp-finding-card-header">
+    <div>
+      <span class="dp-finding-section-id">{_e(sid_label)}</span>
+      <div class="dp-finding-type">{_e(_sig_cat_label(primary_cat))}</div>
+    </div>
+    <div class="dp-finding-count">#{finding_num}</div>
+  </div>
+  <div class="dp-finding-body">
+    {(f'<p class="dp-finding-description">{_e(summary)}</p>') if summary else ""}
+    <div class="dp-finding-strength-row">
+      <span class="dp-finding-strength-label">SIGNAL STRENGTH</span>
+      <span class="dp-finding-strength-pct">{signal_pct}%</span>
+    </div>
+    <div class="dp-signal-strength-bar">
+      <div class="dp-signal-strength-fill" style="width:{signal_pct}%"></div>
+    </div>
+    <div class="dp-tag-row">{chips_html}</div>
+    {also_html}
+    {_subsection("MAIN ISSUE TO FIX", main_issue)}
+    {bullets_html}
+    {_subsection("HOW TO IMPROVE THIS PARAGRAPH", recommendation)}
+    {_subsection("REWRITE HINT", rewrite_hint)}
+  </div>
+</div>"""
+
+
 def _risk_gauge(value: float, width: int = 20) -> str:
     """Render a text risk gauge bar: `[========............] 0.42`"""
     filled = round(value * width)
@@ -1218,60 +1400,13 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"### {label} ({paragraph_count} {group_label}, {len(findings)} {finding_label})")
         lines.append("")
 
-        lines.append("| # | Src | Sig | Findings | Paragraph | Suggestions |")
-        lines.append("|--:|:---:|:---:|----------|-----------|-------------|")
-
         for group in paragraph_groups:
             finding_num += 1
-            group_findings = group["findings"]
-            for f in group_findings:
+            for f in group["findings"]:
                 used_scanners.add(f.scanner)
                 used_signals.add(f.title)
-            scanners = sorted({_SCANNER_CODES.get(f.scanner, f.scanner) for f in group_findings})
-            signals = sorted({_SIGNAL_CODES.get(f.title, f.title) for f in group_findings})
-            details = [
-                _translate_detail(f.detail)
-                for f in group_findings
-                if _translate_detail(f.detail)
-            ]
-            actions = [
-                _translate_recommendation(f.recommendation)
-                for f in group_findings
-                if _translate_recommendation(f.recommendation)
-            ]
-            sentence_ids = group.get("sentence_ids") or []
-            paragraph_label = group.get("paragraph_id") or "Document"
-            sentence_suffix = f" ({sentence_ids[0]}-{sentence_ids[-1]})" if len(sentence_ids) > 1 else (f" ({sentence_ids[0]})" if sentence_ids else "")
-            paragraph = f"**{paragraph_label}{sentence_suffix}:** {_truncate(_table_cell(group.get('text')), 260)}"
-            explanation = group.get("explanation") or {}
-            summary = (
-                explanation.get("reader_summary")
-                or explanation.get("summary")
-            ) if isinstance(explanation, dict) else ""
-            main_issue = explanation.get("main_issue") if isinstance(explanation, dict) else ""
-            why_flagged = explanation.get("why_flagged") if isinstance(explanation, dict) else []
-            recommendation = explanation.get("recommendation") if isinstance(explanation, dict) else ""
-            rewrite_hint = explanation.get("rewrite_hint") if isinstance(explanation, dict) else ""
-            if summary:
-                detail_items = [
-                    summary,
-                    *([f"Main fix: {main_issue}"] if main_issue else []),
-                    *([str(item) for item in why_flagged[:2]] if isinstance(why_flagged, list) else []),
-                ]
-            else:
-                detail_items = details[:4]
-            action_items = [
-                item for item in (recommendation, rewrite_hint) if item
-            ] or actions[:4]
-            detail = "<br>".join(f"- {_table_cell(item)}" for item in detail_items if item) or "—"
-            action = "<br>".join(f"- {_table_cell(item)}" for item in action_items if item) or "—"
-            lines.append(
-                f"| {finding_num} | {_table_cell(', '.join(scanners))} | {_table_cell(', '.join(signals))} | "
-                f"{detail} | {paragraph} | {action} |"
-            )
-        lines.append("")
-
-        # Metadata excluded from reports — available in JSON output
+            lines.append(_render_finding_card(finding_num, tier_level, group))
+            lines.append("")
 
     if not has_any:
         lines.append("*No findings detected. Text appears clean.*")
