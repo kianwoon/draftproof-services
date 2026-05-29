@@ -1,0 +1,154 @@
+/* ============================================================================
+   DraftProof — Colors & Type
+   Canonical design tokens, lifted verbatim from the production React frontend
+   (draftproof-frontend/src/styles/site-master.css :root) and the brand logo.
+
+   Load order:  <link rel="stylesheet" href="colors_and_type.css">
+   Fonts:       Inter + Noto Sans SC via Google Fonts (UI). Georgia (system
+                serif) for reading/document content. ui-monospace for the
+                code-texture motif. See the @import below.
+   ============================================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+SC:wght@400;500;600;700;800;900&display=swap');
+
+:root {
+  /* ---- Brand / ink — deep navy -------------------------------------------- */
+  --navy-950: #0D1B2A;   /* primary ink, dark surfaces, theme-color */
+  --navy-900: #1A2E42;
+  --navy-800: #243B53;
+
+  /* ---- Primary — teal-green ----------------------------------------------- */
+  --green:       #3BA876;   /* primary action / brand accent */
+  --green-dark:  #0F6E56;   /* hover / pressed primary, deep accent text */
+  --mint:        #E1F5EE;   /* tint surface, pills, soft fills */
+
+  /* Logo greens are brighter than the UI green — used only in the mark */
+  --logo-fill:   #0B2A25;   /* shield body */
+  --logo-edge:   #22C55E;   /* shield outline */
+  --logo-check:  #34D399;   /* checkmark */
+
+  /* ---- Neutrals & surfaces ------------------------------------------------ */
+  --ink:          #0D1B2A;
+  --muted:        #7A8694;            /* secondary text */
+  --line:         rgba(13, 27, 42, .10);
+  --surface:      #ffffff;            /* cards */
+  --surface-soft: #F4F2EE;            /* warm paper — the app background */
+  --surface-mint: #E1F5EE;            /* mint panel */
+
+  /* ---- Semantic accents (status tiers) ------------------------------------ */
+  --gold: #C9973A;   /* medium tier / caution */
+  --red:  #E24B4A;   /* high risk / negative */
+  /* green (above) = low risk / positive */
+
+  /* ---- Tier helpers (report classification: clean/acceptable/concerning/strong) */
+  --tier-low:    var(--green);   /* clean / acceptable */
+  --tier-medium: var(--gold);    /* concerning */
+  --tier-high:   var(--red);     /* strong risk */
+
+  /* ---- Elevation & shape -------------------------------------------------- */
+  --shadow-sm: 0 8px 22px rgba(13, 27, 42, 0.07);
+  --shadow-md: 0 18px 46px rgba(13, 27, 42, 0.12);
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 16px;
+
+  /* ---- Layout & motion ---------------------------------------------------- */
+  --header-h: 76px;
+  --max-w: 1200px;
+  --ease: cubic-bezier(.22, 1, .36, 1);   /* the house easing — used everywhere */
+
+  /* ---- Type families ------------------------------------------------------ */
+  --font-ui:   Inter, "Noto Sans SC", ui-sans-serif, system-ui, -apple-system,
+               BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-read: Georgia, "Times New Roman", serif;   /* the user's writing / docs */
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; /* code texture */
+
+  /* ---- Base type scale (clamped, matches production) ---------------------- */
+  --h1-size: clamp(2.25rem, 4.8vw, 3.6rem);   --h1-lh: 1.15;
+  --h2-size: clamp(1.9rem, 3.2vw, 2.5rem);    --h2-lh: 1.25;
+  --h3-size: 1rem;                            --h3-lh: 1.4;
+  --body-size: 1rem;                          --body-lh: 1.7;
+  --eyebrow-size: 12px;                       /* uppercase, +.8px tracking */
+  --small-size: .84rem;
+}
+
+/* ============================================================================
+   SEMANTIC ELEMENT STYLES
+   Apply these by using the element or the matching class.
+   ============================================================================ */
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--surface-soft);
+  font-family: var(--font-ui);
+  font-size: var(--body-size);
+  line-height: var(--body-lh);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, .h1 {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--h1-size);
+  line-height: var(--h1-lh);
+  letter-spacing: 0;
+  color: var(--navy-950);
+  margin: 0 0 1.25rem;
+}
+
+h2, .h2 {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--h2-size);
+  line-height: var(--h2-lh);
+  color: var(--navy-950);
+  margin: 0 0 1rem;
+}
+
+h3, .h3 {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--h3-size);
+  line-height: var(--h3-lh);
+  color: var(--navy-900);
+  margin: 0 0 .5rem;
+}
+
+p, .body {
+  font-family: var(--font-ui);
+  font-size: var(--body-size);
+  line-height: var(--body-lh);
+  color: var(--muted);
+  margin: 0 0 1rem;
+}
+
+/* Eyebrow — the recurring uppercase kicker above headings */
+.eyebrow {
+  font-size: var(--eyebrow-size);
+  font-weight: 500;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+/* Reading type — the user's essay / report body / rewrite diff.
+   This is the deliberate second voice: serif for human-authored prose. */
+.reading, .doc-text {
+  font-family: var(--font-read);
+  font-size: 1rem;
+  line-height: 1.82;
+  color: #172033;
+}
+
+/* Code-texture string (decorative, dark panels only) */
+.mono {
+  font-family: var(--font-mono);
+  font-weight: 650;
+  letter-spacing: .08em;
+}
+
+/* Links */
+a { color: inherit; text-decoration: none; }

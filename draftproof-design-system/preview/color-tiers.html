@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; }
+  body { background: var(--surface-soft); padding: 24px 30px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .tier { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 16px; }
+  .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; margin-right: 8px; vertical-align: middle; }
+  .lvl { font-size: 1.05rem; font-weight: 600; }
+  .bar { display: flex; gap: 3px; margin-top: 12px; }
+  .bar i { width: 22px; height: 5px; border-radius: 2px; }
+  .nm { font-size: 11px; color: var(--muted); margin-top: 10px; }
+  .hx { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="tier">
+      <div class="lvl" style="color:#3BA876"><span class="dot" style="background:#3BA876"></span>Low</div>
+      <div class="bar"><i style="background:#3BA876"></i><i style="background:#3BA876"></i><i style="background:rgba(58,168,118,.2)"></i><i style="background:rgba(58,168,118,.2)"></i><i style="background:rgba(58,168,118,.2)"></i></div>
+      <div class="nm">clean / acceptable &nbsp;·&nbsp; <span class="hx">#3BA876</span></div>
+    </div>
+    <div class="tier">
+      <div class="lvl" style="color:#C9973A"><span class="dot" style="background:#C9973A"></span>Medium</div>
+      <div class="bar"><i style="background:#C9973A"></i><i style="background:#C9973A"></i><i style="background:#C9973A"></i><i style="background:rgba(201,151,58,.2)"></i><i style="background:rgba(201,151,58,.2)"></i></div>
+      <div class="nm">concerning &nbsp;·&nbsp; <span class="hx">#C9973A</span></div>
+    </div>
+    <div class="tier">
+      <div class="lvl" style="color:#E24B4A"><span class="dot" style="background:#E24B4A"></span>High</div>
+      <div class="bar"><i style="background:#E24B4A"></i><i style="background:#E24B4A"></i><i style="background:#E24B4A"></i><i style="background:#E24B4A"></i><i style="background:rgba(226,75,74,.2)"></i></div>
+      <div class="nm">strong risk &nbsp;·&nbsp; <span class="hx">#E24B4A</span></div>
+    </div>
+  </div>
+</body>
+</html>

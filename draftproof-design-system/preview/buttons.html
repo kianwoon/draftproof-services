@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; }
+  body { background: var(--surface-soft); padding: 26px 30px; }
+  .btn { display: inline-flex; align-items: center; gap: .5rem; border: 0; min-height: 44px; border-radius: 8px; font-family: var(--font-ui); font-size: 14px; font-weight: 500; cursor: pointer; transition: transform .18s var(--ease), box-shadow .18s var(--ease), background .18s var(--ease); }
+  .btn-primary { background: var(--green); color: #fff; padding: 12px 24px; }
+  .btn-primary:hover { background: var(--green-dark); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+  .btn-secondary { background: transparent; color: var(--navy-950); padding: 12px 20px; border: .5px solid rgba(13,27,42,.20); }
+  .btn-secondary:hover { background: rgba(13,27,42,.04); border-color: rgba(13,27,42,.32); }
+  .btn-small { min-height: 36px; padding: 8px 14px; font-size: .84rem; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .dark { margin-top: 16px; background: #0D1B2A; border-radius: 12px; padding: 18px; display: flex; gap: 14px; }
+  .btn-ghost { background: transparent; color: rgba(255,255,255,.78); padding: 12px 20px; border: .5px solid rgba(255,255,255,.25); }
+  .btn-ghost:hover { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.35); color: #fff; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <button class="btn btn-primary">Run a pre-submission check</button>
+    <button class="btn btn-secondary">View sample report</button>
+    <button class="btn btn-primary btn-small">Start review</button>
+  </div>
+  <div class="dark">
+    <button class="btn btn-primary">Start scan</button>
+    <button class="btn btn-ghost">See how it works</button>
+  </div>
+</body>
+</html>

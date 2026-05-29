@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; }
+  body { background: var(--surface-soft); padding: 30px; display: flex; gap: 26px; align-items: center; }
+  .item { text-align: center; }
+  .box { width: 150px; height: 84px; background: #fff; border-radius: var(--radius-md); }
+  .sm { box-shadow: 0 8px 22px rgba(13,27,42,.07); }
+  .md { box-shadow: 0 18px 46px rgba(13,27,42,.12); }
+  .dk { background: rgba(255,255,255,.06); border: .5px solid rgba(255,255,255,.12); }
+  .nm { font-size: 12px; font-weight: 600; color: var(--navy-950); margin-top: 12px; }
+  .hx { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+  .darkwrap { background: #0D1B2A; border-radius: 12px; padding: 18px; }
+  .darkwrap .nm { color: #fff; }
+  .darkwrap .hx { color: rgba(255,255,255,.55); }
+</style>
+</head>
+<body>
+  <div class="item"><div class="box sm"></div><div class="nm">shadow-sm</div><div class="hx">0 8px 22px /.07</div></div>
+  <div class="item"><div class="box md"></div><div class="nm">shadow-md</div><div class="hx">0 18px 46px /.12</div></div>
+  <div class="darkwrap"><div class="item"><div class="box dk"></div><div class="nm">dark elevation</div><div class="hx">white .06 + .12 border</div></div></div>
+</body>
+</html>

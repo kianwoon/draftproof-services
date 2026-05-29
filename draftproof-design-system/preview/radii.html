@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; }
+  body { background: var(--surface-soft); padding: 26px 30px; }
+  .row { display: flex; gap: 22px; align-items: flex-end; }
+  .item { text-align: center; }
+  .box { width: 96px; height: 70px; background: #fff; border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+  .nm { font-size: 12px; font-weight: 600; color: var(--navy-950); margin-top: 10px; }
+  .hx { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+  .pill { width: 96px; height: 36px; border-radius: 20px; background: var(--mint); border: 1px solid rgba(58,168,118,.3); }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="item"><div class="box" style="border-radius:8px"></div><div class="nm">Control</div><div class="hx">8px</div></div>
+    <div class="item"><div class="box" style="border-radius:14px"></div><div class="nm">Card</div><div class="hx">14px</div></div>
+    <div class="item"><div class="box" style="border-radius:16px"></div><div class="nm">Large</div><div class="hx">16px</div></div>
+    <div class="item"><div class="pill"></div><div class="nm">Pill</div><div class="hx">20px</div></div>
+  </div>
+</body>
+</html>

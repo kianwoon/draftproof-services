@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; }
+  body { background: var(--surface-soft); padding: 26px 30px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .brand-pill, .pill { display: inline-flex; align-items: center; min-height: 26px; padding: 5px 14px; border: .5px solid rgba(58,168,118,.30); border-radius: 20px; background: rgba(58,168,118,.15); color: var(--green); font-size: 12px; font-weight: 500; }
+  .value-strip span { display: inline-flex; align-items: center; min-height: 32px; padding: 5px 14px; border: .5px solid rgba(58,168,118,.30); border-radius: 20px; background: rgba(58,168,118,.15); color: #3BA876; font-size: 12px; font-weight: 500; }
+  .lab { font-family: var(--font-mono); font-size: 10px; color: var(--muted); letter-spacing: .04em; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+  <p class="lab">BRAND PILL / STATUS PILL</p>
+  <div class="row"><span class="brand-pill">Pre-submission</span><span class="pill">Live preview</span><span class="pill">At a glance</span></div>
+  <p class="lab">VALUE STRIP — hero capability chips</p>
+  <div class="row value-strip"><span>Citation gaps</span><span>Source grounding</span><span>Predictability</span><span>Review-only signals</span></div>
+</body>
+</html>

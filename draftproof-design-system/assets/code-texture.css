@@ -1,0 +1,78 @@
+/* ============================================================================
+   DraftProof — Code Texture motif
+   The signature background: a faint, slowly drifting field of monospace strings
+   (binary + domain verbs) behind dark navy panels. Lifted from the production
+   CodeTexture component + site-master.css.
+
+   USAGE
+   -----
+   Put a .code-texture SVG as the FIRST child of a position:relative dark panel,
+   then ensure real content sits above it (z-index). Minimal markup:
+
+     <div class="dp-dark-panel">
+       <svg class="code-texture" viewBox="0 0 1440 640" preserveAspectRatio="none" aria-hidden="true">
+         <defs>
+           <linearGradient id="ctFade" x1="0" x2="1" y1="0" y2="0">
+             <stop offset="0%"  stop-color="#fff" stop-opacity="0"/>
+             <stop offset="12%" stop-color="#fff" stop-opacity=".95"/>
+             <stop offset="82%" stop-color="#fff" stop-opacity=".74"/>
+             <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+           </linearGradient>
+           <mask id="ctMask"><rect width="1440" height="320" fill="url(#ctFade)"/></mask>
+         </defs>
+         <g mask="url(#ctMask)" class="code-texture-layer">
+           <g class="code-row code-row-a"> ...<text>… lines …</text>... </g>
+           <g class="code-row code-row-b"> ...<text>… lines …</text>... </g>
+         </g>
+       </svg>
+       <div class="panel-content"> … your content … </div>
+     </div>
+
+   Recommended domain strings (mix freely):
+     source.check()  citation.match  grounded=true  claim.verify  review.only
+     0101  1100  0010  1011   evidence.fit  no_verdict  authorship.signal  fix.ready
+   ============================================================================ */
+
+.dp-dark-panel {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: #0D1B2A;          /* --navy-950 */
+  color: #fff;
+}
+.dp-dark-panel > :not(.code-texture) { position: relative; z-index: 2; }
+
+.code-texture {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: .82;
+}
+
+.code-texture-layer text {
+  fill: rgba(255, 255, 255, .34);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: .08em;
+  text-shadow: 0 0 14px rgba(255, 255, 255, .12);
+}
+.code-texture-layer .code-row-b text { fill: rgba(58, 168, 118, .58); }
+
+.code-row {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+}
+.code-row-a { animation: codeDriftLeft 28s linear infinite; }
+.code-row-b { animation: codeDriftRight 34s linear infinite; opacity: .86; }
+
+@keyframes codeDriftLeft  { from { transform: translateX(0); }      to { transform: translateX(-360px); } }
+@keyframes codeDriftRight { from { transform: translateX(-360px); } to { transform: translateX(0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .code-row-a, .code-row-b { animation: none; }
+}

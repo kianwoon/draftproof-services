@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DraftProof — Slide template</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --navy-950: #0D1B2A; --navy-900: #1A2E42; --navy-800: #243B53;
+    --green: #3BA876; --green-dark: #0F6E56; --mint: #E1F5EE;
+    --ink: #0D1B2A; --muted: #7A8694; --line: rgba(13,27,42,.10);
+    --surface: #ffffff; --paper: #F4F2EE;
+    --gold: #C9973A; --red: #E24B4A;
+    --font-ui: Inter, "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; }
+  deck-stage:not(:defined) { visibility: hidden; }
+
+  /* Each slide is 1920×1080; deck-stage absolutely-positions these sections. */
+  .slide {
+    width: 1920px; height: 1080px; overflow: hidden;
+    font-family: var(--font-ui); color: var(--ink);
+    display: flex; flex-direction: column;
+  }
+  .pad { padding: 110px 130px; flex: 1; display: flex; flex-direction: column; }
+
+  /* ---- surfaces ---- */
+  .s-navy { background: var(--navy-950); color: #fff; position: relative; isolation: isolate; }
+  .s-paper { background: var(--paper); }
+  .s-navy .eyebrow { color: rgba(255,255,255,.42); }
+  .s-navy h1, .s-navy h2 { color: #fff; }
+
+  /* ---- shared type ---- */
+  .eyebrow { font-size: 22px; font-weight: 600; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); margin: 0 0 30px; }
+  h1 { font-size: 104px; line-height: 1.04; font-weight: 600; letter-spacing: -1px; margin: 0; color: var(--navy-950); }
+  h2 { font-size: 68px; line-height: 1.1; font-weight: 600; letter-spacing: -.5px; margin: 0 0 28px; color: var(--navy-950); }
+  .lead { font-size: 34px; line-height: 1.5; color: var(--muted); max-width: 1180px; margin: 38px 0 0; }
+  .s-navy .lead { color: rgba(255,255,255,.66); }
+  .grn { color: var(--green); }
+
+  /* ---- brand lockup ---- */
+  .brand { display: flex; align-items: center; gap: 18px; }
+  .brand img { width: 60px; height: 60px; }
+  .brand span { font-size: 34px; font-weight: 600; letter-spacing: -.3px; }
+  .s-navy .brand span { color: #fff; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; }
+  .page-no { font-family: var(--font-mono); font-size: 22px; color: var(--muted); letter-spacing: .06em; }
+  .s-navy .page-no { color: rgba(255,255,255,.4); }
+
+  .pill { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 22px; border-radius: 22px;
+    border: 1px solid rgba(58,168,118,.35); background: rgba(58,168,118,.15); color: var(--green);
+    font-size: 22px; font-weight: 500; width: fit-content; }
+
+  .spacer { flex: 1; }
+
+  /* ---- code texture (dark slides) ---- */
+  .ctex { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, rgba(0,0,0,.78) 82%, transparent);
+            mask-image: linear-gradient(90deg, transparent, #000 14%, rgba(0,0,0,.78) 82%, transparent); }
+  .ctex .row { position: absolute; white-space: nowrap; font-family: var(--font-mono); font-size: 30px; font-weight: 650; letter-spacing: .08em; }
+  .ctex .a { color: rgba(255,255,255,.30); animation: driftL 28s linear infinite; }
+  .ctex .b { color: rgba(58,168,118,.5); animation: driftR 34s linear infinite; }
+  @keyframes driftL { from { transform: translateX(0); } to { transform: translateX(-360px); } }
+  @keyframes driftR { from { transform: translateX(-360px); } to { transform: translateX(0); } }
+  @media (prefers-reduced-motion: reduce) { .ctex .a, .ctex .b { animation: none; } }
+
+  /* ---- statement slide ---- */
+  .statement { font-size: 92px; line-height: 1.12; font-weight: 600; letter-spacing: -1px; max-width: 1500px; color: #fff; }
+  .statement .grn { color: var(--green); }
+
+  /* ---- comparison ---- */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 30px; flex: 1; }
+  .col { border-radius: 20px; padding: 52px; display: flex; flex-direction: column; }
+  .col.old { background: #fff; border: 1px solid var(--line); }
+  .col.new { background: var(--navy-950); color: #fff; }
+  .col h3 { font-size: 30px; font-weight: 600; margin: 0 0 8px; letter-spacing: .2px; }
+  .col.old h3 { color: var(--navy-900); }
+  .col .tag { font-size: 20px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 34px; }
+  .col.old .tag { color: var(--muted); }
+  .col.new .tag { color: rgba(255,255,255,.42); }
+  .col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 26px; }
+  .col li { display: flex; gap: 18px; align-items: flex-start; font-size: 28px; line-height: 1.42; }
+  .col.old li { color: #5a6573; }
+  .col.new li { color: rgba(255,255,255,.82); }
+  .mk { flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 20px; font-weight: 700; margin-top: 2px; }
+  .mk.x { background: rgba(226,75,74,.14); color: var(--red); }
+  .mk.c { background: rgba(58,168,118,.18); color: var(--green); }
+  .col.new .mk.c { background: rgba(58,168,118,.22); color: #4cc78f; }
+
+  /* ---- report metrics ---- */
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; margin-top: 20px; }
+  .metric { background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 40px; min-height: 280px; display: flex; flex-direction: column; box-shadow: 0 18px 46px rgba(13,27,42,.06); }
+  .metric .k { font-size: 22px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin-bottom: 18px; }
+  .metric .v { font-size: 54px; font-weight: 600; line-height: 1; letter-spacing: -1px; }
+  .metric .d { font-size: 24px; color: var(--muted); margin-top: auto; line-height: 1.4; }
+  .v.low { color: var(--green); } .v.med { color: var(--gold); } .v.ink { color: var(--navy-950); }
+  .bars { display: flex; gap: 6px; margin-top: 20px; }
+  .bars i { height: 8px; flex: 1; border-radius: 4px; background: currentColor; opacity: .22; }
+  .bars i.on { opacity: 1; }
+
+  .disclaimer { font-size: 22px; line-height: 1.5; color: rgba(255,255,255,.5); max-width: 1100px; margin-top: 40px; }
+  .cta-row { display: flex; gap: 20px; margin-top: 44px; }
+  .btn { display: inline-flex; align-items: center; min-height: 64px; padding: 0 36px; border-radius: 12px; font-size: 26px; font-weight: 600; }
+  .btn-grn { background: var(--green); color: #fff; }
+  .btn-ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); }
+</style>
+</head>
+<body>
+<deck-stage width="1920" height="1080">
+
+  <!-- 1 · TITLE -->
+  <section class="slide s-navy" data-label="Title">
+    <div class="ctex">
+      <div class="row a" style="top:160px;left:-120px;">0101 source.check() 1100 citation.match 0010 grounded=true 1011 claim.verify 1001 source:linked</div>
+      <div class="row b" style="top:300px;left:-200px;">grounded=true 0110 citation.match 1011 claim.verify 0010 source.integrity 0001 review.signal</div>
+      <div class="row a" style="top:760px;left:-160px;">source.grounded 0011 citation.trace 1101 evidence.linked 0110 no_verdict 0101 fix.ready</div>
+      <div class="row b" style="top:900px;left:-240px;">authorship.signal 0101 no_verdict 1110 actionable=true 0010 source.check() 1001 citation.gap</div>
+    </div>
+    <div class="pad">
+      <div class="topbar">
+        <div class="brand"><img src="assets/logo-shield.svg" alt="" /><span>DraftProof</span></div>
+        <div class="page-no">01</div>
+      </div>
+      <div class="spacer"></div>
+      <p class="eyebrow">Writing integrity reviews</p>
+      <h1>Before you submit,<br />prove your work is <span class="grn">grounded.</span></h1>
+      <p class="lead">A pre-submission review that finds citation gaps, weak grounding, similarity risk, and AI-like writing — then turns them into a plan.</p>
+      <div class="spacer"></div>
+      <p class="page-no">draftproof.app</p>
+    </div>
+  </section>
+
+  <!-- 2 · STATEMENT -->
+  <section class="slide s-navy" data-label="Statement">
+    <div class="ctex">
+      <div class="row a" style="top:220px;left:-120px;">claim.verify 1001 source:linked 0110 citation.add 1010 review.only 0011 evidence.fit 1110</div>
+      <div class="row b" style="top:840px;left:-220px;">citation.gap 0101 source.check() 1110 no_ai_verdict 1001 source.map 0110 citation.fix 0010</div>
+    </div>
+    <div class="pad">
+      <div class="topbar">
+        <div class="brand"><img src="assets/logo-shield.svg" alt="" /><span>DraftProof</span></div>
+        <div class="page-no">02</div>
+      </div>
+      <div class="spacer"></div>
+      <p class="statement">Most writing tools judge the final text.<br /><span class="grn">DraftProof reviews the evidence behind it.</span></p>
+      <p class="lead">Not an AI detector. Not a plagiarism verdict. A review you can act on.</p>
+      <div class="spacer"></div>
+    </div>
+  </section>
+
+  <!-- 3 · COMPARISON -->
+  <section class="slide s-paper" data-label="Comparison">
+    <div class="pad">
+      <div class="topbar">
+        <div class="brand"><img src="assets/logo-shield.svg" alt="" /><span>DraftProof</span></div>
+        <div class="page-no">03</div>
+      </div>
+      <p class="eyebrow" style="margin-top:48px;">Review engine, not verdict machine</p>
+      <h2>DraftProof does not chase zero findings.</h2>
+      <div class="compare">
+        <div class="col old">
+          <p class="tag">Traditional checker</p>
+          <ul>
+            <li><span class="mk x">✕</span><span>Returns a single score</span></li>
+            <li><span class="mk x">✕</span><span>Flags similarity without context</span></li>
+            <li><span class="mk x">✕</span><span>Pushes blanket rewriting</span></li>
+          </ul>
+        </div>
+        <div class="col new">
+          <p class="tag">DraftProof</p>
+          <ul>
+            <li><span class="mk c">✓</span><span>Gives action categories you can work through</span></li>
+            <li><span class="mk c">✓</span><span>Checks citation and source context</span></li>
+            <li><span class="mk c">✓</span><span>Separates repair, review-only, and no action</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 · REPORT METRICS -->
+  <section class="slide s-paper" data-label="Report">
+    <div class="pad">
+      <div class="topbar">
+        <div class="brand"><img src="assets/logo-shield.svg" alt="" /><span>DraftProof</span></div>
+        <div class="page-no">04</div>
+      </div>
+      <p class="eyebrow" style="margin-top:48px;">Sample report</p>
+      <h2>One scan. A clear review plan.</h2>
+      <div class="metrics">
+        <div class="metric">
+          <div class="k">Review tier</div>
+          <div class="v med">Medium</div>
+          <div style="color:var(--gold);" class="bars"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
+          <div class="d">Fixable before submission</div>
+        </div>
+        <div class="metric">
+          <div class="k">AI-style signal</div>
+          <div class="v low">Low · 18%</div>
+          <div style="color:var(--green);" class="bars"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
+          <div class="d">Calibrated after human anchors</div>
+        </div>
+        <div class="metric">
+          <div class="k">Citation gaps</div>
+          <div class="v ink">2 found</div>
+          <div class="d">1 high-severity, 1 medium</div>
+        </div>
+        <div class="metric">
+          <div class="k">Primary fix</div>
+          <div class="v low">1 citation</div>
+          <div class="d">Clears the only high-severity finding</div>
+        </div>
+      </div>
+      <p class="lead" style="font-size:28px;">The report separates citation repair from review-only signals — so you fix the right thing, not everything.</p>
+    </div>
+  </section>
+
+  <!-- 5 · CLOSING -->
+  <section class="slide s-navy" data-label="Closing">
+    <div class="ctex">
+      <div class="row a" style="top:200px;left:-120px;">source.check() 0111 claim.supported 1010 citation.gap 0001 grounded=true 1001 review.layer</div>
+      <div class="row b" style="top:780px;left:-220px;">review.only 1101 trace.source 0101 evidence.fit 1000 source.integrity 0011 cite.linked 1010</div>
+    </div>
+    <div class="pad">
+      <div class="topbar">
+        <div class="brand"><img src="assets/logo-shield.svg" alt="" /><span>DraftProof</span></div>
+        <div class="page-no">05</div>
+      </div>
+      <div class="spacer"></div>
+      <span class="pill">Before Turnitin, review what your instructor may question</span>
+      <h1 style="margin-top:34px;">Submit stronger work.<br /><span class="grn">Not just cleaner text.</span></h1>
+      <div class="cta-row">
+        <span class="btn btn-grn">Review my essay</span>
+        <span class="btn btn-ghost">View sample report</span>
+      </div>
+      <p class="disclaimer">DraftProof provides writing integrity signals and review guidance. It does not determine misconduct, plagiarism, or AI authorship.</p>
+      <div class="spacer"></div>
+    </div>
+  </section>
+
+</deck-stage>
+<script src="deck-stage.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; }
+  body { background: var(--surface-soft); padding: 24px 30px; }
+  .scan-label { display: block; font-size: .92rem; font-weight: 600; color: var(--navy-950); margin-bottom: 4px; }
+  .scan-label span { display: block; font-size: .8rem; font-weight: 400; color: var(--muted); margin-top: 2px; }
+  .ta { width: 100%; min-height: 96px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; color: #172033; font-family: var(--font-read); font-size: 1rem; line-height: 1.7; resize: none; box-sizing: border-box; transition: border-color .15s; }
+  .ta:focus { outline: none; border-color: var(--green); }
+  .meta { display: flex; justify-content: space-between; margin-top: 10px; font-size: .82rem; color: var(--muted); }
+  .meta strong { color: var(--green-dark); font-weight: 600; }
+</style>
+</head>
+<body>
+  <label class="scan-label">Document text<span>Paste your draft — reviewed in the reading serif voice.</span></label>
+  <textarea class="ta">The printing press accelerated the spread of ideas across Europe, fundamentally altering how knowledge was produced and shared.</textarea>
+  <div class="meta"><span>21 words</span><strong>Free scan</strong></div>
+</body>
+</html>

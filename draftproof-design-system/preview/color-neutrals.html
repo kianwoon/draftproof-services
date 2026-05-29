@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; }
+  body { background: var(--surface-soft); padding: 24px 30px; }
+  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  .sw { border-radius: 10px; height: 78px; box-shadow: var(--shadow-sm); }
+  .meta { margin-top: 8px; }
+  .nm { font-size: 12px; font-weight: 600; color: var(--navy-950); }
+  .hx { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+  .note { margin-top: 14px; font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div><div class="sw" style="background:#F4F2EE;border:1px solid var(--line)"></div><div class="meta"><div class="nm">Paper (bg)</div><div class="hx">#F4F2EE</div></div></div>
+    <div><div class="sw" style="background:#ffffff;border:1px solid var(--line)"></div><div class="meta"><div class="nm">Surface</div><div class="hx">#FFFFFF</div></div></div>
+    <div><div class="sw" style="background:#7A8694"></div><div class="meta"><div class="nm">Muted text</div><div class="hx">#7A8694</div></div></div>
+    <div><div class="sw" style="background:#fff;border:1px solid var(--line);position:relative"><div style="position:absolute;inset:0;border-bottom:1px solid rgba(13,27,42,.10);top:50%"></div></div><div class="meta"><div class="nm">Hairline</div><div class="hx">ink / .10</div></div></div>
+    <div><div class="sw" style="background:#172033"></div><div class="meta"><div class="nm">Read ink</div><div class="hx">#172033</div></div></div>
+  </div>
+  <p class="note">Warm paper <strong>#F4F2EE</strong> is the app background — never pure white. Cards are white on paper.</p>
+</body>
+</html>

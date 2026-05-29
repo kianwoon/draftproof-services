@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  html, body { margin: 0; }
+  body { background: var(--surface-soft); padding: 24px 30px; }
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+  .sw { border-radius: 10px; height: 78px; display: flex; align-items: flex-end; padding: 8px; box-shadow: var(--shadow-sm); }
+  .meta { margin-top: 8px; }
+  .nm { font-size: 12px; font-weight: 600; color: var(--navy-950); }
+  .hx { font-family: var(--font-mono); font-size: 10px; color: var(--muted); letter-spacing: .02em; }
+  .lt { color: #fff; font-family: var(--font-mono); font-size: 10px; opacity: .8; }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div><div class="sw" style="background:#0D1B2A"><span class="lt">950</span></div><div class="meta"><div class="nm">Navy ink</div><div class="hx">#0D1B2A</div></div></div>
+    <div><div class="sw" style="background:#1A2E42"><span class="lt">900</span></div><div class="meta"><div class="nm">Navy 900</div><div class="hx">#1A2E42</div></div></div>
+    <div><div class="sw" style="background:#243B53"><span class="lt">800</span></div><div class="meta"><div class="nm">Navy 800</div><div class="hx">#243B53</div></div></div>
+    <div><div class="sw" style="background:#3BA876"><span class="lt">●</span></div><div class="meta"><div class="nm">Green</div><div class="hx">#3BA876</div></div></div>
+    <div><div class="sw" style="background:#0F6E56"><span class="lt">▼</span></div><div class="meta"><div class="nm">Green dark</div><div class="hx">#0F6E56</div></div></div>
+    <div><div class="sw" style="background:#E1F5EE;border:1px solid var(--line)"></div><div class="meta"><div class="nm">Mint</div><div class="hx">#E1F5EE</div></div></div>
+  </div>
+</body>
+</html>

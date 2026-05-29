@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DraftProof — Web App UI Kit</title>
+  <meta name="theme-color" content="#0D1B2A" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+SC:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="site-master.css" />
+  <style>
+    /* Production caps html/#root at height:100% (a JS-routed SPA); for this
+       static kit we let the document flow and scroll naturally. */
+    html, body { height: auto !important; min-height: 100%; overflow-x: hidden; }
+    #root { height: auto !important; }
+    .app-shell { min-height: 100vh; }
+    .app-main { padding-top: var(--header-h); }
+
+    /* Sign-in has no fixed header, so it shouldn't be pushed down by --header-h. */
+    .app-main.is-signin { padding-top: 0; }
+
+    /* Report action breakdown: lay each row as label ↔ value, and give the
+       2×2 grid clean internal hairlines (production renders these from data). */
+    .report-page .action-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 14px; min-height: 0;
+    }
+    .report-action-label { color: var(--navy-900); font-weight: 600; font-size: .92rem; }
+    .report-page .report-aside .btn-secondary { color: var(--navy-950); }
+
+    /* ── Glass treatment: sign-in left panel ─────────────────────────────
+       Lay a soft green/navy glow on the sign-in page, then float the left
+       trust panel as frosted dark glass over it — the glow + code texture
+       diffuse through the blur. Proof pills + brand pill get matching frost. */
+    .signin-shell {
+      background:
+        radial-gradient(58% 78% at 14% 22%, rgba(58, 168, 118, .18), transparent 60%),
+        radial-gradient(54% 72% at 82% 84%, rgba(36, 59, 83, .22), transparent 62%),
+        var(--surface-soft);
+    }
+    .signin-shell .signin-trust-panel {
+      background: linear-gradient(135deg, rgba(26, 46, 66, .76), rgba(13, 27, 42, .62));
+      backdrop-filter: blur(24px) saturate(140%);
+      -webkit-backdrop-filter: blur(24px) saturate(140%);
+      border: 1px solid rgba(255, 255, 255, .16);
+      box-shadow:
+        0 28px 64px rgba(5, 16, 30, .40),
+        inset 0 1px 0 rgba(255, 255, 255, .18);
+    }
+    .signin-shell .signin-proof-list span,
+    .signin-shell .signin-trust-panel .brand-pill {
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script type="text/babel" src="CodeTexture.jsx"></script>
+  <script type="text/babel" src="AppHeader.jsx"></script>
+  <script type="text/babel" src="SignInScreen.jsx"></script>
+  <script type="text/babel" src="DashboardScreen.jsx"></script>
+  <script type="text/babel" src="ScanScreen.jsx"></script>
+  <script type="text/babel" src="ReportScreen.jsx"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const EMAIL = 'jordan.lee@university.edu';
+
+    function App() {
+      const [screen, setScreen] = useState('signin'); // signin | dashboard | scan | report
+      const [balance] = useState(48);
+
+      const go = (next) => {
+        setScreen(next);
+        window.scrollTo(0, 0);
+      };
+
+      const signedIn = screen !== 'signin';
+      const label = { signin: 'Sign in', dashboard: 'Dashboard', scan: 'Scan', report: 'Report' }[screen];
+
+      return (
+        <div className="app-shell" data-screen-label={label}>
+          {signedIn && <AppHeader go={go} active={screen} balance={balance} email={EMAIL} />}
+          <main className={`app-main${screen === 'signin' ? ' is-signin' : ''}`}>
+            {screen === 'signin' && <SignInScreen go={go} />}
+            {screen === 'dashboard' && <DashboardScreen go={go} balance={balance} email={EMAIL} />}
+            {screen === 'scan' && <ScanScreen go={go} balance={balance} />}
+            {screen === 'report' && <ReportScreen go={go} />}
+          </main>
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

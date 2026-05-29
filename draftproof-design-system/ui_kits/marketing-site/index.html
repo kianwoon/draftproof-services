@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DraftProof — Marketing Site UI Kit</title>
+  <meta name="theme-color" content="#0D1B2A" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+SC:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="site-master.css" />
+  <style>
+    /* The kit renders the landing inside the normal app shell; the fixed header
+       sits above .app-main which is offset by --header-h, exactly like prod.
+       Production caps html/#root at height:100% (a JS-routed SPA scrolls fine);
+       for this static recreation we let the document flow + scroll naturally. */
+    html, body { height: auto !important; min-height: 100%; overflow-x: hidden; }
+    #root { height: auto !important; }
+    .app-shell { min-height: 100vh; }
+
+    /* Kit presentation: production collapses the landing hero to one column at
+       ≤920px, leaving an awkward cramped band from 921–1049px. We raise that
+       threshold so narrower preview panes show the real stacked layout instead
+       of a squeezed two-column. Desktop (≥1080px, incl. the 1280px DS card)
+       keeps the full two-column hero unchanged. */
+    @media (max-width: 1080px) {
+      .landing-hero-grid { grid-template-columns: 1fr; gap: 40px; }
+      .review-panel { max-width: 560px; }
+    }
+
+    /* The direct-edit layer wraps bare text in <span> wrappers; the production
+       rule `.landing-hero h1 span { color: green }` would then tint the whole
+       headline. Scope the highlight to its class so only it stays green. */
+    .landing-hero h1 span { color: inherit; }
+    .landing-hero h1 .hero-hl { color: var(--green); }
+
+    /* ── Glass treatment ─────────────────────────────────────────────────
+       Frost the floating hero panel so the drifting code texture diffuses
+       through it (real glassmorphism over the navy hero), and give its inner
+       metric tiles + primary-fix a matching translucent-glass layer. */
+    .landing-hero .review-panel {
+      background: rgba(255, 255, 255, .07);
+      backdrop-filter: blur(20px) saturate(135%);
+      -webkit-backdrop-filter: blur(20px) saturate(135%);
+      border: 1px solid rgba(255, 255, 255, .20);
+      box-shadow:
+        0 24px 60px rgba(5, 16, 30, .42),
+        inset 0 1px 0 rgba(255, 255, 255, .18);
+    }
+    .landing-hero .review-metric {
+      background: rgba(255, 255, 255, .07);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border-color: rgba(255, 255, 255, .16);
+    }
+    .landing-hero .primary-fix {
+      background: rgba(58, 168, 118, .16);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    /* Frost the brand pill + ghost buttons to match the glass language. */
+    .landing-hero .brand-pill {
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .landing-hero .btn-ghost {
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script type="text/babel" src="CodeTexture.jsx"></script>
+  <script type="text/babel" src="SiteHeader.jsx"></script>
+  <script type="text/babel" src="Hero.jsx"></script>
+  <script type="text/babel" src="SampleReportSection.jsx"></script>
+  <script type="text/babel" src="LandingSections.jsx"></script>
+
+  <script type="text/babel">
+    function App() {
+      // Marketing kit is a single scrolling landing; nav uses in-page anchors.
+      const onNav = (e) => {
+        // demo CTA: bounce to the sample report so the click feels alive
+        if (e && e.currentTarget && e.currentTarget.getAttribute('href') === '#') {
+          e.preventDefault();
+          document.getElementById('report')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      };
+      return (
+        <div className="app-shell landing-page" data-screen-label="Marketing landing">
+          <SiteHeader onNav={onNav} />
+          <main className="app-main">
+            <Hero onNav={onNav} />
+            <TrustBar />
+            <HumanWrittenSection />
+            <SampleReportSection onNav={onNav} />
+            <WhySection />
+            <EngineSection />
+            <BeliefsSection />
+            <LandingCTA onNav={onNav} />
+            <LandingFooter />
+          </main>
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
