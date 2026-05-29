@@ -1979,7 +1979,7 @@ th {
 
 .sample-preview-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
   padding: 10px;
   border-bottom: 1px solid #dbe4ea;
@@ -1990,7 +1990,7 @@ th {
   position: relative;
   overflow: hidden;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
@@ -2035,13 +2035,13 @@ th {
 }
 
 .sample-preview-tabs span {
-  font-size: .82rem;
+  font-size: .76rem;
   font-weight: 950;
 }
 
 .sample-preview-tabs em {
-  margin-top: 4px;
-  font-size: .68rem;
+  margin-top: 3px;
+  font-size: .64rem;
   font-style: normal;
   font-weight: 800;
 }
