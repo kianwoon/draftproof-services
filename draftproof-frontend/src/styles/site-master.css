@@ -5048,6 +5048,11 @@ th {
   flex: 0 0 auto;
 }
 
+.report-meta-separator {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
 .report-hero-tier {
   display: flex;
   align-items: center;

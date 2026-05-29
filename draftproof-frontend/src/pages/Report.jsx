@@ -1804,13 +1804,16 @@ export default function Report() {
             </div>
             <div className="report-hero-info">
               <div className="report-eyebrow">{t('report.eyebrow')}</div>
-              <h1>{report.document_name}</h1>
+              <h1>{t('report.documentTitle')}</h1>
               {report.created_at && (
                 <p className="report-meta">
                   <svg width="17" height="17" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <path d="M4.5 1.8v2M11.5 1.8v2M2.5 6h11M3.5 3.5h9A1.5 1.5 0 0114 5v7.5A1.5 1.5 0 0112.5 14h-9A1.5 1.5 0 012 12.5V5a1.5 1.5 0 011.5-1.5z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
                   </svg>
                   {formatDate(report.created_at, locale)}
+                  {report.word_count > 0 && (
+                    <span className="report-meta-separator"> · {t('report.words', { count: report.word_count })}</span>
+                  )}
                 </p>
               )}
             </div>
