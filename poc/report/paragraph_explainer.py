@@ -52,14 +52,22 @@ def build_paragraph_explanation_input(report_json: dict[str, Any]) -> dict[str, 
             if not paragraph_id:
                 paragraph_id = f"document_{finding.get('finding_id') or len(grouped) + 1}"
             paragraph = paragraph_by_id.get(paragraph_id, {})
+            # The exact wordings the detector found most statistically predictable (the strongest
+            # AI-likelihood signal) live on the segment, not the finding. Surfacing them lets the
+            # explainer name the specific phrases to change instead of giving generic advice.
+            sentence_phrases = _segment_predictable_phrases(segment)
             entry = grouped.setdefault(paragraph_id, {
                 "paragraph_id": paragraph_id,
                 "sentence_ids": list(paragraph.get("sentence_ids") or ([] if not sentence_id else [sentence_id])),
                 "text": paragraph.get("text") or segment.get("text") or "",
                 "findings": [],
+                "predictable_phrases": [],
             })
             if sentence_id and sentence_id not in entry["sentence_ids"]:
                 entry["sentence_ids"].append(sentence_id)
+            for phrase in sentence_phrases:
+                if phrase not in entry["predictable_phrases"]:
+                    entry["predictable_phrases"].append(phrase)
             entry["findings"].append({
                 "finding_id": finding.get("finding_id"),
                 "severity": severity,
@@ -72,6 +80,7 @@ def build_paragraph_explanation_input(report_json: dict[str, Any]) -> dict[str, 
                 "detail": finding.get("detail"),
                 "evidence": finding.get("evidence"),
                 "recommendation": finding.get("recommendation"),
+                "predictable_phrases": sentence_phrases,
             })
 
     rows = [
@@ -81,6 +90,17 @@ def build_paragraph_explanation_input(report_json: dict[str, Any]) -> dict[str, 
     ]
     rows.sort(key=lambda row: str(row.get("paragraph_id") or ""))
     return {"paragraphs": rows}
+
+
+def _segment_predictable_phrases(segment: dict[str, Any]) -> list[str]:
+    """Exact predictable token spans the detector flagged on a sentence (deduped, in order)."""
+    predictability = segment.get("predictability") if isinstance(segment.get("predictability"), dict) else {}
+    phrases: list[str] = []
+    for span in predictability.get("predictable_token_spans") or []:
+        text = " ".join(str(span or "").split())
+        if text and text not in phrases:
+            phrases.append(text)
+    return phrases
 
 
 def report_explanation_hash(explainer_input: dict[str, Any]) -> str:
@@ -199,6 +219,10 @@ def _bounded_explainer_input(explainer_input: dict[str, Any]) -> dict[str, Any]:
             "paragraph_id": row.get("paragraph_id"),
             "sentence_ids": row.get("sentence_ids") or [],
             "text": _clip(row.get("text"), max_paragraph_chars),
+            "predictable_phrases": [
+                _clip(phrase, max_finding_chars)
+                for phrase in (row.get("predictable_phrases") or [])[:12]
+            ],
             "findings": bounded_findings,
         })
     return {"paragraphs": rows}
@@ -217,6 +241,10 @@ def _prompt(payload: dict[str, Any]) -> str:
         "- If several findings say the same thing, explain the shared writing problem once.\n"
         "- Recommendation must be a concrete edit for this paragraph, not generic advice.\n"
         "- Tell the student what to change in the paragraph flow, such as adding a specific link, merging related points, or replacing a broad claim with a concrete explanation already supported by the text.\n"
+        "- Each paragraph includes predictable_phrases: the exact wordings the scanner found most statistically expected (the strongest signal). When present, ground the guidance in these specific phrases.\n"
+        "- In why_flagged, quote or closely paraphrase at least one predictable_phrase and explain in plain terms why that exact wording reads as common or expected.\n"
+        "- Recommendation and rewrite_hint must show how to replace one of those specific predictable phrases with a concrete, particular detail already supported by the paragraph — name the phrase being changed.\n"
+        "- Do not just say the wording is 'generic' or a 'standard list'; point to the actual phrase and what would make it specific.\n"
         "- Rewrite hint may show the type of sentence to add, but must not invent new facts.\n"
         "- Do not add facts, examples, citations, or course details not present in the paragraph.\n"
         "- Avoid phrases such as predictable phrasing, semantic drift, low originality, signal, detector, score, or flagged unless explaining uncertainty.\n"
