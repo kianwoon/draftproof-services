@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover
     from poc.llm.gateway import LLMConfig, LLMGateway
 
 from .coverage_guard import missing_required_source_beat_groups
+from .integrity_guard import candidate_integrity_blockers
 from .json_io import parse_json
 from .llm_config import resolve_v6_api_key, resolve_v6_base_url, resolve_v6_model, writer_extra_body, writer_llm_profile, writer_model
 from .report_contracts import paragraph_diagnosis
@@ -121,6 +122,29 @@ def _severe_beat_loss(candidate: str, paragraph: Paragraph) -> bool:
     return False
 
 
+# Clear syntactic breaks that would embarrass the user reading the draft. High-precision only:
+# excludes the false-positive-prone integrity checks (malformed_nominal_stack, malformed_verb_complement,
+# tool/nonhuman predicates) and stylistic ones (sentence_starts_with_conjunction, repeated_subject_start)
+# so the readability backstop catches genuinely broken grammar without over-rejecting good rewrites.
+_BROKEN_GRAMMAR = frozenset({
+    "malformed_subject_verb_agreement", "malformed_negation_order", "malformed_modal_do_negation",
+    "missing_verb_after_negation_scope", "split_negation_fragment", "malformed_connector_fragment",
+    "stranded_prepositional_fragment", "standalone_additive_fragment", "bare_instruction_fragment",
+    "dangling_modifier_sentence_start", "dangling_article_predicate", "dangling_terminal_and_tail",
+    "dangling_additive_tail", "dangling_consequence_tail", "malformed_serial_verb_chain",
+    "malformed_parallel_verb_tail", "malformed_parallel_connector_list", "malformed_additive_predicate",
+    "malformed_with_finite_clause", "malformed_contrast_pair", "malformed_telegraphic_predicate",
+    "demonstrative_agreement_error", "semantic_anchor_corruption", "lost_serial_punctuation",
+    "broken_citation_shape",
+})
+
+
+def _has_broken_grammar(candidate: str) -> bool:
+    """True if the rewrite has a clear syntactic break -- the draft is shown to the user, so it must
+    read cleanly. High-precision set; stylistic/false-positive-prone integrity flags are excluded."""
+    return any(blocker in _BROKEN_GRAMMAR for blocker in candidate_integrity_blockers(str(candidate or "")))
+
+
 def _is_usable(candidate: str, paragraph: Paragraph) -> bool:
     """A rewrite is usable as a shown solution unless it is empty or a stub. This is the ONLY reason
     to fall back to the original -- because there is nothing to demonstrate. Meaning/content concerns
@@ -184,16 +208,14 @@ def run_direct_rewrite_all(
             continue
         if progress_callback:
             progress_callback(min(78, 10 + int(68 * index / max(1, total))), f"Direct rewrite {paragraph.id}")
-        candidate, review_items = _rewrite_paragraph(gateway, paragraph, diagnosis, findings)
-        if not _is_usable(candidate or "", paragraph):
-            candidate, retry_items = _rewrite_paragraph(gateway, paragraph, diagnosis, findings)  # one retry for a stub
-            review_items = retry_items or review_items
-        if not _is_usable(candidate or "", paragraph):
-            # Only fall back when there is genuinely no solution to show.
+        candidate, review_items = _clean_candidate(gateway, paragraph, diagnosis, findings)
+        if candidate is None:
+            # No usable, grammatically-clean rewrite after retries -> show the clean original rather
+            # than broken grammar. (Rare; the curated grammar set is high-precision.)
             rewritten.append(paragraph.text)
-            pass_trace.append(_trace(index, paragraph.id, "source_preserved", "no_usable_rewrite", []))
+            pass_trace.append(_trace(index, paragraph.id, "source_preserved", "no_clean_rewrite", []))
             continue
-        # Always show the solution; ride concerns along as review flags for the user to check/edit.
+        # Always show the solution; ride meaning concerns along as review flags for the user to check.
         rewritten.append(candidate)
         pass_trace.append(_trace(index, paragraph.id, "direct_llm", None, review_items + _review_flags(candidate, paragraph)))
 
@@ -205,6 +227,26 @@ def run_direct_rewrite_all(
         rewritten_text=final_text,
         pass_trace=pass_trace,
     )
+
+
+def _clean_candidate(
+    gateway: LLMGateway,
+    paragraph: Paragraph,
+    diagnosis: dict[str, Any] | None,
+    findings: list[Any],
+    *,
+    attempts: int = 2,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Return the first usable, grammatically-clean rewrite within `attempts`, else (None, []).
+
+    The retry gives a one-off malformation a second chance; falling back to the clean original (vs
+    shipping broken grammar) is the safety net the user reads. Meaning concerns are NOT rejected
+    here -- they ride along as review flags."""
+    for _ in range(max(1, attempts)):
+        candidate, review_items = _rewrite_paragraph(gateway, paragraph, diagnosis, findings)
+        if _is_usable(candidate or "", paragraph) and not _has_broken_grammar(candidate or ""):
+            return candidate, review_items
+    return None, []
 
 
 def _rewrite_paragraph(
