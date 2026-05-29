@@ -73,6 +73,30 @@ def test_normalize_submitted_text_groups_short_continuation_fragments():
     )
 
 
+def test_normalize_attaches_lone_sentence_between_paragraphs_to_previous():
+    p1 = (
+        "Schools have spent decades refining a familiar model of teaching. Lessons were delivered "
+        "in person, practised through homework, and measured by exams. That routine gave teachers a "
+        "clear way to judge whether a student had actually learned the material."
+    )
+    lone = "However, that clarity is exactly what is now disappearing."
+    p2 = (
+        "Parents and employers now expect graduates to show skills a single exam cannot capture. "
+        "They want judgement, collaboration, and the ability to apply ideas under pressure. Those "
+        "qualities are far harder to grade than a memorised fact."
+    )
+
+    normalized = normalize_submitted_text(f"{p1}\n\n{lone}\n\n{p2}")
+    paragraphs = [part for part in normalized.split("\n\n") if part.strip()]
+
+    # the lone sentence is absorbed into the previous paragraph, not left as a one-sentence orphan
+    assert len(paragraphs) == 2
+    assert lone in paragraphs[0]
+    assert paragraphs[0].endswith("disappearing.")
+    # the scanner ID path reproduces the same merged paragraphs (no count-only divergence)
+    assert structured_paragraph_texts(normalized) == paragraphs
+
+
 def test_structure_preserves_explicit_paragraph_boundaries_for_short_blocks():
     text = (
         "First paragraph has one clear sentence. It stays together.\n\n"

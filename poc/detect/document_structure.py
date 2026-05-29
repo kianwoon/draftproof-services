@@ -206,10 +206,21 @@ def _semantic_blocks(text: str) -> list[str]:
 
     def flush_pending() -> None:
         nonlocal pending, pending_words
-        if pending:
-            blocks.append(" ".join(part.strip() for part in pending if part.strip()).strip())
-            pending = []
-            pending_words = 0
+        if not pending:
+            return
+        text = " ".join(part.strip() for part in pending if part.strip()).strip()
+        orphan_words = pending_words
+        pending = []
+        pending_words = 0
+        if not text:
+            return
+        # A short orphan -- e.g. a lone sentence sitting between two paragraphs -- attaches to the
+        # preceding real paragraph instead of standing alone, so the scanner and rewrite see a full
+        # paragraph rather than a one-sentence fragment. Caps still apply (see _can_absorb_orphan).
+        if blocks and _can_absorb_orphan(blocks[-1], text, orphan_words, min_words, max_words, max_sentences):
+            blocks[-1] = (blocks[-1] + " " + text).strip()
+        else:
+            blocks.append(text)
 
     for block in raw_blocks:
         block_text = str(block.get("text") or "").strip()
@@ -321,6 +332,37 @@ def _looks_like_continuation(text: str) -> bool:
             flags=re.I,
         )
     )
+
+
+def _can_absorb_orphan(
+    previous: str,
+    orphan: str,
+    orphan_words: int,
+    min_words: int,
+    max_words: int,
+    max_sentences: int,
+) -> bool:
+    """True when a short trailing orphan should merge into the previous paragraph.
+
+    Targets the lone-sentence-between-paragraphs case: a short fragment (under the paragraph-size
+    floor, at most two sentences) attaches to the preceding paragraph when that paragraph is a real,
+    substantial one -- a multi-sentence paragraph or one already past the word floor, not a heading
+    or a peer short line -- and the combined paragraph stays within the word/sentence caps. This
+    keeps a one-sentence orphan from becoming its own paragraph while leaving genuinely independent
+    short paragraphs apart.
+    """
+    if orphan_words >= min_words or len(split_sentences(orphan)) > 2:
+        return False
+    if _looks_like_heading(previous):
+        return False
+    previous_sentences = len(split_sentences(previous))
+    if previous_sentences < 3 and len(previous.split()) < min_words:
+        return False
+    if len(previous.split()) + orphan_words > max_words:
+        return False
+    if previous_sentences + len(split_sentences(orphan)) > max_sentences:
+        return False
+    return True
 
 
 def _split_pending_sentences(parts: list[str]) -> list[str]:
