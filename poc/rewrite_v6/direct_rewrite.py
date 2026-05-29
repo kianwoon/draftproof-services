@@ -30,6 +30,7 @@ from .integrity_guard import candidate_integrity_blockers
 from .json_io import parse_json
 from .llm_config import resolve_v6_api_key, resolve_v6_base_url, resolve_v6_model, writer_extra_body, writer_llm_profile, writer_model
 from .report_contracts import paragraph_diagnosis
+from .rewrite_playbook import playbook_entries
 from .scan import Scan, findings_for_paragraph, scan_text
 from .selector_diagnostics import _severe_polarity_inversion
 from .text import Paragraph
@@ -64,15 +65,19 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "rewrite_hint_for_shape_only": diagnosis.get("rewrite_hint"),
         } if diagnosis else None,
         "flagged_issue_types": finding_tags,
+        "rewrite_examples": playbook_entries(finding_tags, paragraph_text),
         "instructions": [
             "Most AI-detection risk here comes from CONTENT that is generic and unanchored, not from "
             "word choice. So the main fix is to ADD concrete grounding: where a claim is broad, attach "
             "a specific scenario, actor, setting, mechanism, or illustrative example that makes it "
             "particular. The student will review and replace these with their own real material.",
+            "rewrite_examples shows the SHAPE of each fix (before -> better). Apply the same kind of "
+            "transformation to THIS paragraph's content -- do not copy the example wording.",
             "Rewrite the WHOLE paragraph. Across EVERY sentence, replace generic or predictable "
-            "phrasing with concrete, specific wording.",
-            "Start each sentence differently; vary sentence length (mix short and long); cut hedging "
-            "such as may, might, can, could, should, often, generally.",
+            "phrasing with concrete, specific wording. Change the sentence ROUTE, not just synonyms.",
+            "Vary sentence length HARD: include at least one short sentence (4-8 words) and at least "
+            "one long one (20-35 words). Start each sentence differently; never repeat an opening "
+            "frame. Cut hedging (may, might, can, could, should, often, generally) and generic filler.",
             "Preserve the student's actual argument and meaning. Do not shift a balanced 'not only X "
             "but also Y' into 'Y over X', and do not drop their existing ideas.",
             "Where a claim is generic or unanchored, ADD a concrete grounding detail to fix it -- a "
@@ -179,8 +184,6 @@ def run_direct_rewrite_all(
     cancellation_check: Callable[[], None] | None = None,
     **_ignored: Any,
 ):
-    from .pipeline import DocumentResult  # local import: pipeline must not depend on this module
-
     scan = source_scan or scan_text(text)
     resolved_model = resolve_v6_model(model or writer_model()) or (model or writer_model())
     gateway = LLMGateway(LLMConfig(
@@ -193,6 +196,55 @@ def run_direct_rewrite_all(
         timeout=120,
         cancellation_check=cancellation_check,
     ))
+
+    # Document best-of-N: the direct path is cheap (one call/paragraph), and runs vary a few points,
+    # so generate N whole-document rewrites and keep the one the real detector scores lowest.
+    attempts = _best_of_n()
+    best_doc = None
+    best_score = float("inf")
+    for attempt in range(attempts):
+        if cancellation_check:
+            cancellation_check()
+        doc = _rewrite_document_once(scan, gateway, progress_callback, cancellation_check)
+        score = _document_ai_risk(doc.rewritten_text) if attempts > 1 else 0.0
+        if best_doc is None or score < best_score:
+            best_doc, best_score = doc, score
+    return best_doc
+
+
+def _best_of_n() -> int:
+    try:
+        value = int(os.environ.get("DRAFTPROOF_V6_DIRECT_BEST_OF_N", "2"))
+    except (TypeError, ValueError):
+        value = 2
+    return max(1, min(3, value))
+
+
+def _document_ai_risk(text: str) -> float:
+    """Real-detector AI likelihood (0-100) for a whole document; +inf if unscorable. Used to pick the
+    best of N direct rewrites -- this is the same number reported as final_risk."""
+    try:
+        try:
+            from poc.rewrite_v3.pipeline import _scan_report
+        except ImportError:
+            from rewrite_v3.pipeline import _scan_report
+        report = _scan_report(text)
+        badge = report.get("ai_risk_badge", {}) if isinstance(report.get("ai_risk_badge"), dict) else {}
+        ai = report.get("ai_score")
+        if ai is None:
+            ai = badge.get("ai_likelihood_score")
+        return float(ai) if ai is not None else float("inf")
+    except Exception:
+        return float("inf")
+
+
+def _rewrite_document_once(
+    scan: Scan,
+    gateway: LLMGateway,
+    progress_callback: Callable[[int, str], None] | None,
+    cancellation_check: Callable[[], None] | None,
+):
+    from .pipeline import DocumentResult  # local import: pipeline must not depend on this module
 
     paragraphs = list(scan.paragraphs)
     rewritten: list[str] = []
