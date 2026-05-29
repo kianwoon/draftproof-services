@@ -175,38 +175,24 @@ def _sentence_rows_for_block(source: str, block: dict[str, Any]) -> list[dict[st
 
 
 def _virtual_paragraph_groups(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Group one physical block's sentences into virtual paragraphs (the p001/s001 IDs).
+
+    This is the ID-producing path the scanner and report consume, so it MUST NOT depend on
+    ``normalize_submitted_text`` having run first. If a caller scans un-normalized text, a lumped
+    block still has to break at semantic boundaries -- not at an arbitrary sentence count -- or the
+    findings the planner acts on land on count-sliced paragraphs. The splitting logic is therefore
+    shared with the normalizer via ``_semantic_sentence_groups`` (single source of truth for where a
+    paragraph breaks). A block already within the size caps -- the normal case once normalize has run
+    -- is returned whole, so already-normalized paragraph boundaries are reproduced exactly.
+    """
     if not rows:
         return []
     max_words = _int_env("DRAFTPROOF_STRUCTURE_MAX_PARAGRAPH_WORDS", 170, minimum=60, maximum=320)
     max_sentences = _int_env("DRAFTPROOF_STRUCTURE_MAX_PARAGRAPH_SENTENCES", 8, minimum=3, maximum=16)
-    min_words = _int_env("DRAFTPROOF_STRUCTURE_MIN_PARAGRAPH_WORDS", 70, minimum=20, maximum=max_words)
     total_words = sum(int(row.get("word_count") or 0) for row in rows)
     if len(rows) <= max_sentences and total_words <= max_words:
         return [rows]
-
-    groups: list[list[dict[str, Any]]] = []
-    current: list[dict[str, Any]] = []
-    current_words = 0
-    for row in rows:
-        row_words = int(row.get("word_count") or 0)
-        should_break = bool(current) and (
-            len(current) >= max_sentences
-            or current_words + row_words > max_words
-        )
-        if should_break and current_words < min_words and len(current) < max_sentences + 2:
-            should_break = False
-        if should_break:
-            groups.append(current)
-            current = []
-            current_words = 0
-        current.append(row)
-        current_words += row_words
-    if current:
-        if groups and current_words < min_words:
-            groups[-1].extend(current)
-        else:
-            groups.append(current)
-    return groups
+    return _semantic_sentence_groups(rows)
 
 
 def _semantic_blocks(text: str) -> list[str]:
