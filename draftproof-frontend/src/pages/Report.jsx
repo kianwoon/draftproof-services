@@ -983,7 +983,8 @@ export default function Report() {
     null
   );
 
-  const authorshipEvidence = report?.authorship_evidence || null;
+  // The API nests the scan report under results_json (only ai_risk_badge etc. are hoisted to top level).
+  const authorshipEvidence = report?.results_json?.authorship_evidence || report?.authorship_evidence || null;
 
   const selectAndScrollParagraph = (paragraphId) => {
     setSelectedParagraphId(paragraphId);

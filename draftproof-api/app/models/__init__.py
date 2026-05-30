@@ -96,3 +96,4 @@ class RewriteReportOut(BaseModel):
     sentence_comparison: Optional[list] = None
     ai_findings: Optional[list] = None
     effective_rewrite_plan: Optional[Any] = None
+    authorship_evidence: Optional[Any] = None
