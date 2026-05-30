@@ -4,7 +4,7 @@ import logging
 
 import redis.asyncio as redis
 
-from app.config import REDIS_URL
+from app.config import REDIS_URL, SSE_XREAD_BLOCK_MS
 from app.services.redis_config import redis_connection_options
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ async def read_rewrite_progress(
     rewrite_id: str,
     last_id: str = "$",
     *,
-    block_ms: int = 3000,
+    block_ms: int = SSE_XREAD_BLOCK_MS,
     count: int = 10,
 ) -> list[tuple[str, dict]] | None:
     """Read rewrite progress events.
@@ -97,7 +97,7 @@ async def read_scan_progress(
     scan_id: str,
     last_id: str = "$",
     *,
-    block_ms: int = 3000,
+    block_ms: int = SSE_XREAD_BLOCK_MS,
     count: int = 10,
 ) -> list[tuple[str, dict]] | None:
     """Read scan progress events from Redis stream.

@@ -68,6 +68,15 @@ REDIS_SOCKET_TIMEOUT_SECONDS = max(1, int(os.getenv("REDIS_SOCKET_TIMEOUT_SECOND
 REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS = max(1, int(os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS", "10")))
 REDIS_SOCKET_KEEPALIVE = os.getenv("REDIS_SOCKET_KEEPALIVE", "true").strip().lower() in {"1", "true", "yes", "on"}
 REDIS_HEALTH_CHECK_INTERVAL_SECONDS = max(1, int(os.getenv("REDIS_HEALTH_CHECK_INTERVAL_SECONDS", "120")))
+# SSE progress-stream read window (ms). XREAD BLOCK returns immediately when a
+# new event is published, so widening this only removes idle round-trips (Upstash
+# bills per command) -- it does NOT delay event delivery. Default 5000ms matches
+# the 5s Postgres fallback cadence in the SSE routes, keeping that safety net
+# tight. Clamped below the socket timeout so the blocking read always returns first.
+SSE_XREAD_BLOCK_MS = min(
+    REDIS_SOCKET_TIMEOUT_SECONDS * 1000 - 1000,
+    max(1000, int(os.getenv("SSE_XREAD_BLOCK_MS", "5000"))),
+)
 
 # R2 Storage (for fetching report JSON)
 R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL", "")

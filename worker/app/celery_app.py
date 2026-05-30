@@ -3,7 +3,23 @@
 from celery import Celery
 
 from .config import settings
-from .redis_config import redis_broker_transport_options, redis_ssl_options
+from .redis_config import (
+    apply_broker_brpop_timeout,
+    redis_broker_transport_options,
+    redis_ssl_options,
+)
+
+# kombu hardcodes a 1s BRPOP timeout, re-issued ~once a second per idle worker
+# (~86k Redis commands/day/worker on an empty queue -- costly on per-request
+# Upstash). Widen it to cut idle broker commands ~10x. A pushed task still wakes
+# BRPOP instantly, so this adds no pickup latency. Stay below the broker socket
+# timeout so the blocking read returns before the socket read times out.
+apply_broker_brpop_timeout(
+    min(
+        settings.CELERY_BROKER_POLLING_INTERVAL_SECONDS,
+        max(1, settings.REDIS_SOCKET_TIMEOUT_SECONDS - 5),
+    )
+)
 
 app = Celery(
     "draftproof",

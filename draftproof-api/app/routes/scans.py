@@ -77,7 +77,6 @@ async def stream_scan_events(
                 events = await progress_stream.read_scan_progress(
                     scan_id,
                     last_stream_id,
-                    block_ms=3000,
                     count=10,
                 )
                 if events is None:
