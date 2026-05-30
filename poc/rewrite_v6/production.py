@@ -21,6 +21,11 @@ except ModuleNotFoundError:
 
 from .pipeline import _planner_model, _writer_model, run_v6_rewrite_all
 from .direct_rewrite import direct_rewrite_enabled, run_direct_rewrite_all
+
+try:
+    from report.authorship_evidence import build_authorship_evidence, preserved_idea_spans
+except ImportError:
+    from poc.report.authorship_evidence import build_authorship_evidence, preserved_idea_spans
 from .report_contracts import extract_paragraph_diagnoses, extract_report_signal_contracts, paragraph_diagnoses_context
 from .scan import scan_text_with_report
 
@@ -52,6 +57,12 @@ def run_rewrite_pipeline_v6(
     # direct path is not the legacy scanner-planner-writer pipeline.
     progress(40, "Starting rewrite")
     original_text, rewrite_source = _rewrite_source_text(detect_json)
+    _concern = (detect_json.get("authorship_concern") or {})
+    authorship_evidence = build_authorship_evidence(
+        _concern.get("signals"),
+        false_positives=detect_json.get("false_positives"),
+        confidence=_concern.get("confidence", "low"),
+    )
     effective_detect_json = dict(detect_json)
     effective_detect_json["input_text"] = original_text
     effective_detect_json["rewrite_source"] = rewrite_source
@@ -75,6 +86,7 @@ def run_rewrite_pipeline_v6(
                 base_url=base_url,
                 progress_callback=progress,
                 cancellation_check=raise_if_canceled,
+                authorship_evidence=authorship_evidence,
             )
         else:
             document = run_v6_rewrite_all(
@@ -178,6 +190,13 @@ def run_rewrite_pipeline_v6(
         "final_text": final_text,
         "no_text_change": not changed,
     }
+    authorship_evidence["preserved_ideas"] = preserved_idea_spans(original_text, document.rewritten_text)
+    if isinstance(summary, dict):
+        summary["authorship_evidence"] = authorship_evidence
+        _summary_inner = summary.get("summary")
+        if isinstance(_summary_inner, dict):
+            _summary_inner["authorship_evidence"] = authorship_evidence
+
     result_obj = SimpleNamespace(
         summary=summary,
         sentence_comparison=sentence_comparison,
