@@ -39,6 +39,10 @@ from .rewrite_playbook import playbook_entries
 from .scan import Scan, findings_for_paragraph, scan_text
 from .selector_diagnostics import _severe_polarity_inversion
 from .text import Paragraph
+try:
+    from report.authorship_evidence import paragraph_authorship_targets, authorship_boost_enabled
+except ImportError:
+    from poc.report.authorship_evidence import paragraph_authorship_targets, authorship_boost_enabled
 
 
 def direct_rewrite_enabled() -> bool:
@@ -68,7 +72,7 @@ _SYSTEM = (
 )
 
 
-def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags: list[str]) -> str:
+def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags: list[str], authorship_targets: dict[str, Any] | None = None) -> str:
     source_words = len(str(paragraph_text or "").split())
     word_budget = max(40, int(source_words * 1.3))
     predictable_phrases = list((diagnosis or {}).get("predictable_phrases") or [])
@@ -128,6 +132,21 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "the fix, never as wording to copy.",
         ],
     }
+    authorship_targets = authorship_targets or {}
+    protected = authorship_targets.get("protected_spans") or []
+    grounding = authorship_targets.get("grounding_targets") or []
+    if protected:
+        payload["protected_spans"] = list(protected)
+        payload["instructions"].append(
+            "Keep every sentence in protected_spans VERBATIM -- they are the author's own voice; "
+            "rewriting them only makes them more generic. Rewrite the surrounding text only."
+        )
+    if grounding:
+        payload["grounding_targets"] = list(grounding)
+        payload["instructions"].append(
+            "Where you add concrete grounding, prioritise these author-owned gaps: "
+            + "; ".join(grounding) + "."
+        )
     return "Return JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -291,6 +310,7 @@ def run_direct_rewrite_all(
     base_url: str | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     cancellation_check: Callable[[], None] | None = None,
+    authorship_evidence: Any = None,
     **_ignored: Any,
 ):
     scan = source_scan or scan_text(text)
@@ -319,6 +339,7 @@ def run_direct_rewrite_all(
             gateway,
             _attempt_progress(progress_callback, attempt, attempts),
             cancellation_check,
+            authorship_evidence=authorship_evidence,
         )
         score = _document_ai_risk(doc.rewritten_text) if attempts > 1 else 0.0
         if best_doc is None or score < best_score:
@@ -406,6 +427,7 @@ def _rewrite_document_once(
     gateway: LLMGateway,
     progress_callback: Callable[[int, str], None] | None,
     cancellation_check: Callable[[], None] | None,
+    authorship_evidence: Any = None,
 ):
     from .pipeline import DocumentResult  # local import: pipeline must not depend on this module
 
@@ -432,7 +454,14 @@ def _rewrite_document_once(
                 _section_progress(done, flagged_total),
                 f"Rewriting section {done + 1} of {flagged_total}",
             )
-        candidate, review_items = _clean_candidate(gateway, paragraph, diagnosis, findings)
+        targets = (
+            paragraph_authorship_targets(authorship_evidence, paragraph.text)
+            if (authorship_evidence and authorship_boost_enabled())
+            else {}
+        )
+        candidate, review_items = _clean_candidate(
+            gateway, paragraph, diagnosis, findings, authorship_targets=targets
+        )
         if candidate is None:
             # No usable, grammatically-clean rewrite after retries -> show the clean original rather
             # than broken grammar. (Rare; the curated grammar set is high-precision.)
@@ -461,6 +490,7 @@ def _clean_candidate(
     findings: list[Any],
     *,
     attempts: int = 2,
+    authorship_targets: dict[str, Any] | None = None,
 ) -> tuple[str | None, list[dict[str, Any]]]:
     """Return the first usable, grammatically-clean rewrite within `attempts`, else (None, []).
 
@@ -468,7 +498,7 @@ def _clean_candidate(
     shipping broken grammar) is the safety net the user reads. Meaning concerns are NOT rejected
     here -- they ride along as review flags."""
     for _ in range(max(1, attempts)):
-        candidate, review_items = _rewrite_paragraph(gateway, paragraph, diagnosis, findings)
+        candidate, review_items = _rewrite_paragraph(gateway, paragraph, diagnosis, findings, authorship_targets=authorship_targets)
         if _is_usable(candidate or "", paragraph) and not _has_broken_grammar(candidate or ""):
             return candidate, review_items
     return None, []
@@ -479,11 +509,12 @@ def _rewrite_paragraph(
     paragraph: Paragraph,
     diagnosis: dict[str, Any] | None,
     findings: list[Any],
+    authorship_targets: dict[str, Any] | None = None,
 ) -> tuple[str | None, list[dict[str, Any]]]:
     tags = sorted({tag for finding in findings for tag in (finding.tags or [])})
     try:
         response = gateway.chat(
-            _prompt(paragraph.text, diagnosis, tags),
+            _prompt(paragraph.text, diagnosis, tags, authorship_targets),
             system=_SYSTEM,
             temperature=0.4,
             top_p=0.9,
