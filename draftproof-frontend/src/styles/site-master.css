@@ -3210,7 +3210,9 @@ td:first-child {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .landing-hero .review-panel,
-  .landing-hero .code-texture { display: none; }
+  .landing-hero .code-texture,
+  .checks-section .code-texture,
+  .landing-cta .code-texture { display: none; }
   .landing-hero-grid,
   .why-card-grid,
   .help-heading,
@@ -3309,7 +3311,9 @@ td:first-child {
     gap: 0;
   }
   .landing-hero .review-panel,
-  .landing-hero .code-texture {
+  .landing-hero .code-texture,
+  .checks-section .code-texture,
+  .landing-cta .code-texture {
     display: none;
   }
   .review-grid,
