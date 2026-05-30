@@ -47,11 +47,15 @@ _SYSTEM = (
     "author sees your changes in a before/after diff, so adding new content to fix the problem is "
     "expected and encouraged -- that is the mitigation. Your goal: lower AI-detection risk by making "
     "the writing specific, concrete, and human, while staying in the same subject, register, and tone "
-    "as the source. Where the paragraph is generic or lacks a concrete anchor, ADD grounding: a "
-    "specific mechanism, condition, process, or generic scenario that fits the document's topic. Do "
-    "NOT invent named people, real institutions, place names, specific dates, or statistics -- the "
-    "author must be able to keep what you add without fact-checking a fabrication, so use generic "
-    "referents (a student, a teacher, a school) and concrete mechanisms, not invented proper nouns. "
+    "as the source. Where the paragraph is generic or lacks a concrete anchor, ADD grounding AS THE "
+    "AUTHOR WOULD -- you are the author's proxy. Where the source is written from the author's own "
+    "perspective, ground claims in the author's FIRST-PERSON lived experience ('In my classroom, I "
+    "have seen ...', 'When I assess work, I notice ...'); this is the author's own voice for them to "
+    "confirm or adjust. Where first person does not fit the register, ground with a concrete example, "
+    "a specific case, or a situational (when / after / if) clause instead. Do NOT invent named "
+    "people, real institutions, place names, dates, or statistics -- those are third-party "
+    "fabrications the author cannot verify (first-person authorial framing is the author's OWN voice "
+    "and is encouraged; inventing other named people or places is not). "
     "Preserve the author's actual ARGUMENT and meaning -- do NOT flip a balanced 'not only X "
     "but also Y' into 'Y over X', and do not drop the author's existing ideas. List what you added "
     "in author_review_items so the author can confirm or replace it. "
@@ -89,13 +93,14 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "predictable -- the single strongest AI signal. Rewrite EACH one out: replace it with "
             "more particular, less-expected wording by changing the sentence route around it, not by "
             "swapping in a synonym. None of these phrases should survive verbatim.",
-            "Turn every broad or generic assertion into a GROUNDED one by giving it a concrete "
-            "situation it applies to: a specific case ('in cases where ...'), an illustrative example "
-            "('for example, when a student ...'), or a situational clause (when / after / before / "
-            "once / if ...). A claim with no example, case, or when/after situation is the strongest "
-            "generic-assertion signal -- give each one a situation only THIS paragraph would describe. "
-            "Use GENERIC actors (a student, a teacher) and real mechanisms; do NOT invent named "
-            "people, institutions, places, dates, or statistics.",
+            "Turn every broad or generic assertion into a GROUNDED one. Where the source is the "
+            "author's own perspective, ground it in the author's FIRST-PERSON experience ('In my ..., "
+            "I have seen ...', 'When I ..., I notice ...'); otherwise give it a specific case ('in "
+            "cases where ...'), an illustrative example ('for example, when ...'), or a situational "
+            "clause (when / after / before / if ...). A claim with no first-person experience, "
+            "example, case, or when/after situation is the strongest generic-assertion signal. Do NOT "
+            "invent named people, institutions, places, dates, or statistics -- but first-person "
+            "authorial framing is the author's own voice and IS encouraged.",
             "rewrite_examples shows the SHAPE of each fix (before -> better) -- note they REPLACE, "
             "they don't add on top. Apply the same kind of transformation to THIS paragraph; do not "
             "copy the example wording.",
@@ -166,6 +171,28 @@ def _has_fabricated_named_entities(candidate: str, source_text: str) -> bool:
     return False
 
 
+# First-person lived experience the proxy added to ground a generic claim (e.g. "in my classroom",
+# "when I began teaching", "I have seen ..."). This is the author-proxy acting AS THE AUTHOR -- a
+# legitimate, encouraged grounding scaffold -- but it is the proxy's invention until the author
+# confirms it reflects their real experience, so it rides along as a review flag (annotate, never
+# reject).
+_FIRST_PERSON_EXPERIENCE = re.compile(
+    r"\b(?:in my (?:own\s+)?[a-z]+"
+    r"|when I\b"
+    r"|I(?:'ve|'d| have| had)?\s+(?:saw|see|seen|noticed|found|observed|watched|taught|experienced|tried|tested|recall|remember|struggled|learned|began|started))\b",
+    re.I,
+)
+
+
+def _has_added_first_person_experience(candidate: str, source_text: str) -> bool:
+    """True if the candidate grounds a claim in first-person authorial experience that is NOT already
+    in the source -- the proxy writing in the author's voice. Encouraged, but surfaced so the author
+    confirms it matches their real experience before submitting."""
+    if _FIRST_PERSON_EXPERIENCE.search(" ".join(str(source_text or "").split())):
+        return False  # source is already first-person; nothing newly attributed
+    return bool(_FIRST_PERSON_EXPERIENCE.search(str(candidate or "")))
+
+
 def _severe_beat_loss(candidate: str, paragraph: Paragraph) -> bool:
     """Only flags a source beat as genuinely DROPPED (near-zero coverage), not synonym-rephrased.
     The legacy term-exact check false-positived on faithful synonym rewrites."""
@@ -223,6 +250,9 @@ def _review_flags(candidate: str, paragraph: Paragraph) -> list[dict[str, Any]]:
     if _has_fabricated_named_entities(candidate, paragraph.text):
         flags.append({"added": "invented names or places",
                       "why": "DraftProof added illustrative names/institutions that are not in your text -- replace them with your own real examples or remove them before submitting."})
+    if _has_added_first_person_experience(candidate, paragraph.text):
+        flags.append({"added": "first-person experience written in your voice",
+                      "why": "DraftProof grounded a general claim in the author's own first-person experience as a scaffold -- confirm it matches YOUR real experience, or adjust it, before submitting."})
     return flags
 
 

@@ -839,9 +839,9 @@ CONCRETE_DETAIL_PATTERNS = [
     r"\b[A-Z][A-Za-z]+(?:\s+et\s+al\.)?\s*\(\d{4}\)",  # citation: Name (2020)
     r"\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)",   # citation: (Name, 2020)
     r"['\"“”‘’][^'\"“”‘’]+?['\"“”‘’]",  # quoted span
-    r"\bI (?:saw|see|noticed|found|observed|taught|experienced|tried|asked|tested|measured|remember)\b",  # first-hand
-    r"\bwe (?:found|observed|measured|tested|tried|noticed)\b",  # first-hand (plural)
-    r"\bin my (?:own\s+)?[a-z]+\b",                    # first-hand framing: "in my classroom/practice"
+    r"\bI(?:'ve|'d| have| had)?\s+(?:saw|see|seen|notice|noticed|find|found|observe|observed|watch|watched|taught|experienced|tried|tested|measured|recall|remember|struggled|learned)\b",  # first-hand experience
+    r"\bwe(?:'ve| have| had)?\s+(?:find|found|observe|observed|measured|tested|tried|notice|noticed|seen|watched)\b",  # first-hand (plural)
+    r"\bin my (?:own\s+)?[a-z]+\b",                    # first-hand framing: "in my classroom/experience/practice"
 ]
 NAMED_ENTITY_DETAIL_PATTERN = CONCRETE_DETAIL_PATTERNS[2]
 # Domain-independent grounding STRUCTURES: exemplification, a specific case, a situational
