@@ -59,6 +59,7 @@ class Layer3Input:
     # Text pattern scanner outputs
     predictability: Optional[float] = None
     topk_pattern: Optional[float] = None
+    sentence_fragmentation_risk: Optional[float] = None
     generic_phrase_density: Optional[float] = None
     burstiness_risk: Optional[float] = None
     repeated_sentence_structure_risk: Optional[float] = None
@@ -689,6 +690,27 @@ def estimate_paragraph_topic_uniformity_risk(text: str) -> float:
     return 0.0
 
 
+def estimate_sentence_fragmentation_risk(text: str) -> float:
+    """Mechanical sentence-splitting risk ('de-AI fragmentation').
+
+    Prose chopped into many uniform short sentences starves the structural AI signals
+    (qualifying-text density, repeated-structure, hedging), letting AI content read as clean/green.
+    Calibrated on the test corpus: normal writing sits at mean 14-26 words/sentence with <30% short
+    sentences; only heavily fragmented text clears mean<=11 words AND >=70% of sentences <=12 words.
+    Returns 0 for everything else, so this re-tiers nothing on its own -- it only feeds the
+    fragmented_evasion cluster, which additionally requires high content-AI signals."""
+    sentences = split_sentences(text)
+    lengths = [len(s.split()) for s in sentences if s.split()]
+    if len(lengths) < 8:
+        return 0.0
+    mean_len = sum(lengths) / len(lengths)
+    short_12 = sum(1 for n in lengths if n <= 12) / len(lengths)
+    short_8 = sum(1 for n in lengths if n <= 8) / len(lengths)
+    if mean_len > 11 or short_12 < 0.70:
+        return 0.0
+    return round(max(0.0, min(1.0, (short_8 - 0.30) / 0.45)), 4)
+
+
 def estimate_burstiness_risk(text: str) -> float:
     sentences = split_sentences(text)
     if len(sentences) < 6:
@@ -1130,6 +1152,7 @@ class Layer3Scorer:
         generic_assertion = clamp(data.generic_assertion_risk)
         qualifying_density = clamp(data.qualifying_text_ai_density)
         balanced_hedging = clamp(data.balanced_hedging_risk)
+        fragmentation = clamp(data.sentence_fragmentation_risk)
 
         genericity_support = clamp(genericity / 0.12) if genericity > 0 else 0.0
         topk_support = max(
@@ -1220,6 +1243,18 @@ class Layer3Scorer:
             and generic_assertion >= 0.75
         )
 
+        # Mechanical sentence-splitting evasion: strongly generic AI content chopped into uniform
+        # short sentences, which zeroes the structural signals and drags the weighted average to
+        # "green". Gate on the precise fragmentation detector + high generic-assertion (it is generic
+        # AI, not original human writing) + collapsed qualifying-text density (the starvation tell).
+        # Note: topk arrives CALIBRATED-down in the badge path (~0.44, not raw ~0.79), so it is not a
+        # reliable gate here; the fragmentation detector is the precision gate instead.
+        fragmented_evasion = (
+            fragmentation >= 0.45
+            and generic_assertion >= 0.70
+            and qualifying_density < 0.40
+        )
+
         if qualifying_density_ai:
             cluster_boost = 0.12
             cluster_name = "qualifying_text_ai_density"
@@ -1232,6 +1267,9 @@ class Layer3Scorer:
         elif humanised_ai:
             cluster_boost = 0.08
             cluster_name = "humanised_ai"
+        elif fragmented_evasion:
+            cluster_boost = 0.10
+            cluster_name = "fragmented_evasion"
 
         score = clamp(score + cluster_boost)
         if qualifying_density_ai:
@@ -1240,6 +1278,10 @@ class Layer3Scorer:
             score = max(score, 0.58)
         if template_ai_style and not qualifying_density_ai and qualifying_density < 0.55:
             score = min(score, 0.64)
+        if fragmented_evasion:
+            # Floor into AMBER so mechanically-fragmented AI content cannot read as clean/green.
+            # Conservative: the content signals are extreme, but we do not jump straight to RED.
+            score = max(score, 0.42)
         if sample_tiny:
             score = min(score, 0.24)
         elif sample_limited:
@@ -1519,6 +1561,7 @@ def build_layer3_input_from_text(
         generic_phrase_density=generic_phrase_density,
         burstiness_risk=estimate_burstiness_risk(text),
         repeated_sentence_structure_risk=estimate_repeated_sentence_structure_risk(text),
+        sentence_fragmentation_risk=estimate_sentence_fragmentation_risk(text),
         generic_assertion_risk=generic_assertion,
         qualifying_text_ai_density=qualifying_density,
 
