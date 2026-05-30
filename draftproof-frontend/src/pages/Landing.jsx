@@ -17,6 +17,7 @@ export default function Landing() {
   const beliefs = t('landing.beliefs', { returnObjects: true });
   const reportValueCards = t('landing.reportValueCards', { returnObjects: true });
   const humanWrittenSignals = t('landing.humanWrittenSignals', { returnObjects: true });
+  const humanizerSignals = t('landing.humanizerSignals', { returnObjects: true });
 
   return (
     <main className="landing-page">
@@ -78,6 +79,30 @@ export default function Landing() {
           <span>{t('landing.pdfReport')}</span>
           <span>{t('landing.citationGrounding')}</span>
           <span>{t('landing.contentAwareRewrite')}</span>
+        </div>
+      </section>
+
+      <section className="landing-section human-written-section">
+        <div className="section-inner human-written-layout">
+          <div>
+            <p className="eyebrow">{t('landing.humanizerEyebrow')}</p>
+            <h2>{t('landing.humanizerTitle')}</h2>
+            <p>{t('landing.humanizerBody1')}</p>
+            <p>{t('landing.humanizerBody2')}</p>
+          </div>
+
+          <div className="human-written-panel">
+            <ul className="signal-list" aria-label={t('landing.humanizerSignalsLabel')}>
+              {humanizerSignals.map((signal) => (
+                <li key={signal}>{signal}</li>
+              ))}
+            </ul>
+            <div className="human-written-guardrails">
+              <span>{t('landing.humanizerGuardrail1')}</span>
+              <span>{t('landing.humanizerGuardrail2')}</span>
+              <strong>{t('landing.humanizerPunch')}</strong>
+            </div>
+          </div>
         </div>
       </section>
 
