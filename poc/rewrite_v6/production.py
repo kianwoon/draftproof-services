@@ -46,7 +46,11 @@ def run_rewrite_pipeline_v6(
         if progress_callback:
             progress_callback(percent, message)
 
-    progress(62, "Starting V6 scanner-planner-writer rewrite")
+    # Stay at the 40 floor of the rewrite phase: the per-paragraph loop reports
+    # 40..78 next, so emitting a higher value here (then dropping to 40) made the
+    # progress bar jump backwards. Keep the label generic -- the default lean
+    # direct path is not the legacy scanner-planner-writer pipeline.
+    progress(40, "Starting rewrite")
     original_text, rewrite_source = _rewrite_source_text(detect_json)
     effective_detect_json = dict(detect_json)
     effective_detect_json["input_text"] = original_text
@@ -207,7 +211,7 @@ def run_rewrite_pipeline_v6(
     summary["candidate_generation_status"]["stage_timings"] = stage_timings
     summary["stage_timings"] = stage_timings
     json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    progress(88, "V6 scanner-planner-writer rewrite complete")
+    progress(88, "Rewrite complete")
     return {
         "status": status,
         "md_path": str(md_path),
