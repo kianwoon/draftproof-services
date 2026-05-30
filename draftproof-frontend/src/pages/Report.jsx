@@ -1968,7 +1968,7 @@ export default function Report() {
         )}
 
         {authorshipEvidence && (
-          <section className="rewrite-review-section" aria-label={t('authorshipEvidence.scanTitle')}>
+          <section className="rewrite-review-section">
             <div className="rewrite-review-heading">
               <div>
                 <span className="rewrite-review-kicker">{t('authorshipEvidence.scanKicker')}</span>
@@ -1983,7 +1983,7 @@ export default function Report() {
               <div className="rewrite-target-block">
                 <span>{t('authorshipEvidence.presentTitle')}</span>
                 <ul className="signal-list">
-                  {authorshipEvidence.present_markers.map((m) => <li key={m.signal}>{m.label}</li>)}
+                  {authorshipEvidence.present_markers.map((m, i) => <li key={`${m.signal}-${i}`}>{m.label}</li>)}
                 </ul>
               </div>
             )}
@@ -1992,7 +1992,7 @@ export default function Report() {
                 <span>{t('authorshipEvidence.thinTitle')}</span>
                 <p className="rewrite-review-copy">{t('authorshipEvidence.thinCopy')}</p>
                 <ul className="signal-list">
-                  {authorshipEvidence.thin_signals.map((tn) => <li key={tn.signal}>{tn.action}</li>)}
+                  {authorshipEvidence.thin_signals.map((tn, i) => <li key={`${tn.signal}-${i}`}>{tn.action}</li>)}
                 </ul>
               </div>
             )}
