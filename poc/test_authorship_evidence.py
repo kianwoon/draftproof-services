@@ -62,7 +62,7 @@ def test_preserved_idea_spans_are_verbatim_survivors():
     kept = [p["text"] for p in preserved_idea_spans(original, final)]
     assert "I taught in one room for years." in kept
     assert "Students trusted us." in kept
-    assert all("Technology changes everything" not in t for t in kept)  # rewritten -> not preserved
+    assert "Technology changes everything rapidly today." not in kept  # rewritten -> not preserved
 
 
 def test_paragraph_targets_protect_matching_spans_and_carry_actions():

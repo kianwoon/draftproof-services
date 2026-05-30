@@ -8,6 +8,7 @@ stats -- not human-authorship evidence and not honestly mitigable -- so they nev
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 try:
@@ -58,7 +59,10 @@ def build_authorship_evidence(
         raw = signals.get(sig)
         if raw is None:
             continue
-        risk = float(raw)
+        try:
+            risk = float(raw)
+        except (TypeError, ValueError):
+            continue
         if risk <= PRESENT_MAX:
             present.append({"signal": sig, "label": label, "risk": round(risk, 3)})
         elif risk >= THIN_MIN:
@@ -118,5 +122,4 @@ def paragraph_authorship_targets(evidence: dict[str, Any] | None, paragraph_text
 
 
 def authorship_boost_enabled() -> bool:
-    import os
     return os.environ.get("DRAFTPROOF_AUTHORSHIP_BOOST", "1").strip().lower() not in {"0", "false", "no", "off"}
