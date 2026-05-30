@@ -25,6 +25,11 @@ try:
 except ImportError:  # pragma: no cover
     from poc.llm.gateway import LLMConfig, LLMGateway
 
+try:
+    from detect.layer3_scoring import _sentence_has_concrete_or_context, split_sentences
+except ImportError:  # pragma: no cover
+    from poc.detect.layer3_scoring import _sentence_has_concrete_or_context, split_sentences
+
 from .coverage_guard import missing_required_source_beat_groups
 from .integrity_guard import candidate_integrity_blockers
 from .json_io import parse_json
@@ -193,6 +198,18 @@ def _has_added_first_person_experience(candidate: str, source_text: str) -> bool
     return bool(_FIRST_PERSON_EXPERIENCE.search(str(candidate or "")))
 
 
+def _ungrounded_claims(candidate: str, *, min_words: int = 5) -> list[str]:
+    """Substantive sentences in the rewrite that are STILL generic (carry no concrete anchor) -- the
+    claims only the author's own real specifics can ground. Skips short fragments. The proxy showcases
+    HOW to ground; these surface as 'your turn' review items so the author finishes the rest."""
+    out: list[str] = []
+    for sentence in split_sentences(candidate):
+        s = sentence.strip()
+        if len(s.split()) >= min_words and not _sentence_has_concrete_or_context(s):
+            out.append(s)
+    return out
+
+
 def _severe_beat_loss(candidate: str, paragraph: Paragraph) -> bool:
     """Only flags a source beat as genuinely DROPPED (near-zero coverage), not synonym-rephrased.
     The legacy term-exact check false-positived on faithful synonym rewrites."""
@@ -253,6 +270,13 @@ def _review_flags(candidate: str, paragraph: Paragraph) -> list[dict[str, Any]]:
     if _has_added_first_person_experience(candidate, paragraph.text):
         flags.append({"added": "first-person experience written in your voice",
                       "why": "DraftProof grounded a general claim in the author's own first-person experience as a scaffold -- confirm it matches YOUR real experience, or adjust it, before submitting."})
+    ungrounded = _ungrounded_claims(candidate)
+    if len(ungrounded) >= 2:
+        examples = "; ".join(f"“{s}”" for s in ungrounded[:2])
+        flags.append({"added": "claims that still need your own specifics",
+                      "why": f"{len(ungrounded)} statements here are still general -- the rewrite shows the "
+                             f"style, but only your real example or experience can ground them. Add yours "
+                             f"to at least: {examples}"})
     return flags
 
 
