@@ -1731,9 +1731,7 @@ td:first-child {
 }
 
 .code-row {
-  transform-box: fill-box;
-  transform-origin: center;
-  will-change: transform, opacity;
+  will-change: transform;
 }
 
 .code-row-a {
@@ -1745,14 +1743,18 @@ td:first-child {
   opacity: .86;
 }
 
+/* Translate distance = one text period in SVG units expressed as vw.
+   SVG viewBox is 1440 wide with preserveAspectRatio="none", so
+   1440 SVG units = 100vw at any viewport. Row-a avg period ≈ 1065 SVG units
+   (65 chars × ~15.4px/char + 64px gap) = 74vw. Row-b avg ≈ 980 = 68vw. */
 @keyframes codeDriftLeft {
   from { transform: translateX(0); }
-  to { transform: translateX(-360px); }
+  to   { transform: translateX(-74vw); }
 }
 
 @keyframes codeDriftRight {
-  from { transform: translateX(-360px); }
-  to { transform: translateX(0); }
+  from { transform: translateX(-68vw); }
+  to   { transform: translateX(0); }
 }
 
 .brand-pill {

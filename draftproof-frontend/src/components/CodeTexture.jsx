@@ -53,6 +53,7 @@ function CodeLine({ y, text }) {
     <text x="0" y={y}>
       <tspan>{text}</tspan>
       <tspan dx="64">{text}</tspan>
+      <tspan dx="64">{text}</tspan>
     </text>
   );
 }
