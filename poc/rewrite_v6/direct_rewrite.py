@@ -111,9 +111,11 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "copy the example wording.",
             "Rewrite the WHOLE paragraph. Across EVERY sentence, replace generic or predictable "
             "phrasing with concrete, specific wording. Change the sentence ROUTE, not just synonyms.",
-            "Vary sentence length HARD: include at least one short sentence (4-8 words) and at least "
-            "one long one (20-35 words). Start each sentence differently; never repeat an opening "
-            "frame. Cut hedging (may, might, can, could, should, often, generally) and generic filler.",
+            "Vary sentence rhythm naturally and at the source's register -- let a longer, analytical "
+            "sentence sit next to a shorter, pointed one. NEVER sacrifice fluency, correctness, or "
+            "sophistication for variation, and do not produce choppy or telegraphic sentences. Start "
+            "sentences differently; avoid a uniform cadence. Cut hedging (may, might, can, could, "
+            "should, often, generally) and generic filler.",
             "Preserve the author's actual argument and meaning, and stay in the same subject and "
             "register as the source. Do not shift a balanced 'not only X but also Y' into 'Y over X', "
             "and do not drop their existing ideas.",
