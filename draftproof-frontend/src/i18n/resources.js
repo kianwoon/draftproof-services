@@ -733,7 +733,7 @@ export const resources = {
           cancelRewrite: 'Cancel rewrite',
           starting: 'Starting rewrite...',
           resume: 'Resume Rewrite',
-          rewriteAiSections: 'Rewrite AI Sections',
+          rewriteAiSections: 'Rewrite and Correct it for me',
           tokenEstimate: '{{tokens}} required for this rewrite, based on {{words}} submitted words.',
           emailPdfNotice: 'We will email a PDF copy of the rewritten result to your account email when it is ready.',
           keepOpenInline: 'Keep this report open; results will appear when ready.',
