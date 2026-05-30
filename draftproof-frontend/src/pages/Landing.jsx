@@ -89,6 +89,11 @@ export default function Landing() {
             <h2>{t('landing.humanizerTitle')}</h2>
             <p>{t('landing.humanizerBody1')}</p>
             <p>{t('landing.humanizerBody2')}</p>
+            <p className="sample-reference-note">
+              <a href={t('landing.humanizerSourceUrl')} target="_blank" rel="noopener noreferrer">
+                {t('landing.humanizerSourceLabel')}
+              </a>
+            </p>
           </div>
 
           <div className="human-written-panel">
