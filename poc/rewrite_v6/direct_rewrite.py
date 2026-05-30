@@ -47,9 +47,12 @@ _SYSTEM = (
     "author sees your changes in a before/after diff, so adding new content to fix the problem is "
     "expected and encouraged -- that is the mitigation. Your goal: lower AI-detection risk by making "
     "the writing specific, concrete, and human, while staying in the same subject, register, and tone "
-    "as the source. Where the paragraph is generic or lacks a concrete anchor, ADD one: a concrete "
-    "scenario, actor, setting, or illustrative example that grounds the claim and fits the document's "
-    "topic. Preserve the author's actual ARGUMENT and meaning -- do NOT flip a balanced 'not only X "
+    "as the source. Where the paragraph is generic or lacks a concrete anchor, ADD grounding: a "
+    "specific mechanism, condition, process, or generic scenario that fits the document's topic. Do "
+    "NOT invent named people, real institutions, place names, specific dates, or statistics -- the "
+    "author must be able to keep what you add without fact-checking a fabrication, so use generic "
+    "referents (a student, a teacher, a school) and concrete mechanisms, not invented proper nouns. "
+    "Preserve the author's actual ARGUMENT and meaning -- do NOT flip a balanced 'not only X "
     "but also Y' into 'Y over X', and do not drop the author's existing ideas. List what you added "
     "in author_review_items so the author can confirm or replace it. "
     'Return JSON only: {"rewrite": "...", "author_review_items": [{"added": "...", "why": "..."}]}.'
@@ -86,10 +89,12 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "predictable -- the single strongest AI signal. Rewrite EACH one out: replace it with "
             "more particular, less-expected wording by changing the sentence route around it, not by "
             "swapping in a synonym. None of these phrases should survive verbatim.",
-            "Turn every broad or generic assertion into a concrete, specific claim -- name the actor, "
-            "mechanism, condition, or case. A sentence that could sit unchanged in any essay on this "
-            "topic is the strongest generic-assertion signal; make it one only THIS paragraph could "
-            "contain.",
+            "Turn every broad or generic assertion into a concrete, specific claim -- name the "
+            "mechanism, condition, or case (use a GENERIC actor such as 'a student' or 'a teacher'; "
+            "do NOT invent specific named people, institutions, or places). A sentence that could sit "
+            "unchanged in any essay on this topic is the strongest generic-assertion signal; make it "
+            "one only THIS paragraph could contain through concrete mechanisms, not fabricated "
+            "identities.",
             "rewrite_examples shows the SHAPE of each fix (before -> better) -- note they REPLACE, "
             "they don't add on top. Apply the same kind of transformation to THIS paragraph; do not "
             "copy the example wording.",
@@ -104,8 +109,10 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "Respect length_budget: stay close to the source length. Add a NEW sentence only when a "
             "claim genuinely cannot be grounded by rewriting an existing one. List anything you add "
             "in author_review_items.",
-            "Prefer concrete scenarios over precise invented statistics; keep any figure clearly "
-            "illustrative. Use rewrite_hint only as the shape of the fix, never as wording to copy.",
+            "Prefer concrete mechanisms and generic scenarios over invented specifics. Do NOT "
+            "fabricate named people, real institutions, place names, dates, or statistics -- the "
+            "author would have to fact-check and replace them. Use rewrite_hint only as the shape of "
+            "the fix, never as wording to copy.",
         ],
     }
     return "Return JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
@@ -132,6 +139,28 @@ def _has_fabricated_specifics(candidate: str, source_text: str) -> bool:
     cand_low = cand.casefold()
     for marker in _CITATION_MARKERS:
         if marker in cand_low and marker not in src:
+            return True
+    return False
+
+
+# Invented proper nouns -- named people, institutions, or places absent from the source
+# (e.g. "Mr. Patel", "Lincoln High School"). Fabricated identities the author must replace,
+# so they ride along as a review flag rather than a rejection.
+_HONORIFIC = re.compile(r"\b(?:Mr|Mrs|Ms|Mx|Dr|Prof|Professor)\.?\s+[A-Z][a-z]+")
+_PROPER_NOUN_PHRASE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
+
+
+def _has_fabricated_named_entities(candidate: str, source_text: str) -> bool:
+    """True if the candidate introduces invented proper nouns (named people, institutions, or
+    places) absent from the source. Catches honorific names and multi-word Title-Case spans -- the
+    clearest fabricated identities -- which the author must replace before submitting."""
+    src_low = " ".join(str(source_text or "").split()).casefold()
+    cand = str(candidate or "")
+    for match in _HONORIFIC.finditer(cand):
+        if match.group(0).casefold() not in src_low:
+            return True
+    for match in _PROPER_NOUN_PHRASE.finditer(cand):
+        if match.group(0).casefold() not in src_low:
             return True
     return False
 
@@ -190,6 +219,9 @@ def _review_flags(candidate: str, paragraph: Paragraph) -> list[dict[str, Any]]:
     if _has_fabricated_specifics(candidate, paragraph.text):
         flags.append({"added": "a concrete detail was added to ground the claim",
                       "why": "DraftProof supplied an illustrative specific -- replace it with your own real example, data, or source."})
+    if _has_fabricated_named_entities(candidate, paragraph.text):
+        flags.append({"added": "invented names or places",
+                      "why": "DraftProof added illustrative names/institutions that are not in your text -- replace them with your own real examples or remove them before submitting."})
     return flags
 
 
