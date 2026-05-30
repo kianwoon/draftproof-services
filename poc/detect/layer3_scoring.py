@@ -828,44 +828,30 @@ def estimate_formulaic_conclusion_risk(text: str) -> float:
     return 0.0
 
 
+# Content-agnostic concreteness signals. Per the project rule (NO hardcoded allow-lists), a sentence
+# is "concrete" because it carries a verifiable, specific anchor that holds in ANY subject -- never
+# because it matches a domain's vocabulary. (Replaces the former hardcoded education/hairdressing
+# phrase lists, which over-flagged any document written with different words.)
 CONCRETE_DETAIL_PATTERNS = [
-    r"\b\d+\.?\d*\s*%?\b",  # numbers/percentages
-    r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",  # unit/intake/course codes
-    r"\b[A-Z][a-z]+(?:\s[A-Z][a-z]+)+\b",  # named entities (rough)
-    r"\b[A-Z][A-Za-z]+(?:\s+et\s+al\.)?\s*\(\d{4}\)",  # named source citation
-    r"\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)",  # parenthetical citation
-    r"\bduring\b.*\b\d{4}\b",  # specific time references
-    r"\bin my\b", r"\bI (?:saw|see|noticed|found|observed|taught|experienced|usually|ask|demonstrate|want|encourage)\b",
-    r"\bI do not\b", r"\bI have seen\b", r"\bmy current\b",
-    r"\bwe (?:found|observed|measured|tested)\b",
-    r"\bspecifically\b", r"\bfor example\b", r"\bfor instance\b",
-    r"\bcase study\b", r"\bdata (?:show|from|set)\b",
-    r"\baccording to\b", r'\b["""].+?["""]\b',  # quotes
-    r"\b(?:drafts?|homework|exams?|lesson notes?|classroom discussion|feedback activity)\b",
-    r"\b(?:YouTube|TikTok|AI tools?|search engines?|online courses?|social media|websites?)\b",
-    r"\b(?:source checks?|peer communities|discussion|reflection|practice|attempts?)\b",
-    r"\b(?:sectioning|projection|parting|distribution|design line|mobile guide|stationary guide|guide line|"
-    r"mannequin|client model|client models|weight line|elbow|wrist|finger|scissor|comb|tension|subsection|"
-    r"graduation|graduated haircut|solid form|one length|uniform layer|increased layer|haircut structures?)\b",
+    r"\b\d+\.?\d*\s*%?\b",                              # numbers, quantities, percentages, years
+    r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",             # alphanumeric codes
+    r"\b[A-Z][a-z]+(?:\s[A-Z][a-z]+)+\b",              # multi-word proper nouns / named entities
+    r"\b[A-Z][A-Za-z]+(?:\s+et\s+al\.)?\s*\(\d{4}\)",  # citation: Name (2020)
+    r"\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)",   # citation: (Name, 2020)
+    r"['\"“”‘’][^'\"“”‘’]+?['\"“”‘’]",  # quoted span
+    r"\bI (?:saw|see|noticed|found|observed|taught|experienced|tried|asked|tested|measured|remember)\b",  # first-hand
+    r"\bwe (?:found|observed|measured|tested|tried|noticed)\b",  # first-hand (plural)
+    r"\bin my (?:own\s+)?[a-z]+\b",                    # first-hand framing: "in my classroom/practice"
 ]
 NAMED_ENTITY_DETAIL_PATTERN = CONCRETE_DETAIL_PATTERNS[2]
+# Domain-independent grounding STRUCTURES: exemplification, a specific case, a situational
+# (temporal/conditional) clause, or an explicit evidence reference. No domain words.
 CONTEXTUAL_ANCHOR_PATTERNS = [
-    r"\bonline content\b",
-    r"\bfinal result\b",
-    r"\bhiding the effort\b",
-    r"\bwhat to trust\b",
-    r"\bsource(?:s)?\s+(?:they\s+)?trusted\b",
-    r"\bpass/fail\b",
-    r"\bdrafts?\s+and\s+feedback\b",
-    r"\bfeedback routines?\b",
-    r"\bafter reflection\b",
-    r"\breal situations?\b",
-    r"\bconfusion\b",
-    r"\bstudents?\s+(?:explain|search|write|practice|understand|learn|think)\b",
-    r"\blearners?\s+(?:shift|practise|practice|repeat|name|combine|cut|pause|continue|describe|notice|need|work)\b",
-    r"\bteachers?\s+(?:explain|notice|ask|help|guide)\b",
-    r"\beducators?\s+(?:spot|watch|demonstrate|correct|guide)\b",
-    r"\b(?:comb tension|elbow height|section size|scissor control|guide awareness)\b",
+    r"\b(?:for example|for instance|such as|e\.g\.|i\.e\.|in particular|specifically|namely)\b",
+    r"\b(?:case study|(?:in\s+)?cases?\s+where|in the case of)\b",
+    r"\b(?:when|whenever|after|before|during|once|as soon as)\s+\w+",  # situational / temporal clause
+    r"\bif\s+\w+",                                                      # conditional clause
+    r"\b(?:according to|data (?:show|shows|from|set)|study (?:found|shows|of))\b",  # evidence reference
 ]
 
 

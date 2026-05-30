@@ -89,12 +89,13 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "predictable -- the single strongest AI signal. Rewrite EACH one out: replace it with "
             "more particular, less-expected wording by changing the sentence route around it, not by "
             "swapping in a synonym. None of these phrases should survive verbatim.",
-            "Turn every broad or generic assertion into a concrete, specific claim -- name the "
-            "mechanism, condition, or case (use a GENERIC actor such as 'a student' or 'a teacher'; "
-            "do NOT invent specific named people, institutions, or places). A sentence that could sit "
-            "unchanged in any essay on this topic is the strongest generic-assertion signal; make it "
-            "one only THIS paragraph could contain through concrete mechanisms, not fabricated "
-            "identities.",
+            "Turn every broad or generic assertion into a GROUNDED one by giving it a concrete "
+            "situation it applies to: a specific case ('in cases where ...'), an illustrative example "
+            "('for example, when a student ...'), or a situational clause (when / after / before / "
+            "once / if ...). A claim with no example, case, or when/after situation is the strongest "
+            "generic-assertion signal -- give each one a situation only THIS paragraph would describe. "
+            "Use GENERIC actors (a student, a teacher) and real mechanisms; do NOT invent named "
+            "people, institutions, places, dates, or statistics.",
             "rewrite_examples shows the SHAPE of each fix (before -> better) -- note they REPLACE, "
             "they don't add on top. Apply the same kind of transformation to THIS paragraph; do not "
             "copy the example wording.",
