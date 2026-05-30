@@ -356,19 +356,20 @@ def split_paragraphs(text: str) -> list[str]:
     return [re.sub(r"\s+", " ", p).strip() for p in blocks if p.strip()]
 
 
+# Content-agnostic formulaic-progression markers: the generic temporal/contrastive scaffolding AI
+# essays march through, regardless of subject. (De-overfit: dropped the content11 literal
+# "technology has also" and narrowed "another issue" into agnostic pattern families.)
 FORMULAIC_PROGRESS_MARKERS = [
-    r"\bin the past\b",
-    r"\bnow\b",
-    r"\btoday\b",
-    r"\bthis shift\b",
+    r"\b(?:in the past|historically|traditionally|previously|in earlier times)\b",
+    r"\b(?:nowadays|now|today|these days|in today's)\b",
+    r"\bthis\s+(?:shift|change|trend|development|transformation|evolution)\b",
     r"\bhowever\b",
-    r"\btechnology has also\b",
-    r"\banother issue\b",
-    r"\bbecause of this\b",
-    r"\bthe goal should\b",
-    r"\bin conclusion\b",
-    r"\boverall\b",
-    r"\bultimately\b",
+    r"\b(?:because of this|as a result|consequently|therefore|thus)\b",
+    r"\banother\s+(?:issue|problem|challenge|concern|factor|aspect|point|consideration)\b",
+    r"\bthe\s+(?:goal|aim)\s+should\b",
+    r"\bon the other hand\b",
+    r"\b(?:in conclusion|to conclude|in summary|to sum up)\b",
+    r"\b(?:overall|ultimately|in the end)\b",
 ]
 
 
@@ -796,27 +797,28 @@ def estimate_repeated_sentence_structure_risk(text: str) -> float:
     return 0.0
 
 
+# Content-agnostic formulaic-CONCLUSION shape patterns (NO content/domain literals). A formulaic AI
+# conclusion is recognisable by its SHAPE -- grand-abstract framing, a pivotal-moment metaphor, a
+# prescriptive grand goal, a closing marker -- in ANY subject. (De-overfit: replaces the content11
+# substring list "stands at a turning point" / "in a world full of" / bare adjectives
+# "thoughtful"/"capable"/"responsible", which only flagged that one essay.)
+FORMULAIC_CONCLUSION_PATTERNS = [
+    r"\bin an?\s+(?:world|era|age|time|society|landscape|environment)(?:\s+\w+){0,3}\s+of\b",
+    r"\bstands?\s+at\s+a\s+(?:cross-?roads?|turning\s+point|critical\s+juncture|pivotal\s+moment|defining\s+moment|tipping\s+point)\b",
+    r"\bat\s+a\s+(?:cross-?roads|turning\s+point|critical\s+juncture|pivotal\s+moment)\b",
+    r"\bthe\s+(?:goal|aim|challenge|key|priority|task|focus)\s+(?:should|must|is\s+to|ought|needs\s+to)\b",
+    r"\bit\s+is\s+(?:essential|crucial|vital|imperative|important|necessary)\s+(?:that|to|for)\b",
+    r"\b(?:as|now)\s+we\s+(?:move|look|step|push|head)\s+(?:forward|ahead|into|toward|towards)\b",
+    r"\b(?:in\s+conclusion|to\s+conclude|in\s+summary|to\s+summari[sz]e|to\s+sum\s+up|ultimately|in\s+the\s+end|all\s+in\s+all)\b",
+]
+
+
 def estimate_formulaic_conclusion_risk(text: str) -> float:
     paragraphs = split_paragraphs(text)
     if not paragraphs:
         return 0.0
-
     last = paragraphs[-1].lower()
-    markers = [
-        "stands at a turning point",
-        "the goal should",
-        "not be to",
-        "the goal should be",
-        "thoughtful",
-        "capable",
-        "responsible",
-        "in a world full of",
-        "ultimately",
-        "in conclusion",
-    ]
-
-    hits = sum(1 for marker in markers if marker in last)
-
+    hits = sum(1 for pattern in FORMULAIC_CONCLUSION_PATTERNS if re.search(pattern, last))
     if hits >= 4:
         return 0.85
     if hits == 3:
