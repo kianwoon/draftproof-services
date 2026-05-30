@@ -225,7 +225,12 @@ def run_direct_rewrite_all(
     for attempt in range(attempts):
         if cancellation_check:
             cancellation_check()
-        doc = _rewrite_document_once(scan, gateway, progress_callback, cancellation_check)
+        doc = _rewrite_document_once(
+            scan,
+            gateway,
+            _attempt_progress(progress_callback, attempt, attempts),
+            cancellation_check,
+        )
         score = _document_ai_risk(doc.rewritten_text) if attempts > 1 else 0.0
         if best_doc is None or score < best_score:
             best_doc, best_score = doc, score
@@ -258,6 +263,55 @@ def _document_ai_risk(text: str) -> float:
         return float("inf")
 
 
+# The per-paragraph rewrite phase occupies the 40..78 band of the overall job
+# progress (the worker sets 40 before this phase and 80 after it).
+_PROGRESS_FLOOR = 40
+_PROGRESS_CEIL = 78
+
+
+def _section_progress(done: int, total: int) -> int:
+    """Work-based percent for the per-paragraph phase.
+
+    Reflects flagged sections COMPLETED (done/total), not a paragraph's position
+    in the document, so the bar climbs evenly across the flagged set instead of
+    jumping by where the flagged paragraphs happen to sit.
+    """
+    if total <= 0:
+        return _PROGRESS_FLOOR
+    span = _PROGRESS_CEIL - _PROGRESS_FLOOR
+    return _PROGRESS_FLOOR + int(span * min(done, total) / total)
+
+
+def _attempt_progress(
+    callback: Callable[[int, str], None] | None,
+    attempt: int,
+    attempts: int,
+) -> Callable[[int, str], None] | None:
+    """Compress one best-of-N pass into its own monotonic sub-band of 40..78.
+
+    best-of-N reruns the whole per-paragraph loop, so without this each pass would
+    restart the bar at 40 and the user would see it jump backwards. Pass i maps its
+    local 40..78 into [40 + span*i/N, 40 + span*(i+1)/N], so the bar only advances.
+    Section counting is shown on the first pass; later passes are document-wide
+    quality refinement, so they show a generic "Refining rewrite" label.
+    """
+    if callback is None:
+        return None
+    if attempts <= 1:
+        return callback
+    span = _PROGRESS_CEIL - _PROGRESS_FLOOR
+    band_lo = _PROGRESS_FLOOR + int(span * attempt / attempts)
+    band_hi = _PROGRESS_FLOOR + int(span * (attempt + 1) / attempts)
+
+    def _wrapped(percent: int, message: str) -> None:
+        clamped = max(_PROGRESS_FLOOR, min(_PROGRESS_CEIL, int(percent)))
+        frac = (clamped - _PROGRESS_FLOOR) / max(1, span)
+        mapped = band_lo + int((band_hi - band_lo) * frac)
+        callback(mapped, message if attempt == 0 else "Refining rewrite")
+
+    return _wrapped
+
+
 def _rewrite_document_once(
     scan: Scan,
     gateway: LLMGateway,
@@ -269,7 +323,13 @@ def _rewrite_document_once(
     paragraphs = list(scan.paragraphs)
     rewritten: list[str] = []
     pass_trace: list[dict[str, Any]] = []
-    total = len(paragraphs)
+    # Count the paragraphs that will actually be rewritten so progress reflects
+    # real work (sections done / sections to do), not document position.
+    flagged_total = sum(
+        1 for p in paragraphs
+        if findings_for_paragraph(scan, p.id) or paragraph_diagnosis(p.id)
+    )
+    done = 0
     for index, paragraph in enumerate(paragraphs):
         if cancellation_check:
             cancellation_check()
@@ -279,17 +339,21 @@ def _rewrite_document_once(
             rewritten.append(paragraph.text)
             continue
         if progress_callback:
-            progress_callback(min(78, 10 + int(68 * index / max(1, total))), f"Direct rewrite {paragraph.id}")
+            progress_callback(
+                _section_progress(done, flagged_total),
+                f"Rewriting section {done + 1} of {flagged_total}",
+            )
         candidate, review_items = _clean_candidate(gateway, paragraph, diagnosis, findings)
         if candidate is None:
             # No usable, grammatically-clean rewrite after retries -> show the clean original rather
             # than broken grammar. (Rare; the curated grammar set is high-precision.)
             rewritten.append(paragraph.text)
             pass_trace.append(_trace(index, paragraph.id, "source_preserved", "no_clean_rewrite", []))
-            continue
-        # Always show the solution; ride meaning concerns along as review flags for the user to check.
-        rewritten.append(candidate)
-        pass_trace.append(_trace(index, paragraph.id, "direct_llm", None, review_items + _review_flags(candidate, paragraph)))
+        else:
+            # Always show the solution; ride meaning concerns along as review flags for the user to check.
+            rewritten.append(candidate)
+            pass_trace.append(_trace(index, paragraph.id, "direct_llm", None, review_items + _review_flags(candidate, paragraph)))
+        done += 1
 
     final_text = "\n\n".join(rewritten)
     return DocumentResult(
