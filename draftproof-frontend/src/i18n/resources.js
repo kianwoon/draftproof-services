@@ -1021,6 +1021,14 @@ export const resources = {
         lowConfidenceNote: 'Short submission — read these as indicative.',
         empty: 'Authorship signals are inconclusive for this submission.',
       },
+      rewriteFraming: {
+        title: 'Before you review this rewrite',
+        isCopy: 'DraftProof mitigates AI-detection risk and shows you a reviewable draft to learn from — then edit it with your own specifics.',
+        isntCopy: 'It is not a "make it pass" button. A residual estimate is expected: AI detectors score token predictability, which even strong, human-grounded writing can trigger.',
+        estimateLabel: 'Honest external-detector estimate for this rewrite',
+        estimateContext: 'Treat external detectors as probabilistic signals, not verdicts.',
+        action: 'Review the before/after, then replace the highlighted additions with your own real content.',
+      },
       dialog: {
         cancel: 'Cancel',
         confirm: 'Confirm',
@@ -2051,6 +2059,14 @@ export const resources = {
         preservedTitle: '逐字保留的你的文字',
         lowConfidenceNote: '提交内容较短 — 仅供参考。',
         empty: '本次提交的作者身份信号尚不明确。',
+      },
+      rewriteFraming: {
+        title: '在查看这份改写之前',
+        isCopy: 'DraftProof 用于降低 AI 检测风险，并提供一份可供学习的改写草稿 —— 之后请用你自己的具体内容来修改。',
+        isntCopy: '它不是「一键通过」的按钮。残留的检测估计是预期之内的：AI 检测器衡量的是用词的可预测性，即使是扎实、有真实依据的人类写作也可能被触发。',
+        estimateLabel: '本次改写的诚实第三方检测器估计',
+        estimateContext: '请将第三方检测器视为概率性信号，而非定论。',
+        action: '对照前后差异，然后用你自己的真实内容替换高亮的补充部分。',
       },
       dialog: {
         cancel: '取消',
