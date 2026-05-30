@@ -239,7 +239,9 @@ export default function Rewrite() {
   const manualSuggestions = (summary.manual_suggestions || report?.manual_suggestions || []).filter(Boolean);
   const authorProxyContext = summary.author_proxy_context || report?.author_proxy_context || {};
   const authorshipEvidence = report?.authorship_evidence || summary.authorship_evidence || null;
-  const externalEstimate = report?.external_detector_estimate || null;
+  // Prod nests the rewrite summary under report.summary, so the hoisted estimate lands there;
+  // the poc/bare path exposes it top-level. Check both (mirrors authorshipEvidence above).
+  const externalEstimate = report?.external_detector_estimate || summary?.external_detector_estimate || null;
   const authorReviewCards = (
     summary.author_review_cards ||
     authorProxyContext.review_cards ||
