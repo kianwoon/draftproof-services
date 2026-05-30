@@ -1997,6 +1997,14 @@ export default function Report() {
                 </ul>
               </div>
             )}
+            {authorshipEvidence.strengthen_examples?.length > 0 && (
+              <div className="rewrite-target-block">
+                <span>{t('authorshipEvidence.strengthenExamplesTitle')}</span>
+                {authorshipEvidence.strengthen_examples.slice(0, 5).map((s, i) => (
+                  <p key={i}>{s}</p>
+                ))}
+              </div>
+            )}
             {authorshipEvidence.human_recognized_spans?.length > 0 && (
               <div className="rewrite-target-block">
                 <span>{t('authorshipEvidence.recognizedTitle')}</span>

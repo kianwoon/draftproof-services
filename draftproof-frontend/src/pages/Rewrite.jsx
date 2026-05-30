@@ -389,6 +389,14 @@ export default function Rewrite() {
                 </ul>
               </div>
             )}
+            {authorshipEvidence.strengthen_examples?.length > 0 && (
+              <div className="rewrite-target-block">
+                <span>{t('authorshipEvidence.strengthenExamplesTitle')}</span>
+                {authorshipEvidence.strengthen_examples.slice(0, 5).map((s, i) => (
+                  <p key={i}>{s}</p>
+                ))}
+              </div>
+            )}
           </section>
         )}
 
