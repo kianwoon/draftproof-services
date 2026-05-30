@@ -1,6 +1,9 @@
 """Celery application — broker via Redis."""
 
+import logging
+
 from celery import Celery
+from celery.signals import worker_ready
 
 from .config import settings
 from .redis_config import (
@@ -8,6 +11,8 @@ from .redis_config import (
     redis_broker_transport_options,
     redis_ssl_options,
 )
+
+logger = logging.getLogger(__name__)
 
 # kombu hardcodes a 1s BRPOP timeout, re-issued ~once a second per idle worker
 # (~86k Redis commands/day/worker on an empty queue -- costly on per-request
@@ -59,3 +64,18 @@ app.conf.update(
     # still doing final detector scans.
     broker_transport_options=redis_broker_transport_options(),
 )
+
+
+@worker_ready.connect
+def _reconcile_interrupted_jobs_on_boot(**_kwargs):
+    """Recover rewrite jobs orphaned in 'processing' by a previously-killed worker.
+
+    Runs once when this worker becomes ready. Best-effort: any failure is logged
+    and must never block worker startup.
+    """
+    try:
+        from .recovery import reconcile_interrupted_rewrites
+
+        reconcile_interrupted_rewrites()
+    except Exception:
+        logger.warning("Startup reconciler failed", exc_info=True)

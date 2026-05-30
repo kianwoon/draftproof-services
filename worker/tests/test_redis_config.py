@@ -12,7 +12,23 @@ def test_worker_broker_transport_has_resilient_redis_options():
     assert options["socket_keepalive"] is settings.REDIS_SOCKET_KEEPALIVE
     assert options["health_check_interval"] == settings.REDIS_HEALTH_CHECK_INTERVAL_SECONDS
     assert options["retry_on_timeout"] is True
-    assert options["polling_interval"] == settings.CELERY_BROKER_POLLING_INTERVAL_SECONDS
+    # polling_interval is intentionally NOT set: kombu's redis transport ignores
+    # it (not in from_transport_options). Idle-poll cost is controlled by widening
+    # kombu's hardcoded 1s BRPOP timeout instead (see test below).
+    assert "polling_interval" not in options
+
+
+def test_worker_brpop_timeout_is_widened_below_socket_timeout():
+    from kombu.transport import redis as kombu_redis
+
+    fn = kombu_redis.Channel._brpop_start
+    assert getattr(fn, "_draftproof_patched", False) is True
+    expected = min(
+        settings.CELERY_BROKER_POLLING_INTERVAL_SECONDS,
+        max(1, settings.REDIS_SOCKET_TIMEOUT_SECONDS - 5),
+    )
+    assert fn.__defaults__[0] == expected
+    assert fn.__defaults__[0] < settings.REDIS_SOCKET_TIMEOUT_SECONDS
 
 
 def test_worker_celery_reconnects_without_retry_ceiling():

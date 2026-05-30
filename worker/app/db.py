@@ -111,28 +111,31 @@ def update_job_status(job_id: str, status: str, **fields):
 
 
 def capture_credits(user_id: str, job_id: str, word_count: int):
-    """Capture a credit reservation and create a usage_event."""
+    """Capture a scan credit reservation and create a usage_event (idempotent).
+
+    The status flip is an atomic compare-and-swap: ``UPDATE ... WHERE
+    status='active' RETURNING``. Only one caller can win, so a redelivered scan
+    task -- or a concurrent API-side stale-recovery capture -- re-evaluates the
+    WHERE against the already-captured row, matches zero rows, and no-ops. The
+    balance is debited and the usage_event written exactly once (one active
+    reservation per job is the upstream invariant).
+    """
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            """SELECT id, credit_account_id, tokens_reserved
-               FROM credit_reservations
+            """UPDATE credit_reservations
+               SET status = 'captured'
                WHERE job_id = %s AND status = 'active'
-               LIMIT 1""",
+               RETURNING credit_account_id, tokens_reserved""",
             (job_id,),
         )
         row = cur.fetchone()
         if not row:
             return
 
-        res_id = row["id"]
         acct_id = row["credit_account_id"]
         tokens_reserved = row["tokens_reserved"]
 
-        cur.execute(
-            "UPDATE credit_reservations SET status = 'captured' WHERE id = %s",
-            (res_id,),
-        )
         cur.execute(
             "UPDATE credit_accounts SET balance_tokens = balance_tokens - %s, reserved_tokens = reserved_tokens - %s WHERE id = %s",
             (tokens_reserved, tokens_reserved, acct_id),
@@ -172,6 +175,22 @@ def is_rewrite_canceled(job_id: str) -> bool:
         cur.execute("SELECT status FROM rewrite_jobs WHERE id = %s", (job_id,))
         row = cur.fetchone()
         return bool(row and row.get("status") == "canceled")
+
+
+def list_processing_rewrite_jobs() -> list:
+    """Return rewrite jobs currently in 'processing' (for the startup reconciler).
+
+    At worker boot these are candidates orphaned by a previously-killed worker;
+    the reconciler decides per-job whether each is genuinely stale.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, scan_id, user_id, created_at, status
+               FROM rewrite_jobs
+               WHERE status = 'processing'"""
+        )
+        return cur.fetchall()
 
 
 def claim_rewrite_job(job_id: str) -> Optional[dict]:
@@ -233,49 +252,57 @@ def update_rewrite_status(
 
 
 def release_rewrite_credits(job_id: str):
-    """Release reserved tokens back to available balance (on failure/cancellation)."""
+    """Release reserved tokens back to available balance on failure/cancel (idempotent).
+
+    Atomic compare-and-swap mirrors capture: only one caller flips an 'active'
+    reservation to 'released', so release races safely against a concurrent
+    capture (whichever flips status first wins; the other no-ops) and against a
+    redelivered task -- reserved tokens are returned exactly once.
+    """
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            """SELECT id, credit_account_id, tokens_reserved
-               FROM credit_reservations
+            """UPDATE credit_reservations
+               SET status = 'released'
                WHERE job_id = %s AND status = 'active'
-               LIMIT 1""",
+               RETURNING credit_account_id, tokens_reserved""",
             (job_id,),
         )
         row = cur.fetchone()
         if not row:
             return
-        res_id = row["id"]
-        acct_id = row["credit_account_id"]
-        tokens = row["tokens_reserved"]
 
-        cur.execute("UPDATE credit_reservations SET status = 'released' WHERE id = %s", (res_id,))
         cur.execute(
             "UPDATE credit_accounts SET reserved_tokens = reserved_tokens - %s WHERE id = %s",
-            (tokens, acct_id),
+            (row["tokens_reserved"], row["credit_account_id"]),
         )
 
 
 def capture_rewrite_credits(user_id: str, job_id: str):
-    """Capture credit reservation for a rewrite job."""
+    """Capture credit reservation for a rewrite job (idempotent).
+
+    Atomic compare-and-swap: only one caller flips an 'active' reservation to
+    'captured'. A redelivered rewrite task, or a concurrent API-side
+    stale-recovery capture, re-evaluates WHERE status='active' against the
+    already-captured row, matches zero rows, and no-ops -- so the rewrite is
+    billed exactly once.
+    """
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            """SELECT id, credit_account_id, tokens_reserved
-               FROM credit_reservations
+            """UPDATE credit_reservations
+               SET status = 'captured'
                WHERE job_id = %s AND status = 'active'
-               LIMIT 1""",
+               RETURNING credit_account_id, tokens_reserved""",
             (job_id,),
         )
         row = cur.fetchone()
         if not row:
             return
-        res_id = row["id"]
+
         acct_id = row["credit_account_id"]
         tokens = row["tokens_reserved"]
 
-        cur.execute("UPDATE credit_reservations SET status = 'captured' WHERE id = %s", (res_id,))
         cur.execute(
             "UPDATE credit_accounts SET balance_tokens = balance_tokens - %s, reserved_tokens = reserved_tokens - %s WHERE id = %s",
             (tokens, tokens, acct_id),
