@@ -26,6 +26,11 @@ try:
     from report.authorship_evidence import build_authorship_evidence, preserved_idea_spans, strengthen_anchor_sentences
 except ImportError:
     from poc.report.authorship_evidence import build_authorship_evidence, preserved_idea_spans, strengthen_anchor_sentences
+
+try:
+    from detect.layer3_scoring import estimate_external_detector_likelihood
+except ImportError:
+    from poc.detect.layer3_scoring import estimate_external_detector_likelihood
 from .report_contracts import extract_paragraph_diagnoses, extract_report_signal_contracts, paragraph_diagnoses_context
 from .scan import scan_text_with_report
 
@@ -193,6 +198,7 @@ def run_rewrite_pipeline_v6(
     }
     authorship_evidence["preserved_ideas"] = preserved_idea_spans(original_text, final_text)
     summary["authorship_evidence"] = authorship_evidence
+    summary["external_detector_estimate"] = _external_estimate_from_scan(rewritten_scan_report)
 
     result_obj = SimpleNamespace(
         summary=summary,
@@ -378,6 +384,20 @@ def _has_full_report_shape(report: dict[str, Any] | None) -> bool:
             or transformation.get("core_signals")
         )
     )
+
+
+def _external_estimate_from_scan(scan_report: dict | None) -> dict | None:
+    """The rewritten content's external-detector estimate: prefer the precomputed badge value, else
+    recompute from the badge's ai_components, else None (graceful for minimal/missing scans)."""
+    badge = scan_report.get("ai_risk_badge") if isinstance(scan_report, dict) else None
+    badge = badge if isinstance(badge, dict) else {}
+    estimate = badge.get("external_detector_estimate")
+    if estimate:
+        return estimate
+    components = badge.get("ai_components")
+    if isinstance(components, dict) and components:
+        return estimate_external_detector_likelihood(components)
+    return None
 
 
 def _detect_scores_for_summary(original_report: dict[str, Any], rewritten_report: dict[str, Any]) -> dict[str, Any]:

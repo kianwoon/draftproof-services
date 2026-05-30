@@ -97,3 +97,4 @@ class RewriteReportOut(BaseModel):
     ai_findings: Optional[list] = None
     effective_rewrite_plan: Optional[Any] = None
     authorship_evidence: Optional[Any] = None
+    external_detector_estimate: Optional[Any] = None
