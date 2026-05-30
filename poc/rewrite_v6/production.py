@@ -23,9 +23,9 @@ from .pipeline import _planner_model, _writer_model, run_v6_rewrite_all
 from .direct_rewrite import direct_rewrite_enabled, run_direct_rewrite_all
 
 try:
-    from report.authorship_evidence import build_authorship_evidence, preserved_idea_spans
+    from report.authorship_evidence import build_authorship_evidence, preserved_idea_spans, strengthen_anchor_sentences
 except ImportError:
-    from poc.report.authorship_evidence import build_authorship_evidence, preserved_idea_spans
+    from poc.report.authorship_evidence import build_authorship_evidence, preserved_idea_spans, strengthen_anchor_sentences
 from .report_contracts import extract_paragraph_diagnoses, extract_report_signal_contracts, paragraph_diagnoses_context
 from .scan import scan_text_with_report
 
@@ -62,6 +62,7 @@ def run_rewrite_pipeline_v6(
         _concern.get("signals"),
         false_positives=detect_json.get("false_positives"),
         confidence=_concern.get("confidence", "low"),
+        strengthen_examples=strengthen_anchor_sentences(detect_json),
     )
     effective_detect_json = dict(detect_json)
     effective_detect_json["input_text"] = original_text

@@ -47,11 +47,35 @@ def _summary_line(n_present: int, n_thin: int, confidence: str) -> str:
     return f"Authorship signals are inconclusive for this submission.{soft}"
 
 
+def strengthen_anchor_sentences(report_like: dict | None, *, limit: int = 5, min_words: int = 6) -> list[str]:
+    """The actual flagged sentences from the draft (rewrite_edit_briefs[].target_sentence) that the
+    'strengthen these' actions should be applied to. Deduped (case-insensitive), order-preserving,
+    short fragments dropped, capped at `limit`."""
+    briefs = (report_like or {}).get("rewrite_edit_briefs") or []
+    out: list[str] = []
+    seen: set[str] = set()
+    for b in briefs:
+        if not isinstance(b, dict):
+            continue
+        sent = (b.get("target_sentence") or "").strip()
+        if not sent or len(sent.split()) < min_words:
+            continue
+        norm = _norm(sent)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append(sent)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def build_authorship_evidence(
     signals: dict[str, Any] | None,
     false_positives: list[dict[str, Any]] | None = None,
     confidence: str = "low",
     preserved_ideas: list[dict[str, Any]] | None = None,
+    strengthen_examples: list[str] | None = None,
 ) -> dict[str, Any]:
     signals = signals or {}
     present, mixed, thin = [], [], []
@@ -87,6 +111,7 @@ def build_authorship_evidence(
         "thin_signals": thin,
         "human_recognized_spans": human_spans,
         "preserved_ideas": list(preserved_ideas or []),
+        "strengthen_examples": list(strengthen_examples or []),
         "confidence": confidence or "low",
         "summary_line": _summary_line(len(present), len(thin), confidence or "low"),
     }

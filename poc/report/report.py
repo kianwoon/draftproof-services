@@ -18,7 +18,7 @@ from typing import List, Dict, Any, Optional
 from enum import Enum
 
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
-from report.authorship_evidence import build_authorship_evidence
+from report.authorship_evidence import build_authorship_evidence, strengthen_anchor_sentences
 from detect.authorship_windows import build_ai_footprint_profile, build_authorship_window_profile
 from detect.document_structure import structured_sentence_segments
 from detect.repair_units import build_repair_units_v2
@@ -4174,6 +4174,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             report.authorship_concern_signals,
             false_positives=report.false_positives,
             confidence=report.authorship_concern_confidence,
+            strengthen_examples=strengthen_anchor_sentences({"rewrite_edit_briefs": _rewrite_edit_briefs()}),
         ),
         "authorship_concern": {
             "score": report.authorship_concern_score,

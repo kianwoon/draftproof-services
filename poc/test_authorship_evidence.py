@@ -7,6 +7,7 @@ from poc.report.authorship_evidence import (
     build_authorship_evidence,
     preserved_idea_spans,
     paragraph_authorship_targets,
+    strengthen_anchor_sentences,
 )
 
 
@@ -71,3 +72,29 @@ def test_paragraph_targets_protect_matching_spans_and_carry_actions():
     targets = paragraph_authorship_targets(block, "I taught in one room for years. More generic claims here.")
     assert "I taught in one room for years." in targets["protected_spans"]
     assert any("source" in g.lower() or "concrete" in g.lower() for g in targets["grounding_targets"])
+
+
+def test_strengthen_anchor_sentences_extracts_target_sentences():
+    report = {"rewrite_edit_briefs": [
+        {"target_sentence": "The abundance of information has created a new learning environment."},
+        {"target_sentence": "The abundance of information has created a new learning environment."},  # dup
+        {"target_sentence": "Too short."},  # < 6 words, dropped
+        {"target_sentence": "Students learn from teachers and digital platforms in many ways."},
+    ]}
+    out = strengthen_anchor_sentences(report)
+    assert out == [
+        "The abundance of information has created a new learning environment.",
+        "Students learn from teachers and digital platforms in many ways.",
+    ]
+
+
+def test_strengthen_anchor_sentences_empty_when_no_briefs():
+    assert strengthen_anchor_sentences({}) == []
+    assert strengthen_anchor_sentences(None) == []
+
+
+def test_build_attaches_strengthen_examples():
+    block = build_authorship_evidence(_signals(), strengthen_examples=["Some flagged sentence here in the draft."])
+    assert block["strengthen_examples"] == ["Some flagged sentence here in the draft."]
+    # default is empty list, not missing
+    assert build_authorship_evidence(_signals())["strengthen_examples"] == []
