@@ -3209,6 +3209,8 @@ td:first-child {
     position: static;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .landing-hero .review-panel,
+  .landing-hero .code-texture { display: none; }
   .landing-hero-grid,
   .why-card-grid,
   .help-heading,
@@ -3300,9 +3302,17 @@ td:first-child {
   }
   .landing-hero {
     padding-top: 48px;
+    padding-bottom: 56px;
   }
   .landing-hero-grid {
-    gap: 32px;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .landing-hero .review-panel {
+    display: none;
+  }
+  .landing-hero .code-texture {
+    display: none;
   }
   .review-grid,
   .signal-list,
