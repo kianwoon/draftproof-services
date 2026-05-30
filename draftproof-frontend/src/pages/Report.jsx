@@ -375,6 +375,8 @@ export default function Report() {
   const submittedEditorRef = useRef(null);
   const submittedHighlightRef = useRef(null);
   const submittedDocumentRef = useRef(null);
+  const submittedPanelRef = useRef(null);
+  const [panelOffset, setPanelOffset] = useState(0);
   const submittedEditorCloseTimerRef = useRef(null);
 
   const clearSubmittedEditorCloseTimer = useCallback(() => {
@@ -753,6 +755,23 @@ export default function Report() {
 
     return () => clearInterval(timer);
   }, [rewriteTimerActive, activeRewriteForTimer?.id]);
+
+  // Slide panel to align with the selected paragraph
+  useEffect(() => {
+    if (!selectedParagraphId || !submittedDocumentRef.current || !submittedPanelRef.current) {
+      setPanelOffset(0);
+      return;
+    }
+    const container = submittedDocumentRef.current;
+    const panel = submittedPanelRef.current;
+    const btn = container.querySelector(`[data-paragraph-id="${selectedParagraphId}"]`);
+    if (!btn) { setPanelOffset(0); return; }
+    const containerRect = container.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const rawOffset = btnRect.top - containerRect.top;
+    const maxOffset = containerRect.height - panel.getBoundingClientRect().height;
+    setPanelOffset(Math.max(0, Math.min(rawOffset, maxOffset)));
+  }, [selectedParagraphId]);
 
   if (loading) return (
     <main className="dash-shell">
@@ -1999,7 +2018,12 @@ export default function Report() {
                   );
                 })}
               </div>
-              <aside className="submitted-signal-panel" aria-label={t('report.submitted.selectedSignal')}>
+              <aside
+                className="submitted-signal-panel"
+                ref={submittedPanelRef}
+                style={{ transform: `translateY(${panelOffset}px)` }}
+                aria-label={t('report.submitted.selectedSignal')}
+              >
                 {selectedParagraph?.primarySignal ? (
                   <>
                     <span className="submitted-panel-kicker">{selectedParagraph.sentence_id}</span>
