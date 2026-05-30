@@ -22,7 +22,7 @@ from detect.authorship_windows import build_ai_footprint_profile, build_authorsh
 from detect.document_structure import structured_sentence_segments
 from detect.repair_units import build_repair_units_v2
 from detect.rewrite_targets import build_problem_inventory, build_rewrite_target_profile
-from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text
+from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text, estimate_external_detector_likelihood
 from detect.transformation import (
     TRANSFORMATION_SIGNAL_METADATA,
     classify_transformation_from_scan,
@@ -1418,10 +1418,17 @@ class ReportBuilder:
         # calibrated risk is a separate safe-band gate.
         ai_components["topk_pattern"] = topk_calibration.get("topk_pattern_raw", raw_topk_pattern)
 
+        # Honest, external-facing expectation: strict third-party detectors (Turnitin/GPTZero) key on
+        # raw token predictability and over-flag, so they rate text far higher than DraftProof's
+        # false-positive-averse score. Surface that so users are not blindsided. Additive only -- it
+        # does NOT affect the tier, ai_likelihood_score, or any rewrite gate.
+        external_detector_estimate = estimate_external_detector_likelihood(ai_components)
+
         ai_risk_badge = {
             # AI Generation (Phase 1)
             "tier": layer3.tier.value,
             "ai_likelihood_score": round(layer3.ai_likelihood_score * 100, 2),
+            "external_detector_estimate": external_detector_estimate,
             "authorship_rating": layer3.authorship_rating,
             "authorship_rating_label": layer3.authorship_rating.get("label"),
             "authorship_rating_code": layer3.authorship_rating.get("code"),

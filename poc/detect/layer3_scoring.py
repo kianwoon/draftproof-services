@@ -711,6 +711,41 @@ def estimate_sentence_fragmentation_risk(text: str) -> float:
     return round(max(0.0, min(1.0, (short_8 - 0.30) / 0.45)), 4)
 
 
+def estimate_external_detector_likelihood(components: dict) -> dict:
+    """Perplexity-forward estimate of how strict THIRD-PARTY AI detectors (Turnitin, GPTZero,
+    Originality, ...) are likely to rate this text.
+
+    Those tools key on raw token predictability (low perplexity) and uniform rhythm, and they
+    OVER-FLAG -- including genuine human writing. DraftProof's own score deliberately discounts raw
+    Top-k to avoid false-accusing writers, so it reads lower. This estimate exists only to set the
+    user's expectation about external tools; it is NOT DraftProof's assessment, and it is
+    intentionally a directional band (external tools vary widely and some rate even higher)."""
+    def _v(key: str) -> float:
+        value = components.get(key)
+        return float(value) if isinstance(value, (int, float)) else 0.0
+
+    topk_raw = _v("topk_pattern_raw") or _v("topk_pattern")
+    predictability = _v("predictability")
+    burstiness = _v("burstiness_risk")
+    score = max(0.0, min(100.0, 0.55 * topk_raw + 0.25 * predictability + 0.20 * burstiness))
+    if score >= 55.0 or topk_raw >= 65.0:
+        band = "high"
+    elif score >= 35.0:
+        band = "elevated"
+    else:
+        band = "low"
+    return {
+        "score": round(score, 1),
+        "band": band,
+        "note": (
+            "Estimated likelihood that strict third-party detectors (e.g. Turnitin, GPTZero) flag "
+            "this as AI. They weight raw token predictability far more aggressively than DraftProof "
+            "and tend to over-flag -- treat as an external-facing estimate, not DraftProof's "
+            "assessment."
+        ),
+    }
+
+
 def estimate_burstiness_risk(text: str) -> float:
     sentences = split_sentences(text)
     if len(sentences) < 6:
