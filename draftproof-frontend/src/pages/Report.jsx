@@ -983,6 +983,8 @@ export default function Report() {
     null
   );
 
+  const authorshipEvidence = report?.authorship_evidence || null;
+
   const selectAndScrollParagraph = (paragraphId) => {
     setSelectedParagraphId(paragraphId);
     if (!submittedDocumentRef.current) return;
@@ -1963,6 +1965,46 @@ export default function Report() {
           </section>
         ) : (
           reportSummaryBar
+        )}
+
+        {authorshipEvidence && (
+          <section className="rewrite-review-section" aria-label={t('authorshipEvidence.scanTitle')}>
+            <div className="rewrite-review-heading">
+              <div>
+                <span className="rewrite-review-kicker">{t('authorshipEvidence.scanKicker')}</span>
+                <h3>{t('authorshipEvidence.scanTitle')}</h3>
+              </div>
+            </div>
+            <p className="rewrite-review-copy">{t('authorshipEvidence.scanCopy')}</p>
+            {authorshipEvidence.confidence === 'low' && (
+              <p className="sample-reference-note">{t('authorshipEvidence.lowConfidenceNote')}</p>
+            )}
+            {authorshipEvidence.present_markers?.length > 0 && (
+              <div className="rewrite-target-block">
+                <span>{t('authorshipEvidence.presentTitle')}</span>
+                <ul className="signal-list">
+                  {authorshipEvidence.present_markers.map((m) => <li key={m.signal}>{m.label}</li>)}
+                </ul>
+              </div>
+            )}
+            {authorshipEvidence.thin_signals?.length > 0 && (
+              <div className="rewrite-addition-block">
+                <span>{t('authorshipEvidence.thinTitle')}</span>
+                <p className="rewrite-review-copy">{t('authorshipEvidence.thinCopy')}</p>
+                <ul className="signal-list">
+                  {authorshipEvidence.thin_signals.map((tn) => <li key={tn.signal}>{tn.action}</li>)}
+                </ul>
+              </div>
+            )}
+            {authorshipEvidence.human_recognized_spans?.length > 0 && (
+              <div className="rewrite-target-block">
+                <span>{t('authorshipEvidence.recognizedTitle')}</span>
+                {authorshipEvidence.human_recognized_spans.slice(0, 6).map((s, i) => (
+                  <p key={s.sentence_id || i}>{s.text}</p>
+                ))}
+              </div>
+            )}
+          </section>
         )}
 
         {submittedContent.paragraphs.length > 0 && (
