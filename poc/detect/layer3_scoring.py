@@ -357,19 +357,21 @@ def split_paragraphs(text: str) -> list[str]:
 
 
 # Content-agnostic formulaic-progression markers: the generic temporal/contrastive scaffolding AI
-# essays march through, regardless of subject. (De-overfit: dropped the content11 literal
-# "technology has also" and narrowed "another issue" into agnostic pattern families.)
+# essays march through. (Minimal de-overfit: dropped the content11 literal "technology has also";
+# widened "another issue"/"this shift" into small agnostic families; kept the rest + denominator so
+# non-overfit documents score exactly as before.)
 FORMULAIC_PROGRESS_MARKERS = [
-    r"\b(?:in the past|historically|traditionally|previously|in earlier times)\b",
-    r"\b(?:nowadays|now|today|these days|in today's)\b",
-    r"\bthis\s+(?:shift|change|trend|development|transformation|evolution)\b",
+    r"\bin the past\b",
+    r"\bnow\b",
+    r"\btoday\b",
+    r"\bthis (?:shift|change|trend)\b",
     r"\bhowever\b",
-    r"\b(?:because of this|as a result|consequently|therefore|thus)\b",
-    r"\banother\s+(?:issue|problem|challenge|concern|factor|aspect|point|consideration)\b",
-    r"\bthe\s+(?:goal|aim)\s+should\b",
-    r"\bon the other hand\b",
-    r"\b(?:in conclusion|to conclude|in summary|to sum up)\b",
-    r"\b(?:overall|ultimately|in the end)\b",
+    r"\banother (?:issue|problem|challenge|concern|factor|aspect)\b",
+    r"\bbecause of this\b",
+    r"\bthe goal should\b",
+    r"\bin conclusion\b",
+    r"\boverall\b",
+    r"\bultimately\b",
 ]
 
 
