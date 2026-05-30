@@ -839,6 +839,9 @@ export default function Report() {
   const rewrittenScan = getRewrittenDetectScan(rewriteResultReport) || {};
   const rewrittenBadge = rewrittenScan.ai_risk_badge || {};
   const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
+  // Honest, external-facing expectation. Prefer the rewritten content's estimate (that is what users
+  // cross-check on third-party sites); fall back to the main report badge for plain scans.
+  const externalDetectorEstimate = rewrittenBadge.external_detector_estimate || badge.external_detector_estimate || null;
   const rewrittenTransformation = rewrittenBadge.transformation_classification || null;
   const rewrittenTransformationSignalMetadata = getScanTransformationSignals(rewrittenScan);
   const rewrittenTransformationFeatureFallbacks = transformationSignalFeatureMap(rewrittenTransformationSignalMetadata);
@@ -1335,6 +1338,20 @@ export default function Report() {
         <div className="report-stat">
           <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(calibratedReportAiScore(rawAuthorshipSignal), 0)}</span>
           <span className="report-stat-label">{t('report.summary.rawAiSignal')}</span>
+        </div>
+      )}
+      {externalDetectorEstimate?.score != null && (
+        <div
+          className="report-stat"
+          title={externalDetectorEstimate.note || t('report.summary.externalDetectorNote', { defaultValue: 'Estimated likelihood that strict third-party detectors (Turnitin, GPTZero) flag this as AI. These tools over-flag; for a genuine pass, finish the draft in your own words.' })}
+        >
+          <span
+            className="report-stat-value"
+            style={{ color: externalDetectorEstimate.band === 'high' ? '#dc2626' : externalDetectorEstimate.band === 'elevated' ? '#d97706' : '#16a34a' }}
+          >
+            {formatMetricPercent(externalDetectorEstimate.score, 0)}
+          </span>
+          <span className="report-stat-label">{t('report.summary.externalDetectorEstimate', { defaultValue: 'Est. external detectors' })}</span>
         </div>
       )}
       {writingScore != null && (
