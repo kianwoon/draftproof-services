@@ -3308,9 +3308,7 @@ td:first-child {
     grid-template-columns: 1fr;
     gap: 0;
   }
-  .landing-hero .review-panel {
-    display: none;
-  }
+  .landing-hero .review-panel,
   .landing-hero .code-texture {
     display: none;
   }
