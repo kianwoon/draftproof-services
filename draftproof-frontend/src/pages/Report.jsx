@@ -374,6 +374,7 @@ export default function Report() {
   const notifiedRewriteIdsRef = useRef(new Set());
   const submittedEditorRef = useRef(null);
   const submittedHighlightRef = useRef(null);
+  const submittedDocumentRef = useRef(null);
   const submittedEditorCloseTimerRef = useRef(null);
 
   const clearSubmittedEditorCloseTimer = useCallback(() => {
@@ -959,6 +960,14 @@ export default function Report() {
     submittedContent.paragraphs.find((paragraph) => paragraph.signals.length > 0) ||
     null
   );
+
+  const selectAndScrollParagraph = (paragraphId) => {
+    setSelectedParagraphId(paragraphId);
+    if (!submittedDocumentRef.current) return;
+    const btn = submittedDocumentRef.current.querySelector(`[data-paragraph-id="${paragraphId}"]`);
+    if (!btn) return;
+    submittedDocumentRef.current.scrollTo({ top: btn.offsetTop - 16, behavior: 'smooth' });
+  };
   const selectedParagraphGuidance = selectedParagraph?.explanation || {};
   const selectedReaderSummary = (
     selectedParagraphGuidance.reader_summary ||
@@ -1959,7 +1968,7 @@ export default function Report() {
               </div>
             )}
             <div className="submitted-content-grid">
-              <div className="submitted-document" aria-label={t('report.submitted.documentText')}>
+              <div className="submitted-document" ref={submittedDocumentRef} aria-label={t('report.submitted.documentText')}>
                 {submittedContent.paragraphs.map((paragraph) => {
                   const signal = paragraph.primarySignal;
                   const isSelected = selectedParagraph?.id === paragraph.id;
@@ -1970,13 +1979,14 @@ export default function Report() {
                     <p key={paragraph.id}>
                       <button
                         type="button"
+                        data-paragraph-id={paragraph.id}
                         className={`submitted-highlight submitted-paragraph-highlight signal-style-${signalClassName(signal.key)}${isSelected ? ' is-selected' : ''}`}
                         style={{ '--signal-color': signal.color }}
                         title={signalDescription(signal.key, signal.description, t)}
                         onMouseEnter={() => setSelectedParagraphId(paragraph.id)}
                         onFocus={() => setSelectedParagraphId(paragraph.id)}
                         onClick={() => {
-                          setSelectedParagraphId(paragraph.id);
+                          selectAndScrollParagraph(paragraph.id);
                         }}
                       >
                         {paragraph.text}
