@@ -6304,7 +6304,7 @@ td:first-child {
   border-radius: 16px;
   background: rgba(255, 255, 255, .94);
   box-shadow: 0 16px 34px rgba(15, 23, 42, .07);
-  overflow: hidden;
+  overflow: clip; /* clip = visual clipping only, does NOT trap sticky children */
 }
 
 .submitted-content-head {
@@ -6427,15 +6427,14 @@ td:first-child {
 .submitted-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 34%);
-  align-items: stretch;
+  align-items: start;
   min-height: 360px;
 }
 
 .submitted-document {
   align-self: stretch;
-  min-height: 100%;
+  min-height: 360px;
   max-height: none;
-  overflow: auto;
   box-sizing: border-box;
   padding: 1.25rem 1.35rem;
   border-right: 1px solid #e2e8f0;
@@ -6560,7 +6559,11 @@ td:first-child {
 .submitted-signal-panel {
   display: flex;
   flex-direction: column;
-  align-self: stretch;
+  align-self: start;
+  position: sticky;
+  top: calc(var(--header-h, 64px) + 1rem);
+  max-height: calc(100vh - var(--header-h, 64px) - 2rem);
+  overflow-y: auto;
   gap: .85rem;
   padding: 1.15rem;
   background: #f8fafc;
@@ -8151,12 +8154,16 @@ td:first-child {
     align-self: auto;
     min-height: 0;
     max-height: 520px;
+    overflow: auto;
     border-right: 0;
     border-bottom: 1px solid #e2e8f0;
     padding: 1rem;
     font-size: .95rem;
   }
   .submitted-signal-panel {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
     padding: 1rem;
   }
   .submitted-editor-sheet {

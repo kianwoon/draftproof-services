@@ -964,9 +964,13 @@ export default function Report() {
   const selectAndScrollParagraph = (paragraphId) => {
     setSelectedParagraphId(paragraphId);
     if (!submittedDocumentRef.current) return;
-    const btn = submittedDocumentRef.current.querySelector(`[data-paragraph-id="${paragraphId}"]`);
+    const container = submittedDocumentRef.current;
+    const btn = container.querySelector(`[data-paragraph-id="${paragraphId}"]`);
     if (!btn) return;
-    submittedDocumentRef.current.scrollTo({ top: btn.offsetTop - 16, behavior: 'smooth' });
+    const containerRect = container.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const targetScrollTop = container.scrollTop + (btnRect.top - containerRect.top) - 16;
+    container.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
   };
   const selectedParagraphGuidance = selectedParagraph?.explanation || {};
   const selectedReaderSummary = (
