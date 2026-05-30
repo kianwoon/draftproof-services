@@ -239,6 +239,7 @@ export default function Rewrite() {
   const manualSuggestions = (summary.manual_suggestions || report?.manual_suggestions || []).filter(Boolean);
   const authorProxyContext = summary.author_proxy_context || report?.author_proxy_context || {};
   const authorshipEvidence = report?.authorship_evidence || summary.authorship_evidence || null;
+  const externalEstimate = report?.external_detector_estimate || null;
   const authorReviewCards = (
     summary.author_review_cards ||
     authorProxyContext.review_cards ||
@@ -305,6 +306,31 @@ export default function Rewrite() {
         )}
 
         {error && <ErrorReload message={error} />}
+
+        {report?.final_text && (
+          <section className="rewrite-review-section" aria-label={t('rewriteFraming.title')}>
+            <div className="rewrite-review-heading">
+              <div>
+                <h3>{t('rewriteFraming.title')}</h3>
+              </div>
+            </div>
+            <p className="rewrite-review-copy">{t('rewriteFraming.isCopy')}</p>
+            <p className="rewrite-review-copy">{t('rewriteFraming.isntCopy')}</p>
+            {externalEstimate?.score != null && (
+              <p className="rewrite-review-copy">
+                <strong>{t('rewriteFraming.estimateLabel')}: </strong>
+                <strong
+                  style={{ color: externalEstimate.band === 'high' ? '#dc2626' : externalEstimate.band === 'elevated' ? '#d97706' : '#16a34a' }}
+                >
+                  {`${Math.round(externalEstimate.score)}%`}
+                </strong>
+                {' — '}
+                {t('rewriteFraming.estimateContext')}
+              </p>
+            )}
+            <p className="rewrite-review-copy">{t('rewriteFraming.action')}</p>
+          </section>
+        )}
 
         {requiresManualReview && report?.final_text && (
           <section className="rewrite-status-alert">
