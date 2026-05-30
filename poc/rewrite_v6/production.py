@@ -190,12 +190,8 @@ def run_rewrite_pipeline_v6(
         "final_text": final_text,
         "no_text_change": not changed,
     }
-    authorship_evidence["preserved_ideas"] = preserved_idea_spans(original_text, document.rewritten_text)
-    if isinstance(summary, dict):
-        summary["authorship_evidence"] = authorship_evidence
-        _summary_inner = summary.get("summary")
-        if isinstance(_summary_inner, dict):
-            _summary_inner["authorship_evidence"] = authorship_evidence
+    authorship_evidence["preserved_ideas"] = preserved_idea_spans(original_text, final_text)
+    summary["authorship_evidence"] = authorship_evidence
 
     result_obj = SimpleNamespace(
         summary=summary,
