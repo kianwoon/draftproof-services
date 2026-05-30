@@ -901,40 +901,22 @@ def estimate_lived_detail_risk(text: str, domain_patterns: Optional[list[str]] =
     if not sentences:
         return 0.70
 
+    # Content-agnostic lived-detail signals (NO hardcoded domain vocabulary, per project rule).
+    # Sentences are lowercased before matching, so patterns are lowercase. Lived detail = the
+    # author's first-hand experience + concrete specifics, in ANY subject -- not domain keywords.
     base_patterns = [
-        r"\b\d+\b",
-        r"\bduring\b",
-        r"\bwhen\b",
-        r"\bafter\b",
-        r"\bbefore\b",
-        r"\bin my classroom\b",
-        r"\bi have seen\b",
-        r"\bi noticed\b",
-        r"\bi would\b",
-        r"\bi think\b",
-        r"\bi worry\b",
-        r"\bi treat\b",
-        r"\bthe (?:part|issue|point) i\b",
+        r"\b\d+\b",                                            # numbers / quantities
+        r"\b(?:during|when|after|before|once|while)\b",        # temporal grounding
+        r"\bin my\b",                                          # first-hand framing ("in my class/clinic/...")
+        r"\bi(?:'ve|'d| have| had)?\s+(?:saw|see|seen|notice|noticed|observed|watched|found|tried|tested|taught|experienced|measured|recall|remember|ask|asked|use|used|treat|demonstrate|encourage|gave|struggled|learned|worry|think|would)\b",
+        r"\bwe(?:'ve| have)?\s+(?:observed|found|noticed|measured|tested|tried|saw|seen)\b",
+        r"\bmy (?:judgement|judgment|current|own)\b",
+        r"\bthe (?:part|issue|point) (?:i|we)\b",
         r"\bwhat (?:i|we) (?:would|need|want)\b",
-        r"\bmy judgement\b",
-        r"\bwe observed\b",
-        r"\bfeedback\b",
-        r"\btesting\b",
-        r"\bstudent said\b",
-        r"\bteacher said\b",
-        r"\bschool\b",
-        r"\bclassroom\b",
-        r"\bcase\b",
-        r"\bexample\b",
-        r"\bincident\b",
-        r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",
-        r"\bBox Hill\b",
-        r"\bI (?:see|ask|demonstrate|want|encourage|usually)\b",
-        r"\bmy current\b",
-        r"\blearners?\s+(?:shift|practise|practice|repeat|name|combine|cut|pause|continue|describe|notice|need|work)\b",
-        r"\b(?:sectioning|projection|parting|distribution|design line|mobile guide|stationary guide|guide line|"
-        r"guide|mannequin|client model|client models|weight line|elbow|wrist|finger|scissor|comb|tension|subsection|"
-        r"graduation|graduated haircut|solid form|one length|uniform layer|increased layer|haircut structures?)\b",
+        r"\b(?:said|told|reported|recalled)\b",                # attribution / quotation
+        r"\b(?:for example|for instance|such as|in particular|specifically)\b",  # exemplification
+        r"\b(?:case|example|incident|episode)\b",              # concrete instance
+        r"\bfeedback\b", r"\btesting\b",                       # process specifics
     ]
 
     patterns = base_patterns + (domain_patterns or [])
@@ -973,14 +955,16 @@ ASSERTION_VERB_PATTERNS = [
     r"\benables?\b", r"\bforces?\b", r"\bthreatens?\b",
 ]
 
+# Content-agnostic "author-owned context" signals (NO hardcoded domain vocabulary, per project
+# rule). Matched case-insensitively. The author's own first-hand framing + concrete specifics in
+# any subject -- never a named institution or a domain's jargon.
 AUTHOR_OWNED_CONTEXT_PATTERNS = [
-    r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",
-    r"\b(?:At Box Hill Institute|Certificate III|my current learners)\b",
-    r"\bI (?:see|ask|demonstrate|want|encourage|usually|notice|use|treat)\b",
-    r"\blearners?\s+(?:shift|practise|practice|repeat|name|combine|cut|pause|continue|describe|notice|need|work|must|can)\b",
-    r"\b(?:sectioning|projection|parting|distribution|design line|mobile guide|stationary guide|guide line|"
-    r"mannequin|client model|client models|weight line|elbow|wrist|finger|scissor|comb|tension|subsection|"
-    r"graduation|graduated haircut|solid form|one length|uniform layer|increased layer|haircut structures?)\b",
+    r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",                 # alphanumeric codes
+    r"\bin my\b",                                          # first-hand framing
+    r"\bI (?:see|saw|ask|asked|demonstrate|want|encourage|usually|notice|use|used|treat|observed|tried|taught|gave|found)\b",
+    r"\bwe (?:observed|found|noticed|measured|tested|tried)\b",
+    r"\bmy (?:current|own|judgement|judgment)\b",
+    r"\b(?:for example|for instance|such as|in particular)\b",
 ]
 
 
