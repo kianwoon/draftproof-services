@@ -5979,7 +5979,7 @@ td:first-child {
   display: grid;
   justify-items: end;
   align-content: center;
-  flex: 0 0 clamp(150px, 22vw, 220px);
+  flex: 0 0 clamp(172px, 23vw, 244px);
   min-height: 92px;
   padding: .9rem 1rem;
   color: var(--rating-color, #b45309);
@@ -6024,11 +6024,15 @@ td:first-child {
   max-width: 100%;
   margin-top: .28rem;
   color: var(--rating-color, #b45309);
-  font-size: clamp(1.28rem, 2.5vw, 2rem);
+  /* Sized so the longest verdict word ("DETECTORS") fits the seal on one line; wrap at word
+     boundaries (break-word only as a last resort) so a word is never split mid-letter. */
+  font-size: clamp(1.02rem, 1.9vw, 1.5rem);
   font-weight: 950;
   letter-spacing: 0;
-  line-height: .98;
-  overflow-wrap: anywhere;
+  line-height: 1.02;
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: none;
   text-transform: uppercase;
 }
 

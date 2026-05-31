@@ -165,8 +165,11 @@ img[src^="https://img.shields.io"] { height: 18px; }
 .dp-rewrite-stamp strong {
     display: block;
     color: inherit;
-    font-size: 21pt;
-    line-height: 1;
+    /* Sized so the longest verdict word ("DETECTORS") fits the 128pt seal; wrap whole words. */
+    font-size: 15pt;
+    line-height: 1.06;
+    overflow-wrap: break-word;
+    word-break: normal;
 }
 
 .dp-rewrite-stamp em {
