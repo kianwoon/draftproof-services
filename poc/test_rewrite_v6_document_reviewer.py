@@ -214,6 +214,20 @@ def test_review_returns_unchanged_on_bad_json(monkeypatch):
     assert result.corrections == []
 
 
+def test_review_drops_polarity_inverting_correction(monkeypatch):
+    # The fidelity guard must drop a correction that flips a 'not only X but also Y' balance into
+    # 'Y over X', even when the score would otherwise improve.
+    monkeypatch.setattr(document_reviewer, "_score", lambda t: 10.0)
+    doc = "AI is not only useful for drafting but also useful for checking the student's reasoning."
+    correction = {"corrections": [
+        {"original": doc, "revised": "AI matters for checking reasoning rather than for drafting."}
+    ]}
+    gw = _stub([json.dumps(correction)])
+    result = document_reviewer.review_document(doc, gateway=gw)
+    assert result.text == doc            # polarity-inverting correction dropped
+    assert result.corrections == []
+
+
 from poc.rewrite_v6 import direct_rewrite as dr
 from poc.rewrite_v6.pipeline import DocumentResult
 from poc.rewrite_v6.scan import scan_text as _scan_text
