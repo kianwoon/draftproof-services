@@ -1420,7 +1420,9 @@ export default function Report() {
               </div>
             )}
           </div>
-          <em>{formatMetricPercent(calibratedReportAiScore(variantAiScore), 0)}</em>
+          {variant !== 'original' && (
+            <em>{formatMetricPercent(calibratedReportAiScore(variantAiScore), 0)}</em>
+          )}
         </div>
         {summary && (
           <details className="ai-likelihood-calibration">
