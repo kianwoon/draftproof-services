@@ -134,7 +134,6 @@ function formatMetricPercent(value, digits = 0) {
   return `${percent.toFixed(digits)}%`;
 }
 
-const REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5;
 const TURNITIN_AI_REFERENCE_THRESHOLD = 20;
 const AI_SIGNAL_STAMP_LEVELS = [
   {
@@ -163,9 +162,11 @@ const AI_SIGNAL_STAMP_LEVELS = [
   },
 ];
 
+// Returns the DraftProof AI-likelihood percent (badge ai_likelihood_score) directly — the
+// single canonical "AI score" shown across the report page, scan list, PDF, and email.
+// (Previously halved by a 0.5 "display multiplier"; removed so every surface agrees.)
 function calibratedReportAiScore(value) {
-  const percent = metricValue(value);
-  return percent == null ? null : percent * REPORT_AI_SCORE_DISPLAY_MULTIPLIER;
+  return metricValue(value);
 }
 
 function metricValue(value) {

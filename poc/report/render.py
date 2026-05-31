@@ -148,7 +148,6 @@ def _tf_pct(value) -> float | None:
     return max(0.0, min(100.0, number))
 
 
-_REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5
 _TURNITIN_AI_REFERENCE_THRESHOLD = 20
 _TURNITIN_AI_REFERENCE_NOTE = (
     "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage "
@@ -157,8 +156,9 @@ _TURNITIN_AI_REFERENCE_NOTE = (
 
 
 def _display_ai_score(value) -> float | None:
-    score = _tf_pct(value)
-    return None if score is None else score * _REPORT_AI_SCORE_DISPLAY_MULTIPLIER
+    # Canonical DraftProof AI-likelihood percent (badge ai_likelihood_score), shown directly.
+    # Previously halved by a 0.5 "display multiplier"; removed so page, PDF, and email agree.
+    return _tf_pct(value)
 
 
 def _ai_reference_suffix(score) -> str | None:
@@ -1376,7 +1376,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _rating_label = _rating.get("label") or _ab.get("authorship_rating_label")
         _sc = _shield_colors.get(_abt, "lightgrey")
         _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)
-        lines.append(f"![{_abt_label}](https://img.shields.io/badge/Turnitin_AI_Tier-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.0f}%`")
+        lines.append(f"![{_abt_label}](https://img.shields.io/badge/DraftProof_AI-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.0f}%`")
         if _rating_label:
             lines.append(f"**Authorship Rating:** {_rating_label}")
         lines.append("")

@@ -74,3 +74,20 @@ def test_markdown_external_unavailable_fallback():
     md = render_markdown(_report_with_badge(ext=False))
     assert "External estimate unavailable" in md
     assert "42%" in md
+
+
+def test_display_ai_score_is_not_halved():
+    # GUARD: the legacy 0.5 "display multiplier" was removed. The displayed AI score must
+    # equal the badge ai_likelihood_score (the single canonical number), NOT half of it.
+    from report.render import _display_ai_score
+    assert _display_ai_score(42) == 42
+    assert _display_ai_score(0.42) == 42  # 0-1 scale normalizes to percent
+    assert _display_ai_score(None) is None
+
+
+def test_markdown_score_is_badge_value_no_legacy_halving():
+    # GUARD: with badge ai_likelihood_score=42, the PDF/markdown must show 42% (header +
+    # AI Likelihood block + Original Scan) and NEVER the legacy halved 21% anywhere.
+    md = render_markdown(_report_with_badge(ext=True))
+    assert "42%" in md
+    assert "21%" not in md
