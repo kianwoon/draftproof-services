@@ -106,12 +106,20 @@ class Correction:
     rule: str = "qc"
 
 
+# Upper bound on corrections evaluated per document. Each one re-scores the whole document, so this
+# bounds worst-case latency if a model returns an unexpectedly long list. The surgical design
+# expects only a handful; a 1800-word doc has ~15-20 paragraphs and the detectors flag a few, so a
+# real run never approaches this. Anything beyond is reported via ReviewResult.corrections_over_cap.
+_MAX_CORRECTIONS = 25
+
+
 @dataclass
 class ReviewResult:
     text: str
     corrections: list[Correction] = field(default_factory=list)
     skipped: str | None = None
     must_fix_unaddressed: list[str] = field(default_factory=list)
+    corrections_over_cap: int = 0
 
 
 def _score(text: str) -> float:
@@ -170,9 +178,13 @@ def review_document(
 
     current = text
     applied: list[Correction] = []
-    for item in (data.get("corrections") or []):
-        if not isinstance(item, dict):
-            continue
+    # Each accepted-or-rejected correction re-scores the whole document (_correction_is_safe ->
+    # _score), so cost is O(corrections) full scans. Cap the number we evaluate to bound worst-case
+    # latency if a model returns an unexpectedly long list; the surgical design expects only a
+    # handful. Extra corrections beyond the cap are surfaced in the trace, not silently dropped.
+    corrections_in = [c for c in (data.get("corrections") or []) if isinstance(c, dict)]
+    over_cap = max(0, len(corrections_in) - _MAX_CORRECTIONS)
+    for item in corrections_in[:_MAX_CORRECTIONS]:
         original = str(item.get("original") or "")
         revised = str(item.get("revised") or "")
         if not original or original not in current:
@@ -187,4 +199,5 @@ def review_document(
         issue.rule for issue in must_fix
         if not any(t in addressed for t in issue.target_sentences)
     ]
-    return ReviewResult(text=current, corrections=applied, must_fix_unaddressed=unaddressed)
+    return ReviewResult(text=current, corrections=applied, must_fix_unaddressed=unaddressed,
+                        corrections_over_cap=over_cap)

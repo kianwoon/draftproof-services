@@ -348,6 +348,7 @@ def _apply_reviewer(
             {"original": c.original, "revised": c.revised} for c in result.corrections
         ][:12],
         "must_fix_unaddressed": result.must_fix_unaddressed,
+        "corrections_over_cap": result.corrections_over_cap,
     })
     return DocumentResult(
         initial_scan=doc.initial_scan,

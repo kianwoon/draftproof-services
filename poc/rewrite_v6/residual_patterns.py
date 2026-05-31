@@ -31,14 +31,16 @@ def _paragraphs(text: str) -> list[str]:
     return [p.strip() for p in re.split(r"\n\s*\n", str(text or "")) if p.strip()]
 
 
-def _first_sentence(paragraph: str) -> str:
-    match = re.search(r"^.*?[.!?](?:\s|$)", paragraph.strip())
-    return (match.group(0).strip() if match else paragraph.strip())
-
-
 def _sentences(text: str) -> list[str]:
     parts = re.split(r"(?<=[.!?])\s+", str(text or "").replace("\n", " ").strip())
     return [p.strip() for p in parts if p.strip()]
+
+
+def _first_sentence(paragraph: str) -> str:
+    # Reuse _sentences so opener targets and rhythm/other detectors agree on sentence boundaries
+    # (a single source of truth for "what is sentence 1 of this paragraph").
+    sents = _sentences(paragraph)
+    return sents[0] if sents else paragraph.strip()
 
 
 def _first_word(sentence: str) -> str:
