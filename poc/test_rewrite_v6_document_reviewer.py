@@ -66,3 +66,27 @@ def test_robotic_transitions_fires():
 def test_robotic_transitions_silent_when_absent():
     doc = "Schools changed fast.\n\nThat created a new problem teachers had to solve themselves."
     assert [i for i in detect_residual_patterns(doc) if i.rule == "robotic_transitions"] == []
+
+
+def test_repeated_subject_starts_fires():
+    doc = (
+        "Technology helps students learn. Technology also distracts them constantly. "
+        "Technology shapes how teachers plan every lesson now."
+    )
+    issues = detect_residual_patterns(doc)
+    rep = [i for i in issues if i.rule == "repeated_subject_starts"]
+    assert len(rep) == 1
+    assert 19 in rep[0].trick_ids
+
+
+def test_balance_phrase_fires():
+    doc = "AI in the classroom brings both opportunities and risks for every learner involved."
+    issues = detect_residual_patterns(doc)
+    bal = [i for i in issues if i.rule == "balance_phrase"]
+    assert len(bal) == 1
+    assert 7 in bal[0].trick_ids
+
+
+def test_balance_phrase_silent_when_specific():
+    doc = "AI helps students brainstorm at the planning stage, but it hides gaps they cannot explain."
+    assert [i for i in detect_residual_patterns(doc) if i.rule == "balance_phrase"] == []

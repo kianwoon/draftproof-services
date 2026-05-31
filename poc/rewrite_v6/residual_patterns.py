@@ -119,6 +119,56 @@ def _detect_robotic_transitions(text: str) -> ResidualIssue | None:
                          evidence=evidence, target_sentences=hits)
 
 
+# ---------------------------------------------------------------------------
+# Detector: repeated_subject_starts (#19)
+# ---------------------------------------------------------------------------
+
+# Same first word more than this many times within one paragraph reads as a repeated subject start.
+_MAX_SAME_FIRST_WORD = 2
+
+
+def _detect_repeated_subject_starts(text: str) -> ResidualIssue | None:
+    flagged: list[str] = []
+    for para in _paragraphs(text):
+        sents = _sentences(para)
+        counts: dict[str, int] = {}
+        for s in sents:
+            fw = _first_word(s)
+            if fw:
+                counts[fw] = counts.get(fw, 0) + 1
+        for fw, c in counts.items():
+            if c > _MAX_SAME_FIRST_WORD:
+                flagged.extend(s for s in sents if _first_word(s) == fw)
+    if not flagged:
+        return None
+    evidence = (
+        "Several sentences in a paragraph start with the same word -- rotate the openings "
+        "(guideline 19)."
+    )
+    return ResidualIssue(rule="repeated_subject_starts", trick_ids=[19],
+                         evidence=evidence, target_sentences=flagged)
+
+
+# ---------------------------------------------------------------------------
+# Detector: balance_phrase (#7)
+# ---------------------------------------------------------------------------
+
+# "both X and Y" abstract balance phrasing (guideline 7).
+_BALANCE_RE = re.compile(r"\bboth\b[^.?!]{0,60}?\band\b", re.I)
+
+
+def _detect_balance_phrase(text: str) -> ResidualIssue | None:
+    hits = [s for s in _sentences(text) if _BALANCE_RE.search(s)]
+    if not hits:
+        return None
+    evidence = (
+        "A 'both X and Y' balance phrase states the shape of a trade-off without the actual "
+        "benefit or risk -- name the specific benefit and the specific risk (guideline 7)."
+    )
+    return ResidualIssue(rule="balance_phrase", trick_ids=[7],
+                         evidence=evidence, target_sentences=hits)
+
+
 def detect_residual_patterns(text: str) -> list[ResidualIssue]:
     """Run every detector over the full document; return all fired issues (may be empty)."""
     issues: list[ResidualIssue] = []
@@ -128,4 +178,10 @@ def detect_residual_patterns(text: str) -> list[ResidualIssue]:
     robotic = _detect_robotic_transitions(text)
     if robotic is not None:
         issues.append(robotic)
+    repeated = _detect_repeated_subject_starts(text)
+    if repeated is not None:
+        issues.append(repeated)
+    balance = _detect_balance_phrase(text)
+    if balance is not None:
+        issues.append(balance)
     return issues
