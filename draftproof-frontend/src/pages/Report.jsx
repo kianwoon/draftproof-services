@@ -1200,7 +1200,10 @@ export default function Report() {
     ? t('rewritePage.externalReviewTitle')
     : formatAuthorshipSealDetailWithReference(
       hasRewriteSignalComparison ? rewrittenAuthorshipSealDetail : authorshipSealDetail,
-      sealDisplayReferenceScore ?? sealReferenceScore,
+      // Use the CALIBRATED authorship risk that the detail actually displays (not the conservative
+      // headline AI-likelihood) so the suffix agrees with the shown number: a sub-20% calibrated
+      // risk reads "below 20% reference", never "review threshold exceeded".
+      sealReferenceScore,
       t
     );
   const canStartRewrite = hasAIFindings && !hasRewriteResult;

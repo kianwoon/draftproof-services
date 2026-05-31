@@ -238,17 +238,22 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
     author_review_required = _requires_author_review(summary)
     external_review_required = _requires_external_review(summary)
     stamp = _rewrite_stamp(summary, risk)
+    # The seal subtitle leads with the CALIBRATED authorship risk (so the report page and the PDF
+    # show the same number), and its reference suffix is computed from that SAME displayed value --
+    # a sub-20% calibrated risk must read "below 20% reference", never "review threshold exceeded".
+    # `risk` (the conservative headline AI-likelihood) still drives the stamp label/colour above.
+    subtitle_score = calibrated if calibrated is not None else risk
     risk_text = (
         "Author review required"
         if author_review_required
         else "External review required"
         if external_review_required
-        else f"{risk}% calibrated risk"
-        if risk is not None
+        else f"{subtitle_score}% calibrated risk"
+        if subtitle_score is not None
         else "Calibrated risk unavailable"
     )
     if not author_review_required and not external_review_required:
-        risk_text = _with_ai_reference(risk_text, risk)
+        risk_text = _with_ai_reference(risk_text, subtitle_score)
     scan_heading = (
         _authorship_label(rewritten_scan)
         if author_review_required or external_review_required
