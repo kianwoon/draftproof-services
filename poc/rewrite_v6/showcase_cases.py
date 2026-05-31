@@ -63,7 +63,8 @@ def changed_paragraph_pairs(original_text: str, final_text: str, *, limit: int =
 _SYSTEM = (
     "You are a writing teacher building short worked-example CASES from a before/after rewrite, so a "
     "student learns to ground and specify their OWN writing. You teach the technique; you never help "
-    "text evade AI detection. Quote the real text verbatim and keep every explanation concrete."
+    "text evade AI detection. Quote the real text verbatim and keep every explanation concrete. "
+    "Inside field values, never use the double-quote character; use single quotes if you must quote."
 )
 
 _CASE_FIELDS = ("submitted_quote", "marker_sees", "move_label", "rewritten_quote", "why_it_lands", "your_rule")
@@ -89,8 +90,28 @@ def _build_prompt(pairs: list[dict], *, max_cases: int) -> str:
         '- "why_it_lands": 2-3 sentences on why the grounded version works (verifiable particulars, lived texture).\n'
         '- "your_rule": 1-2 sentences addressed to "you" — a rule the student reuses in their own writing.\n\n'
         "Write in the same language as the text. Be concrete and specific. Never mention AI detectors or "
-        'evasion. Return ONLY JSON of the form {"cases": [ ... ]}.'
+        'evasion. Return ONLY JSON of the form {"cases": [ ... ]}.\n\n'
+        "CRITICAL JSON RULE: inside any field value, NEVER use the double-quote character. If you need "
+        "to quote a word, use single quotes 'like this'. The output must be valid, parseable JSON."
     )
+
+
+def _loose_cases(text: str, *, max_cases: int) -> list[dict]:
+    """Last-resort parser for the strongest gpt-oss failure mode: valid-looking JSON with UNescaped
+    inner double-quotes (e.g. ... about "information" into ...) that breaks json.loads. We know the
+    schema, so pull each field per case object with a regex that tolerates stray inner quotes."""
+    out: list[dict] = []
+    for obj in re.findall(r"\{[^{}]*\}", str(text or ""), re.S):
+        case: dict[str, str] = {}
+        for field in _CASE_FIELDS:
+            m = re.search(rf'"{field}"\s*:\s*"(.*?)"\s*(?:,\s*"|\}})', obj, re.S)
+            if m:
+                case[field] = m.group(1).strip()
+        if case.get("submitted_quote") and case.get("rewritten_quote") and (case.get("why_it_lands") or case.get("your_rule")):
+            out.append({f: case.get(f, "") for f in _CASE_FIELDS})
+            if len(out) >= max_cases:
+                break
+    return out
 
 
 def _coerce_cases(raw: Any, *, max_cases: int) -> list[dict]:
@@ -138,12 +159,24 @@ def author_showcase_cases(
         resp = client.chat(prompt, system=_SYSTEM, response_format={"type": "json_object"})
         content = getattr(resp, "content", resp)
         content = content if isinstance(content, str) else str(content or "")
+        # strict JSON first; then the v6 tolerant parser; then a schema-aware loose extractor that
+        # survives gpt-oss's unescaped inner double-quotes (the observed prod failure mode).
+        cases: list[dict] = []
         try:
-            parsed = json.loads(content)
+            cases = _coerce_cases(json.loads(content), max_cases=max_cases)
         except (ValueError, TypeError):
-            from .json_io import parse_json  # tolerant parser used across v6
-            parsed = parse_json(content)
-        return _coerce_cases(parsed, max_cases=max_cases)
+            pass
+        if not cases:
+            try:
+                from .json_io import parse_json
+                cases = _coerce_cases(parse_json(content), max_cases=max_cases)
+            except Exception:
+                pass
+        if not cases:
+            cases = _loose_cases(content, max_cases=max_cases)
+        if not cases:
+            logger.warning("showcase_cases: model returned unparseable/empty cases (content len=%d)", len(content))
+        return cases
     except Exception as exc:  # pragma: no cover - safety net; never break the rewrite
         logger.warning("showcase_cases authoring failed: %s", exc)
         return []

@@ -107,6 +107,30 @@ def test_incomplete_case_is_dropped():
     assert author_showcase_cases(ORIG, FINAL, client=_FakeClient(bad)) == []
 
 
+def test_unescaped_inner_quotes_recovered_via_loose_parser():
+    # The real gpt-oss prod failure: valid-looking JSON with UNescaped inner double-quotes that
+    # breaks json.loads. The loose fallback must still recover the case.
+    messy = (
+        '{"cases":[{'
+        '"submitted_quote":"Students are surrounded by information.",'
+        '"marker_sees":"It is generic; readers cannot picture the "flood" of sources.",'
+        '"move_label":"Abstraction -> observed instance",'
+        '"rewritten_quote":"In my classroom, I see students arriving with a flood of articles.",'
+        '"why_it_lands":"It names what the teacher actually sees.",'
+        '"your_rule":"Turn vague claims about "information" into a concrete snapshot."}]}'
+    )
+    import json as _json
+    try:
+        _json.loads(messy)
+        assert False, "fixture should be invalid JSON (unescaped inner quotes)"
+    except ValueError:
+        pass
+    cases = author_showcase_cases(ORIG, FINAL, client=_FakeClient(messy))
+    assert len(cases) == 1
+    assert cases[0]["submitted_quote"] == "Students are surrounded by information."
+    assert cases[0]["your_rule"].startswith("Turn vague claims about")
+
+
 if __name__ == "__main__":
     for fn in list(globals().values()):
         if callable(fn) and getattr(fn, "__name__", "").startswith("test_"):
