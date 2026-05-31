@@ -73,6 +73,24 @@ def reviewer_enabled() -> bool:
     return os.environ.get("DRAFTPROOF_V6_REVIEWER", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
+# Token budget for the QC call. Must cover gpt-oss's reasoning phase PLUS the sentence-only output;
+# the reasoning phase alone exceeded 4000 on a whole-doc review. Default 16000 (verified to produce
+# the full correction set). Tunable via DRAFTPROOF_V6_REVIEWER_MAX_TOKENS without a redeploy.
+_REVIEWER_MAX_TOKENS_DEFAULT = 16000
+
+
+def _reviewer_max_tokens() -> int:
+    raw = os.environ.get("DRAFTPROOF_V6_REVIEWER_MAX_TOKENS", "").strip()
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return _REVIEWER_MAX_TOKENS_DEFAULT
+
+
 def build_reviewer_prompt(text: str, must_fix: list[ResidualIssue]) -> str:
     payload: dict[str, Any] = {
         "task": "qc_review_the_full_document",
@@ -166,7 +184,14 @@ def review_document(
             system=_SYSTEM,
             temperature=0.4,
             top_p=0.9,
-            max_tokens=4000,
+            # gpt-oss spends most of its budget on REASONING tokens before emitting any content
+            # (a whole-doc QC review reasons far more than a single-paragraph writer call). At 4000
+            # the reasoning phase consumed ~3997 tokens and the response truncated to empty
+            # (finish_reason=length, content_is_null) -> EmptyLLMContentError -> zero corrections.
+            # This is the same starvation that reverted the prior showcase. The budget must cover
+            # reasoning + the (small) sentence-only output, so give ample headroom. Verified against
+            # real docs: 4000 -> 0 corrections; 16000 -> full valid correction set.
+            max_tokens=_reviewer_max_tokens(),
             response_format={"type": "json_object"},
             app_label="DocumentReviewer",
         )
