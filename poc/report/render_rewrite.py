@@ -5,9 +5,12 @@ import re
 import html
 from typing import List, Dict, Any, Optional
 
+# Single source for the external-band -> friendly label map (shared with the scan PDF /
+# page / email so the rewrite PDF's Turnitin row reads identically).
+from .render import _EXTERNAL_BAND_LABELS
+
 
 _TIER_ORDER = ["critical", "high", "medium", "low"]
-_REPORT_AI_SCORE_DISPLAY_MULTIPLIER = 0.5
 _TURNITIN_AI_REFERENCE_THRESHOLD = 20
 _TURNITIN_AI_REFERENCE_NOTE = (
     "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage "
@@ -62,8 +65,10 @@ def _ai_score(report: dict) -> float:
 
 
 def _display_ai_score(value: float) -> float:
-    percent = _metric_percent(value, clamp=False)
-    return (percent or 0.0) * _REPORT_AI_SCORE_DISPLAY_MULTIPLIER
+    # Canonical DraftProof AI-likelihood percent (badge ai_likelihood_score), shown directly.
+    # Previously halved by a 0.5 "display multiplier"; removed so the rewrite PDF agrees with
+    # the report page, the scan PDF, and the email.
+    return _metric_percent(value, clamp=False) or 0.0
 
 
 def _ai_reference_suffix(score) -> str | None:
@@ -730,6 +735,18 @@ def render_rewrite_report(
             f"| **AI Likelihood** | `{_display_ai_score(orig_ai):.0f}%` | "
             f"`{_display_ai_score(new_ai):.0f}%` | `{_display_ai_score(ai_delta):+.0f}%` |"
         )
+        # Turnitin / external estimate — matches the page's dual headline. A rewrite does NOT
+        # beat perplexity detectors, so this typically stays high; users must see it.
+        def _ext_cell(b):
+            ext = (b.get("external_detector_estimate") or {}) if isinstance(b, dict) else {}
+            s = ext.get("score")
+            if not isinstance(s, (int, float)):
+                return "n/a"
+            lbl = _EXTERNAL_BAND_LABELS.get(str(ext.get("band") or "").lower(), ("", ""))[0]
+            return f"~{s:.0f}% ({lbl})" if lbl else f"~{s:.0f}%"
+        if isinstance((orig_badge.get("external_detector_estimate") or {}).get("score"), (int, float)) or \
+                isinstance((new_badge.get("external_detector_estimate") or {}).get("score"), (int, float)):
+            lines.append(f"| **Turnitin / external** | {_ext_cell(orig_badge)} | {_ext_cell(new_badge)} | - |")
         turnitin_before = summary.get("turnitin_like_ai_score_before", detect_scores.get("turnitin_like_ai_score_before"))
         turnitin_after = summary.get("turnitin_like_ai_score_after", detect_scores.get("turnitin_like_ai_score_after"))
         turnitin_drop = summary.get("turnitin_like_ai_score_drop", detect_scores.get("turnitin_like_ai_score_drop"))
