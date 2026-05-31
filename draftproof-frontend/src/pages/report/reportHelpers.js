@@ -1427,6 +1427,24 @@ function aiLikelihoodBands(badge) {
   return { draftproof, external };
 }
 
+const REWRITE_VERDICT_TONES = {
+  high: { color: '#b91c1c', bg: '#fef2f2' },
+  elevated: { color: '#c2410c', bg: '#fff7ed' },
+  low: { color: '#15803d', bg: '#f0fdf4' },
+};
+
+// Rewrite seal verdict tracks the DETECTOR reality (external/Turnitin band), never the rosy
+// internal calibrated risk -- users read a reassuring verdict as "Turnitin-safe", which no
+// rewrite can honestly promise (the fluency estimate has a floor no rewrite removes). A
+// reassuring ("low") verdict is earned only when detectors genuinely stop flagging.
+function rewriteDetectorVerdict(band, t) {
+  const key = String(band || '').toLowerCase();
+  if (key === 'high') return { label: t('report.transformation.verdict.stillFlagged'), tone: REWRITE_VERDICT_TONES.high };
+  if (key === 'elevated') return { label: t('report.transformation.verdict.riskRemains'), tone: REWRITE_VERDICT_TONES.elevated };
+  if (key === 'low') return { label: t('report.transformation.verdict.riskLow'), tone: REWRITE_VERDICT_TONES.low };
+  return { label: t('report.transformation.verdict.reviewed'), tone: { color: '#334155', bg: '#f8fafc' } };
+}
+
 export {
   TIER_CONFIG,
   SEVERITY_CONFIG,
@@ -1480,4 +1498,5 @@ export {
   isReviewOnlyRewriteMessage,
   buildRewriteEventsUrl,
   aiLikelihoodBands,
+  rewriteDetectorVerdict,
 };

@@ -38,7 +38,6 @@ import {
   deriveCalibratedAuthorshipRating,
   formatAuthorshipSealDetail,
   formatAuthorshipSealDetailWithReference,
-  getAiSignalStamp,
   getAuthorshipTone,
   formatSignedDelta,
   formatPlainScore,
@@ -63,6 +62,7 @@ import {
   isReviewOnlyRewriteMessage,
   buildRewriteEventsUrl,
   aiLikelihoodBands,
+  rewriteDetectorVerdict,
 } from './report/reportHelpers';
 
 const RESCAN_POLL_INTERVAL = 3000;
@@ -934,18 +934,14 @@ export default function Report() {
     rewrittenDocumentContext,
     rewrittenBadge.ai_components?.topk_calibration_eligible
   ) || rewrittenStoredAuthorshipRating, t);
-  const rewrittenAuthorshipSealDetail = formatAuthorshipSealDetail({
-    rating: rewrittenAuthorshipRating,
-    topkPatternScore: rewrittenTopkPatternScore,
-    topkCalibratedRisk: rewrittenTopkCalibratedRisk,
-    calibratedAuthorshipRisk: rewrittenCalibratedAuthorshipRisk,
-    fallbackScore: rewrittenAiScore,
-  }, t);
-  const rewrittenAuthorshipTone = getAuthorshipTone(rewrittenAuthorshipRating);
+  // The seal verdict/tone/detail come from the detector band (rewriteDetectorVerdict). The
+  // underlying authorship classification is retained as the verdict's hover-tooltip (fullLabel).
   const rewrittenAuthorshipRatingFullLabel = rewrittenAuthorshipRating.label || rewrittenBadge.authorship_rating_label || null;
-  const rewrittenAuthorshipRatingLabel = rewrittenAuthorshipRating.short_label || rewrittenAuthorshipRatingFullLabel;
   const rewrittenRequiresAuthorReview = requiresRewriteAuthorReview(rewriteResultSummary);
   const rewrittenRequiresExternalReview = requiresRewriteExternalReview(rewriteResultSummary);
+  // The rewritten rating VERDICT tracks the detector reality (external/Turnitin band), not the
+  // authorship "GOOD" -- users read "GOOD" as "Turnitin-safe", which no rewrite can honestly promise.
+  const rewrittenDetectorVerdict = rewriteDetectorVerdict(aiLikelihoodBands(rewrittenBadge).external?.band, t);
   const manualReviewTone = { color: '#92400e', bg: '#fffbeb' };
   const originalColumnRatingBadge = {
     caption: t('report.transformation.originalRating'),
@@ -969,9 +965,9 @@ export default function Report() {
     }
     : {
       caption: t('report.transformation.rewrittenRating'),
-      label: rewrittenAuthorshipRatingLabel,
-      fullLabel: rewrittenAuthorshipRatingFullLabel,
-      tone: rewrittenAuthorshipTone,
+      label: rewrittenDetectorVerdict.label,
+      fullLabel: rewrittenAuthorshipRatingFullLabel || rewrittenDetectorVerdict.label,
+      tone: rewrittenDetectorVerdict.tone,
     };
   const issueCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
@@ -1174,38 +1170,22 @@ export default function Report() {
   const transformationRewrittenScore = hasRewriteSignalComparison
     ? (rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk ?? rewrittenAiScore)
     : rewrittenAiScore;
-  const sealReferenceScore = hasRewriteSignalComparison
-    ? rewrittenCalibratedAuthorshipRisk
-    : calibratedAuthorshipRisk;
-  const sealDisplayReferenceScore = hasRewriteSignalComparison
-    ? calibratedReportAiScore(transformationRewrittenScore)
-    : sealReferenceScore;
-  const sealAiSignalStamp = getAiSignalStamp(sealDisplayReferenceScore ?? sealReferenceScore, t);
-  const rewriteBelowReferenceBand = hasRewriteSignalComparison && sealDisplayReferenceScore != null && sealDisplayReferenceScore < 20;
-  const displayedRewrittenColumnRatingBadge = rewriteBelowReferenceBand
-    ? {
-      ...rewrittenColumnRatingBadge,
-      label: sealAiSignalStamp.label,
-      fullLabel: sealAiSignalStamp.label,
-      tone: sealAiSignalStamp.tone,
-    }
-    : rewrittenColumnRatingBadge;
-  const sealRatingBadge = hasRewriteSignalComparison ? displayedRewrittenColumnRatingBadge : originalColumnRatingBadge;
-  const sealTone = sealRatingBadge.tone || sealAiSignalStamp.tone;
+  // Scan-only seal still annotates the original's calibrated risk; the rewrite seal no longer
+  // shows a calibrated-risk reference (the verdict above carries the detector reality instead).
+  const sealReferenceScore = calibratedAuthorshipRisk;
+  const sealRatingBadge = hasRewriteSignalComparison ? rewrittenColumnRatingBadge : originalColumnRatingBadge;
+  const sealTone = sealRatingBadge.tone || { color: '#334155', bg: '#f8fafc' };
   const sealRatingCaption = sealRatingBadge.caption || (hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal'));
-  const sealRatingLabel = sealRatingBadge.label || sealAiSignalStamp.label;
+  const sealRatingLabel = sealRatingBadge.label;
   const sealAuthorshipDetail = rewrittenRequiresAuthorReview
     ? t('rewritePage.authorReviewTitle')
     : rewrittenRequiresExternalReview
     ? t('rewritePage.externalReviewTitle')
-    : formatAuthorshipSealDetailWithReference(
-      hasRewriteSignalComparison ? rewrittenAuthorshipSealDetail : authorshipSealDetail,
-      // Use the CALIBRATED authorship risk that the detail actually displays (not the conservative
-      // headline AI-likelihood) so the suffix agrees with the shown number: a sub-20% calibrated
-      // risk reads "below 20% reference", never "review threshold exceeded".
-      sealReferenceScore,
-      t
-    );
+    : hasRewriteSignalComparison
+    // Rewrite seal: credit the grounding work and direct the user to finish it -- no risk % that
+    // would compete with the headline or imply a detector pass.
+    ? t('report.transformation.verdict.groundingDetail')
+    : formatAuthorshipSealDetailWithReference(authorshipSealDetail, sealReferenceScore, t);
   const canStartRewrite = hasAIFindings && !hasRewriteResult;
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
@@ -1580,7 +1560,7 @@ export default function Report() {
         {hasRewriteSignalComparison ? (
           <div className="transformation-comparison-grid">
             {renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore, originalColumnRatingBadge)}
-            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, transformationRewrittenScore, displayedRewrittenColumnRatingBadge)}
+            {renderTransformationDetails('rewritten', rewrittenTransformation, rewrittenTransformationSummary, transformationRewrittenScore, rewrittenColumnRatingBadge)}
           </div>
         ) : (
           renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore)

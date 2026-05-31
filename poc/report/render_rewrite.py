@@ -149,6 +149,31 @@ def _rewrite_stamp(summary: dict, risk) -> dict:
     return {"caption": "Rewritten Rating", **stamp}
 
 
+# Seal verdict tracks the DETECTOR reality (external/Turnitin band). Users read a reassuring
+# verdict as "Turnitin-safe", but the external/fluency estimate has a floor no rewrite removes,
+# so a safe-looking verdict next to a still-flagged card is a false promise. A reassuring verdict
+# is earned only when detectors genuinely stop flagging (band "low").
+_EXTERNAL_VERDICT = {
+    "high": {"label": "Still flagged by detectors", "color": "#b91c1c", "bg": "#fef2f2"},
+    "elevated": {"label": "Detector risk remains", "color": "#c2410c", "bg": "#fff7ed"},
+    "low": {"label": "Detector risk low", "color": "#15803d", "bg": "#f0fdf4"},
+}
+_GROUNDING_SEAL_SUBTITLE = "grounding improved — finish in your own words to lower detector risk"
+
+
+def _rewrite_verdict(summary: dict, rewritten_scan: dict) -> dict:
+    """Detector-reality verdict for the rewritten-rating seal. Review states win first; otherwise
+    the verdict is driven by the rewritten content's external/Turnitin band, never by the rosy
+    internal calibrated risk."""
+    if _requires_author_review(summary):
+        return {"caption": "Rewritten Rating", "label": "Author Review", "color": "#0f766e", "bg": "#ecfdf5"}
+    if _requires_external_review(summary):
+        return {"caption": "Rewritten Rating", "label": "Review Required", "color": "#92400e", "bg": "#fffbeb"}
+    band = str((_badge(rewritten_scan).get("external_detector_estimate") or {}).get("band") or "").lower()
+    verdict = _EXTERNAL_VERDICT.get(band) or {"label": "Rewrite reviewed", "color": "#334155", "bg": "#f8fafc"}
+    return {"caption": "Rewritten Rating", **verdict}
+
+
 def _wq_score(report: dict) -> float:
     return _first_metric((report or {}).get("writing_score"), _badge(report).get("writing_quality_score")) or 0.0
 
@@ -238,22 +263,17 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
     author_review_required = _requires_author_review(summary)
     external_review_required = _requires_external_review(summary)
     stamp = _rewrite_stamp(summary, risk)
-    # The seal subtitle leads with the CALIBRATED authorship risk (so the report page and the PDF
-    # show the same number), and its reference suffix is computed from that SAME displayed value --
-    # a sub-20% calibrated risk must read "below 20% reference", never "review threshold exceeded".
-    # `risk` (the conservative headline AI-likelihood) still drives the stamp label/colour above.
-    subtitle_score = calibrated if calibrated is not None else risk
-    risk_text = (
+    # Seal VERDICT tracks the detector reality (external/Turnitin band), not the rosy internal
+    # calibrated risk -- users read a reassuring verdict as "Turnitin-safe", which no rewrite can
+    # honestly promise. The subtitle credits the grounding work and points the user to finish it.
+    verdict = _rewrite_verdict(summary, rewritten_scan)
+    seal_subtitle = (
         "Author review required"
         if author_review_required
         else "External review required"
         if external_review_required
-        else f"{subtitle_score}% calibrated risk"
-        if subtitle_score is not None
-        else "Calibrated risk unavailable"
+        else _GROUNDING_SEAL_SUBTITLE
     )
-    if not author_review_required and not external_review_required:
-        risk_text = _with_ai_reference(risk_text, subtitle_score)
     scan_heading = (
         _authorship_label(rewritten_scan)
         if author_review_required or external_review_required
@@ -286,10 +306,10 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
         """
     return f"""
 <div class="dp-rewrite-outcome-panel">
-  <div class="dp-rewrite-stamp" style="color:{stamp["color"]};border-color:{stamp["color"]};background:{stamp["bg"]}">
-    <span>{html.escape(stamp["caption"])}</span>
-    <strong>{html.escape(stamp["label"].upper())}</strong>
-    <em>{html.escape(risk_text)}</em>
+  <div class="dp-rewrite-stamp" style="color:{verdict["color"]};border-color:{verdict["color"]};background:{verdict["bg"]}">
+    <span>{html.escape(verdict["caption"])}</span>
+    <strong>{html.escape(verdict["label"].upper())}</strong>
+    <em>{html.escape(seal_subtitle)}</em>
   </div>
   <div class="dp-rewrite-scan-summary">
     <span>Rewritten Scan</span>
