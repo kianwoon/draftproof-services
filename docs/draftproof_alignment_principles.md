@@ -16,6 +16,13 @@ between the service's signals and its charter.
 - **The rewrite feature is a SHOWCASE: it demonstrates to the user *how* to improve their
   content to be AI-risk-free.** It is a teaching draft / reviewable example — **not** a
   final submission, and **not** machine output the user should hand in as-is.
+- **The rewrite runs automatically and smoothly — NO user participation during the
+  process.** No interactive prompts, no mid-process input. The user **receives** the
+  finished showcase, then reviews the before/after and **edits it with their own
+  experience afterward**, on their own. (The illustrative anchors the rewrite invents are
+  the *point* — they demonstrate the grounding technique; the author-proxy already flags
+  them `user_input_needed: confirm/replace/remove` for the user's later editing. This is
+  why CLAUDE.md demotes "fabricated specifics" guards.)
 - **The user owns the final words.** They review the before/after, learn what grounding
   looks like, and re-express it in their own real content.
 
@@ -83,6 +90,9 @@ Two different things can be "optimized," and they point in **opposite directions
 - ❌ A tool that implies its machine rewrite is submission-ready or detector-safe.
 - ❌ Fabrication as the end state. The rewrite may show *illustrative* anchors, but the
   user must replace them with their own real specifics.
+- ❌ An **interactive** rewrite that requires user participation *during* the process. The
+  rewrite is smooth and automated; the user's editing happens *after*, on their own
+  content. (Considered and explicitly rejected — not what the user wants.)
 
 ---
 
@@ -93,8 +103,11 @@ Two different things can be "optimized," and they point in **opposite directions
    risk-awareness wording in §3.2. Keep the number; change its meaning.
 2. **Make grounding the lead optimizable signal** in the report narrative; frame the
    rewrite as a "grounding map / showcase."
-3. **Author-proxy = elicit + integrate the user's real specifics** (use the existing
-   `user_input_needed`) — scaffold the user's own grounding rather than implying
-   auto-fix. Do not expand it to chase the external number.
+3. **Author-proxy stays automated.** It fills grounding gaps with *illustrative*,
+   clearly-flagged anchors (the existing `user_input_needed: confirm/replace/remove`
+   markers) to produce a smooth, high-quality showcase. The before/after diff + those
+   markers guide the user's own **offline** editing. Do NOT make the rewrite interactive
+   or require mid-process input. Effort goes into showcase **quality + smoothness**, not
+   interactivity and not chasing the external number.
 4. Keep the single-canonical-number + no-re-derivation invariants (guard tests already
    added: `_display_ai_score`/`aiLikelihoodBands` not halved; compaction keep-list).
