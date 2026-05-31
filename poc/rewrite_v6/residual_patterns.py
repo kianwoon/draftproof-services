@@ -23,8 +23,74 @@ class ResidualIssue:
     target_sentences: list[str] = field(default_factory=list)  # exact sentences QC must fix
 
 
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _paragraphs(text: str) -> list[str]:
+    return [p.strip() for p in re.split(r"\n\s*\n", str(text or "")) if p.strip()]
+
+
+def _first_sentence(paragraph: str) -> str:
+    match = re.search(r"^.*?[.!?](?:\s|$)", paragraph.strip())
+    return (match.group(0).strip() if match else paragraph.strip())
+
+
+def _sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+", str(text or "").replace("\n", " ").strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _first_word(sentence: str) -> str:
+    words = re.findall(r"[A-Za-z'']+", sentence)
+    return words[0].lower() if words else ""
+
+
+# ---------------------------------------------------------------------------
+# Detector: opener_monoculture (#19, #2)
+# ---------------------------------------------------------------------------
+
+# A document needs at least this many paragraphs before opener repetition is meaningful.
+_MIN_PARAGRAPHS_FOR_OPENER_CHECK = 3
+# If this fraction (or more) of paragraphs share the same first-2-word opener frame, it reads as a
+# monoculture (the writer's blind-spot: every paragraph independently picked the same frame).
+_OPENER_SHARE_THRESHOLD = 0.5
+# Number of leading words that define an "opener frame".
+_OPENER_FRAME_WORDS = 2
+
+
+def _opener_frame(paragraph: str, n: int = _OPENER_FRAME_WORDS) -> str:
+    words = re.findall(r"[A-Za-z'']+", paragraph)
+    return " ".join(w.lower() for w in words[:n])
+
+
+def _detect_opener_monoculture(text: str) -> ResidualIssue | None:
+    paras = _paragraphs(text)
+    if len(paras) < _MIN_PARAGRAPHS_FOR_OPENER_CHECK:
+        return None
+    frames = [_opener_frame(p) for p in paras]
+    counts: dict[str, int] = {}
+    for f in frames:
+        if f:
+            counts[f] = counts.get(f, 0) + 1
+    if not counts:
+        return None
+    top_frame, top_count = max(counts.items(), key=lambda kv: kv[1])
+    if top_count < 2 or top_count / len(paras) < _OPENER_SHARE_THRESHOLD:
+        return None
+    targets = [_first_sentence(p) for p, f in zip(paras, frames) if f == top_frame]
+    evidence = (
+        f"{top_count} of {len(paras)} paragraphs open with the same frame "
+        f"'{top_frame}' -- vary the openings (guideline 19)."
+    )
+    return ResidualIssue(rule="opener_monoculture", trick_ids=[19, 2],
+                         evidence=evidence, target_sentences=targets)
+
+
 def detect_residual_patterns(text: str) -> list[ResidualIssue]:
     """Run every detector over the full document; return all fired issues (may be empty)."""
     issues: list[ResidualIssue] = []
-    # Detectors are added in later sub-tasks.
+    opener = _detect_opener_monoculture(text)
+    if opener is not None:
+        issues.append(opener)
     return issues
