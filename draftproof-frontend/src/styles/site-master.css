@@ -7826,6 +7826,74 @@ td:first-child {
   line-height: 1.6;
 }
 
+/* Showcase annotation layer — worked-example teaching notes on changed paragraphs (additive). */
+.rewrite-annotation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+
+.rewrite-annotation {
+  background: rgba(255, 255, 255, .92);
+  border: 1px solid #dbe4ea;
+  border-left: 4px solid #0f766e;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, .06);
+}
+
+.rewrite-annotation-pair {
+  display: grid;
+  gap: .55rem;
+}
+
+.annotation-original,
+.annotation-rewritten {
+  margin: 0;
+  padding: .6rem .75rem;
+  border-radius: 8px;
+  line-height: 1.58;
+  overflow-wrap: anywhere;
+}
+
+.annotation-original {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #7f1d1d;
+}
+
+.annotation-rewritten {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #14532d;
+}
+
+.annotation-techniques {
+  margin: .85rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: .4rem;
+  color: #334155;
+  line-height: 1.55;
+}
+
+.annotation-techniques strong {
+  color: #0f766e;
+}
+
+.annotation-your-turn {
+  margin-top: 1rem;
+  padding: .85rem 1rem;
+  border-radius: 8px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
 .rewrite-suggestion-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));

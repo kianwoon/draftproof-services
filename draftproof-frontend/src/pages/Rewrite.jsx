@@ -8,6 +8,7 @@ import {
   requiresRewriteAuthorReview,
   requiresRewriteExternalReview,
 } from './report/reportHelpers';
+import { annotateDocument } from './report/showcaseAnnotations';
 
 function normalizeSentence(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -272,6 +273,9 @@ export default function Rewrite() {
   const rewrittenWordCount = countWords(report?.final_text);
   const originalText = report?.original_text || summary.original_text || '';
   const documentDiff = buildSplitDiff(originalText, report?.final_text || '');
+  // Worked-example teaching notes laid on the changed paragraphs (additive; explains the change,
+  // does not modify any text). Empty when nothing changed or paragraph structure shifted.
+  const showcaseAnnotations = annotateDocument(originalText, report?.final_text || '');
 
   return (
     <main className="dash-shell">
@@ -382,6 +386,38 @@ export default function Rewrite() {
                 </div>
               </article>
             </div>
+          </section>
+        )}
+
+        {showcaseAnnotations.length > 0 && (
+          <section className="rewrite-review-section rewrite-annotations-section">
+            <div className="rewrite-review-heading">
+              <div>
+                <span className="rewrite-review-kicker">{t('rewritePage.annotations.kicker')}</span>
+                <h3>{t('rewritePage.annotations.title')}</h3>
+              </div>
+            </div>
+            <p className="rewrite-review-copy">{t('rewritePage.annotations.intro')}</p>
+            <ol className="rewrite-annotation-list">
+              {showcaseAnnotations.map((a, i) => (
+                <li key={i} className="rewrite-annotation">
+                  <div className="rewrite-annotation-pair">
+                    <p className="annotation-original">{a.original}</p>
+                    <p className="annotation-rewritten">{a.rewritten}</p>
+                  </div>
+                  <ul className="annotation-techniques">
+                    {a.techniques.map((tech, j) => (
+                      <li key={j}>
+                        <strong>{t(`rewritePage.annotations.${tech.key}_label`)}</strong>
+                        {' — '}
+                        {t(`rewritePage.annotations.${tech.key}_why`, { detail: tech.detail || '' })}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ol>
+            <p className="annotation-your-turn rewrite-review-copy">{t('rewritePage.annotations.yourTurn')}</p>
           </section>
         )}
 
