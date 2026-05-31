@@ -1376,6 +1376,7 @@ export default function Report() {
             <div className="ai-likelihood-caption">{t('report.aiLikelihood.draftproof')}</div>
             <div className="ai-likelihood-score" style={{ color: dp.color }}>{dp.score}%</div>
             <div className="ai-likelihood-band">{dp.tier}</div>
+            <div className="ai-likelihood-actionable">{t('report.aiLikelihood.draftproofNote')}</div>
           </div>
           <div className="ai-likelihood-metric">
             <div className="ai-likelihood-caption">{t('report.aiLikelihood.external')}</div>

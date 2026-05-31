@@ -340,7 +340,7 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
         return ""
     badge = badge or {}
     out = ["## AI Likelihood", ""]
-    out.append(f"- **DraftProof (conservative): {dp['score']}% — {dp['tier']}**")
+    out.append(f"- **DraftProof (conservative): {dp['score']}% — {dp['tier']}** — improves as you ground the content (the signal to act on)")
     ext = bands["external"]
     if ext:
         out.append(f"- **Turnitin / external: ~{ext['score']}% — {ext['label']}**")

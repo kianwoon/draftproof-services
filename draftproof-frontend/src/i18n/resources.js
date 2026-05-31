@@ -830,6 +830,7 @@ export const resources = {
         aiLikelihood: {
           title: 'AI Likelihood',
           draftproof: 'DraftProof (conservative)',
+          draftproofNote: 'Improves as you ground your content — the signal to act on',
           external: 'Turnitin / external',
           externalBand: {
             low: 'unlikely to be flagged',
@@ -1882,6 +1883,7 @@ export const resources = {
         aiLikelihood: {
           title: 'AI 可能性',
           draftproof: 'DraftProof（保守估计）',
+          draftproofNote: '随着内容更有据可依而改善——这是应当着力的指标',
           external: 'Turnitin / 外部检测器',
           externalBand: {
             low: '不太可能被标记',
