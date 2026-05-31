@@ -1518,6 +1518,13 @@ class ReportBuilder:
         if not rewrite_is_recommended:
             reason_codes.append("rewrite_not_recommended")
 
+        # Inject detect scan scores into the rewrite summary so the rewrite report shows
+        # the same risk scores the user sees in the scan report. Must run BEFORE the
+        # return; this block was previously dead code placed after it.
+        if self._rewrite_summary:
+            self._rewrite_summary.detect_ai_likelihood = ai_risk_badge.get("ai_likelihood_score", 0.0)
+            self._rewrite_summary.detect_writing_quality = ai_risk_badge.get("writing_quality_score", 0.0)
+
         return DraftReport(
             overall_tier=adjusted_tier,
             finding_count=len(self._findings),
@@ -1546,12 +1553,6 @@ class ReportBuilder:
             authorship_concern_signals=concern["signals"],
             ai_risk_badge=ai_risk_badge,
         )
-
-        # Inject detect scan scores into rewrite summary so rewrite report
-        # shows the same risk scores the user sees in the scan report.
-        if self._rewrite_summary:
-            self._rewrite_summary.detect_ai_likelihood = ai_risk_badge.get("ai_likelihood_score", 0.0)
-            self._rewrite_summary.detect_writing_quality = ai_risk_badge.get("writing_quality_score", 0.0)
 
 
 # ── Report to dict ──────────────────────────────────────────────────
