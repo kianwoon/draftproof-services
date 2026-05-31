@@ -664,7 +664,6 @@ def _executive_signal_chart_html(
     )
     calibrated_score = _tf_pct(features.get("calibrated_ai_risk"))
     rating_tone = _authorship_rating_tone(rating)
-    stamp = _ai_signal_stamp(calibrated_score)
     ai_components = badge.get("ai_components") or {}
     topk_score = _tf_pct(ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")))
     topk_calibrated_score = _tf_pct(ai_components.get("topk_calibrated_risk"))
@@ -754,11 +753,13 @@ def _executive_signal_chart_html(
         '</div>',
         (
             '<div class="dp-rating-seal" style="'
-            f'--rating-color:{stamp["color"]};--rating-bg:{stamp["bg"]};'
-            f'color:{stamp["color"]};border-color:{stamp["color"]};background:{stamp["bg"]}">'
+            f'--rating-color:{rating_tone["color"]};--rating-bg:{rating_tone["bg"]};'
+            f'color:{rating_tone["color"]};border-color:{rating_tone["color"]};background:{rating_tone["bg"]}">'
         ),
-        '<span>AI Signal</span>',
-        f'<strong>{escape(stamp["label"])}</strong>',
+        # Seal shows the authorship RATING (matches the web page's "Original Rating" stamp),
+        # not the generic _ai_signal_stamp label — keeps page⇄PDF parity.
+        '<span>Original Rating</span>',
+        f'<strong>{escape(rating_label)}</strong>',
         f'<em>{escape(rating_detail)}</em>',
         '</div>',
         '</header>',
