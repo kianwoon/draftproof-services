@@ -5,7 +5,7 @@ import os
 import re
 from typing import Any, Callable
 
-from poc.llm.gateway import LLMConfig, LLMGateway
+from poc.llm.gateway import LLMConfig, LLMGateway, model_supports_json_object_response_format
 
 
 DEFAULT_V6_MODEL = "openai/gpt-oss-120b"
@@ -243,6 +243,40 @@ def _selector_model() -> str:
         or os.environ.get("DRAFTPROOF_V6_PLANNER_MODEL")
         or os.environ.get("DRAFTPROOF_PLANNER_MODEL")
         or DEFAULT_V6_MODEL
+    )
+
+
+def showcase_model() -> str:
+    """Model that authors the rewrite teaching cases (the showcase). Falls back to the selector
+    model so it inherits the same provider/env already proven in production."""
+    return (
+        os.environ.get("DRAFTPROOF_V6_SHOWCASE_MODEL")
+        or os.environ.get("DRAFTPROOF_SHOWCASE_MODEL")
+        or _selector_model()
+    )
+
+
+def showcase_gateway(
+    *,
+    api_key: str | None,
+    base_url: str | None,
+    cancellation_check: Callable[[], None] | None = None,
+) -> LLMGateway:
+    """Gateway for authoring showcase teaching cases. JSON output, modest budget; mirrors the
+    selector's provider routing so it works wherever the rewrite already runs."""
+    model = resolve_v6_model(showcase_model()) or showcase_model()
+    response_format = {"type": "json_object"} if model_supports_json_object_response_format(model) else None
+    return LLMGateway(
+        LLMConfig(
+            model=model,
+            api_key=resolve_v6_api_key(api_key),
+            base_url=resolve_v6_base_url(base_url),
+            temperature=0.4,
+            max_tokens=2200,
+            response_format=response_format,
+            provider=provider_from_env("SELECTOR", model),
+            cancellation_check=cancellation_check,
+        )
     )
 
 
