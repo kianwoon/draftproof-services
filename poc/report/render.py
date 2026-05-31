@@ -291,6 +291,39 @@ def _transformation_contribution_summary(features: dict, signals: list[dict], ba
     }
 
 
+_DRAFTPROOF_TIER_COLORS = {
+    "GREEN": "#16a34a", "AMBER": "#d97706", "ORANGE": "#ea580c", "RED": "#dc2626",
+}
+_EXTERNAL_BAND_LABELS = {
+    "low": ("unlikely to be flagged", "#16a34a"),
+    "elevated": ("possibly flagged", "#d97706"),
+    "high": ("likely to be flagged", "#dc2626"),
+}
+
+
+def _ai_likelihood_bands(badge: dict | None) -> dict:
+    """Shared band->label/color mapping for the dual headline. Mirrors the JS
+    ``aiLikelihoodBands`` in reportHelpers.js (kept in sync via the spec table)."""
+    badge = badge or {}
+    score = badge.get("ai_likelihood_score")
+    tier = str(badge.get("tier") or "").upper()
+    draftproof = None
+    if isinstance(score, (int, float)):
+        draftproof = {
+            "score": round(score),
+            "tier": tier or "AMBER",
+            "color": _DRAFTPROOF_TIER_COLORS.get(tier, "#d97706"),
+        }
+    ext = badge.get("external_detector_estimate") or {}
+    ext_score = ext.get("score")
+    external = None
+    if isinstance(ext_score, (int, float)):
+        band = str(ext.get("band") or "").lower()
+        label, color = _EXTERNAL_BAND_LABELS.get(band, ("estimated", "#475569"))
+        external = {"score": round(ext_score), "band": band, "label": label, "color": color}
+    return {"draftproof": draftproof, "external": external}
+
+
 def _signal_chart_rows(features: dict, badge: dict | None = None) -> list[dict]:
     rows_by_key = {row["key"]: row for row in _transformation_signals(features)}
     ai_components = (badge or {}).get("ai_components") or {}
