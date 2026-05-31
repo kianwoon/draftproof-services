@@ -62,6 +62,7 @@ import {
   getRewriteProgressDetail,
   isReviewOnlyRewriteMessage,
   buildRewriteEventsUrl,
+  aiLikelihoodBands,
 } from './report/reportHelpers';
 
 const RESCAN_POLL_INTERVAL = 3000;
@@ -841,7 +842,6 @@ export default function Report() {
   const rewrittenAiScore = rewrittenScan.ai_score ?? rewrittenBadge.ai_likelihood_score ?? rewriteResultSummary?.rewrite_risk ?? null;
   // Honest, external-facing expectation. Prefer the rewritten content's estimate (that is what users
   // cross-check on third-party sites); fall back to the main report badge for plain scans.
-  const externalDetectorEstimate = rewrittenBadge.external_detector_estimate || badge.external_detector_estimate || null;
   const rewrittenTransformation = rewrittenBadge.transformation_classification || null;
   const rewrittenTransformationSignalMetadata = getScanTransformationSignals(rewrittenScan);
   const rewrittenTransformationFeatureFallbacks = transformationSignalFeatureMap(rewrittenTransformationSignalMetadata);
@@ -1343,20 +1343,6 @@ export default function Report() {
           <span className="report-stat-label">{t('report.summary.rawAiSignal')}</span>
         </div>
       )}
-      {externalDetectorEstimate?.score != null && (
-        <div
-          className="report-stat"
-          title={externalDetectorEstimate.note || t('report.summary.externalDetectorNote', { defaultValue: 'Estimated likelihood that strict third-party detectors (Turnitin, GPTZero) flag this as AI. These tools over-flag; for a genuine pass, finish the draft in your own words.' })}
-        >
-          <span
-            className="report-stat-value"
-            style={{ color: externalDetectorEstimate.band === 'high' ? '#dc2626' : externalDetectorEstimate.band === 'elevated' ? '#d97706' : '#16a34a' }}
-          >
-            {formatMetricPercent(externalDetectorEstimate.score, 0)}
-          </span>
-          <span className="report-stat-label">{t('report.summary.externalDetectorEstimate', { defaultValue: 'Est. external detectors' })}</span>
-        </div>
-      )}
       {writingScore != null && (
         <div className="report-stat">
           <span className="report-stat-value" style={{ color: '#6366f1' }}>{formatMetricPercent(writingScore, 0)}</span>
@@ -1375,9 +1361,47 @@ export default function Report() {
     </div>
   );
 
+  const renderAiLikelihoodHeadline = (variantBadge) => {
+    const bands = aiLikelihoodBands(variantBadge);
+    if (!bands.draftproof) return null;
+    const dp = bands.draftproof;
+    const ext = bands.external;
+    const tc = variantBadge?.transformation_classification || {};
+    const ratingLabel = variantBadge?.authorship_rating_label;
+    return (
+      <div className="ai-likelihood-block">
+        <div className="ai-likelihood-caption">{t('report.aiLikelihood.title')}</div>
+        <div className="ai-likelihood-pair">
+          <div className="ai-likelihood-metric">
+            <div className="ai-likelihood-caption">{t('report.aiLikelihood.draftproof')}</div>
+            <div className="ai-likelihood-score" style={{ color: dp.color }}>{dp.score}%</div>
+            <div className="ai-likelihood-band">{dp.tier}</div>
+          </div>
+          <div className="ai-likelihood-metric">
+            <div className="ai-likelihood-caption">{t('report.aiLikelihood.external')}</div>
+            {ext ? (
+              <>
+                <div className="ai-likelihood-score" style={{ color: ext.color }}>~{ext.score}%</div>
+                <div className="ai-likelihood-band">{t(`report.aiLikelihood.externalBand.${ext.band}`, { defaultValue: '' })}</div>
+              </>
+            ) : (
+              <div className="ai-likelihood-unavailable">{t('report.aiLikelihood.externalUnavailable')}</div>
+            )}
+          </div>
+        </div>
+        <div className="ai-likelihood-meta">
+          {tc.label ? `${tc.label}${tc.confidence ? ` (${tc.confidence})` : ''}` : null}
+          {ratingLabel ? `  ·  ${ratingLabel}` : null}
+        </div>
+        <div className="ai-likelihood-why">{t('report.aiLikelihood.whyDiffer')}</div>
+      </div>
+    );
+  };
+
   const renderTransformationDetails = (variant, pattern, summary, variantAiScore, ratingBadge = null) => {
     return (
       <div className={`transformation-detail ${variant === 'rewritten' ? 'is-rewritten' : 'is-original'}`}>
+        {variant === 'original' && renderAiLikelihoodHeadline(originalComparisonBadge)}
         <div className="transformation-detail-head">
           <div>
             <span>{variant === 'rewritten' ? t('report.transformation.rewrittenScan') : t('report.transformation.originalScan')}</span>
@@ -1399,34 +1423,37 @@ export default function Report() {
           <em>{formatMetricPercent(calibratedReportAiScore(variantAiScore), 0)}</em>
         </div>
         {summary && (
-          <div className="transformation-ratio-summary">
-            <div className="transformation-ratio-copy">
-              <span>{t('report.transformation.estimatedContribution')}</span>
-              <p>{summary.summary}</p>
-              <div className="transformation-adjustment-row">
-                <strong>{t('report.transformation.calibratedAiRisk', { value: summary.adjustedAiRisk })}</strong>
-                <strong>{t('report.transformation.humanAnchorDiscount', { value: summary.humanAnchorDiscount })}</strong>
-                <strong>{t('report.transformation.calibrationConfidence', { value: summary.calibrationConfidence })}</strong>
-                <strong>{t('report.transformation.reportingSuppression', { value: summary.reportingSuppression })}</strong>
-              </div>
-            </div>
-            <div className="transformation-ratio-bars" aria-label={t('report.transformation.contributionEstimate', { variant: variant === 'rewritten' ? t('report.transformation.rewritten') : t('report.transformation.original') })}>
-              <div className="transformation-ratio-row">
-                <span>{t('report.transformation.humanContribution')}</span>
-                <strong>{summary.humanContribution}%</strong>
-                <div className="transformation-ratio-track">
-                  <div className="transformation-ratio-fill is-human" style={{ width: `${summary.humanContribution}%` }} />
+          <details className="ai-likelihood-calibration">
+            <summary>{t('report.aiLikelihood.calibrateHeading')}</summary>
+            <div className="transformation-ratio-summary">
+              <div className="transformation-ratio-copy">
+                <span>{t('report.transformation.estimatedContribution')}</span>
+                <p>{summary.summary}</p>
+                <div className="transformation-adjustment-row">
+                  <strong>{t('report.transformation.calibratedAiRisk', { value: summary.adjustedAiRisk })}</strong>
+                  <strong>{t('report.transformation.humanAnchorDiscount', { value: summary.humanAnchorDiscount })}</strong>
+                  <strong>{t('report.transformation.calibrationConfidence', { value: summary.calibrationConfidence })}</strong>
+                  <strong>{t('report.transformation.reportingSuppression', { value: summary.reportingSuppression })}</strong>
                 </div>
               </div>
-              <div className="transformation-ratio-row">
-                <span>{t('report.transformation.aiTransformation')}</span>
-                <strong>{summary.aiTransformation}%</strong>
-                <div className="transformation-ratio-track">
-                  <div className="transformation-ratio-fill is-ai" style={{ width: `${summary.aiTransformation}%` }} />
+              <div className="transformation-ratio-bars" aria-label={t('report.transformation.contributionEstimate', { variant: variant === 'rewritten' ? t('report.transformation.rewritten') : t('report.transformation.original') })}>
+                <div className="transformation-ratio-row">
+                  <span>{t('report.transformation.humanContribution')}</span>
+                  <strong>{summary.humanContribution}%</strong>
+                  <div className="transformation-ratio-track">
+                    <div className="transformation-ratio-fill is-human" style={{ width: `${summary.humanContribution}%` }} />
+                  </div>
+                </div>
+                <div className="transformation-ratio-row">
+                  <span>{t('report.transformation.aiTransformation')}</span>
+                  <strong>{summary.aiTransformation}%</strong>
+                  <div className="transformation-ratio-track">
+                    <div className="transformation-ratio-fill is-ai" style={{ width: `${summary.aiTransformation}%` }} />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          </details>
         )}
       </div>
     );
