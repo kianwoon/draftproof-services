@@ -90,3 +90,31 @@ def test_balance_phrase_fires():
 def test_balance_phrase_silent_when_specific():
     doc = "AI helps students brainstorm at the planning stage, but it hides gaps they cannot explain."
     assert [i for i in detect_residual_patterns(doc) if i.rule == "balance_phrase"] == []
+
+
+def test_rhythm_sameness_fires_on_uniform_lengths():
+    doc = (
+        "Students learn many new things every single day. "
+        "Teachers plan many small lessons every single week. "
+        "Schools change many old rules every single year. "
+        "Parents ask many hard questions every single term. "
+        "Leaders make many big choices every single month."
+    )
+    issues = detect_residual_patterns(doc)
+    assert [i for i in issues if i.rule == "rhythm_sameness"], "expected rhythm_sameness to fire"
+    assert 13 in next(i for i in issues if i.rule == "rhythm_sameness").trick_ids
+
+
+def test_rhythm_sameness_silent_on_varied_lengths():
+    doc = (
+        "Schools change. "
+        "When a student opens a laptop in class, the lesson the teacher planned a week earlier "
+        "suddenly has to compete with a dozen brighter, faster, louder sources of information. "
+        "That shift matters."
+    )
+    assert [i for i in detect_residual_patterns(doc) if i.rule == "rhythm_sameness"] == []
+
+
+def test_clean_human_doc_has_no_issues_at_all():
+    doc = _VARIED_DOC
+    assert detect_residual_patterns(doc) == []

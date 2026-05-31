@@ -169,6 +169,45 @@ def _detect_balance_phrase(text: str) -> ResidualIssue | None:
                          evidence=evidence, target_sentences=hits)
 
 
+# ---------------------------------------------------------------------------
+# Detector: rhythm_sameness (#13)
+# ---------------------------------------------------------------------------
+
+# A paragraph with >= this many sentences whose length coefficient-of-variation is below the
+# threshold reads as mechanically uniform rhythm (guideline 13).
+_MIN_SENTENCES_FOR_RHYTHM = 4
+_RHYTHM_CV_THRESHOLD = 0.20  # std/mean of sentence word-counts; below this is "too even"
+
+
+def _coefficient_of_variation(values: list[int]) -> float:
+    if len(values) < 2:
+        return 1.0
+    mean = sum(values) / len(values)
+    if mean == 0:
+        return 1.0
+    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    return (variance ** 0.5) / mean
+
+
+def _detect_rhythm_sameness(text: str) -> ResidualIssue | None:
+    worst: list[str] = []
+    for para in _paragraphs(text):
+        sents = _sentences(para)
+        if len(sents) < _MIN_SENTENCES_FOR_RHYTHM:
+            continue
+        lengths = [len(re.findall(r"[A-Za-z'']+", s)) for s in sents]
+        if _coefficient_of_variation(lengths) < _RHYTHM_CV_THRESHOLD:
+            worst.extend(sents)
+    if not worst:
+        return None
+    evidence = (
+        "A paragraph's sentences are all about the same length -- vary the rhythm with a short "
+        "sentence next to a longer one (guideline 13)."
+    )
+    return ResidualIssue(rule="rhythm_sameness", trick_ids=[13],
+                         evidence=evidence, target_sentences=worst)
+
+
 def detect_residual_patterns(text: str) -> list[ResidualIssue]:
     """Run every detector over the full document; return all fired issues (may be empty)."""
     issues: list[ResidualIssue] = []
@@ -184,4 +223,7 @@ def detect_residual_patterns(text: str) -> list[ResidualIssue]:
     balance = _detect_balance_phrase(text)
     if balance is not None:
         issues.append(balance)
+    rhythm = _detect_rhythm_sameness(text)
+    if rhythm is not None:
+        issues.append(rhythm)
     return issues
