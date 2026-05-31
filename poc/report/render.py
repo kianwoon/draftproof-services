@@ -341,7 +341,8 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
     out.append(f"- **DraftProof (conservative): {dp['score']}% — {dp['tier']}**")
     ext = bands["external"]
     if ext:
-        out.append(f"- **Turnitin / external: ~{ext['score']}% — {ext['label']}**")
+        target = "target < 20% — not met" if ext["score"] >= 20 else "within Turnitin's < 20% low-range"
+        out.append(f"- **Turnitin / external: ~{ext['score']}% — {ext['label']}** ({target})")
     else:
         out.append("- _External estimate unavailable — re-scan to populate._")
     out.append("")
