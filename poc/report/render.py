@@ -325,19 +325,17 @@ def _ai_likelihood_bands(badge: dict | None) -> dict:
 
 
 _AI_LIKELIHOOD_WHY = (
-    "DraftProof is false-positive-averse, so it avoids wrongly accusing human writers. "
-    "Strict detectors (Turnitin, GPTZero) weight raw token predictability and over-flag "
-    "fluent writing -- even genuine human writing scores high here -- so treat this as a "
-    "risk heads-up, not a score to beat. Your real safeguard is grounding the content and "
-    "finishing it in your own words."
+    "This is a calibrated estimate of how strict third-party detectors (Turnitin, GPTZero) may rate "
+    "your text -- based on limited data and imperfect, since these detectors over-flag fluent "
+    "writing (even genuine human writing). Treat it as a heads-up, not a verdict; your safeguard is "
+    "grounding the content and finishing it in your own words."
 )
 
-# INTERIM (calibration pending): our external/Turnitin estimate over-flags real Turnitin --
-# measured +62.5 points on a genuine human reflection Turnitin cleared at 0% (see
-# poc/calibration/). Until it is recalibrated to predict real outcomes, we do NOT surface it as a
-# predicted percentage; showing it would give honest authors a false scare. Flip to True (and
-# recalibrate) once the calibration harness shows it tracks real Turnitin.
-EXTERNAL_ESTIMATE_DISPLAY_ENABLED = False
+# The badge's external_detector_estimate is the calibrated 2-signal segment-fraction model
+# (detect.layer3_scoring.estimate_external_detector_segment_fraction): the flagged share of formal +
+# predictable sentences, which reproduced a real Turnitin 27% (vs the old perplexity-blend's 62%).
+# Surfaced as an ESTIMATE (still 1-doc calibration). Set False to suppress the number again.
+EXTERNAL_ESTIMATE_DISPLAY_ENABLED = True
 
 _EXTERNAL_DEMOTED_NOTE = (
     "Third-party AI detectors (Turnitin, GPTZero) are imperfect and over-flag fluent writing -- "
@@ -357,7 +355,7 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
     out.append(f"- **DraftProof grounding signal: {dp['score']}% — {dp['tier']}** — improves as you ground the content (the signal to act on)")
     ext = bands["external"]
     if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and ext:
-        out.append(f"- **Turnitin / external: ~{ext['score']}% — {ext['label']}**")
+        out.append(f"- **Turnitin / external (estimated): ~{ext['score']}% — {ext['label']}**")
     out.append("")
     tc = badge.get("transformation_classification") or {}
     meta = []

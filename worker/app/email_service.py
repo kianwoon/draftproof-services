@@ -23,10 +23,10 @@ _EXTERNAL_BAND_LABELS = {
     "high": "likely to be flagged",
 }
 
-# INTERIM (calibration pending): keep in sync with report.render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED.
-# Our external/Turnitin estimate over-flags real Turnitin (measured +62.5 pts on a doc Turnitin
-# cleared at 0%), so we do NOT email a predicted percentage; it would falsely scare honest authors.
-EXTERNAL_ESTIMATE_DISPLAY_ENABLED = False
+# Keep in sync with report.render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED. The badge now carries the
+# calibrated 2-signal segment-fraction estimate (reproduced a real Turnitin 27% vs the old 62%),
+# so we email it again as an estimate.
+EXTERNAL_ESTIMATE_DISPLAY_ENABLED = True
 
 
 class EmailConfigurationError(RuntimeError):

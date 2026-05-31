@@ -749,6 +749,73 @@ def estimate_external_detector_likelihood(components: dict) -> dict:
     }
 
 
+# --- Calibrated 2-signal segment-fraction estimator -------------------------------------------
+# Turnitin reports its AI score as the FRACTION of flagged qualifying sentences, and (from one
+# labeled doc, Reflection AT3 = Turnitin 27%, flagged in the formal Critical-Analysis middle, with
+# the plain conclusion spared) keys on BOTH predictability AND formal-academic register. This
+# estimator flags a sentence when both clear their bar; the score is the flagged share of words.
+# Thresholds fit on FULL sentence text to reproduce that doc's 26-27% (and exclude its conclusion).
+# UNVALIDATED for generalisation; surfaced as an ESTIMATE. Canonical home; the calibration tool
+# poc/calibration/segment_fraction_estimate.py imports this.
+_TURNITIN_TOP10_THRESHOLD = 0.46
+_TURNITIN_REGISTER_THRESHOLD = 1.1
+_REGISTER_NOMINAL = re.compile(r"(tion|sion|ment|ance|ence|ity|ism)s?$", re.I)
+_REGISTER_CONNECTIVES = frozenset({
+    "furthermore", "thereby", "whilst", "hence", "thus", "moreover", "consequently",
+    "nevertheless", "whereas", "inasmuch", "therein", "herein", "notwithstanding",
+})
+_REGISTER_FIRST_PERSON = frozenset({"i", "my", "me", "i'm", "i've", "myself", "mine"})
+
+
+def register_score(text: str) -> float:
+    """Formal-academic register of a sentence (nominalisations + connectives + long words -
+    first-person voice). Higher = more 'generated-essay' sounding."""
+    words = re.findall(r"[A-Za-z']+", (text or "").lower())
+    n = max(1, len(words))
+    nominal = sum(1 for t in words if _REGISTER_NOMINAL.search(t)) / n
+    conn = sum(1 for t in words if t in _REGISTER_CONNECTIVES) / n
+    first_person = sum(1 for t in words if t in _REGISTER_FIRST_PERSON) / n
+    mean_len = sum(len(t) for t in words) / n
+    return nominal * 4 + conn * 6 + max(0.0, mean_len - 4.3) * 0.5 - first_person * 5
+
+
+def estimate_external_detector_segment_fraction(sentences) -> Optional[dict]:
+    """Calibrated estimate: the flagged share of qualifying sentences (top10 >= bar AND register
+    >= bar). `sentences` = iterable of dicts with 'text' and 'top10'. Returns the estimate dict, or
+    None when no usable per-sentence data (caller falls back to the perplexity estimate)."""
+    rows = []
+    for s in sentences or []:
+        if not isinstance(s, dict):
+            continue
+        # Accept both the builder's PredictabilitySummary keys ('sentence'/'top10_ratio') and the
+        # final report-dict keys ('text'/'top10').
+        text = s.get("text") or s.get("sentence") or ""
+        top10 = s.get("top10")
+        if top10 is None:
+            top10 = s.get("top10_ratio")
+        words = len(text.split())
+        if isinstance(top10, (int, float)) and words:
+            rows.append((float(top10), register_score(text), words))
+    total = sum(w for _, _, w in rows)
+    if not total:
+        return None
+    flagged = sum(w for p, r, w in rows
+                  if p >= _TURNITIN_TOP10_THRESHOLD and r >= _TURNITIN_REGISTER_THRESHOLD)
+    score = round(100.0 * flagged / total, 1)
+    band = "high" if score >= 50.0 else "elevated" if score >= 20.0 else "low"
+    return {
+        "score": score,
+        "band": band,
+        "model": "segment_fraction_v1",
+        "validated": False,
+        "note": (
+            "Estimated likelihood that strict third-party detectors (Turnitin, GPTZero) flag this "
+            "as AI -- the share of formal, predictable sentences. Calibrated on limited data and "
+            "imperfect (detectors over-flag fluent writing); a heads-up, not a verdict."
+        ),
+    }
+
+
 def estimate_burstiness_risk(text: str) -> float:
     sentences = split_sentences(text)
     if len(sentences) < 6:

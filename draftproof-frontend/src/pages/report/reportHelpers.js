@@ -1410,11 +1410,10 @@ function buildRewriteEventsUrl(rewriteId) {
 const DRAFTPROOF_TIER_COLORS = { GREEN: '#16a34a', AMBER: '#d97706', ORANGE: '#ea580c', RED: '#dc2626' };
 const EXTERNAL_BAND_COLORS = { low: '#16a34a', elevated: '#d97706', high: '#dc2626' };
 
-// INTERIM (calibration pending): our external/Turnitin estimate over-flags real Turnitin
-// (measured +62.5 pts on a doc Turnitin cleared at 0% — see poc/calibration/). Until recalibrated,
-// we do NOT surface it as a predicted % or a detector verdict; it would falsely scare honest
-// authors. Mirror of render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED — flip both together post-calibration.
-const EXTERNAL_ESTIMATE_DISPLAY_ENABLED = false;
+// The badge now carries the calibrated 2-signal segment-fraction estimate (reproduced a real
+// Turnitin 27% vs the old perplexity-blend's 62%), so we surface it again as an ESTIMATE.
+// Mirror of render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED — keep both in sync.
+const EXTERNAL_ESTIMATE_DISPLAY_ENABLED = true;
 
 // Mirror of report.render._ai_likelihood_bands (same band table; see spec). Returns the
 // external band KEY; the label is resolved via i18n (report.aiLikelihood.externalBand.<band>).
