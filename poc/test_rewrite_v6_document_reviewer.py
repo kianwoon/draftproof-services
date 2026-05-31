@@ -212,3 +212,80 @@ def test_review_returns_unchanged_on_bad_json(monkeypatch):
     result = document_reviewer.review_document(doc, gateway=gw)
     assert result.text == doc
     assert result.corrections == []
+
+
+from poc.rewrite_v6 import direct_rewrite as dr
+from poc.rewrite_v6.pipeline import DocumentResult
+from poc.rewrite_v6.scan import scan_text as _scan_text
+
+
+def test_apply_reviewer_runs_qc_then_scans_qcd_text(monkeypatch):
+    writer_text = "\n\n".join([
+        "In my classroom, I have seen change arrive faster than the school can absorb it.",
+        "In my classroom, I have seen students lean on AI before they ask me anything.",
+        "In my classroom, I have seen the textbook lose its old authority in a single year.",
+    ])
+    doc = DocumentResult(
+        initial_scan=_scan_text(writer_text),
+        final_scan=_scan_text(writer_text),
+        rewritten_text=writer_text,
+        passes=[],
+        pass_trace=[],
+    )
+    correction = {"corrections": [
+        {"original": "In my classroom, I have seen change arrive faster than the school can absorb it.",
+         "revised": "Change now arrives faster than my school can absorb it."}
+    ]}
+    gw = _stub([json.dumps(correction)])
+    monkeypatch.setattr(document_reviewer, "_score", lambda t: 10.0)
+
+    out = dr._apply_reviewer(doc, gw, cancellation_check=None)
+    assert "Change now arrives faster than my school can absorb it." in out.rewritten_text
+    # final_scan must reflect the QC'd text (order: rewrite -> QC -> scan). Scan field is source_text.
+    assert out.final_scan.source_text == out.rewritten_text
+    assert any(row.get("selected_source") == "qc_reviewer" for row in out.pass_trace)
+
+
+def test_apply_reviewer_noop_when_disabled(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_REVIEWER", "0")
+    writer_text = "A short clean paragraph that needs nothing at all."
+    doc = DocumentResult(
+        initial_scan=_scan_text(writer_text),
+        final_scan=_scan_text(writer_text),
+        rewritten_text=writer_text,
+        passes=[],
+        pass_trace=[],
+    )
+    gw = _stub(["{}"])
+    out = dr._apply_reviewer(doc, gw, cancellation_check=None)
+    assert out is doc
+    assert gw.calls == []
+
+
+def test_apply_reviewer_keeps_safe_drops_regressing(monkeypatch):
+    # Two corrections: one safe, one regressing -> safe kept, regressing dropped (per-correction guard).
+    writer_text = "\n\n".join([
+        "In my classroom, I have seen change arrive faster than the school can absorb it.",
+        "In my classroom, I have seen students lean on AI before they ask me anything.",
+        "In my classroom, I have seen the textbook lose its old authority in a single year.",
+    ])
+    doc = DocumentResult(
+        initial_scan=_scan_text(writer_text),
+        final_scan=_scan_text(writer_text),
+        rewritten_text=writer_text,
+        passes=[],
+        pass_trace=[],
+    )
+    correction = {"corrections": [
+        {"original": "In my classroom, I have seen students lean on AI before they ask me anything.",
+         "revised": "Students now lean on AI before they ask me anything."},
+        {"original": "In my classroom, I have seen the textbook lose its old authority in a single year.",
+         "revised": "The textbook lost its authority, which made things WORSE."},
+    ]}
+    gw = _stub([json.dumps(correction)])
+    monkeypatch.setattr(document_reviewer, "_score", lambda t: 90.0 if "WORSE" in t else 10.0)
+
+    out = dr._apply_reviewer(doc, gw, cancellation_check=None)
+    assert "Students now lean on AI before they ask me anything." in out.rewritten_text  # safe kept
+    assert "WORSE" not in out.rewritten_text                                              # regressing dropped
+    assert out.final_scan.source_text == out.rewritten_text

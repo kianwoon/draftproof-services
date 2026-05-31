@@ -313,6 +313,52 @@ def _review_flags(candidate: str, paragraph: Paragraph) -> list[dict[str, Any]]:
     return flags
 
 
+def _apply_reviewer(
+    doc,
+    gateway,
+    *,
+    cancellation_check: Callable[[], None] | None,
+):
+    """Run the QC reviewer on the writer's winning document, then re-scan the QC'd text.
+
+    Order: rewrite -> QC -> scan. The reviewer fixes cross-paragraph patterns the per-paragraph
+    writer can't see; the single authoritative final_scan is computed here, AFTER QC. On disable or
+    any failure the writer's document is returned unchanged. Corrections apply cumulatively to the
+    evolving text inside review_document, each guarded against the pre-QC baseline score."""
+    from .document_reviewer import reviewer_enabled, review_document
+    from .pipeline import DocumentResult
+
+    if not reviewer_enabled():
+        return doc
+    try:
+        result = review_document(
+            doc.rewritten_text, gateway=gateway, cancellation_check=cancellation_check
+        )
+    except Exception:
+        return doc
+    if not result.corrections:
+        return doc  # nothing changed; keep writer's doc + its scan
+
+    reviewed_text = result.text
+    trace = list(doc.pass_trace)
+    trace.append({
+        "selected_source": "qc_reviewer",
+        "status": "accepted",
+        "corrections": [
+            {"original": c.original, "revised": c.revised} for c in result.corrections
+        ][:12],
+        "must_fix_unaddressed": result.must_fix_unaddressed,
+    })
+    return DocumentResult(
+        initial_scan=doc.initial_scan,
+        final_scan=scan_text(reviewed_text),   # the ONE authoritative scan, post-QC
+        rewritten_text=reviewed_text,
+        passes=doc.passes,
+        pass_trace=trace,
+        final_text_before_quality_repair=doc.final_text_before_quality_repair,
+    )
+
+
 def run_direct_rewrite_all(
     text: str,
     *,
@@ -356,7 +402,9 @@ def run_direct_rewrite_all(
         score = _document_ai_risk(doc.rewritten_text) if attempts > 1 else 0.0
         if best_doc is None or score < best_score:
             best_doc, best_score = doc, score
-    return best_doc
+    # rewrite -> QC -> scan: the reviewer fixes whole-document patterns the per-paragraph writer
+    # can't see, then the single authoritative final scan runs on the QC'd text.
+    return _apply_reviewer(best_doc, gateway, cancellation_check=cancellation_check)
 
 
 def _best_of_n() -> int:
