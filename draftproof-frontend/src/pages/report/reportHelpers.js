@@ -1406,6 +1406,26 @@ function buildRewriteEventsUrl(rewriteId) {
   return buildApiEventUrl(`/rewrites/${rewriteId}/events`);
 }
 
+const DRAFTPROOF_TIER_COLORS = { GREEN: '#16a34a', AMBER: '#d97706', ORANGE: '#ea580c', RED: '#dc2626' };
+const EXTERNAL_BAND_COLORS = { low: '#16a34a', elevated: '#d97706', high: '#dc2626' };
+
+// Mirror of report.render._ai_likelihood_bands (same band table; see spec). Returns the
+// external band KEY; the label is resolved via i18n (report.aiLikelihood.externalBand.<band>).
+function aiLikelihoodBands(badge) {
+  const b = badge || {};
+  const score = b.ai_likelihood_score;
+  const tier = String(b.tier || '').toUpperCase();
+  const draftproof = typeof score === 'number'
+    ? { score: Math.round(score), tier: tier || 'AMBER', color: DRAFTPROOF_TIER_COLORS[tier] || '#d97706' }
+    : null;
+  const ext = b.external_detector_estimate || {};
+  const band = String(ext.band || '').toLowerCase();
+  const external = typeof ext.score === 'number'
+    ? { score: Math.round(ext.score), band, color: EXTERNAL_BAND_COLORS[band] || '#475569', note: ext.note || '' }
+    : null;
+  return { draftproof, external };
+}
+
 export {
   TIER_CONFIG,
   SEVERITY_CONFIG,
@@ -1458,4 +1478,5 @@ export {
   getRewriteProgressDetail,
   isReviewOnlyRewriteMessage,
   buildRewriteEventsUrl,
+  aiLikelihoodBands,
 };
