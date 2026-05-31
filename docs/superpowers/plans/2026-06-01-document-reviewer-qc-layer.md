@@ -15,8 +15,9 @@
 ## Confirmed interfaces (do not guess — these are verified)
 
 - `poc/rewrite_v6/pipeline.py:71` — `@dataclass DocumentResult` fields: `initial_scan: Scan`, `final_scan: Scan`, `rewritten_text: str`, `passes: list[Any]`, `pass_trace: list[dict] = field(default_factory=list)`, `final_text_before_quality_repair: str | None = None`.
-- `poc/rewrite_v6/text.py` — `@dataclass Paragraph(id: str, index: int, text: str)` with `.is_heading` (≤3 words); `split_paragraphs(text) -> list[Paragraph]`; `word_count(text) -> int`.
-- `poc/rewrite_v6/scan.py` — `scan_text(text) -> Scan`; `@dataclass Scan(text, paragraphs, findings)`.
+- `poc/rewrite_v6/text.py` — `@dataclass(frozen=True) Paragraph(id: str, index: int, text: str, sentences: list[Sentence])` — `sentences` is REQUIRED (pass `[]` for a synthetic); `split_paragraphs(text) -> list[Paragraph]`; `word_count(text) -> int`.
+- `poc/rewrite_v6/scan.py` — `scan_text(text) -> Scan`; `@dataclass(frozen=True) Scan(source_text: str, paragraphs, findings, scores)`. **The text field is `source_text`, NOT `text`.**
+- **Test runner:** `~/.pyenv/versions/3.11.0/bin/python -m pytest` (pytest 7.4.3). Plain `python`/`pytest` are NOT on PATH; use this interpreter for every test command below.
 - `poc/rewrite_v6/json_io.py` — `parse_json(text) -> Any` (tolerant; may raise/return non-dict).
 - `poc/rewrite_v6/direct_rewrite.py` — `_document_ai_risk(text) -> float` (real-detector AI likelihood, +inf if unscorable); `_has_broken_grammar(candidate: str) -> bool`; `run_direct_rewrite_all(...)` builds `gateway` and `return best_doc` at line 358.
 - `poc/rewrite_v6/selector_diagnostics.py:36` — `_severe_polarity_inversion(candidate: str, paragraph: Paragraph) -> bool`.
@@ -878,8 +879,10 @@ def _correction_is_safe(original: str, revised: str, *, doc_after: str, baseline
         return False
     if _has_broken_grammar(revised):
         return False
-    # polarity must not flip vs the writer's original sentence
-    if _severe_polarity_inversion(revised, Paragraph(id="qc", index=0, text=original)):
+    # polarity must not flip vs the writer's original sentence.
+    # Paragraph is a frozen dataclass with a REQUIRED `sentences` field; _severe_polarity_inversion
+    # only reads `.text`, so an empty sentences list is a safe synthetic.
+    if _severe_polarity_inversion(revised, Paragraph(id="qc", index=0, text=original, sentences=[])):
         return False
     # the whole doc with this correction applied must not score worse than baseline
     if _score(doc_after) > baseline:
@@ -994,8 +997,9 @@ def test_apply_reviewer_runs_qc_then_scans_qcd_text(monkeypatch):
 
     out = dr._apply_reviewer(doc, gw, cancellation_check=None)
     assert "Change now arrives faster than my school can absorb it." in out.rewritten_text
-    # final_scan must reflect the QC'd text (order: rewrite -> QC -> scan)
-    assert out.final_scan.text == out.rewritten_text
+    # final_scan must reflect the QC'd text (order: rewrite -> QC -> scan).
+    # NOTE: the Scan dataclass field is `source_text`, NOT `text`.
+    assert out.final_scan.source_text == out.rewritten_text
     # corrections recorded in the trace
     assert any(row.get("selected_source") == "qc_reviewer" for row in out.pass_trace)
 
