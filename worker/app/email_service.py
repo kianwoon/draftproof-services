@@ -23,6 +23,11 @@ _EXTERNAL_BAND_LABELS = {
     "high": "likely to be flagged",
 }
 
+# INTERIM (calibration pending): keep in sync with report.render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED.
+# Our external/Turnitin estimate over-flags real Turnitin (measured +62.5 pts on a doc Turnitin
+# cleared at 0%), so we do NOT email a predicted percentage; it would falsely scare honest authors.
+EXTERNAL_ESTIMATE_DISPLAY_ENABLED = False
+
 
 class EmailConfigurationError(RuntimeError):
     """Raised when email sending is enabled but required settings are missing."""
@@ -144,7 +149,14 @@ def build_scan_completion_email(
     formatted_ai_score = _format_display_ai_score(ai_score)
     if formatted_ai_score is not None:
         details.append(f"AI likelihood score: {formatted_ai_score}%")
-    if external_estimate:
+    if not EXTERNAL_ESTIMATE_DISPLAY_ENABLED:
+        details.append(
+            "Note: third-party AI detectors (Turnitin, GPTZero) over-flag fluent writing — including "
+            "genuine human writing — so we don't surface a predicted score. Your safeguard is "
+            "grounding the content, finishing it in your own words, and keeping your drafts as "
+            "authorship evidence."
+        )
+    elif external_estimate:
         ext_score = _metric_percent(external_estimate.get("score"))
         if ext_score is not None:
             band = str(external_estimate.get("band") or "").strip().lower()

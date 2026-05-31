@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 
 # Single source for the external-band -> friendly label map (shared with the scan PDF /
 # page / email so the rewrite PDF's Turnitin row reads identically).
-from .render import _EXTERNAL_BAND_LABELS
+from .render import _EXTERNAL_BAND_LABELS, EXTERNAL_ESTIMATE_DISPLAY_ENABLED
 
 
 _TIER_ORDER = ["critical", "high", "medium", "low"]
@@ -158,17 +158,20 @@ _EXTERNAL_VERDICT = {
     "elevated": {"label": "Detector risk remains", "color": "#c2410c", "bg": "#fff7ed"},
     "low": {"label": "Detector risk low", "color": "#15803d", "bg": "#f0fdf4"},
 }
-_GROUNDING_SEAL_SUBTITLE = "grounding improved — finish in your own words to lower detector risk"
+_GROUNDING_SEAL_SUBTITLE = "grounding improved — review and finish in your own words"
 
 
 def _rewrite_verdict(summary: dict, rewritten_scan: dict) -> dict:
-    """Detector-reality verdict for the rewritten-rating seal. Review states win first; otherwise
-    the verdict is driven by the rewritten content's external/Turnitin band, never by the rosy
-    internal calibrated risk."""
+    """Rewritten-rating seal verdict. Review states win first. INTERIM (EXTERNAL_ESTIMATE_DISPLAY_
+    ENABLED=False): the external/Turnitin band over-flags real Turnitin, so we do NOT assert a
+    detector verdict ("Still flagged" / "Detector risk low") that the band can't support -- the
+    seal stays a neutral grounding verdict. When re-enabled (post-calibration), the band drives it."""
     if _requires_author_review(summary):
         return {"caption": "Rewritten Rating", "label": "Author Review", "color": "#0f766e", "bg": "#ecfdf5"}
     if _requires_external_review(summary):
         return {"caption": "Rewritten Rating", "label": "Review Required", "color": "#92400e", "bg": "#fffbeb"}
+    if not EXTERNAL_ESTIMATE_DISPLAY_ENABLED:
+        return {"caption": "Rewritten Rating", "label": "Grounded draft — review", "color": "#0f766e", "bg": "#ecfdf5"}
     band = str((_badge(rewritten_scan).get("external_detector_estimate") or {}).get("band") or "").lower()
     verdict = _EXTERNAL_VERDICT.get(band) or {"label": "Rewrite reviewed", "color": "#334155", "bg": "#f8fafc"}
     return {"caption": "Rewritten Rating", **verdict}
@@ -769,8 +772,9 @@ def render_rewrite_report(
                 return "n/a"
             lbl = _EXTERNAL_BAND_LABELS.get(str(ext.get("band") or "").lower(), ("", ""))[0]
             return f"~{s:.0f}% ({lbl})" if lbl else f"~{s:.0f}%"
-        if isinstance((orig_badge.get("external_detector_estimate") or {}).get("score"), (int, float)) or \
-                isinstance((new_badge.get("external_detector_estimate") or {}).get("score"), (int, float)):
+        if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and (
+                isinstance((orig_badge.get("external_detector_estimate") or {}).get("score"), (int, float)) or
+                isinstance((new_badge.get("external_detector_estimate") or {}).get("score"), (int, float))):
             lines.append(f"| **Turnitin / external** | {_ext_cell(orig_badge)} | {_ext_cell(new_badge)} | - |")
         turnitin_before = summary.get("turnitin_like_ai_score_before", detect_scores.get("turnitin_like_ai_score_before"))
         turnitin_after = summary.get("turnitin_like_ai_score_after", detect_scores.get("turnitin_like_ai_score_after"))

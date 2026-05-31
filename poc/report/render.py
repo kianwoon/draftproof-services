@@ -332,6 +332,20 @@ _AI_LIKELIHOOD_WHY = (
     "finishing it in your own words."
 )
 
+# INTERIM (calibration pending): our external/Turnitin estimate over-flags real Turnitin --
+# measured +62.5 points on a genuine human reflection Turnitin cleared at 0% (see
+# poc/calibration/). Until it is recalibrated to predict real outcomes, we do NOT surface it as a
+# predicted percentage; showing it would give honest authors a false scare. Flip to True (and
+# recalibrate) once the calibration harness shows it tracks real Turnitin.
+EXTERNAL_ESTIMATE_DISPLAY_ENABLED = False
+
+_EXTERNAL_DEMOTED_NOTE = (
+    "Third-party AI detectors (Turnitin, GPTZero) are imperfect and over-flag fluent writing -- "
+    "including genuine human writing -- so a predicted score is not a reliable signal of your "
+    "result, and we don't surface one here. Your safeguard is grounding the content, finishing it "
+    "in your own words, and keeping your drafts as authorship evidence."
+)
+
 
 def _render_ai_likelihood_headline(badge: dict | None) -> str:
     bands = _ai_likelihood_bands(badge)
@@ -340,12 +354,10 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
         return ""
     badge = badge or {}
     out = ["## AI Likelihood", ""]
-    out.append(f"- **DraftProof (conservative): {dp['score']}% — {dp['tier']}** — improves as you ground the content (the signal to act on)")
+    out.append(f"- **DraftProof grounding signal: {dp['score']}% — {dp['tier']}** — improves as you ground the content (the signal to act on)")
     ext = bands["external"]
-    if ext:
+    if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and ext:
         out.append(f"- **Turnitin / external: ~{ext['score']}% — {ext['label']}**")
-    else:
-        out.append("- _External estimate unavailable — re-scan to populate._")
     out.append("")
     tc = badge.get("transformation_classification") or {}
     meta = []
@@ -357,7 +369,7 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
     if meta:
         out.append(" · ".join(meta))
         out.append("")
-    out.append(_AI_LIKELIHOOD_WHY)
+    out.append(_AI_LIKELIHOOD_WHY if EXTERNAL_ESTIMATE_DISPLAY_ENABLED else _EXTERNAL_DEMOTED_NOTE)
     out.append("")
     return "\n".join(out)
 

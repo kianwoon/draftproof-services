@@ -1410,6 +1410,12 @@ function buildRewriteEventsUrl(rewriteId) {
 const DRAFTPROOF_TIER_COLORS = { GREEN: '#16a34a', AMBER: '#d97706', ORANGE: '#ea580c', RED: '#dc2626' };
 const EXTERNAL_BAND_COLORS = { low: '#16a34a', elevated: '#d97706', high: '#dc2626' };
 
+// INTERIM (calibration pending): our external/Turnitin estimate over-flags real Turnitin
+// (measured +62.5 pts on a doc Turnitin cleared at 0% — see poc/calibration/). Until recalibrated,
+// we do NOT surface it as a predicted % or a detector verdict; it would falsely scare honest
+// authors. Mirror of render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED — flip both together post-calibration.
+const EXTERNAL_ESTIMATE_DISPLAY_ENABLED = false;
+
 // Mirror of report.render._ai_likelihood_bands (same band table; see spec). Returns the
 // external band KEY; the label is resolved via i18n (report.aiLikelihood.externalBand.<band>).
 function aiLikelihoodBands(badge) {
@@ -1438,6 +1444,10 @@ const REWRITE_VERDICT_TONES = {
 // rewrite can honestly promise (the fluency estimate has a floor no rewrite removes). A
 // reassuring ("low") verdict is earned only when detectors genuinely stop flagging.
 function rewriteDetectorVerdict(band, t) {
+  // INTERIM: the external band over-flags real Turnitin, so we don't assert a detector verdict.
+  if (!EXTERNAL_ESTIMATE_DISPLAY_ENABLED) {
+    return { label: t('report.transformation.verdict.grounded'), tone: { color: '#0f766e', bg: '#ecfdf5' } };
+  }
   const key = String(band || '').toLowerCase();
   if (key === 'high') return { label: t('report.transformation.verdict.stillFlagged'), tone: REWRITE_VERDICT_TONES.high };
   if (key === 'elevated') return { label: t('report.transformation.verdict.riskRemains'), tone: REWRITE_VERDICT_TONES.elevated };
@@ -1499,4 +1509,5 @@ export {
   buildRewriteEventsUrl,
   aiLikelihoodBands,
   rewriteDetectorVerdict,
+  EXTERNAL_ESTIMATE_DISPLAY_ENABLED,
 };

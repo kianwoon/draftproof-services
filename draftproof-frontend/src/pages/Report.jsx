@@ -63,6 +63,7 @@ import {
   buildRewriteEventsUrl,
   aiLikelihoodBands,
   rewriteDetectorVerdict,
+  EXTERNAL_ESTIMATE_DISPLAY_ENABLED,
 } from './report/reportHelpers';
 
 const RESCAN_POLL_INTERVAL = 3000;
@@ -1361,23 +1362,25 @@ export default function Report() {
             <div className="ai-likelihood-band">{dp.tier}</div>
             <div className="ai-likelihood-actionable">{t('report.aiLikelihood.draftproofNote')}</div>
           </div>
-          <div className="ai-likelihood-metric">
-            <div className="ai-likelihood-caption">{t('report.aiLikelihood.external')}</div>
-            {ext ? (
-              <>
-                <div className="ai-likelihood-score" style={{ color: ext.color }}>~{ext.score}%</div>
-                <div className="ai-likelihood-band">{t(`report.aiLikelihood.externalBand.${ext.band}`, { defaultValue: '' })}</div>
-              </>
-            ) : (
-              <div className="ai-likelihood-unavailable">{t('report.aiLikelihood.externalUnavailable')}</div>
-            )}
-          </div>
+          {EXTERNAL_ESTIMATE_DISPLAY_ENABLED && (
+            <div className="ai-likelihood-metric">
+              <div className="ai-likelihood-caption">{t('report.aiLikelihood.external')}</div>
+              {ext ? (
+                <>
+                  <div className="ai-likelihood-score" style={{ color: ext.color }}>~{ext.score}%</div>
+                  <div className="ai-likelihood-band">{t(`report.aiLikelihood.externalBand.${ext.band}`, { defaultValue: '' })}</div>
+                </>
+              ) : (
+                <div className="ai-likelihood-unavailable">{t('report.aiLikelihood.externalUnavailable')}</div>
+              )}
+            </div>
+          )}
         </div>
         <div className="ai-likelihood-meta">
           {tc.label ? `${tc.label}${tc.confidence ? ` (${tc.confidence})` : ''}` : null}
           {ratingLabel ? `  ·  ${ratingLabel}` : null}
         </div>
-        <div className="ai-likelihood-why">{t('report.aiLikelihood.whyDiffer')}</div>
+        <div className="ai-likelihood-why">{EXTERNAL_ESTIMATE_DISPLAY_ENABLED ? t('report.aiLikelihood.whyDiffer') : t('report.aiLikelihood.externalDemoted')}</div>
       </div>
     );
   };

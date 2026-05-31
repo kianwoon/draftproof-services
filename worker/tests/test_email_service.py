@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from app.email_service import (
+    EXTERNAL_ESTIMATE_DISPLAY_ENABLED,
     build_rewrite_completion_email,
     build_scan_completion_email,
     send_email,
@@ -161,8 +162,15 @@ def test_build_scan_completion_email_includes_turnitin_estimate():
         settings=_settings(),
     )
 
-    assert "Turnitin / external estimate: ~60% (likely to be flagged)" in payload["text"]
-    assert "risk heads-up, not a target" in payload["text"]
+    if EXTERNAL_ESTIMATE_DISPLAY_ENABLED:
+        assert "Turnitin / external estimate: ~60% (likely to be flagged)" in payload["text"]
+        assert "risk heads-up, not a target" in payload["text"]
+    else:
+        # INTERIM: external estimate demoted (it over-flags real Turnitin) -> no predicted %.
+        assert "Turnitin / external estimate: ~" not in payload["text"]
+        assert "~60%" not in payload["text"]
+        assert "don't surface a predicted score" in payload["text"]
+        assert "authorship evidence" in payload["text"]
 
 
 def test_build_scan_completion_email_omits_turnitin_when_no_estimate():

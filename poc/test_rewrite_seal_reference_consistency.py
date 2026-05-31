@@ -1,39 +1,37 @@
 """Rewrite seal verdict guard (render_rewrite.py).
 
-Charter decision (user, 2026-05-31): users read a "GOOD" seal as "Turnitin-safe".
-But the rewrite cannot reach Turnitin-safe (the external/fluency estimate has a floor
-no rewrite removes), so a reassuring verdict next to a "~52% likely to be flagged" card
-is a FALSE promise. Therefore the seal verdict must TRACK THE DETECTOR REALITY:
+History:
+  1. Seal showed "GOOD" (calibrated risk) -> read by users as "Turnitin-safe" -> false promise.
+  2. Switched the verdict to track the external/Turnitin band ("Still flagged by detectors" ...).
+  3. INTERIM (current): a real Turnitin report proved our external band OVER-FLAGS reality
+     (+62.5 pts on a doc Turnitin cleared at 0% -- see poc/calibration/). So while
+     EXTERNAL_ESTIMATE_DISPLAY_ENABLED is False we make NO detector claim at all: the seal is a
+     neutral grounding verdict, and no external % / band leaks onto any surface.
 
-  * external band "high"     -> "Still flagged by detectors"   (never reads as safe)
-  * external band "elevated" -> "Detector risk remains"
-  * external band "low"      -> "Detector risk low"            (the only ~safe verdict)
-
-and the subtitle credits the grounding work + directs the user to finish in their own
-words -- it must NOT show a calibrated-risk % with a "below 20% reference" safety phrase.
-
-Imports ONLY report.render_rewrite to stay decoupled from the rewrite pipeline.
+These tests pin the interim contract. When the flag flips True (post-calibration), they skip and
+the band-driven behaviour is expected again.
 """
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
+from report.render import EXTERNAL_ESTIMATE_DISPLAY_ENABLED  # noqa: E402
 from report.render_rewrite import render_rewrite_report  # noqa: E402
 
+_DEMOTED = not EXTERNAL_ESTIMATE_DISPLAY_ENABLED
+_skip_if_enabled = pytest.mark.skipif(
+    not _DEMOTED, reason="external estimate re-enabled; band-driven verdict expected instead")
 
-def _summary(external_band: str, ext_score: int, headline: int = 32, calibrated: int = 16) -> dict:
+
+def _summary(external_band: str = "high", ext_score: int = 52) -> dict:
     return {
         "outcome": "partial_candidate_not_strict_safe",
         "status": "partial_candidate_not_strict_safe",
-        "detect_scores": {
-            "original_ai_authorship": 70,
-            "rewritten_ai_authorship": headline,
-            "original_ai_transformation": 34,
-            "rewritten_ai_transformation": 3,
-            "rewritten_human_contribution": 97,
-        },
+        "detect_scores": {"original_ai_authorship": 70, "rewritten_ai_authorship": 32},
         "detect_scan_original": {
             "findings": {"critical": [], "high": [], "medium": [], "low": []},
             "ai_risk_badge": {"ai_likelihood_score": 42, "writing_quality_score": 65},
@@ -41,44 +39,39 @@ def _summary(external_band: str, ext_score: int, headline: int = 32, calibrated:
         "detect_scan_rewritten": {
             "findings": {"critical": [], "high": [], "medium": [], "low": []},
             "ai_risk_badge": {
-                "ai_likelihood_score": headline,
+                "ai_likelihood_score": 32,
                 "writing_quality_score": 70,
                 "external_detector_estimate": {"score": ext_score, "band": external_band},
             },
             "scan_intelligence": {"transformation": {"contribution": {
-                "human_contribution_ratio": 97,
-                "ai_transformation_ratio": 3,
-                "calibrated_ai_risk": calibrated,
+                "human_contribution_ratio": 97, "ai_transformation_ratio": 3, "calibrated_ai_risk": 16,
             }}},
         },
     }
 
 
-def test_high_external_band_never_claims_safe():
-    # Detectors still flag it (~52% high) while the internal calibrated risk is a rosy 16%.
-    # The seal must reflect the DETECTOR reality, not the rosy number.
+@_skip_if_enabled
+def test_demoted_seal_makes_no_detector_claim():
+    # Even with a "high" external band, the demoted seal must NOT assert a detector outcome
+    # (neither "still flagged" nor a reassuring "safe"/"GOOD"/"low"), and must not leak a % .
     report = render_rewrite_report(_summary("high", 52), [], [], original_text="O.", final_text="R.")
-    assert "Still flagged by detectors".upper() in report.upper(), report
-    # No false-safety / no cherry-picked calibrated-risk-with-reference on the seal verdict line.
-    assert "below 20% reference" not in report, "seal must not imply a Turnitin pass"
-    assert "16% calibrated risk · below 20% reference" not in report
-    # Credits the work + directs the user to finish it themselves.
-    assert "finish in your own words" in report.lower(), report
+    up = report.upper()
+    assert "GROUNDED DRAFT" in up, report
+    assert "STILL FLAGGED BY DETECTORS" not in up
+    assert "DETECTOR RISK LOW" not in up
+    assert "~52%" not in report
+    assert "below 20% reference" not in report
+    assert "Turnitin / external" not in report
 
 
-def test_low_external_band_is_the_only_safe_verdict():
-    report = render_rewrite_report(_summary("low", 14), [], [], original_text="O.", final_text="R.")
-    assert "Detector risk low".upper() in report.upper(), report
-    assert "Still flagged by detectors".upper() not in report.upper(), report
-
-
-def test_elevated_external_band_says_risk_remains():
-    report = render_rewrite_report(_summary("elevated", 40), [], [], original_text="O.", final_text="R.")
-    assert "Detector risk remains".upper() in report.upper(), report
+@_skip_if_enabled
+def test_demoted_seal_credits_grounding_and_directs_finish():
+    report = render_rewrite_report(_summary("high", 52), [], [], original_text="O.", final_text="R.")
+    assert "grounding improved" in report.lower()
+    assert "finish in your own words" in report.lower()
 
 
 if __name__ == "__main__":
-    test_high_external_band_never_claims_safe()
-    test_low_external_band_is_the_only_safe_verdict()
-    test_elevated_external_band_says_risk_remains()
+    test_demoted_seal_makes_no_detector_claim()
+    test_demoted_seal_credits_grounding_and_directs_finish()
     print("ok")

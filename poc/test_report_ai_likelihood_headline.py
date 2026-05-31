@@ -1,5 +1,5 @@
 """Dual-headline AI-likelihood rendering (page + PDF share this band table)."""
-from report.render import _ai_likelihood_bands
+from report.render import _ai_likelihood_bands, EXTERNAL_ESTIMATE_DISPLAY_ENABLED
 
 
 def test_draftproof_tier_maps_to_color():
@@ -62,18 +62,26 @@ def _report_with_badge(ext=True):
     )
 
 
-def test_markdown_shows_both_numbers_and_ordering():
+def test_markdown_leads_with_draftproof_and_orders_before_calibration():
     md = render_markdown(_report_with_badge(ext=True))
     assert "AI Likelihood" in md
-    assert "42%" in md and "~60%" in md
-    assert "likely to be flagged" in md
-    assert md.index("AI Likelihood") < md.index("How DraftProof calibrates this")
-
-
-def test_markdown_external_unavailable_fallback():
-    md = render_markdown(_report_with_badge(ext=False))
-    assert "External estimate unavailable" in md
     assert "42%" in md
+    assert md.index("AI Likelihood") < md.index("How DraftProof calibrates this")
+    if EXTERNAL_ESTIMATE_DISPLAY_ENABLED:
+        assert "~60%" in md and "likely to be flagged" in md
+    else:
+        # INTERIM: external estimate demoted (it over-flags real Turnitin) -> no predicted %.
+        assert "~60%" not in md
+        assert "likely to be flagged" not in md
+        assert "not a reliable signal" in md  # the honest caution replaces the number
+
+
+def test_markdown_external_demoted_or_unavailable():
+    md = render_markdown(_report_with_badge(ext=False))
+    assert "42%" in md
+    if not EXTERNAL_ESTIMATE_DISPLAY_ENABLED:
+        assert "likely to be flagged" not in md
+        assert "not a reliable signal" in md
 
 
 def test_display_ai_score_is_not_halved():
