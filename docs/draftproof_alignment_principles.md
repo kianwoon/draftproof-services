@@ -98,16 +98,17 @@ Two different things can be "optimized," and they point in **opposite directions
 
 ## 6. Implications for current code (alignment backlog)
 
-1. **Reframe the external estimate** (page `report.aiLikelihood.*`, render.py, render_rewrite.py,
-   email_service.py): replace "Turnitin pass target < 20% — not met" with the
-   risk-awareness wording in §3.2. Keep the number; change its meaning.
-2. **Make grounding the lead optimizable signal** in the report narrative; frame the
-   rewrite as a "grounding map / showcase."
-3. **Author-proxy stays automated.** It fills grounding gaps with *illustrative*,
-   clearly-flagged anchors (the existing `user_input_needed: confirm/replace/remove`
-   markers) to produce a smooth, high-quality showcase. The before/after diff + those
-   markers guide the user's own **offline** editing. Do NOT make the rewrite interactive
-   or require mid-process input. Effort goes into showcase **quality + smoothness**, not
-   interactivity and not chasing the external number.
-4. Keep the single-canonical-number + no-re-derivation invariants (guard tests already
-   added: `_display_ai_score`/`aiLikelihoodBands` not halved; compaction keep-list).
+1. ✅ **DONE (commit 38ad5d98) — Reframe the external estimate** (page `report.aiLikelihood.*`,
+   render.py, render_rewrite.py, email_service.py): removed "Turnitin pass target < 20% — not
+   met"; the why-copy now says strict detectors over-flag fluent writing (even genuine human
+   writing) — a risk heads-up, not a score to beat. Number kept; meaning changed.
+2. ✅ **DONE (commit acab0e14) — Grounding score is the lead optimizable signal.** Dual headline
+   leads with DraftProof; now captioned "improves as you ground the content (the signal to act
+   on)" (page + scan PDF). The rewrite is framed as a showcase (see the rewrite-quality work +
+   the rewriteFraming banner).
+3. ✅ **DONE (commit 8dbd9448) — Author-proxy automated, showcase quality up.** The writer grounds
+   in FIRST-PERSON framing carrying CONCRETE illustrative detail (the best-measured version,
+   final_risk mean 31.55), flagged in author_review_items for the author to replace. Smooth,
+   automated, no interactivity. See [[project_v6_score_floor]] REWRITE-QUALITY LEVER.
+4. **(standing) Keep the single-canonical-number + no-re-derivation invariants** (guard tests:
+   `_display_ai_score`/`aiLikelihoodBands` not halved; compaction keep-list).
