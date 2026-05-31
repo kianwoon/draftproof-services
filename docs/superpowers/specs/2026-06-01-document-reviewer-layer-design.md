@@ -30,9 +30,16 @@ writer untouched and add a **separate, document-aware reviewer** that sees the w
 
 ## 2. Objective
 
-Add a reviewer pass that reads the **full rewritten document**, deterministically detects residual
-AI-shaped patterns guided by the 25-trick taxonomy, and **surgically corrects only the offending
-sentences** — so the final shown content is a clean, varied teaching artifact.
+Add a **QC (quality-control) reviewer pass** that reads the **full rewritten document**, inspects it
+against the 25 writing-craft guidelines, and **surgically corrects any substandard sentence** — so
+the final shown content is a clean, varied, higher-quality teaching artifact.
+
+Like a real QC inspector, the reviewer is not limited to a pre-printed defect list: it may correct
+**any** sentence it judges substandard against the 25. Deterministic detectors run alongside as a
+**safety net** — they *guarantee* the cross-paragraph patterns a per-paragraph writer is blind to
+(the observed "In my classroom" monoculture) are always caught and handed over as **must-fix**,
+never missed. Detectors = guaranteed sight on cross-doc patterns; rubric = QC craft judgment over
+everything else.
 
 Aligned with the rewrite objective (`CLAUDE.md`, `project_v6_rewrite_objective`): the reviewer
 **annotates/repairs**, never re-genericizes the writer's grounded specifics, and falls back to the
@@ -109,24 +116,29 @@ Detectors (Phase 1):
 
 Thresholds live as named module constants with a one-line rationale each (not magic numbers inline).
 
-### 4.2 `poc/rewrite_v6/document_reviewer.py` — orchestrator + one LLM call
+### 4.2 `poc/rewrite_v6/document_reviewer.py` — QC orchestrator + one LLM call
 
 ```python
 def review_document(text: str, *, gateway, cancellation_check=None) -> ReviewResult: ...
 ```
 
 Flow:
-1. `issues = detect_residual_patterns(text)`.
-2. If `not issues` → return `ReviewResult(text=text, corrections=[], skipped="no_issues")`
-   (**no LLM call** on clean docs).
-3. Build the reviewer prompt: the **`WRITING_CRAFT_GUIDELINES` rubric** (the 25) + the **full
-   document** (for sight) + only the **fired issues with their evidence and target sentences**.
-   Output schema asks for `{ "corrections": [ {"original": "...exact sentence...", "revised": "..."} ] }`
-   — corrected sentences ONLY. Bounded output → length-proof (≈200 tokens out regardless of doc
-   length).
+1. `must_fix = detect_residual_patterns(text)` — the deterministic safety net (cross-paragraph
+   patterns that must never be missed).
+2. Build the QC reviewer prompt: the **`WRITING_CRAFT_GUIDELINES` rubric** (the 25) + the **full
+   document** + the **`must_fix` issues with evidence** marked as required. Instruction: act as QC —
+   correct every `must_fix` issue AND any other sentence that falls short of the 25, but **change
+   only what is substandard** (vary opening / transition / rhythm / wording); never touch the
+   grounded specifics the writer added. Output schema:
+   `{ "corrections": [ {"original": "...exact sentence...", "revised": "..."} ] }` — corrected
+   sentences ONLY. Bounded output → length-proof (≈200–600 tokens out regardless of doc length).
+3. **QC always runs when enabled** (one LLM call per document) — it may find defects the detectors
+   don't model, so we do not short-circuit on an empty `must_fix`. The only skip is the kill switch.
 4. Parse JSON (reuse `json_io.parse_json`). Each correction is **spliced by verbatim match** of
    `original` in the doc. Unmatched originals are skipped (safe no-op).
-5. Apply the §6 fidelity guard per correction. Return the reviewed text + a `corrections` trace.
+5. Apply the §6 fidelity guard per correction. Cross-check that every `must_fix` issue was addressed;
+   any unaddressed must-fix is recorded in the trace. Return the reviewed text + a `corrections`
+   trace.
 
 ### 4.3 Wire-in — `direct_rewrite.run_direct_rewrite_all`
 
@@ -146,11 +158,10 @@ no report or frontend changes required.
 ```
 writer (per-paragraph, unchanged)
    → best_of_N winner: rewritten_text
-      → detect_residual_patterns(text)         [pure, free]
-         → issues? ── no ──► ship writer text unchanged
-                │ yes
-                ▼
-         review_document: 1 LLM call, full-doc sight, returns corrected sentences only
+      → detect_residual_patterns(text)          [pure, free] → must_fix issues (safety net)
+         ▼
+      review_document: 1 QC LLM call (full-doc sight + 25 rubric + must_fix)
+         → returns corrected sentences only (any substandard sentence, must_fix required)
                 ▼
          splice by verbatim match  →  §6 fidelity guard per correction (drop regressions)
                 ▼
@@ -199,7 +210,7 @@ annotation-UI surface that was reverted on 2026-06-01 (commit `acb764a9`).
 | LLM returns empty / invalid JSON (the revert bug) | Output is tiny (corrected sentences only) so truncation is unlikely; on parse failure → ship writer text unchanged |
 | Correction regresses score/grammar/polarity | Drop that one correction (§6) |
 | Reviewer `original` doesn't match doc verbatim | Skip that correction (no splice) |
-| No patterns fire | No LLM call; writer text shipped as-is |
+| QC finds nothing to fix | Returns zero corrections; writer text shipped unchanged (one cheap LLM call spent) |
 | Reviewer alters grounded specifics | Prompt forbids it; polarity/score guards catch the worst; correction dropped on regression |
 | Doc extremely long (>~6000 words) | Input still <10% context; out of scope to chunk now (YAGNI) — revisit only if real docs exceed it |
 
