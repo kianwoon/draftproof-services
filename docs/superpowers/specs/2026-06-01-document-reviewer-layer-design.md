@@ -44,18 +44,35 @@ intrinsic perplexity/top-k floor.
 
 ---
 
-## 3. The 25 tricks → three buckets (by who can verify)
+## 3. The 25 guidelines — the reviewer's craft rubric
 
-| Bucket | Tricks | Reviewer treatment |
+**The 25 guidelines are the reviewer's guiding rubric and are placed directly in the reviewer
+prompt.** They are general, content-agnostic writing-craft principles (vary openings, avoid robotic
+transitions, attach risk to a failure mode, etc.) — they are **good guidance, not a hardcode
+violation** (confirmed by the user, 2026-06-01). The NO HARDCODE gate forbids baking
+domain-specific lists/categories/answers that overfit to particular content; craft guidance that
+applies to any prose is legitimate.
+
+The rubric lives as a **single module constant** (`WRITING_CRAFT_GUIDELINES`, a compact
+problem→fix list mirroring the user's 25) so it has one source of truth and is easy to maintain.
+
+The 25 still split by **who can verify them**, which decides how the reviewer is allowed to act:
+
+| Bucket | Guidelines | Reviewer treatment |
 |---|---|---|
-| **A. Machine-checkable, cross/within-doc** | #2 predictable start, #5 packed list, #6 sentence overload, #7 balance phrase, #8 robotic transition, #12 formulaic contrast, #13 rhythm sameness, #19 same subject starts, #21 dense modifiers, #24 even paragraph shape | **Deterministic detector** measures evidence → reviewer LLM corrects flagged sentences |
-| **B. Judgment-only** | #4 author anchor, #11 weak judgment, #17 weak evidence, #20 ownership, #15/#16 specific benefit/risk | **Review flag only** — never silent-edited (a machine can't reliably score "is this judgment strong") |
-| **C. Already owned upstream** | #1/#3/#9/#10/#18/#22/#23 grounding & concreteness | Owned by the **writer** (`direct_rewrite._SYSTEM`); reviewer does not duplicate |
+| **A. Machine-detectable, cross/within-doc** | #2 predictable start, #5 packed list, #6 sentence overload, #7 balance phrase, #8 robotic transition, #12 formulaic contrast, #13 rhythm sameness, #19 same subject starts, #21 dense modifiers, #24 even paragraph shape | **Deterministic detector supplies hard evidence** (e.g. "paragraphs 1,2,3,7 open 'In my'") → reviewer edits the flagged sentences, guided by the rubric |
+| **B. Judgment-only** | #4 author anchor, #11 weak judgment, #17 weak evidence, #20 ownership, #15/#16 specific benefit/risk | **Review flag only** — never silent-edited (a machine can't reliably score "is this judgment strong"); the rubric still tells the user what to strengthen |
+| **C. Already owned upstream** | #1/#3/#9/#10/#18/#22/#23 grounding & concreteness | Owned by the **writer** (`direct_rewrite._SYSTEM`); reviewer protects, does not re-do |
 | **Wrapper** | #25 preserve original meaning | **Fidelity guard** around every correction (see §6) |
 
-**Phase 1 ships bucket A detectors** for the high-confidence, cross-paragraph patterns that caused
-the observed bug; bucket B flags are emitted but advisory. The deterministic detector set is the
-minimum that reliably fires on real monoculture without false positives.
+**Why detectors AND rubric.** The rubric (all 25) tells the reviewer *what good prose looks like*.
+The detectors solve what the rubric alone can't: a per-paragraph writer is **blind across
+paragraphs**, so the reviewer needs hard, pre-computed evidence of cross-paragraph patterns (the
+observed 7/8 "In my classroom") rather than eyeballing a long doc and possibly missing or
+hallucinating them. Detectors = reliable sight; rubric = craft judgment.
+
+**Phase 1** ships the bucket-A detectors (the cross-paragraph patterns that caused the observed bug)
+plus the full 25-guideline rubric in the reviewer prompt. Bucket-B items ride as advisory flags.
 
 ---
 
@@ -102,10 +119,11 @@ Flow:
 1. `issues = detect_residual_patterns(text)`.
 2. If `not issues` → return `ReviewResult(text=text, corrections=[], skipped="no_issues")`
    (**no LLM call** on clean docs).
-3. Build the reviewer prompt: **full document** (for sight) + only the **fired issues with their
-   evidence and target sentences** + a short within-sentence polish reminder. Output schema asks for
-   `{ "corrections": [ {"original": "...exact sentence...", "revised": "..."} ] }` — corrected
-   sentences ONLY. Bounded output → length-proof (≈200 tokens out regardless of doc length).
+3. Build the reviewer prompt: the **`WRITING_CRAFT_GUIDELINES` rubric** (the 25) + the **full
+   document** (for sight) + only the **fired issues with their evidence and target sentences**.
+   Output schema asks for `{ "corrections": [ {"original": "...exact sentence...", "revised": "..."} ] }`
+   — corrected sentences ONLY. Bounded output → length-proof (≈200 tokens out regardless of doc
+   length).
 4. Parse JSON (reuse `json_io.parse_json`). Each correction is **spliced by verbatim match** of
    `original` in the doc. Unmatched originals are skipped (safe no-op).
 5. Apply the §6 fidelity guard per correction. Return the reviewed text + a `corrections` trace.
@@ -221,7 +239,7 @@ confirm reviewer does **not** regress final_risk (it should hold or modestly imp
 | File | New/Changed | Purpose | Est. lines |
 |---|---|---|---|
 | `poc/rewrite_v6/residual_patterns.py` | new | deterministic detectors | ~180 |
-| `poc/rewrite_v6/document_reviewer.py` | new | orchestrator + 1 LLM call + fidelity guard | ~160 |
+| `poc/rewrite_v6/document_reviewer.py` | new | `WRITING_CRAFT_GUIDELINES` rubric (the 25) + orchestrator + 1 LLM call + fidelity guard | ~200 |
 | `poc/rewrite_v6/direct_rewrite.py` | changed | wire reviewer after best-of-N; kill switch | ~25 |
 | `poc/test_rewrite_v6_document_reviewer.py` | new | detector + orchestrator + wire-in tests | ~220 |
 
