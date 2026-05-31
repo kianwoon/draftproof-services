@@ -272,9 +272,6 @@ export default function Rewrite() {
   const rewrittenWordCount = countWords(report?.final_text);
   const originalText = report?.original_text || summary.original_text || '';
   const documentDiff = buildSplitDiff(originalText, report?.final_text || '');
-  // LLM-authored worked teaching cases on this rewrite (authored in the worker, carried on the
-  // report). Empty/absent → the section simply doesn't render.
-  const showcaseCases = Array.isArray(report?.showcase_cases) ? report.showcase_cases : [];
 
   return (
     <main className="dash-shell">
@@ -385,40 +382,6 @@ export default function Rewrite() {
                 </div>
               </article>
             </div>
-          </section>
-        )}
-
-        {showcaseCases.length > 0 && (
-          <section className="rewrite-review-section rewrite-cases-section">
-            <div className="rewrite-review-heading">
-              <div>
-                <span className="rewrite-review-kicker">{t('rewritePage.cases.kicker')}</span>
-                <h3>{t('rewritePage.cases.title')}</h3>
-              </div>
-            </div>
-            <p className="rewrite-review-copy">{t('rewritePage.cases.intro')}</p>
-            <ol className="rewrite-case-list">
-              {showcaseCases.map((c, i) => (
-                <li key={i} className="rewrite-case">
-                  {c.move_label && <div className="rewrite-case-move">{c.move_label}</div>}
-                  <div className="rewrite-case-quote is-submitted">
-                    <span className="rewrite-case-tag">{t('rewritePage.cases.submitted')}</span>
-                    <p>{c.submitted_quote}</p>
-                  </div>
-                  {c.marker_sees && <p className="rewrite-case-note">{c.marker_sees}</p>}
-                  <div className="rewrite-case-quote is-grounded">
-                    <span className="rewrite-case-tag">{t('rewritePage.cases.grounded')}</span>
-                    <p>{c.rewritten_quote}</p>
-                  </div>
-                  {c.why_it_lands && <p className="rewrite-case-note">{c.why_it_lands}</p>}
-                  {c.your_rule && (
-                    <p className="rewrite-case-rule">
-                      <strong>{t('rewritePage.cases.yourRule')}</strong> {c.your_rule}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ol>
           </section>
         )}
 

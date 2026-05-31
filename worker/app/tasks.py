@@ -643,7 +643,6 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         ),
         "effective_rewrite_plan": _compact_debug_value(payload.get("effective_rewrite_plan")),
         "billing_decision": payload.get("billing_decision"),
-        "showcase_cases": payload.get("showcase_cases"),
         "rewrite_json_truncated": True,
         "rewrite_json_truncation_reason": f"rewrite.json exceeded {max_bytes} bytes before upload",
     }
@@ -2316,20 +2315,6 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                     rw.rewrite_plan if rw and hasattr(rw, "rewrite_plan") else None
                 ),
             }
-            # Showcase: LLM-authored worked teaching cases on the rewrite (additive; the try/except
-            # guarantees it never blocks or alters the rewrite if authoring fails).
-            try:
-                from rewrite_v6.showcase_cases import author_showcase_cases
-                rewrite_json["showcase_cases"] = author_showcase_cases(
-                    rewrite_json.get("original_text") or "",
-                    rewrite_json.get("final_text") or "",
-                    api_key=llm_api_key or None,
-                    base_url=settings.LLM_BASE_URL or None,
-                    cancellation_check=raise_if_canceled,
-                )
-            except Exception:
-                _l.exception("showcase_cases authoring raised; continuing without cases")
-                rewrite_json["showcase_cases"] = []
             billing_decision = _rewrite_billing_decision(result, rewrite_json)
             rewrite_json["billing_decision"] = billing_decision
             rewrite_json = _bounded_rewrite_json_payload(rewrite_json)

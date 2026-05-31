@@ -98,4 +98,3 @@ class RewriteReportOut(BaseModel):
     effective_rewrite_plan: Optional[Any] = None
     authorship_evidence: Optional[Any] = None
     external_detector_estimate: Optional[Any] = None
-    showcase_cases: Optional[list] = None
