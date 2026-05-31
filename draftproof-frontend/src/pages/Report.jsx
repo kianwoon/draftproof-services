@@ -1398,10 +1398,14 @@ export default function Report() {
     );
   };
 
-  const renderTransformationDetails = (variant, pattern, summary, variantAiScore, ratingBadge = null) => {
+  const renderTransformationDetails = (variant, pattern, summary, _variantAiScore, ratingBadge = null) => {
     return (
       <div className={`transformation-detail ${variant === 'rewritten' ? 'is-rewritten' : 'is-original'}`}>
-        {variant === 'original' && renderAiLikelihoodHeadline(originalComparisonBadge)}
+        {renderAiLikelihoodHeadline(
+          variant === 'rewritten'
+            ? { ...rewrittenBadge, ai_likelihood_score: rewrittenBadge.ai_likelihood_score ?? rewrittenAiScore }
+            : { ...originalComparisonBadge, ai_likelihood_score: originalComparisonBadge.ai_likelihood_score ?? aiScore },
+        )}
         <div className="transformation-detail-head">
           <div>
             <span>{variant === 'rewritten' ? t('report.transformation.rewrittenScan') : t('report.transformation.originalScan')}</span>
@@ -1420,12 +1424,9 @@ export default function Report() {
               </div>
             )}
           </div>
-          {variant !== 'original' && (
-            <em>{formatMetricPercent(calibratedReportAiScore(variantAiScore), 0)}</em>
-          )}
         </div>
         {summary && (
-          <details className="ai-likelihood-calibration">
+          <details className="ai-likelihood-calibration" open>
             <summary>{t('report.aiLikelihood.calibrateHeading')}</summary>
             <div className="transformation-ratio-summary">
               <div className="transformation-ratio-copy">

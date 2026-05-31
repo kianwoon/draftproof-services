@@ -14,6 +14,9 @@ SCAN_BADGE_KEYS = (
     "transformation_classification",
     "ai_components",
     "writing_components",
+    # Retained so the rewritten scan's dual headline can show the Turnitin/external
+    # estimate (a rewrite does NOT beat perplexity detectors — users must see this).
+    "external_detector_estimate",
 )
 
 TRANSFORMATION_KEYS = (
