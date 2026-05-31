@@ -1014,6 +1014,23 @@ class ReportBuilder:
 
         return raw_tier
 
+    @staticmethod
+    def _floor_tier_to_badge(adjusted_tier: Tier, badge_tier_value: str) -> Tier:
+        """Overall tier must not read LOW when the AI-likelihood badge is AMBER+.
+
+        ``_derive_weighted_tier`` re-derives the overall tier from per-finding tiers
+        and a brittle ``pred_risk >= 0.45`` cliff; it never consults the badge's own
+        aggregate AI-likelihood (which already folds in generic_assertion, topk, etc.).
+        So a highly-generic, zero-grounding document can land LOW while its badge is
+        AMBER (observed: test_content11 -> badge AMBER 42%, generic_assertion 90,
+        overall LOW). A LOW headline under an amber+ badge contradicts the badge and
+        under-warns the user, so floor it to MEDIUM. GREEN badges (genuinely low AI
+        signal) may stay LOW. Only LOW is lifted; higher tiers are never altered.
+        """
+        if adjusted_tier == Tier.LOW and str(badge_tier_value or "").upper() in ("AMBER", "ORANGE", "RED"):
+            return Tier.MEDIUM
+        return adjusted_tier
+
     def build(self) -> DraftReport:
         # Assign sequential finding IDs
         for i, f in enumerate(self._findings):
@@ -1149,6 +1166,9 @@ class ReportBuilder:
                 break
 
         # Build human-readable tier reason
+        # NOTE: pre-floor value. The badge floor (below, after the badge is computed)
+        # may lift adjusted_tier LOW->MEDIUM and, when it does, REPLACES overall_tier_reason
+        # entirely — so this tier_label string must not be appended to the reason after the floor.
         tier_label = adjusted_tier.value.upper()
         # Count non-low findings
         non_low = sum(1 for f in self._findings if f.tier.value not in ("low", "clean"))
@@ -1463,6 +1483,22 @@ class ReportBuilder:
             overall_tier_reason = overall_tier_reason.replace(
                 f"AI likelihood is {ai_val:.1%}",
                 f"AI likelihood is {badge_ai_score:.1%}",
+            )
+
+        # Badge floor: the headline tier must not read LOW when the AI-likelihood badge
+        # is AMBER+ (the badge aggregates generic_assertion/topk/etc.; the weighted
+        # derivation does not). Lifts only LOW -> MEDIUM; never lowers a higher tier.
+        pre_floor_tier = adjusted_tier
+        adjusted_tier = self._floor_tier_to_badge(adjusted_tier, ai_risk_badge.get("tier"))
+        if adjusted_tier != pre_floor_tier:
+            # Self-contained reason (do NOT append the stale pre-floor text, which still
+            # asserts the LOW tier). Signal detail remains available in ai_components/findings.
+            overall_tier_reason = (
+                f"Overall tier is {adjusted_tier.value.upper()} (raised from "
+                f"{pre_floor_tier.value.upper()}): the AI-likelihood badge is "
+                f"{str(ai_risk_badge.get('tier') or '').upper()} at {badge_ai_score:.1%}. A document "
+                f"with amber-or-higher AI-likelihood is not rated below {adjusted_tier.value.upper()}; "
+                f"see the AI signal breakdown for the contributing signals."
             )
 
         # ── Reason codes: structured tier explanation ──
