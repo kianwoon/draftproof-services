@@ -827,6 +827,19 @@ export const resources = {
           },
         },
         ok: 'OK',
+        aiLikelihood: {
+          title: 'AI Likelihood',
+          draftproof: 'DraftProof (conservative)',
+          external: 'Turnitin / external',
+          externalBand: {
+            low: 'unlikely to be flagged',
+            elevated: 'possibly flagged',
+            high: 'likely to be flagged',
+          },
+          externalUnavailable: 'External estimate unavailable — re-scan to populate.',
+          whyDiffer: 'DraftProof is false-positive-averse, so it avoids wrongly accusing human writers. Strict detectors (Turnitin, GPTZero) weight raw token predictability far more aggressively. For a genuine pass, finish the draft in your own words.',
+          calibrateHeading: 'How DraftProof calibrates this',
+        },
       },
       rewritePage: {
         failed: 'Rewrite failed',
@@ -1866,6 +1879,19 @@ export const resources = {
           },
         },
         ok: '确定',
+        aiLikelihood: {
+          title: 'AI 可能性',
+          draftproof: 'DraftProof（保守估计）',
+          external: 'Turnitin / 外部检测器',
+          externalBand: {
+            low: '不太可能被标记',
+            elevated: '可能被标记',
+            high: '很可能被标记',
+          },
+          externalUnavailable: '暂无外部估计——重新扫描以生成。',
+          whyDiffer: 'DraftProof 倾向于避免误判，因此不会轻易将人类写作判定为 AI。严格的检测器（Turnitin、GPTZero）对原始词元可预测性的权重要高得多。若要真正通过检测，请用自己的话完成稿件。',
+          calibrateHeading: 'DraftProof 如何校准此结果',
+        },
       },
       rewritePage: {
         failed: '改写失败',
