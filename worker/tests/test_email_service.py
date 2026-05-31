@@ -75,11 +75,13 @@ def test_build_rewrite_completion_email_truncates_large_content():
 
 
 def test_build_scan_completion_email_attaches_report_pdf():
+    # authorship_rating_label provided → used directly; ai_score NOT halved
     payload = build_scan_completion_email(
         recipient_email="student@example.com",
         scan_id="scan-1",
         tier="possible AI-assisted",
         ai_score=42.5,
+        authorship_rating_label="Possible AI-Assisted",
         writing_score=81,
         finding_count=3,
         pdf_bytes=b"%PDF-1.7 scan",
@@ -90,8 +92,8 @@ def test_build_scan_completion_email_attaches_report_pdf():
     assert payload["from"] == "DraftProof Support <support@draftproof.app>"
     assert payload["subject"] == "Your DraftProof scan report is ready"
     assert "Scan ID: scan-1" in payload["text"]
-    assert "Report outcome: possible AI-assisted" in payload["text"]
-    assert "AI likelihood score: 21%" in payload["text"]
+    assert "Report outcome: Possible AI-Assisted" in payload["text"]
+    assert "AI likelihood score: 42%" in payload["text"]  # full score, NOT halved
     assert "Writing score: 81%" in payload["text"]
     assert "Findings: 3" in payload["text"]
     assert payload["attachments"] == [
@@ -105,41 +107,78 @@ def test_build_scan_completion_email_attaches_report_pdf():
 
 
 def test_build_scan_completion_email_formats_page_aligned_outcome_and_ai_score():
+    # authorship_rating_label=None → falls back to tier-based label; ai_score NOT halved
     payload = build_scan_completion_email(
         recipient_email="student@example.com",
         scan_id="4957c85d-f913-40eb-892c-addf0850b02f",
         tier="amber",
         ai_score=36.66,
-        ai_signal_score=15,
+        authorship_rating_label=None,
         writing_score=44.05,
         finding_count=37,
         pdf_bytes=b"%PDF-1.7 scan",
         settings=_settings(),
     )
 
-    assert "Report outcome: Low AI Signal" in payload["text"]
-    assert "AI likelihood score: 18%" in payload["text"]
+    assert "Report outcome: Moderate Risk" in payload["text"]  # tier-based fallback
+    assert "AI likelihood score: 37%" in payload["text"]  # round(36.66) = 37, full score
     assert "Writing score: 44.05%" in payload["text"]
     assert "Findings: 37" in payload["text"]
 
 
-def test_build_scan_completion_email_uses_calibrated_authorship_band():
+def test_build_scan_completion_email_uses_authorship_rating_label():
+    # authorship_rating_label takes precedence over tier
     payload = build_scan_completion_email(
         recipient_email="student@example.com",
         scan_id="181952b4-73bd-4a66-bb4f-c89d0e8d2aa9",
         tier="amber",
         ai_score=42,
-        ai_signal_score=21,
+        authorship_rating_label="Possible AI-Assisted",
         writing_score=59.33,
         finding_count=28,
         pdf_bytes=b"%PDF-1.7 scan",
         settings=_settings(),
     )
 
-    assert "Report outcome: Unlikely AI-Assisted" in payload["text"]
-    assert "AI likelihood score: 21%" in payload["text"]
+    assert "Report outcome: Possible AI-Assisted" in payload["text"]
+    assert "AI likelihood score: 42%" in payload["text"]  # full score, NOT halved
     assert "Writing score: 59.33%" in payload["text"]
     assert "Findings: 28" in payload["text"]
+
+
+def test_build_scan_completion_email_includes_turnitin_estimate():
+    # external_estimate with band "high" → Turnitin line present
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-ext",
+        tier="amber",
+        ai_score=42,
+        authorship_rating_label="Possible AI-Assisted",
+        external_estimate={"score": 59.8, "band": "high"},
+        writing_score=81,
+        finding_count=3,
+        pdf_bytes=b"%PDF-1.7 scan",
+        settings=_settings(),
+    )
+
+    assert "Turnitin / external estimate: ~60% (likely to be flagged)" in payload["text"]
+
+
+def test_build_scan_completion_email_omits_turnitin_when_no_estimate():
+    # no external_estimate → no Turnitin line
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-noext",
+        tier="amber",
+        ai_score=42,
+        authorship_rating_label="Possible AI-Assisted",
+        writing_score=81,
+        finding_count=3,
+        pdf_bytes=b"%PDF-1.7 scan",
+        settings=_settings(),
+    )
+
+    assert "Turnitin / external estimate:" not in payload["text"]
 
 
 def test_send_rewrite_completion_email_skips_when_disabled(monkeypatch):
