@@ -87,10 +87,45 @@ def _detect_opener_monoculture(text: str) -> ResidualIssue | None:
                          evidence=evidence, target_sentences=targets)
 
 
+# ---------------------------------------------------------------------------
+# Detector: robotic_transitions (#8)
+# ---------------------------------------------------------------------------
+
+# Closed-class formulaic transition openers (guideline 8). Sentence-initial only.
+_ROBOTIC_TRANSITIONS = (
+    "furthermore", "moreover", "additionally", "in addition", "in conclusion",
+    "consequently", "thus", "therefore", "as a result", "overall", "to conclude",
+    "in summary", "firstly", "secondly", "thirdly", "lastly", "notably",
+)
+# Need at least this many robotic openers in the doc before flagging (1 is fine in good prose).
+_MIN_ROBOTIC_HITS = 2
+
+
+def _starts_with_robotic(sentence: str) -> bool:
+    low = sentence.strip().lower()
+    return any(low.startswith(t + " ") or low.startswith(t + ",") for t in _ROBOTIC_TRANSITIONS)
+
+
+def _detect_robotic_transitions(text: str) -> ResidualIssue | None:
+    hits = [s for s in _sentences(text) if _starts_with_robotic(s)]
+    if len(hits) < _MIN_ROBOTIC_HITS:
+        return None
+    evidence = (
+        f"{len(hits)} sentences open with a formulaic transition "
+        f"(Furthermore/Moreover/In conclusion ...) -- use cause-based transitions instead "
+        f"(guideline 8)."
+    )
+    return ResidualIssue(rule="robotic_transitions", trick_ids=[8],
+                         evidence=evidence, target_sentences=hits)
+
+
 def detect_residual_patterns(text: str) -> list[ResidualIssue]:
     """Run every detector over the full document; return all fired issues (may be empty)."""
     issues: list[ResidualIssue] = []
     opener = _detect_opener_monoculture(text)
     if opener is not None:
         issues.append(opener)
+    robotic = _detect_robotic_transitions(text)
+    if robotic is not None:
+        issues.append(robotic)
     return issues

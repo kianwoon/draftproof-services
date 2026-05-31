@@ -46,3 +46,23 @@ def test_opener_monoculture_fires_on_repeated_in_my():
 def test_opener_monoculture_silent_on_varied_doc():
     issues = detect_residual_patterns(_VARIED_DOC)
     assert [i for i in issues if i.rule == "opener_monoculture"] == []
+
+
+def test_robotic_transitions_fires():
+    doc = (
+        "Schools changed fast.\n\n"
+        "Furthermore, the curriculum widened beyond the textbook every year.\n\n"
+        "Moreover, students began learning from sources teachers could not control.\n\n"
+        "In conclusion, the old model no longer matches how learners seek knowledge."
+    )
+    issues = detect_residual_patterns(doc)
+    robotic = [i for i in issues if i.rule == "robotic_transitions"]
+    assert len(robotic) == 1
+    assert 8 in robotic[0].trick_ids
+    assert any(s.lower().startswith("furthermore") for s in robotic[0].target_sentences)
+    assert len(robotic[0].target_sentences) >= 2
+
+
+def test_robotic_transitions_silent_when_absent():
+    doc = "Schools changed fast.\n\nThat created a new problem teachers had to solve themselves."
+    assert [i for i in detect_residual_patterns(doc) if i.rule == "robotic_transitions"] == []
