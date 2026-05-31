@@ -8848,3 +8848,40 @@ td:first-child {
     padding: 16px;
   }
 }
+
+.ai-likelihood-block {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  background: #fbfdff;
+}
+.ai-likelihood-pair {
+  display: flex;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+.ai-likelihood-metric { min-width: 160px; }
+.ai-likelihood-metric .ai-likelihood-caption {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+.ai-likelihood-metric .ai-likelihood-score {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.ai-likelihood-metric .ai-likelihood-band { font-size: 0.85rem; color: #475569; }
+.ai-likelihood-meta { margin-top: 10px; font-size: 0.9rem; color: #334155; }
+.ai-likelihood-why { margin-top: 8px; font-size: 0.85rem; color: #64748b; }
+.ai-likelihood-unavailable { font-size: 0.85rem; color: #94a3b8; font-style: italic; }
+details.ai-likelihood-calibration { margin-top: 14px; }
+details.ai-likelihood-calibration > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #475569;
+}
+details.ai-likelihood-calibration[open] > summary { margin-bottom: 10px; }
