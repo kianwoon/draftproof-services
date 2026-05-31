@@ -149,9 +149,12 @@ def build_scan_completion_email(
         if ext_score is not None:
             band = str(external_estimate.get("band") or "").strip().lower()
             band_label = _EXTERNAL_BAND_LABELS.get(band, "")
-            target = "target < 20% — not met" if ext_score >= 20 else "within Turnitin's < 20% low-range"
-            inner = f"{band_label}; {target}" if band_label else target
-            details.append(f"Turnitin / external estimate: ~{round(ext_score)}% ({inner})")
+            parenthetical = f" ({band_label})" if band_label else ""
+            details.append(f"Turnitin / external estimate: ~{round(ext_score)}%{parenthetical}")
+            details.append(
+                "  (Strict detectors over-flag fluent writing — a risk heads-up, not a target; "
+                "ground the content and finish in your own words.)"
+            )
     formatted_writing_score = _format_score(writing_score)
     if formatted_writing_score is not None:
         details.append(f"Writing score: {formatted_writing_score}%")

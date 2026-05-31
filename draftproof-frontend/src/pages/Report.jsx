@@ -1383,11 +1383,6 @@ export default function Report() {
               <>
                 <div className="ai-likelihood-score" style={{ color: ext.color }}>~{ext.score}%</div>
                 <div className="ai-likelihood-band">{t(`report.aiLikelihood.externalBand.${ext.band}`, { defaultValue: '' })}</div>
-                <div className={`ai-likelihood-target ${ext.score >= 20 ? 'is-not-met' : 'is-met'}`}>
-                  {ext.score >= 20
-                    ? t('report.aiLikelihood.turnitinTargetNotMet')
-                    : t('report.aiLikelihood.turnitinTargetMet')}
-                </div>
               </>
             ) : (
               <div className="ai-likelihood-unavailable">{t('report.aiLikelihood.externalUnavailable')}</div>

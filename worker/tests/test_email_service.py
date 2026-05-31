@@ -161,7 +161,8 @@ def test_build_scan_completion_email_includes_turnitin_estimate():
         settings=_settings(),
     )
 
-    assert "Turnitin / external estimate: ~60% (likely to be flagged; target < 20% — not met)" in payload["text"]
+    assert "Turnitin / external estimate: ~60% (likely to be flagged)" in payload["text"]
+    assert "risk heads-up, not a target" in payload["text"]
 
 
 def test_build_scan_completion_email_omits_turnitin_when_no_estimate():

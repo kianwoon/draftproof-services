@@ -743,9 +743,7 @@ def render_rewrite_report(
             if not isinstance(s, (int, float)):
                 return "n/a"
             lbl = _EXTERNAL_BAND_LABELS.get(str(ext.get("band") or "").lower(), ("", ""))[0]
-            tgt = "target <20% not met" if s >= 20 else "meets <20% target"
-            inner = f"{lbl}; {tgt}" if lbl else tgt
-            return f"~{s:.0f}% ({inner})"
+            return f"~{s:.0f}% ({lbl})" if lbl else f"~{s:.0f}%"
         if isinstance((orig_badge.get("external_detector_estimate") or {}).get("score"), (int, float)) or \
                 isinstance((new_badge.get("external_detector_estimate") or {}).get("score"), (int, float)):
             lines.append(f"| **Turnitin / external** | {_ext_cell(orig_badge)} | {_ext_cell(new_badge)} | - |")

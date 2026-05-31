@@ -326,8 +326,10 @@ def _ai_likelihood_bands(badge: dict | None) -> dict:
 
 _AI_LIKELIHOOD_WHY = (
     "DraftProof is false-positive-averse, so it avoids wrongly accusing human writers. "
-    "Strict detectors (Turnitin, GPTZero) weight raw token predictability far more "
-    "aggressively. For a genuine pass, finish the draft in your own words."
+    "Strict detectors (Turnitin, GPTZero) weight raw token predictability and over-flag "
+    "fluent writing -- even genuine human writing scores high here -- so treat this as a "
+    "risk heads-up, not a score to beat. Your real safeguard is grounding the content and "
+    "finishing it in your own words."
 )
 
 
@@ -341,8 +343,7 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
     out.append(f"- **DraftProof (conservative): {dp['score']}% — {dp['tier']}**")
     ext = bands["external"]
     if ext:
-        target = "target < 20% — not met" if ext["score"] >= 20 else "within Turnitin's < 20% low-range"
-        out.append(f"- **Turnitin / external: ~{ext['score']}% — {ext['label']}** ({target})")
+        out.append(f"- **Turnitin / external: ~{ext['score']}% — {ext['label']}**")
     else:
         out.append("- _External estimate unavailable — re-scan to populate._")
     out.append("")
