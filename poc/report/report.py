@@ -2611,33 +2611,110 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     def _fallback_sentence_segments(text: str) -> list:
         return structured_sentence_segments(text or "")
 
-    def _source_segments() -> list:
+    def _scored_segment_row(i: int, s: dict, fallback: dict) -> dict:
+        return {
+            "sentence_id": s.get("sentence_id", fallback.get("sentence_id") or f"s{i + 1:03d}"),
+            "paragraph_id": s.get("paragraph_id") or fallback.get("paragraph_id") or "p001",
+            "source_paragraph_id": s.get("source_paragraph_id") or fallback.get("source_paragraph_id") or "",
+            "virtual_paragraph_id": s.get("virtual_paragraph_id") or fallback.get("virtual_paragraph_id") or s.get("paragraph_id") or fallback.get("paragraph_id") or "p001",
+            "sentence_index": i,
+            "start_char": s.get("start_char") if s.get("start_char") is not None else fallback.get("start_char", 0),
+            "end_char": s.get("end_char") if s.get("end_char") is not None else fallback.get("end_char", 0),
+            "sentence": s.get("sentence") or fallback.get("sentence", ""),
+            "predictability": {
+                "score": s.get("risk"),
+                "risk_label": s.get("risk_label"),
+                "top10_ratio": s.get("top10_ratio"),
+                "top50_ratio": s.get("top50_ratio"),
+                "avg_surprisal": s.get("avg_surprisal"),
+                "top_predicted_tokens": s.get("top_predicted_tokens", []),
+                "predictable_token_spans": s.get("predictable_token_spans", []),
+            },
+        }
+
+    def _source_segments(complete: bool = False) -> list:
+        # ``complete=False`` (default): scored sentences only — the exact set the
+        # rewrite-handoff profiles (repair units, authorship windows, generation
+        # handoff) consume. Kept scored-only so that handoff stays byte-identical.
+        #
+        # ``complete=True``: EVERY sentence in the submitted document. The
+        # predictability scanner only scores sentences with >= 8 words
+        # (poc/predictability/scanner.py floor), so ``pred_sentences`` is a SUBSET;
+        # building the rendered document from it alone dropped short sentences from
+        # the "submitted content" view. For the display surface we base segments on
+        # the full structural split and JOIN scored rows by normalized text so the
+        # display reconstructs the whole document. Unscored sentences ride along as
+        # plain (no-signal) segments — inert to signal-driven downstream consumers.
         structured_segments = _fallback_sentence_segments(report.original_text or "")
-        if pred_sentences:
+        if not pred_sentences:
+            return structured_segments
+        if not complete or not structured_segments:
             rows = []
             for i, s in enumerate(pred_sentences):
                 fallback = structured_segments[i] if i < len(structured_segments) else {}
+                rows.append(_scored_segment_row(i, s, fallback))
+            return rows
+
+        def _key(text) -> str:
+            return " ".join(str(text or "").split())
+
+        # Queue scored rows per normalized text so duplicate sentences match in order.
+        scored_by_text: dict = {}
+        for s in pred_sentences:
+            scored_by_text.setdefault(_key(s.get("sentence")), []).append(s)
+
+        rows = []
+        for i, seg in enumerate(structured_segments):
+            text = seg.get("sentence", "")
+            queue = scored_by_text.get(_key(text))
+            matched = queue.pop(0) if queue else None
+            if matched is not None:
                 rows.append({
-                    "sentence_id": s.get("sentence_id", fallback.get("sentence_id") or f"s{i + 1:03d}"),
-                    "paragraph_id": s.get("paragraph_id") or fallback.get("paragraph_id") or "p001",
-                    "source_paragraph_id": s.get("source_paragraph_id") or fallback.get("source_paragraph_id") or "",
-                    "virtual_paragraph_id": s.get("virtual_paragraph_id") or fallback.get("virtual_paragraph_id") or s.get("paragraph_id") or fallback.get("paragraph_id") or "p001",
+                    "sentence_id": matched.get("sentence_id") or seg.get("sentence_id") or f"s{i + 1:03d}",
+                    "paragraph_id": seg.get("paragraph_id") or matched.get("paragraph_id") or "p001",
+                    "source_paragraph_id": seg.get("source_paragraph_id") or matched.get("source_paragraph_id") or "",
+                    "virtual_paragraph_id": seg.get("virtual_paragraph_id") or seg.get("paragraph_id") or "p001",
                     "sentence_index": i,
-                    "start_char": s.get("start_char") if s.get("start_char") is not None else fallback.get("start_char", 0),
-                    "end_char": s.get("end_char") if s.get("end_char") is not None else fallback.get("end_char", 0),
-                    "sentence": s.get("sentence") or fallback.get("sentence", ""),
+                    "start_char": seg.get("start_char", 0),
+                    "end_char": seg.get("end_char", 0),
+                    "sentence": text,
                     "predictability": {
-                        "score": s.get("risk"),
-                        "risk_label": s.get("risk_label"),
-                        "top10_ratio": s.get("top10_ratio"),
-                        "top50_ratio": s.get("top50_ratio"),
-                        "avg_surprisal": s.get("avg_surprisal"),
-                        "top_predicted_tokens": s.get("top_predicted_tokens", []),
-                        "predictable_token_spans": s.get("predictable_token_spans", []),
+                        "score": matched.get("risk"),
+                        "risk_label": matched.get("risk_label"),
+                        "top10_ratio": matched.get("top10_ratio"),
+                        "top50_ratio": matched.get("top50_ratio"),
+                        "avg_surprisal": matched.get("avg_surprisal"),
+                        "top_predicted_tokens": matched.get("top_predicted_tokens", []),
+                        "predictable_token_spans": matched.get("predictable_token_spans", []),
                     },
                 })
-            return rows
-        return structured_segments
+            else:
+                # Unscored sentence (below the predictability word floor). Synthetic id
+                # (``u_`` prefix) can't collide with scored ``sNNN`` ids, and the empty
+                # signal set means ``_document_segments`` marks it un-highlighted and
+                # signal-driven consumers (e.g. rewrite_v6 _report_findings) skip it.
+                struct_id = seg.get("sentence_id") or f"s{i + 1:03d}"
+                rows.append({
+                    "sentence_id": f"u_{struct_id}",
+                    "paragraph_id": seg.get("paragraph_id") or "p001",
+                    "source_paragraph_id": seg.get("source_paragraph_id") or "",
+                    "virtual_paragraph_id": seg.get("virtual_paragraph_id") or seg.get("paragraph_id") or "p001",
+                    "sentence_index": i,
+                    "start_char": seg.get("start_char", 0),
+                    "end_char": seg.get("end_char", 0),
+                    "sentence": text,
+                    "predictability": {},
+                })
+        # Safety net: a scored sentence that didn't text-match any structural segment
+        # (pathological splitting) must still appear so its highlight/findings are never
+        # lost. In practice the join is exhaustive, so this is normally empty.
+        leftover_index = len(structured_segments)
+        for queue in scored_by_text.values():
+            for s in queue:
+                rows.append(_scored_segment_row(leftover_index, s, {}))
+                leftover_index += 1
+        rows.sort(key=lambda r: (r.get("start_char") or 0, r.get("sentence_index") or 0))
+        return rows
 
     def _signal_descriptor(f: Finding) -> Dict[str, str]:
         title = (f.title or "").lower()
@@ -2726,9 +2803,9 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "recommendation": f.recommendation,
         }
 
-    def _document_segments() -> list:
+    def _document_segments(complete: bool = False) -> list:
         segments = []
-        for item in _source_segments():
+        for item in _source_segments(complete):
             sid = item.get("sentence_id")
             signals = [_segment_signal(f) for f in findings_by_sentence.get(sid, [])]
             signals.sort(key=lambda entry: entry.get("score", 0), reverse=True)
@@ -3953,6 +4030,13 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         integrity_layers = _integrity_layers(badge, transformation, contribution)
         segments = _document_segments()
         paragraph_rows = _paragraph_map(segments)
+        # Display surface: the complete document (scored + unscored short sentences),
+        # used ONLY for the rendered "submitted content" (document.segments /
+        # highlight_segments / document.paragraphs). The handoff profiles below keep
+        # consuming the scored-only ``segments``/``paragraph_rows`` so their output is
+        # byte-identical to before this display fix.
+        display_segments = _document_segments(complete=True)
+        display_paragraph_rows = _paragraph_map(display_segments)
         authorship_window_profile = build_authorship_window_profile(
             source_text=report.original_text or "",
             segments=segments,
@@ -4028,10 +4112,10 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             },
             "document": {
                 "word_count": len(report.original_text.split()) if report.original_text else 0,
-                "sentence_count": len(segments),
-                "paragraph_count": len({s.get("paragraph_id") for s in segments if s.get("paragraph_id")}),
-                "segments": segments,
-                "paragraphs": paragraph_rows,
+                "sentence_count": len(display_segments),
+                "paragraph_count": len({s.get("paragraph_id") for s in display_segments if s.get("paragraph_id")}),
+                "segments": display_segments,
+                "paragraphs": display_paragraph_rows,
                 "authorship_window_profile": authorship_window_profile,
                 "ai_footprint_profile": ai_footprint_profile,
                 "rewrite_target_profile": rewrite_target_profile,
