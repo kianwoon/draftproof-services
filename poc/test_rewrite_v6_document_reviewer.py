@@ -118,3 +118,97 @@ def test_rhythm_sameness_silent_on_varied_lengths():
 def test_clean_human_doc_has_no_issues_at_all():
     doc = _VARIED_DOC
     assert detect_residual_patterns(doc) == []
+
+
+from poc.rewrite_v6 import document_reviewer
+from poc.rewrite_v6.document_reviewer import (
+    WRITING_CRAFT_GUIDELINES,
+    build_reviewer_prompt,
+    reviewer_enabled,
+)
+
+
+def test_rubric_has_all_25_guidelines():
+    assert len(WRITING_CRAFT_GUIDELINES) == 25
+
+
+def test_prompt_includes_doc_rubric_and_must_fix_evidence():
+    from poc.rewrite_v6.residual_patterns import ResidualIssue
+    must_fix = [ResidualIssue(rule="opener_monoculture", trick_ids=[19],
+                              evidence="4 of 8 paragraphs open 'in my'",
+                              target_sentences=["In my classroom, I have seen X."])]
+    prompt = build_reviewer_prompt("FULL DOC TEXT HERE", must_fix)
+    assert "FULL DOC TEXT HERE" in prompt
+    assert "4 of 8 paragraphs open 'in my'" in prompt
+    assert "In my classroom, I have seen X." in prompt
+    assert "corrections" in prompt
+    low = prompt.lower()
+    assert "vary" in low and "transition" in low
+
+
+def test_reviewer_enabled_default_on(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_V6_REVIEWER", raising=False)
+    assert reviewer_enabled() is True
+    monkeypatch.setenv("DRAFTPROOF_V6_REVIEWER", "0")
+    assert reviewer_enabled() is False
+
+
+def _stub(payloads):
+    class _StubGateway:
+        def __init__(self, payloads):
+            self._payloads = list(payloads)
+            self.calls = []
+        def chat(self, prompt, *, system=None, **kwargs):
+            self.calls.append({"prompt": prompt, "system": system})
+            payload = self._payloads.pop(0) if self._payloads else "{}"
+            return SimpleNamespace(content=payload, raw_content=payload)
+    return _StubGateway(payloads)
+
+
+def test_review_splices_correction_by_verbatim_match(monkeypatch):
+    monkeypatch.setattr(document_reviewer, "_score", lambda t: 10.0)
+    doc = "In my classroom, I have seen change.\n\nIn my classroom, I have seen more change."
+    correction = {"corrections": [
+        {"original": "In my classroom, I have seen more change.",
+         "revised": "Last spring, the change reached my own lesson plans."}
+    ]}
+    gw = _stub([json.dumps(correction)])
+    result = document_reviewer.review_document(doc, gateway=gw)
+    assert "Last spring, the change reached my own lesson plans." in result.text
+    assert "In my classroom, I have seen more change." not in result.text
+    assert len(result.corrections) == 1
+
+
+def test_review_skips_unmatched_original(monkeypatch):
+    monkeypatch.setattr(document_reviewer, "_score", lambda t: 10.0)
+    doc = "In my classroom, I have seen change every term without fail."
+    correction = {"corrections": [
+        {"original": "A sentence that is not in the document.", "revised": "whatever"}
+    ]}
+    gw = _stub([json.dumps(correction)])
+    result = document_reviewer.review_document(doc, gateway=gw)
+    assert result.text == doc
+    assert result.corrections == []
+
+
+def test_review_drops_correction_that_raises_score(monkeypatch):
+    def fake_score(t):
+        return 90.0 if "WORSE" in t else 10.0
+    monkeypatch.setattr(document_reviewer, "_score", fake_score)
+    doc = "In my classroom, I have seen change every single term here.\n\nIn my classroom, I have seen it twice."
+    correction = {"corrections": [
+        {"original": "In my classroom, I have seen it twice.", "revised": "This made things WORSE."}
+    ]}
+    gw = _stub([json.dumps(correction)])
+    result = document_reviewer.review_document(doc, gateway=gw)
+    assert "WORSE" not in result.text
+    assert result.text == doc
+
+
+def test_review_returns_unchanged_on_bad_json(monkeypatch):
+    monkeypatch.setattr(document_reviewer, "_score", lambda t: 10.0)
+    doc = "In my classroom, I have seen change happen quickly here."
+    gw = _stub(["not json at all"])
+    result = document_reviewer.review_document(doc, gateway=gw)
+    assert result.text == doc
+    assert result.corrections == []
