@@ -39,3 +39,38 @@ def test_missing_external_returns_none():
 def test_missing_score_returns_none_draftproof():
     assert _ai_likelihood_bands({})["draftproof"] is None
     assert _ai_likelihood_bands(None)["draftproof"] is None
+
+
+from report.render import render_markdown
+from report.report import DraftReport, PredictabilitySummary, Tier
+
+
+def _report_with_badge(ext=True):
+    badge = {
+        "ai_likelihood_score": 42.0, "tier": "AMBER",
+        "authorship_rating_label": "Possible AI-Assisted",
+        "transformation_classification": {"label": "AI-stitched / patchwork", "confidence": "high"},
+    }
+    if ext:
+        badge["external_detector_estimate"] = {"score": 59.8, "band": "high", "note": "x"}
+    return DraftReport(
+        overall_tier=Tier.MEDIUM, finding_count=0, findings_by_tier={},
+        original_text="Some essay text about education and technology today.",
+        predictability=PredictabilitySummary(
+            overall_risk=0.42, risk_distribution={}, sentences=[], style_shifts=[], generic_phrases_found=[]),
+        ai_risk_badge=badge,
+    )
+
+
+def test_markdown_shows_both_numbers_and_ordering():
+    md = render_markdown(_report_with_badge(ext=True))
+    assert "AI Likelihood" in md
+    assert "42%" in md and "~60%" in md
+    assert "likely to be flagged" in md
+    assert md.index("AI Likelihood") < md.index("How DraftProof calibrates this")
+
+
+def test_markdown_external_unavailable_fallback():
+    md = render_markdown(_report_with_badge(ext=False))
+    assert "External estimate unavailable" in md
+    assert "42%" in md

@@ -324,6 +324,42 @@ def _ai_likelihood_bands(badge: dict | None) -> dict:
     return {"draftproof": draftproof, "external": external}
 
 
+_AI_LIKELIHOOD_WHY = (
+    "DraftProof is false-positive-averse, so it avoids wrongly accusing human writers. "
+    "Strict detectors (Turnitin, GPTZero) weight raw token predictability far more "
+    "aggressively. For a genuine pass, finish the draft in your own words."
+)
+
+
+def _render_ai_likelihood_headline(badge: dict | None) -> str:
+    bands = _ai_likelihood_bands(badge)
+    dp = bands["draftproof"]
+    if not dp:
+        return ""
+    badge = badge or {}
+    out = ["## AI Likelihood", ""]
+    out.append(f"- **DraftProof (conservative): {dp['score']}% — {dp['tier']}**")
+    ext = bands["external"]
+    if ext:
+        out.append(f"- **Turnitin / external: ~{ext['score']}% — {ext['label']}**")
+    else:
+        out.append("- _External estimate unavailable — re-scan to populate._")
+    out.append("")
+    tc = badge.get("transformation_classification") or {}
+    meta = []
+    if tc.get("label"):
+        conf = tc.get("confidence")
+        meta.append(f"Pattern: {tc['label']}" + (f" ({conf} confidence)" if conf else ""))
+    if badge.get("authorship_rating_label"):
+        meta.append(str(badge["authorship_rating_label"]))
+    if meta:
+        out.append(" · ".join(meta))
+        out.append("")
+    out.append(_AI_LIKELIHOOD_WHY)
+    out.append("")
+    return "\n".join(out)
+
+
 def _signal_chart_rows(features: dict, badge: dict | None = None) -> list[dict]:
     rows_by_key = {row["key"]: row for row in _transformation_signals(features)}
     ai_components = (badge or {}).get("ai_components") or {}
@@ -1370,6 +1406,11 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
                 lines.append(">")
         lines.append("")
 
+    # ── AI LIKELIHOOD HEADLINE ─────────────────────────────────────
+    _headline = _render_ai_likelihood_headline(report.ai_risk_badge)
+    if _headline:
+        lines.append(_headline)
+
     # ── 1. EXECUTIVE SUMMARY ──────────────────────────────────────
     lines.append('<div style="page-break-before: always;"></div>')
     lines.append("")
@@ -1385,6 +1426,9 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         n_low=n_low,
         total=total,
     )
+    if _headline:
+        lines.append("### How DraftProof calibrates this")
+        lines.append("")
     if signal_chart:
         lines.append(signal_chart)
     else:
