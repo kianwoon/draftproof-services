@@ -1031,6 +1031,19 @@ class ReportBuilder:
             return Tier.MEDIUM
         return adjusted_tier
 
+    # Domain grounding built purely from generic domain-term counts, with ZERO concrete
+    # anchors anywhere (no named entities, numbers, dates, or quotes), is unanchored
+    # vocabulary -- not subject-matter grounding. Cap it so it can't inflate the
+    # human-anchor discount (transformation.py) or the writing-quality grounding credit
+    # (layer3). Real grounded writing carries at least one concrete anchor.
+    _DOMAIN_GROUNDING_UNANCHORED_CAP = 0.30
+
+    @staticmethod
+    def _gate_domain_grounding(strength: float, concrete_anchor_count: int) -> float:
+        if (concrete_anchor_count or 0) <= 0:
+            return min(float(strength), ReportBuilder._DOMAIN_GROUNDING_UNANCHORED_CAP)
+        return float(strength)
+
     def build(self) -> DraftReport:
         # Assign sequential finding IDs
         for i, f in enumerate(self._findings):
@@ -1324,9 +1337,18 @@ class ReportBuilder:
             axis_scores["specificity"] = "clear"
         # Domain grounding axis
         dg_level = "weak"
+        concrete_anchor_count = 0
         for f in self._findings:
             if f.title == "low_specificity" and f.metadata:
                 dg_level = f.metadata.get("domain_grounding_level", "weak")
+                # Concrete anchors: real subject-matter grounding co-occurs with at least
+                # one of these; their total absence means "domain terms" are generic vocab.
+                concrete_anchor_count = (
+                    int(f.metadata.get("named_entities", 0) or 0)
+                    + int(f.metadata.get("numbers", 0) or 0)
+                    + int(f.metadata.get("dates", 0) or 0)
+                    + int(f.metadata.get("quotes", 0) or 0)
+                )
         axis_scores["domain_grounding"] = dg_level
 
         # ── Authorship concern score ──
@@ -1361,6 +1383,11 @@ class ReportBuilder:
             domain_grounding_strength = max(domain_grounding_strength, 0.55)
         elif domain_grounding_strength > 0:
             domain_grounding_strength = max(domain_grounding_strength, 0.30)
+        # Concrete-anchor gate: don't credit "domain grounding" assembled only from
+        # generic vocabulary when the document has zero concrete anchors.
+        domain_grounding_strength = self._gate_domain_grounding(
+            domain_grounding_strength, concrete_anchor_count
+        )
 
         n_high = sum(1 for f in self._findings if f.tier == Tier.HIGH)
         n_critical = sum(1 for f in self._findings if f.tier == Tier.CRITICAL)
