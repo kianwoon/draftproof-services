@@ -112,3 +112,17 @@ def test_residual_fix_runs_before_reviewer(monkeypatch):
     monkeypatch.setattr(direct_rewrite, "LLMGateway", lambda *a, **k: None)
     direct_rewrite.run_direct_rewrite_all("some original text.\n\nsecond paragraph here.")
     assert order == ["residual", "reviewer"]
+
+
+def test_all_candidates_none_keeps_pass1_and_records_checked_trace(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_RESIDUAL_FIX", "1")
+    rewritten = "PARA_A_REWRITTEN.\n\nPARA_B_REWRITTEN."
+    paras = [Paragraph(id="p001", index=0, text="PARA_A_REWRITTEN.", sentences=[]),
+             Paragraph(id="p002", index=1, text="PARA_B_REWRITTEN.", sentences=[])]
+    # both flagged, but the writer yields no clean candidate for either
+    _patch(monkeypatch, paragraphs=paras, flagged_ids={"p001", "p002"},
+           candidate_by_id={"p001": None, "p002": None})
+    out = direct_rewrite._apply_residual_fix(_doc(rewritten), gateway=None, cancellation_check=None)
+    assert out.rewritten_text == rewritten          # pass-1 text preserved, no regression
+    entry = next(e for e in out.pass_trace if e.get("selected_source") == "residual_checker")
+    assert entry["refixed"] == 0 and entry["flagged_paragraphs"] == 2

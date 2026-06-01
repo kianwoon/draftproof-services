@@ -95,15 +95,21 @@ def _apply_residual_fix(
             rewritten.append(paragraph.text)   # keep PASS-1 text (we scanned the rewritten draft)
             continue
         flagged += 1
-        targets = (
-            paragraph_authorship_targets(authorship_evidence, paragraph.text)
-            if (authorship_evidence and authorship_boost_enabled())
-            else {}
-        )
-        # diagnosis=None on purpose: fresh findings only, never stale original paragraph_diagnosis.
-        candidate, review_items = _clean_candidate(
-            gateway, paragraph, None, findings, authorship_targets=targets
-        )
+        try:
+            targets = (
+                paragraph_authorship_targets(authorship_evidence, paragraph.text)
+                if (authorship_evidence and authorship_boost_enabled())
+                else {}
+            )
+            # diagnosis=None on purpose: fresh findings only, never stale original paragraph_diagnosis.
+            candidate, review_items = _clean_candidate(
+                gateway, paragraph, None, findings, authorship_targets=targets
+            )
+        except Exception:
+            # A writer failure on one paragraph must degrade to its pass-1 text, never discard the
+            # whole pass-1 result. (cancellation_check above stays outside this guard so a real
+            # cancellation still propagates.)
+            candidate, review_items = None, []
         if candidate is None:
             rewritten.append(paragraph.text)   # no clean residual fix -> keep pass-1 paragraph
         else:
