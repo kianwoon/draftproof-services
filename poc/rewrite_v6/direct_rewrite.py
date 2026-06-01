@@ -735,6 +735,21 @@ def _dequote_fragmented(text: str) -> str:
     return re.sub(r"\s+([,.;:!?])", r"\1", fixed)
 
 
+# gpt-oss occasionally drops a stray sentence-period right before an intended comma after a real
+# word ("...at a high school., I keep asking" -> "...at a high school, I keep asking"). Fires ONLY
+# when a >=5-letter LOWERCASE run precedes ".," -- so abbreviations are never touched: they are short
+# ("etc.," "Inc.," "no.,"), capitalized ("U.S.,"), or contain internal periods ("e.g.,"). The
+# lowercase-run match also handles a capitalized word ("School.," -> "School,") since it binds to the
+# trailing letters only. Deterministic, no-op on clean text; keeps the comma (the model's stray mark
+# is the period). Known tiny gap: a rare >=5-letter lowercase abbreviation ("approx.,") would lose its
+# period -- cosmetic and user-editable, accepted over an abbreviation hardcode list.
+_STRAY_PERIOD_BEFORE_COMMA = re.compile(r"([a-z]{5,})\.,")
+
+
+def _normalize_punctuation(text: str) -> str:
+    return _STRAY_PERIOD_BEFORE_COMMA.sub(r"\1,", text or "")
+
+
 def _clean_candidate(
     gateway: LLMGateway,
     paragraph: Paragraph,
@@ -754,6 +769,7 @@ def _clean_candidate(
     salvage: tuple[str, list[dict[str, Any]]] | None = None
     for _ in range(max(1, attempts)):
         candidate, review_items = _rewrite_paragraph(gateway, paragraph, diagnosis, findings, authorship_targets=authorship_targets)
+        candidate = _normalize_punctuation(candidate) if candidate else candidate
         cand = candidate or ""
         if not _is_usable(cand, paragraph) or _has_broken_grammar(cand):
             continue
