@@ -27,8 +27,10 @@ def _normalize_database_url(raw_db_url: str) -> str:
 
     parsed = urlsplit(database_url)
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    if parsed.hostname and parsed.hostname.split(".")[0].startswith("ep-") and "sslmode" not in query:
-        query["sslmode"] = "require"
+    # asyncpg accepts sslmode in its own DSN parser, but SQLAlchemy's asyncpg
+    # dialect forwards URL query keys as keyword args in this app's pinned
+    # runtime. Keep SSL enforcement in create_async_engine(connect_args).
+    query.pop("sslmode", None)
     return urlunsplit(parsed._replace(query=urlencode(query)))
 
 

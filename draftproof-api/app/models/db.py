@@ -10,7 +10,7 @@ from app.config import DATABASE_CONNECT_TIMEOUT_SECONDS, DATABASE_URL
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    connect_args={"timeout": DATABASE_CONNECT_TIMEOUT_SECONDS},
+    connect_args={"ssl": "require", "timeout": DATABASE_CONNECT_TIMEOUT_SECONDS},
     pool_pre_ping=True,
     pool_recycle=300,
     pool_size=20,
