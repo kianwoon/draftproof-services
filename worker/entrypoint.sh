@@ -68,6 +68,20 @@ else
     echo "[entrypoint] No GIT_PAT set — using baked-in poc/ code"
 fi
 
+# ── Volume mount guard ────────────────────────────────────────────
+# Verify HF_HOME is a real mounted volume, not a plain container dir.
+# If the Koyeb volume is detached, models silently write to ephemeral
+# storage and are re-downloaded on every redeploy.
+CACHE_DEV=$(stat -c %d "${HF_HOME}" 2>/dev/null || echo "unknown")
+ROOT_DEV=$(stat -c %d / 2>/dev/null || echo "root")
+if [ "${CACHE_DEV}" = "${ROOT_DEV}" ] || [ "${CACHE_DEV}" = "unknown" ]; then
+    echo "[entrypoint] ERROR: ${HF_HOME} is NOT a mounted volume (same device as /)"
+    echo "[entrypoint]   Model cache will not persist across redeploys."
+    echo "[entrypoint]   Ensure volume eeb30e19 is attached at /app/hf_cache in Koyeb."
+    exit 1
+fi
+echo "[entrypoint] Volume check OK: ${HF_HOME} is a mounted volume (dev=${CACHE_DEV})"
+
 # Ensure cache dir exists
 mkdir -p "${CACHE_DIR}"
 

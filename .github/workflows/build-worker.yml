@@ -112,15 +112,19 @@ jobs:
       - name: Deploy to Koyeb via GHCR image
         env:
           KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
+          # Volume ID for /app/hf_cache — always included to prevent accidental detach
+          HF_VOLUME_ID: "eeb30e19"
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           IMAGE="ghcr.io/kianwoon/draftproof-worker:sha-${SHORT_SHA}"
           echo "Deploying ${IMAGE} to Koyeb..."
+          # Always include volumes in the PATCH — Koyeb shallow-merges definition,
+          # so omitting volumes would silently detach the HF model cache volume.
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}" \
             -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"definition\":{\"docker\":{\"image\":\"${IMAGE}\",\"image_registry_secret\":\"e3888d3f\"}}}")
+            -d "{\"definition\":{\"docker\":{\"image\":\"${IMAGE}\",\"image_registry_secret\":\"e3888d3f\"},\"volumes\":[{\"id\":\"${HF_VOLUME_ID}\",\"path\":\"/app/hf_cache\"}]}}")
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
@@ -130,4 +134,4 @@ jobs:
             echo "$BODY" | jq '.' >&2
             exit 1
           fi
-          echo "Koyeb deploy triggered successfully"
+          echo "Koyeb deploy triggered successfully (volume eeb30e19 → /app/hf_cache preserved)"
