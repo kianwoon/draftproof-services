@@ -37,6 +37,13 @@ def test_salvage_returns_empty_without_corrections_key():
     assert dr._salvage_corrections("") == []
 
 
+def test_salvage_handles_escaped_quotes_in_values():
+    # an escaped quote inside a value must not end the string early (brace/depth stays correct)
+    raw = r'{"corrections": [{"original": "a b c", "revised": "she said \"go\" twice"}, {"original": "d", "revised": "cut'
+    out = dr._salvage_corrections(raw)
+    assert len(out) == 1 and out[0]["revised"] == 'she said "go" twice'
+
+
 # ---- _request_corrections: retry + salvage -------------------------------------------------
 def _resp(text):
     return types.SimpleNamespace(raw_content=text, content=text)
@@ -77,6 +84,13 @@ def test_request_corrections_reports_failure_after_all_attempts():
     gw = _Gateway(["not json at all", "still {nonsense"])
     corrs, skipped = dr._request_corrections(gw, "prompt", None)
     assert corrs == [] and skipped in {"bad_json", "llm_error"}
+
+
+def test_request_corrections_accepts_valid_empty_list_without_retry():
+    # a clean parse with an empty corrections list means "nothing to fix" -- NOT an error; don't retry
+    gw = _Gateway(['{"corrections": []}'])
+    corrs, skipped = dr._request_corrections(gw, "prompt", None)
+    assert corrs == [] and skipped is None and gw.calls == 1
 
 
 # ---- review_document applies salvaged corrections ------------------------------------------
