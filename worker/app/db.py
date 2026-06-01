@@ -11,9 +11,23 @@ import psycopg2.extras
 from .config import settings
 
 
+def _sslmode_connect_kwargs(url: str) -> dict:
+    """psycopg2 connect kwargs that force an SSL connection. Neon/Koyeb managed Postgres rejects
+    non-SSL connections ('connection is insecure (try using `sslmode=require`)'), which makes every
+    scan_document DB call fail at get_conn and retry forever. Add sslmode=require UNLESS the DSN
+    already sets one (matches both URI `?sslmode=` and keyword `sslmode=` formats). Passing it as a
+    kwarg is format-agnostic and avoids a libpq duplicate-parameter error. Worker-scoped -- the API
+    uses a separate asyncpg engine."""
+    return {} if (url and "sslmode=" in url) else {"sslmode": "require"}
+
+
 @contextmanager
 def get_conn():
-    conn = psycopg2.connect(settings.DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    conn = psycopg2.connect(
+        settings.DATABASE_URL,
+        cursor_factory=psycopg2.extras.RealDictCursor,
+        **_sslmode_connect_kwargs(settings.DATABASE_URL),
+    )
     try:
         yield conn
         conn.commit()
