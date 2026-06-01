@@ -97,3 +97,18 @@ def test_kill_switch_skips_rescan(monkeypatch):
     out = direct_rewrite._apply_residual_fix(doc, gateway=None, cancellation_check=None)
     assert out is doc
     assert called == []
+
+
+def test_residual_fix_runs_before_reviewer(monkeypatch):
+    """Order guard: in run_direct_rewrite_all, residual fix must execute before the reviewer."""
+    order = []
+    monkeypatch.setattr(direct_rewrite, "_best_of_n", lambda: 1)
+    monkeypatch.setattr(direct_rewrite, "_rewrite_document_once",
+                        lambda *a, **k: _doc("P1.\n\nP2."))
+    monkeypatch.setattr(direct_rewrite, "_apply_residual_fix",
+                        lambda doc, gateway, **k: (order.append("residual"), doc)[1])
+    monkeypatch.setattr(direct_rewrite, "_apply_reviewer",
+                        lambda doc, gateway, **k: (order.append("reviewer"), doc)[1])
+    monkeypatch.setattr(direct_rewrite, "LLMGateway", lambda *a, **k: None)
+    direct_rewrite.run_direct_rewrite_all("some original text.\n\nsecond paragraph here.")
+    assert order == ["residual", "reviewer"]

@@ -491,8 +491,14 @@ def run_direct_rewrite_all(
         score = _document_ai_risk(doc.rewritten_text) if attempts > 1 else 0.0
         if best_doc is None or score < best_score:
             best_doc, best_score = doc, score
-    # rewrite -> QC -> scan: the reviewer fixes whole-document patterns the per-paragraph writer
-    # can't see, then the single authoritative final scan runs on the QC'd text.
+    # rewrite -> residual fix (pass 2) -> QC -> scan. Pass 2 re-scans the rewritten draft and fixes
+    # paragraph-level residuals the per-paragraph writer missed or introduced; then the whole-doc
+    # reviewer fixes cross-paragraph patterns; the authoritative final scan runs last, in the reviewer.
+    best_doc = _apply_residual_fix(
+        best_doc, gateway,
+        cancellation_check=cancellation_check,
+        authorship_evidence=authorship_evidence,
+    )
     return _apply_reviewer(best_doc, gateway, cancellation_check=cancellation_check)
 
 
