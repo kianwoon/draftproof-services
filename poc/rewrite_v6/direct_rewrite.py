@@ -665,6 +665,27 @@ def _clean_candidate(
     return None, []
 
 
+# Token budget for the writer's per-paragraph rewrite. gpt-oss spends reasoning tokens FIRST and
+# they count toward this cap; a content-heavy paragraph starved at 4000 (reasoning_tokens ~3997,
+# finish_reason=length) -> empty content -> EmptyLLMContentError -> source_preserved (the original
+# is kept and no rewrite is shown). Same starvation class as the QC reviewer
+# (DRAFTPROOF_V6_REVIEWER_MAX_TOKENS). Default 16000; tune via DRAFTPROOF_V6_WRITER_MAX_TOKENS
+# without a redeploy.
+_WRITER_MAX_TOKENS_DEFAULT = 16000
+
+
+def _writer_max_tokens() -> int:
+    raw = os.environ.get("DRAFTPROOF_V6_WRITER_MAX_TOKENS", "").strip()
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return _WRITER_MAX_TOKENS_DEFAULT
+
+
 def _rewrite_paragraph(
     gateway: LLMGateway,
     paragraph: Paragraph,
@@ -679,10 +700,11 @@ def _rewrite_paragraph(
             system=_SYSTEM,
             temperature=0.4,
             top_p=0.9,
-            # gpt-oss spends reasoning tokens that count toward this cap; a content-rich rewrite
-            # plus author_review_items JSON was truncating at 1600 (finish_reason=length) -> invalid
-            # JSON -> dropped -> source_preserved. Give ample headroom so the JSON always closes.
-            max_tokens=4000,
+            # gpt-oss spends reasoning tokens FIRST and they count toward this cap; a content-heavy
+            # paragraph starved at 4000 (reasoning_tokens ~3997, finish_reason=length) -> empty
+            # content -> EmptyLLMContentError -> source_preserved. The budget must cover reasoning +
+            # the rewrite JSON, so give ample headroom. Tunable via DRAFTPROOF_V6_WRITER_MAX_TOKENS.
+            max_tokens=_writer_max_tokens(),
             response_format={"type": "json_object"},
             app_label="DirectRewrite",
         )
