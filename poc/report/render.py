@@ -331,10 +331,11 @@ _AI_LIKELIHOOD_WHY = (
     "grounding the content and finishing it in your own words."
 )
 
-# The badge's external_detector_estimate is the calibrated 2-signal segment-fraction model
-# (detect.layer3_scoring.estimate_external_detector_segment_fraction): the flagged share of formal +
-# predictable sentences, which reproduced a real Turnitin 27% (vs the old perplexity-blend's 62%).
-# Surfaced as an ESTIMATE (still 1-doc calibration). Set False to suppress the number again.
+# The badge's external_detector_estimate is the MORE CONSERVATIVE (higher-band) of two estimators
+# (detect.layer3_scoring.combine_external_detector_estimates): the Turnitin-style segment-fraction
+# model and the GPTZero-style perplexity blend. Either lens can saturate while the other reads low,
+# so we surface the stricter band to avoid under-warning; both ride along under `alternates`.
+# Surfaced as an ESTIMATE (limited calibration). Set False to suppress the number again.
 EXTERNAL_ESTIMATE_DISPLAY_ENABLED = True
 
 _EXTERNAL_DEMOTED_NOTE = (

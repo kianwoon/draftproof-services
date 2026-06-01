@@ -816,6 +816,44 @@ def estimate_external_detector_segment_fraction(sentences) -> Optional[dict]:
     }
 
 
+_EXTERNAL_BAND_RANK = {"low": 0, "elevated": 1, "high": 2}
+
+
+def combine_external_detector_estimates(
+    segment: Optional[dict], likelihood: Optional[dict]
+) -> Optional[dict]:
+    """Surface the MORE CONSERVATIVE (higher-band) of the two external-detector estimates so the
+    dual-headline never UNDER-warns.
+
+    The two estimators answer DIFFERENT questions, and a document can saturate one while the other
+    reads low:
+      - segment-fraction: Turnitin-style "share of formal + predictable sentences" (it reproduced a
+        real Turnitin 27% on a human reflection essay).
+      - perplexity-blend: GPTZero-style document confidence (the better predictor when fully
+        AI-fluent prose saturates GPTZero to ~100% while the segment share stays low).
+    Picking `segment or likelihood` (the old behaviour) let a low segment share mask a high
+    perplexity read -- e.g. our rewrite scored segment=6% "low" while GPTZero rated it 100% and the
+    perplexity blend rated it 62% "high". Taking the higher band fixes that: we warn if EITHER lens
+    is elevated. Shape is preserved (score/band/note/...) so existing consumers are unaffected; both
+    inputs ride along under `alternates` for transparency. Returns None only when both are missing."""
+    candidates = [
+        e for e in (segment, likelihood)
+        if isinstance(e, dict) and isinstance(e.get("score"), (int, float))
+    ]
+    if not candidates:
+        return None
+    winner = max(
+        candidates,
+        key=lambda e: (
+            _EXTERNAL_BAND_RANK.get(str(e.get("band") or "").lower(), 0),
+            float(e.get("score") or 0.0),
+        ),
+    )
+    combined = dict(winner)
+    combined["alternates"] = {"segment_fraction": segment, "likelihood": likelihood}
+    return combined
+
+
 def estimate_burstiness_risk(text: str) -> float:
     sentences = split_sentences(text)
     if len(sentences) < 6:

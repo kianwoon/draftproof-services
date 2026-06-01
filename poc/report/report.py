@@ -23,7 +23,7 @@ from detect.authorship_windows import build_ai_footprint_profile, build_authorsh
 from detect.document_structure import structured_sentence_segments
 from detect.repair_units import build_repair_units_v2
 from detect.rewrite_targets import build_problem_inventory, build_rewrite_target_profile
-from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text, estimate_external_detector_likelihood, estimate_external_detector_segment_fraction
+from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text, estimate_external_detector_likelihood, estimate_external_detector_segment_fraction, combine_external_detector_estimates
 from detect.transformation import (
     TRANSFORMATION_SIGNAL_METADATA,
     classify_transformation_from_scan,
@@ -1467,14 +1467,15 @@ class ReportBuilder:
         ai_components["topk_pattern"] = topk_calibration.get("topk_pattern_raw", raw_topk_pattern)
 
         # External-facing estimate of how strict third-party detectors (Turnitin/GPTZero) may rate
-        # this. PREFER the calibrated 2-signal segment-fraction model (flagged share of formal +
-        # predictable sentences -- it reproduced a real Turnitin 27% and matched its segments);
-        # fall back to the perplexity-blend when per-sentence data is unavailable. Additive only --
+        # this. The two estimators answer different questions and a document can saturate one while
+        # the other reads low (e.g. a fully AI-fluent rewrite: segment-fraction 6% "low" but GPTZero
+        # 100% / perplexity-blend 62% "high"). Surface the MORE CONSERVATIVE (higher-band) of the two
+        # so the dual-headline never UNDER-warns; both ride along under `alternates`. Additive only --
         # does NOT affect the tier, ai_likelihood_score, or any rewrite gate.
         _pred_sentences = self._pred_summary.sentences if self._pred_summary else None
-        external_detector_estimate = (
-            estimate_external_detector_segment_fraction(_pred_sentences)
-            or estimate_external_detector_likelihood(ai_components)
+        external_detector_estimate = combine_external_detector_estimates(
+            estimate_external_detector_segment_fraction(_pred_sentences),
+            estimate_external_detector_likelihood(ai_components),
         )
 
         ai_risk_badge = {
