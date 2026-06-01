@@ -51,6 +51,12 @@ def direct_rewrite_enabled() -> bool:
     return os.environ.get("DRAFTPROOF_V6_DIRECT_REWRITE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
+def residual_fix_enabled() -> bool:
+    """Kill switch for rewrite pass 2 (paragraph-level residual checker). Default ON; set
+    DRAFTPROOF_V6_RESIDUAL_FIX=0 to disable (flow reverts to rewrite -> reviewer -> scan)."""
+    return os.environ.get("DRAFTPROOF_V6_RESIDUAL_FIX", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
 _SYSTEM = (
     "You produce a SUGGESTED rewrite of a flagged paragraph for the author to review and edit. The "
     "author sees your changes in a before/after diff, so adding new content to fix the problem is "
