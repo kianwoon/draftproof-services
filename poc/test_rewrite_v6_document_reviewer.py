@@ -146,6 +146,35 @@ def test_prompt_includes_doc_rubric_and_must_fix_evidence():
     assert "vary" in low and "transition" in low
 
 
+def test_document_level_subset_is_the_six_cross_paragraph_guidelines():
+    assert document_reviewer.DOCUMENT_LEVEL_GUIDELINE_IDS == frozenset({8, 13, 14, 19, 23, 24})
+    ids = {document_reviewer._guideline_id(g) for g in document_reviewer.DOCUMENT_LEVEL_GUIDELINES}
+    assert ids == frozenset({8, 13, 14, 19, 23, 24})
+    assert len(WRITING_CRAFT_GUIDELINES) == 25  # full rubric stays intact (single source of truth)
+
+
+def test_prompt_includes_document_level_excludes_sentence_level():
+    prompt = build_reviewer_prompt("DOC", [])
+    # document-level kept (cross-paragraph patterns the writer is blind to)
+    assert "19. Same subject starts" in prompt
+    assert "8. Robotic transition" in prompt
+    assert "24. Too-even paragraph shape" in prompt
+    # sentence-level dropped -- the per-paragraph writer already handles these
+    assert "6. Sentence overload" not in prompt
+    assert "10. Abstract nouns" not in prompt
+    assert "22. Weak source handling" not in prompt
+
+
+def test_document_level_must_fix_drops_sentence_level_balance_phrase():
+    issues = [
+        ResidualIssue(rule="opener_monoculture", trick_ids=[19, 2], evidence="x", target_sentences=["a"]),
+        ResidualIssue(rule="balance_phrase", trick_ids=[7], evidence="y", target_sentences=["b"]),
+    ]
+    rules = {i.rule for i in document_reviewer._document_level_must_fix(issues)}
+    assert "opener_monoculture" in rules   # cross-paragraph -> reviewer keeps it
+    assert "balance_phrase" not in rules    # sentence-level (#7) -> writer/residual owns it
+
+
 def test_reviewer_enabled_default_on(monkeypatch):
     monkeypatch.delenv("DRAFTPROOF_V6_REVIEWER", raising=False)
     assert reviewer_enabled() is True
@@ -276,12 +305,19 @@ def test_apply_reviewer_noop_when_disabled(monkeypatch):
     assert gw.calls == []
 
 
-def test_apply_reviewer_keeps_safe_drops_regressing(monkeypatch):
-    # Two corrections: one safe, one regressing -> safe kept, regressing dropped (per-correction guard).
+def test_apply_reviewer_keeps_style_fix_drops_regressing_nonstyle(monkeypatch):
+    # Altitude design: a STYLE correction (resolves a document-level detector target -- here the
+    # opener_monoculture first sentence) is kept even when it RAISES the perplexity-dominated score;
+    # a NON-style correction (a mid-paragraph sentence, no detector target) that raises the score is
+    # still dropped by the score guard. Paragraphs have two sentences so sentence 2 is a non-target.
+    # allow-hardcode: test fixture sample document (sample prose to exercise the reviewer), not logic.
     writer_text = "\n\n".join([
-        "In my classroom, I have seen change arrive faster than the school can absorb it.",
-        "In my classroom, I have seen students lean on AI before they ask me anything.",
-        "In my classroom, I have seen the textbook lose its old authority in a single year.",
+        "In my classroom, I have seen change arrive faster than the school can absorb it. "
+        "The pace leaves little room to adjust the lesson plans.",
+        "In my classroom, I have seen students lean on AI before they ask me anything. "
+        "They trust the tool more than their own first instinct.",
+        "In my classroom, I have seen the textbook lose its old authority in a single year. "
+        "Students check three other sources before they believe a single line.",
     ])
     doc = DocumentResult(
         initial_scan=_scan_text(writer_text),
@@ -291,15 +327,19 @@ def test_apply_reviewer_keeps_safe_drops_regressing(monkeypatch):
         pass_trace=[],
     )
     correction = {"corrections": [
+        # style: original is an opener_monoculture target sentence -> NOT score-gated -> kept
         {"original": "In my classroom, I have seen students lean on AI before they ask me anything.",
-         "revised": "Students now lean on AI before they ask me anything."},
-        {"original": "In my classroom, I have seen the textbook lose its old authority in a single year.",
-         "revised": "The textbook lost its authority, which made things WORSE."},
+         "revised": "Students now lean on AI before they ask me anything, skipping me entirely."},
+        # non-style: original is a mid-paragraph sentence (no detector target) -> score-gated -> dropped
+        {"original": "They trust the tool more than their own first instinct.",
+         "revised": "They trust the tool more than their instinct, which made things WORSE."},
     ]}
     gw = _stub([json.dumps(correction)])
-    monkeypatch.setattr(document_reviewer, "_score", lambda t: 90.0 if "WORSE" in t else 10.0)
+    # ANY change raises the score (markers cover both revisions); only the score guard differs.
+    monkeypatch.setattr(document_reviewer, "_score",
+                        lambda t: 90.0 if ("skipping me entirely" in t or "WORSE" in t) else 10.0)
 
     out = dr._apply_reviewer(doc, gw, cancellation_check=None)
-    assert "Students now lean on AI before they ask me anything." in out.rewritten_text  # safe kept
-    assert "WORSE" not in out.rewritten_text                                              # regressing dropped
+    assert "skipping me entirely" in out.rewritten_text   # style fix kept despite higher score
+    assert "WORSE" not in out.rewritten_text               # non-style regressing dropped
     assert out.final_scan.source_text == out.rewritten_text

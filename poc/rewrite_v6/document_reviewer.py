@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -54,6 +55,39 @@ WRITING_CRAFT_GUIDELINES: list[str] = [
     "24. Too-even paragraph shape: give each paragraph a distinct role.",
     "25. Rewrite drift: preserve the original idea first; improve expression without changing meaning.",
 ]
+
+# Altitude split. The per-paragraph writer already applies the SENTENCE/PARAGRAPH-level guidelines
+# when it rewrites each paragraph; handing all 25 to the reviewer just invites it to re-touch (and
+# genericize) the writer's good sentences. The reviewer's proper scope is the DOCUMENT level --
+# cross-paragraph / whole-document patterns the per-paragraph writer is structurally blind to:
+#   8  robotic transitions (flow between paragraphs)
+#   13 repeated rhythm (sameness across the doc)
+#   14 predictable paragraph arc (document order)
+#   19 same subject/opener starts (cross-paragraph monoculture)
+#   23 AI-like conclusion (the document's close)
+#   24 too-even paragraph shape (each paragraph a distinct role)
+# Guideline 25 (preserve meaning) is a CONSTRAINT on every edit, enforced by _correction_is_safe and
+# _SYSTEM, not a fix-target. Everything else is paragraph/sentence-level -> the writer's job.
+DOCUMENT_LEVEL_GUIDELINE_IDS: frozenset[int] = frozenset({8, 13, 14, 19, 23, 24})
+
+
+def _guideline_id(line: str) -> int | None:
+    m = re.match(r"\s*(\d+)\.", line)
+    return int(m.group(1)) if m else None
+
+
+# Derived from the single source of truth above (no re-typed prose), so the two never drift.
+DOCUMENT_LEVEL_GUIDELINES: list[str] = [
+    g for g in WRITING_CRAFT_GUIDELINES if _guideline_id(g) in DOCUMENT_LEVEL_GUIDELINE_IDS
+]
+
+
+def _document_level_must_fix(issues: list[ResidualIssue]) -> list[ResidualIssue]:
+    """Keep only the deterministic detectors whose guideline maps to the document-level subset.
+    Drops sentence-level tells (e.g. balance_phrase #7) -- those belong to the writer/residual pass,
+    not the reviewer."""
+    return [i for i in issues if DOCUMENT_LEVEL_GUIDELINE_IDS.intersection(i.trick_ids)]
+
 
 _SYSTEM = (
     "You are a writing QUALITY-CONTROL reviewer. You receive a draft that an automated rewriter "
@@ -94,7 +128,8 @@ def _reviewer_max_tokens() -> int:
 def build_reviewer_prompt(text: str, must_fix: list[ResidualIssue]) -> str:
     payload: dict[str, Any] = {
         "task": "qc_review_the_full_document",
-        "guidelines": WRITING_CRAFT_GUIDELINES,
+        "scope": "document_level_only_cross_paragraph_patterns",
+        "guidelines": DOCUMENT_LEVEL_GUIDELINES,
         "must_fix_issues": [
             {"issue": issue.rule, "evidence": issue.evidence,
              "sentences_to_fix": issue.target_sentences}
@@ -102,8 +137,8 @@ def build_reviewer_prompt(text: str, must_fix: list[ResidualIssue]) -> str:
         ],
         "full_document": text,
         "instructions": [
-            "Resolve every must_fix issue, and fix any other sentence that clearly falls short of "
-            "the guidelines.",
+            "Resolve every must_fix issue, then stop. Only touch DOCUMENT-LEVEL / cross-paragraph patterns the per-paragraph writer cannot see: repeated openings across paragraphs, robotic transitions, uniform rhythm across the doc, predictable paragraph order, a slogan-like conclusion.",
+            "Do NOT re-touch sentence-level wording, word choice, or grounding inside a single paragraph -- the writer already handled those. If a sentence is fine on its own, leave it alone.",
             "Change only what is substandard. Keep all grounded specifics intact.",
             "Each correction's 'original' MUST be an exact substring of full_document so it can be "
             "spliced back. Quote it verbatim, including punctuation.",
@@ -147,8 +182,27 @@ def _score(text: str) -> float:
     return _document_ai_risk(text)
 
 
-def _correction_is_safe(original: str, revised: str, *, doc_after: str, baseline: float) -> bool:
-    """Keep a correction only if it doesn't regress score, break grammar, or invert polarity."""
+def _norm(text: str) -> str:
+    return " ".join((text or "").split()).casefold()
+
+
+def _is_style_correction(original: str, style_targets: list[str]) -> bool:
+    """True if this correction resolves a deterministic STRUCTURAL/style must-fix -- its sentence is
+    one of the residual-pattern detector's target sentences (opener/rhythm/repeated-start monoculture,
+    balance phrase). Such corrections are readability fixes, exempt from the AI-score guard."""
+    n = _norm(original)
+    return bool(n) and any(n in t or t in n for t in style_targets)
+
+
+def _correction_is_safe(original: str, revised: str, *, doc_after: str, baseline: float,
+                        score_gated: bool = True) -> bool:
+    """Keep a correction only if it doesn't break grammar or invert polarity.
+
+    STYLE corrections (those resolving a deterministic residual-pattern detector -- opener/rhythm/
+    repeated-start monoculture) pass score_gated=False: varying an opening is a readability fix that
+    does NOT lower the perplexity-dominated AI-risk score (it nudges it up by noise), so gating it on
+    `_score` systematically drops the genuine variations and keeps only cosmetic near-synonym edits,
+    leaving the monoculture intact. Grounding/other corrections stay score-gated."""
     from .direct_rewrite import _has_broken_grammar
     revised = (revised or "").strip()
     if not revised or len(revised.split()) < 3:
@@ -159,7 +213,7 @@ def _correction_is_safe(original: str, revised: str, *, doc_after: str, baseline
     # a REQUIRED `sentences` field; _severe_polarity_inversion only reads `.text`, so [] is safe.
     if _severe_polarity_inversion(revised, Paragraph(id="qc", index=0, text=original, sentences=[])):
         return False
-    if _score(doc_after) > baseline:
+    if score_gated and _score(doc_after) > baseline:
         return False
     return True
 
@@ -271,13 +325,19 @@ def review_document(
     returns the writer's text unchanged."""
     if cancellation_check:
         cancellation_check()
-    must_fix = detect_residual_patterns(text)
+    # Reviewer scope is the document level only: keep cross-paragraph/whole-doc detectors, drop
+    # sentence-level tells (balance_phrase #7) -- the writer/residual pass owns those.
+    must_fix = _document_level_must_fix(detect_residual_patterns(text))
     baseline = _score(text)
     prompt = build_reviewer_prompt(text, must_fix)
     corrections_in, skipped = _request_corrections(gateway, prompt, cancellation_check)
 
     current = text
     applied: list[Correction] = []
+    # Corrections that resolve a deterministic structural/style must-fix (opener/rhythm/repeated-
+    # start monoculture, balance phrase) are NOT gated on the AI-risk score -- they're readability
+    # fixes that the perplexity-dominated score doesn't reward (see _correction_is_safe).
+    style_targets = [_norm(t) for issue in must_fix for t in (issue.target_sentences or [])]
     # Each accepted-or-rejected correction re-scores the whole document (_correction_is_safe ->
     # _score), so cost is O(corrections) full scans. Cap the number we evaluate to bound worst-case
     # latency if a model returns an unexpectedly long list; the surgical design expects only a
@@ -289,14 +349,16 @@ def review_document(
         if not original or original not in current:
             continue
         candidate_doc = current.replace(original, revised, 1)
-        if _correction_is_safe(original, revised, doc_after=candidate_doc, baseline=baseline):
+        score_gated = not _is_style_correction(original, style_targets)
+        if _correction_is_safe(original, revised, doc_after=candidate_doc, baseline=baseline,
+                               score_gated=score_gated):
             current = candidate_doc
             applied.append(Correction(original=original, revised=revised))
 
-    addressed = " ".join(c.original for c in applied)
-    unaddressed = [
-        issue.rule for issue in must_fix
-        if not any(t in addressed for t in issue.target_sentences)
-    ]
+    # Honest unaddressed: re-detect on the corrected text and report which structural patterns STILL
+    # fire. (The old 'was a target sentence touched' test reported success when a cosmetic edit
+    # touched a sentence but left the pattern intact.)
+    still_present = {issue.rule for issue in detect_residual_patterns(current)}
+    unaddressed = [issue.rule for issue in must_fix if issue.rule in still_present]
     return ReviewResult(text=current, corrections=applied, skipped=skipped,
                         must_fix_unaddressed=unaddressed, corrections_over_cap=over_cap)
