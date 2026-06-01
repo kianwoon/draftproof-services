@@ -4,6 +4,7 @@ import hashlib
 import json
 from contextlib import contextmanager
 from typing import Optional
+from urllib.parse import urlsplit
 
 import psycopg2
 import psycopg2.extras
@@ -11,14 +12,30 @@ import psycopg2.extras
 from .config import settings
 
 
-def _sslmode_connect_kwargs(url: str) -> dict:
-    """psycopg2 connect kwargs that force an SSL connection. Neon/Koyeb managed Postgres rejects
-    non-SSL connections ('connection is insecure (try using `sslmode=require`)'), which makes every
-    scan_document DB call fail at get_conn and retry forever. Add sslmode=require UNLESS the DSN
-    already sets one (matches both URI `?sslmode=` and keyword `sslmode=` formats). Passing it as a
-    kwarg is format-agnostic and avoids a libpq duplicate-parameter error. Worker-scoped -- the API
-    uses a separate asyncpg engine."""
-    return {} if (url and "sslmode=" in url) else {"sslmode": "require"}
+def _neon_connect_kwargs(url: str) -> dict:
+    """psycopg2 connect kwargs for Neon/Koyeb managed Postgres, which imposes two requirements the
+    worker's bundled libpq may not satisfy on its own:
+
+    * ``sslmode=require`` -- the endpoint rejects non-SSL connections ('connection is insecure (try
+      using `sslmode=require`)'), which otherwise makes every scan_document DB call fail and retry.
+    * ``options=endpoint=<id>`` -- Neon routes to the correct compute using the TLS SNI extension
+      (the Postgres wire protocol can't carry the hostname). libpq only sends SNI from Postgres 14+;
+      an older bundled libpq sends none, so Neon can't identify the compute and returns 'Control
+      plane request failed'. Passing the compute id (the first label of the host) in libpq
+      ``options`` is Neon's documented SNI-less workaround, and is harmless when SNI already works
+      (verified against the live endpoint).
+
+    Each is added only when the URL doesn't already specify it (avoids a libpq duplicate-parameter
+    error and respects an explicit choice). Worker-scoped -- the API uses a separate asyncpg engine.
+    See Neon docs: https://neon.com/docs/connect/connection-errors (SNI / "Control plane request failed")."""
+    kwargs: dict = {}
+    if not (url and "sslmode=" in url):
+        kwargs["sslmode"] = "require"
+    if url and "options=" not in url:
+        endpoint_id = (urlsplit(url).hostname or "").split(".")[0]
+        if endpoint_id.startswith("ep-"):  # Neon compute id
+            kwargs["options"] = f"endpoint={endpoint_id}"
+    return kwargs
 
 
 @contextmanager
@@ -26,7 +43,7 @@ def get_conn():
     conn = psycopg2.connect(
         settings.DATABASE_URL,
         cursor_factory=psycopg2.extras.RealDictCursor,
-        **_sslmode_connect_kwargs(settings.DATABASE_URL),
+        **_neon_connect_kwargs(settings.DATABASE_URL),
     )
     try:
         yield conn
