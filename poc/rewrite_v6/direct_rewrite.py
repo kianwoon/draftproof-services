@@ -57,6 +57,88 @@ def residual_fix_enabled() -> bool:
     return os.environ.get("DRAFTPROOF_V6_RESIDUAL_FIX", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _apply_residual_fix(
+    doc,
+    gateway,
+    *,
+    cancellation_check: Callable[[], None] | None,
+    authorship_evidence: Any = None,
+):
+    """Rewrite pass 2: a paragraph-level check on the rewriter's own output.
+
+    Re-scan the REWRITTEN draft (never the original) and re-run the writer on any paragraph the
+    FRESH re-scan flags -- catching both residuals pass 1 missed and problems pass 1 introduced.
+    Unflagged paragraphs keep their pass-1 text, so pass-1 gains are preserved (the load-bearing
+    invariant). Flagging and rewriting drive off the fresh `findings_for_paragraph` ONLY; we pass
+    diagnosis=None to `_clean_candidate` because `paragraph_diagnosis()` is a positional-id
+    ContextVar still holding the ORIGINAL diagnosis (stale-leak guard, R1). On disable/any failure
+    the document is returned unchanged."""
+    from .pipeline import DocumentResult
+
+    if not residual_fix_enabled():
+        return doc
+    try:
+        residual_scan = scan_text(doc.rewritten_text)
+    except Exception:
+        return doc
+
+    paragraphs = list(residual_scan.paragraphs)
+    rewritten: list[str] = []
+    trace = list(doc.pass_trace)
+    refixed = 0
+    flagged = 0
+    for index, paragraph in enumerate(paragraphs):
+        if cancellation_check:
+            cancellation_check()
+        findings = findings_for_paragraph(residual_scan, paragraph.id)
+        if not findings:
+            rewritten.append(paragraph.text)   # keep PASS-1 text (we scanned the rewritten draft)
+            continue
+        flagged += 1
+        targets = (
+            paragraph_authorship_targets(authorship_evidence, paragraph.text)
+            if (authorship_evidence and authorship_boost_enabled())
+            else {}
+        )
+        # diagnosis=None on purpose: fresh findings only, never stale original paragraph_diagnosis.
+        candidate, review_items = _clean_candidate(
+            gateway, paragraph, None, findings, authorship_targets=targets
+        )
+        if candidate is None:
+            rewritten.append(paragraph.text)   # no clean residual fix -> keep pass-1 paragraph
+        else:
+            rewritten.append(candidate)
+            refixed += 1
+            trace.append(_trace(index, paragraph.id, "residual_fix", None,
+                                review_items + _review_flags(candidate, paragraph)))
+
+    if refixed == 0:
+        trace.append({"selected_source": "residual_checker", "status": "checked",
+                      "flagged_paragraphs": flagged, "refixed": 0})
+        return DocumentResult(
+            initial_scan=doc.initial_scan,
+            final_scan=doc.final_scan,
+            passes=doc.passes,
+            rewritten_text=doc.rewritten_text,
+            pass_trace=trace,
+            final_text_before_quality_repair=doc.final_text_before_quality_repair,
+            quality_repair=doc.quality_repair,
+            naturalisation_repair=doc.naturalisation_repair,
+        )
+
+    fixed_text = "\n\n".join(rewritten)
+    return DocumentResult(
+        initial_scan=doc.initial_scan,
+        final_scan=scan_text(fixed_text),
+        passes=doc.passes,
+        rewritten_text=fixed_text,
+        pass_trace=trace,
+        final_text_before_quality_repair=doc.final_text_before_quality_repair,
+        quality_repair=doc.quality_repair,
+        naturalisation_repair=doc.naturalisation_repair,
+    )
+
+
 _SYSTEM = (
     "You produce a SUGGESTED rewrite of a flagged paragraph for the author to review and edit. The "
     "author sees your changes in a before/after diff, so adding new content to fix the problem is "
