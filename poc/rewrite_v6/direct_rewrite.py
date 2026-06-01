@@ -711,6 +711,30 @@ def _rewrite_document_once(
     )
 
 
+# gpt-oss intermittently degrades a whole-paragraph rewrite into a run of quoted clauses
+# ('"a," "b," "c."') -- a generation-failure tell, not prose. The signature is ADJACENT straight
+# quotes (a closing quote immediately followed by an opening one, modulo a comma/space); a single
+# inline quotation like "got it" has content between its quotes, so it never matches. A candidate
+# wrapped whole in straight quotes is also caught. The fix prefers a clean retry; only if every
+# attempt degrades do we MERGE the clauses back (last-resort salvage) and flag it -- the user still
+# sees a usable rewrite instead of source_preserved (which would teach nothing).
+_QUOTE_CLAUSE_JOINT = re.compile(r'"\s*,?\s*"')
+
+
+def _is_quote_fragmented(text: str) -> bool:
+    t = (text or "").strip()
+    if _QUOTE_CLAUSE_JOINT.search(t):
+        return True
+    return len(t) >= 2 and t.startswith('"') and t.endswith('"') and t.count('"') == 2
+
+
+def _dequote_fragmented(text: str) -> str:
+    fixed = _QUOTE_CLAUSE_JOINT.sub(lambda m: ", " if "," in m.group(0) else " ", text or "")
+    fixed = fixed.replace('"', "")
+    fixed = re.sub(r"\s+", " ", fixed).strip()
+    return re.sub(r"\s+([,.;:!?])", r"\1", fixed)
+
+
 def _clean_candidate(
     gateway: LLMGateway,
     paragraph: Paragraph,
@@ -724,11 +748,26 @@ def _clean_candidate(
 
     The retry gives a one-off malformation a second chance; falling back to the clean original (vs
     shipping broken grammar) is the safety net the user reads. Meaning concerns are NOT rejected
-    here -- they ride along as review flags."""
+    here -- they ride along as review flags. A quote-fragmented generation (gpt-oss degradation) is
+    treated as not-clean so the retry can produce real prose; if every attempt degrades, the dequoted
+    salvage is returned with a `writer_quote_degraded` flag rather than discarded."""
+    salvage: tuple[str, list[dict[str, Any]]] | None = None
     for _ in range(max(1, attempts)):
         candidate, review_items = _rewrite_paragraph(gateway, paragraph, diagnosis, findings, authorship_targets=authorship_targets)
-        if _is_usable(candidate or "", paragraph) and not _has_broken_grammar(candidate or ""):
-            return candidate, review_items
+        cand = candidate or ""
+        if not _is_usable(cand, paragraph) or _has_broken_grammar(cand):
+            continue
+        if _is_quote_fragmented(cand):
+            if salvage is None:
+                fixed = _dequote_fragmented(cand)
+                if _is_usable(fixed, paragraph) and not _has_broken_grammar(fixed) and not _is_quote_fragmented(fixed):
+                    flag = {"type": "writer_quote_degraded",
+                            "detail": "model emitted quoted clause fragments; merged back to prose"}
+                    salvage = (fixed, review_items + [flag])
+            continue
+        return candidate, review_items
+    if salvage is not None:
+        return salvage
     return None, []
 
 
