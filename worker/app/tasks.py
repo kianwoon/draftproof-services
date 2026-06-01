@@ -105,6 +105,16 @@ def _selected_rewrite_pipeline(settings_obj) -> str:
     return "legacy"
 
 
+def _best_effort_scan_status_update(job_id: str, status: str, **fields) -> bool:
+    """Persist scan status when possible without blocking Celery retry/failure handling."""
+    try:
+        update_job_status(job_id, status, **fields)
+        return True
+    except Exception:
+        logger.warning("Scan status update failed for %s while setting %s", job_id, status, exc_info=True)
+        return False
+
+
 def _runtime_code_fingerprint() -> dict:
     """Return non-secret evidence of the worker code actually imported."""
     fingerprint = {
@@ -1765,7 +1775,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
             return {"status": "completed", "tier": tier, "findings": finding_count}
 
     except SoftTimeLimitExceeded:
-        update_job_status(
+        _best_effort_scan_status_update(
             job_id,
             "failed",
             error="Scan timed out (5 min limit)",
@@ -1778,7 +1788,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
         return {"status": "failed", "error": "timeout"}
     except Exception as e:
         if self.request.retries < self.max_retries:
-            update_job_status(
+            _best_effort_scan_status_update(
                 job_id,
                 "retrying",
                 error=str(e),
@@ -1790,7 +1800,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
             )
             raise self.retry(exc=e)
         else:
-            update_job_status(
+            _best_effort_scan_status_update(
                 job_id,
                 "failed",
                 error=str(e),

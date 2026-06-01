@@ -4,7 +4,7 @@ import hashlib
 import json
 from contextlib import contextmanager
 from typing import Optional
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, unquote_plus, urlsplit
 
 import psycopg2
 import psycopg2.extras
@@ -28,13 +28,23 @@ def _neon_connect_kwargs(url: str) -> dict:
     Each is added only when the URL doesn't already specify it (avoids a libpq duplicate-parameter
     error and respects an explicit choice). Worker-scoped -- the API uses a separate asyncpg engine.
     See Neon docs: https://neon.com/docs/connect/connection-errors (SNI / "Control plane request failed")."""
-    kwargs: dict = {}
-    if not (url and "sslmode=" in url):
+    parsed = urlsplit(url or "")
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    kwargs: dict = {"connect_timeout": settings.DATABASE_CONNECT_TIMEOUT_SECONDS}
+
+    if "sslmode" not in query:
         kwargs["sslmode"] = "require"
-    if url and "options=" not in url:
-        endpoint_id = (urlsplit(url).hostname or "").split(".")[0]
-        if endpoint_id.startswith("ep-"):  # Neon compute id
-            kwargs["options"] = f"endpoint={endpoint_id}"
+
+    endpoint_id = (parsed.hostname or "").split(".")[0]
+    options_values = [unquote_plus(value) for value in query.get("options", [])]
+    has_endpoint_option = any(
+        part == f"endpoint={endpoint_id}"
+        for value in options_values
+        for part in value.split()
+    )
+    if endpoint_id.startswith("ep-") and not has_endpoint_option:
+        merged_options = " ".join(value.strip() for value in options_values if value.strip())
+        kwargs["options"] = f"{merged_options} endpoint={endpoint_id}".strip()
     return kwargs
 
 
