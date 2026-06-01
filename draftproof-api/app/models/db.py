@@ -5,11 +5,12 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime, timezone
 import uuid
 
-from app.config import DATABASE_URL
+from app.config import DATABASE_CONNECT_TIMEOUT_SECONDS, DATABASE_URL
 
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
+    connect_args={"timeout": DATABASE_CONNECT_TIMEOUT_SECONDS},
     pool_pre_ping=True,
     pool_recycle=300,
     pool_size=20,

@@ -1,26 +1,38 @@
 import os
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
-_raw_db_url = os.getenv("DATABASE_URL", "").strip()
-if not _raw_db_url:
-    raise RuntimeError("DATABASE_URL environment variable is required")
+DATABASE_CONNECT_TIMEOUT_SECONDS = max(1, int(os.getenv("DATABASE_CONNECT_TIMEOUT_SECONDS", "10")))
 
-# Normalize any postgres:// or postgresql:// to postgresql+asyncpg:// for SQLAlchemy async
-if "://" in _raw_db_url:
-    # Strip any existing scheme, then prepend the correct async one
-    _after_scheme = _raw_db_url.split("://", 1)[1]
-    DATABASE_URL = f"postgresql+asyncpg://{_after_scheme}"
-else:
-    # Bare hostname — build from Koyeb env vars
-    _db_user = os.getenv("DATABASE_USER", "koyeb-adm")
-    _db_pass = os.getenv("DATABASE_PASSWORD", "")
-    _db_name = os.getenv("DATABASE_NAME", "koyebdb")
-    _db_port = os.getenv("DATABASE_PORT", "5432")
-    DATABASE_URL = f"postgresql+asyncpg://{_db_user}:{_db_pass}@{_raw_db_url}:{_db_port}/{_db_name}"
+
+def _normalize_database_url(raw_db_url: str) -> str:
+    raw_db_url = (raw_db_url or "").strip()
+    if not raw_db_url:
+        raise RuntimeError("DATABASE_URL environment variable is required")
+
+    if "://" in raw_db_url:
+        # Normalize any postgres:// or postgresql:// to postgresql+asyncpg:// for SQLAlchemy async.
+        after_scheme = raw_db_url.split("://", 1)[1]
+        database_url = f"postgresql+asyncpg://{after_scheme}"
+    else:
+        # Bare hostname — build from Koyeb env vars.
+        db_user = os.getenv("DATABASE_USER", "koyeb-adm")
+        db_pass = os.getenv("DATABASE_PASSWORD", "")
+        db_name = os.getenv("DATABASE_NAME", "koyebdb")
+        db_port = os.getenv("DATABASE_PORT", "5432")
+        database_url = f"postgresql+asyncpg://{db_user}:{db_pass}@{raw_db_url}:{db_port}/{db_name}"
+
+    parsed = urlsplit(database_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if parsed.hostname and parsed.hostname.split(".")[0].startswith("ep-") and "sslmode" not in query:
+        query["sslmode"] = "require"
+    return urlunsplit(parsed._replace(query=urlencode(query)))
+
+
+DATABASE_URL = _normalize_database_url(os.getenv("DATABASE_URL", ""))
 
 # Auth
 SECRET_KEY = os.getenv("SECRET_KEY")
