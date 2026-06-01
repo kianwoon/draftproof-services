@@ -478,34 +478,47 @@ def _apply_reviewer(
 
     if not reviewer_enabled():
         return doc
+
+    def _rebuilt(rewritten_text, final_scan, trace):
+        # Preserve ALL DocumentResult fields (the old reviewer dropped quality_repair /
+        # naturalisation_repair). final_scan is the single authoritative post-QC scan.
+        return DocumentResult(
+            initial_scan=doc.initial_scan,
+            final_scan=final_scan,
+            rewritten_text=rewritten_text,
+            passes=doc.passes,
+            pass_trace=trace,
+            final_text_before_quality_repair=doc.final_text_before_quality_repair,
+            quality_repair=doc.quality_repair,
+            naturalisation_repair=doc.naturalisation_repair,
+        )
+
     try:
         result = review_document(
             doc.rewritten_text, gateway=gateway, cancellation_check=cancellation_check
         )
     except Exception:
-        return doc
-    if not result.corrections:
-        return doc  # nothing changed; keep writer's doc + its scan
+        # ALWAYS record the QC pass -- a swallowed failure used to leave no trace (qc_reviewer:0),
+        # making it look like the reviewer never ran.
+        return _rebuilt(doc.rewritten_text, doc.final_scan,
+                        list(doc.pass_trace) + [{"selected_source": "qc_reviewer", "status": "error", "applied": 0}])
 
-    reviewed_text = result.text
     trace = list(doc.pass_trace)
     trace.append({
         "selected_source": "qc_reviewer",
-        "status": "accepted",
+        "status": "accepted" if result.corrections else (result.skipped or "no_corrections"),
+        "applied": len(result.corrections),
         "corrections": [
             {"original": c.original, "revised": c.revised} for c in result.corrections
         ][:12],
+        "skipped": result.skipped,
         "must_fix_unaddressed": result.must_fix_unaddressed,
         "corrections_over_cap": result.corrections_over_cap,
     })
-    return DocumentResult(
-        initial_scan=doc.initial_scan,
-        final_scan=scan_text(reviewed_text),   # the ONE authoritative scan, post-QC
-        rewritten_text=reviewed_text,
-        passes=doc.passes,
-        pass_trace=trace,
-        final_text_before_quality_repair=doc.final_text_before_quality_repair,
-    )
+    if not result.corrections:
+        # No text change, but the pass is now always recorded (no more silent failures).
+        return _rebuilt(doc.rewritten_text, doc.final_scan, trace)
+    return _rebuilt(result.text, scan_text(result.text), trace)
 
 
 def run_direct_rewrite_all(

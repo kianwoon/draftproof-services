@@ -164,6 +164,102 @@ def _correction_is_safe(original: str, revised: str, *, doc_after: str, baseline
     return True
 
 
+# gpt-oss intermittently (~1 in 5 calls, measured) runs away past max_tokens (finish_reason=length)
+# and cuts the JSON mid-object, so parse_json raises and EVERY correction is lost. Retry to escape a
+# bad roll, and salvage the corrections that DID complete from a truncated body before giving up.
+_REVIEWER_ATTEMPTS = 2
+
+
+def _salvage_corrections(raw: str) -> list[dict[str, Any]]:
+    """Recover complete correction objects from a truncated/invalid reviewer response.
+
+    Brace-matches the ``corrections`` array and parses each fully-closed ``{...}`` object, ignoring
+    the cut-off tail (and any ``{``/``}`` that appear inside string values). Returns the recovered
+    objects, or ``[]`` when nothing usable is present."""
+    if not raw:
+        return []
+    key = raw.find('"corrections"')
+    start = raw.find("[", key) if key >= 0 else -1
+    if start < 0:
+        return []
+    objs: list[dict[str, Any]] = []
+    depth = 0
+    obj_start: int | None = None
+    in_str = False
+    esc = False
+    for idx in range(start + 1, len(raw)):
+        ch = raw[idx]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                obj_start = idx
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and obj_start is not None:
+                    try:
+                        parsed = json.loads(raw[obj_start:idx + 1])
+                        if isinstance(parsed, dict):
+                            objs.append(parsed)
+                    except Exception:
+                        pass
+                    obj_start = None
+        elif ch == "]" and depth == 0:
+            break
+    return objs
+
+
+def _request_corrections(
+    gateway: Any, prompt: str, cancellation_check: Callable[[], None] | None
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Ask the reviewer LLM for corrections, robust to gpt-oss's runaway/truncation. Per attempt:
+    parse the JSON; on parse failure, salvage the complete objects from the partial body; retry on a
+    total miss. Returns (corrections, skipped_reason): reason is None on a clean parse,
+    'salvaged_partial' when recovered from a truncated body, else 'bad_json'/'llm_error'."""
+    last_reason = "llm_error"
+    for _ in range(_REVIEWER_ATTEMPTS):
+        if cancellation_check:
+            cancellation_check()
+        try:
+            response = gateway.chat(
+                prompt,
+                system=_SYSTEM,
+                temperature=0.4,
+                top_p=0.9,
+                # Must cover gpt-oss's reasoning phase PLUS the sentence-only output; tunable via
+                # DRAFTPROOF_V6_REVIEWER_MAX_TOKENS. Even at 16000 a runaway can hit the cap, which
+                # is why _salvage_corrections + retry exist below.
+                max_tokens=_reviewer_max_tokens(),
+                response_format={"type": "json_object"},
+                app_label="DocumentReviewer",
+            )
+            raw = getattr(response, "raw_content", "") or getattr(response, "content", "") or ""
+        except Exception:
+            last_reason = "llm_error"
+            continue
+        try:
+            data = parse_json(raw)
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            return [c for c in (data.get("corrections") or []) if isinstance(c, dict)], None
+        salvaged = _salvage_corrections(raw)
+        if salvaged:
+            return salvaged, "salvaged_partial"
+        last_reason = "bad_json"
+    return [], last_reason
+
+
 def review_document(
     text: str,
     *,
@@ -178,28 +274,7 @@ def review_document(
     must_fix = detect_residual_patterns(text)
     baseline = _score(text)
     prompt = build_reviewer_prompt(text, must_fix)
-    try:
-        response = gateway.chat(
-            prompt,
-            system=_SYSTEM,
-            temperature=0.4,
-            top_p=0.9,
-            # gpt-oss spends most of its budget on REASONING tokens before emitting any content
-            # (a whole-doc QC review reasons far more than a single-paragraph writer call). At 4000
-            # the reasoning phase consumed ~3997 tokens and the response truncated to empty
-            # (finish_reason=length, content_is_null) -> EmptyLLMContentError -> zero corrections.
-            # This is the same starvation that reverted the prior showcase. The budget must cover
-            # reasoning + the (small) sentence-only output, so give ample headroom. Verified against
-            # real docs: 4000 -> 0 corrections; 16000 -> full valid correction set.
-            max_tokens=_reviewer_max_tokens(),
-            response_format={"type": "json_object"},
-            app_label="DocumentReviewer",
-        )
-        data = parse_json(getattr(response, "raw_content", "") or getattr(response, "content", "") or "")
-    except Exception:
-        return ReviewResult(text=text, corrections=[], skipped="llm_error")
-    if not isinstance(data, dict):
-        return ReviewResult(text=text, corrections=[], skipped="bad_json")
+    corrections_in, skipped = _request_corrections(gateway, prompt, cancellation_check)
 
     current = text
     applied: list[Correction] = []
@@ -207,7 +282,6 @@ def review_document(
     # _score), so cost is O(corrections) full scans. Cap the number we evaluate to bound worst-case
     # latency if a model returns an unexpectedly long list; the surgical design expects only a
     # handful. Extra corrections beyond the cap are surfaced in the trace, not silently dropped.
-    corrections_in = [c for c in (data.get("corrections") or []) if isinstance(c, dict)]
     over_cap = max(0, len(corrections_in) - _MAX_CORRECTIONS)
     for item in corrections_in[:_MAX_CORRECTIONS]:
         original = str(item.get("original") or "")
@@ -224,5 +298,5 @@ def review_document(
         issue.rule for issue in must_fix
         if not any(t in addressed for t in issue.target_sentences)
     ]
-    return ReviewResult(text=current, corrections=applied, must_fix_unaddressed=unaddressed,
-                        corrections_over_cap=over_cap)
+    return ReviewResult(text=current, corrections=applied, skipped=skipped,
+                        must_fix_unaddressed=unaddressed, corrections_over_cap=over_cap)
