@@ -2,7 +2,7 @@
 content-preservation gate rejects anything that rewords content. gpt-oss is mocked; the gate (stemmed
 content multiset + numbers) is exercised for real.
 
-allow-hardcode: the sample sentences below are test fixtures for the gate, not matching logic.
+The sample sentences below are test fixtures for the gate, not matching logic.
 """
 from __future__ import annotations
 
@@ -34,6 +34,20 @@ def test_gate_accepts_article_insertion():
     assert gr._is_grammar_only(BROKEN, FIXED) is True
 
 
+def test_gate_accepts_the_and_an_insertion():
+    # the dominant dropped-article fixes -- a strict >=2-letter-equality gate wrongly rejected these
+    assert gr._is_grammar_only("Compare three articles on same topic today.",
+                               "Compare three articles on the same topic today.") is True
+    assert gr._is_grammar_only("I assign essay about climate policy each week.",
+                               "I assign an essay about climate policy each week.") is True
+
+
+def test_gate_rejects_short_content_word_swap():
+    # a 2-3 letter content word swapped (dog->cat) is NOT an article insertion -> still rejected
+    assert gr._is_grammar_only("I keep a dog at the home office daily.",
+                               "I keep a cat at the home office daily.") is False
+
+
 def test_gate_accepts_agreement_fix():
     assert gr._is_grammar_only("The data show clear trends.", "The data shows clear trends.") is True
 
@@ -44,6 +58,12 @@ def test_gate_rejects_reworded_content():
 
 def test_gate_rejects_number_change():
     assert gr._is_grammar_only("I taught 12 students last term.", "I taught 15 students last term.") is False
+
+
+def test_gate_rejects_short_scope_and_negation_changes():
+    assert gr._is_grammar_only("The method is useful.", "The method is not useful.") is False
+    assert gr._is_grammar_only("The task measures skill only.", "The task measures skill.") is False
+    assert gr._is_grammar_only("The model supports both speed and quality.", "The model supports speed and quality.") is False
 
 
 def test_gate_rejects_identical():

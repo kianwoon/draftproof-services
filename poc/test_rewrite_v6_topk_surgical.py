@@ -2,7 +2,7 @@
 stay fluent + faithful, stopping at the ~0.50 target. GPT-2 is mocked here (deterministic/fast); the
 gate logic (lowers top-k + grammar + polarity + length) is exercised for real.
 
-allow-hardcode: the sample sentences below are test fixtures to exercise the gate, not matching logic.
+The sample sentences below are test fixtures to exercise the gate, not matching logic.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from poc.rewrite_v6 import topk_surgical as ts
 
 HIGH = "The employers I have consulted repeatedly tell me that communication matters greatly to them."
-FIX = "Employers I have spoken with stress that clear dialogue is what counts most to them."
+FIX = "The employers I have repeatedly consulted tell me that communication greatly matters to them."
 LOW = "In my 2019 class twelve students built a working water filter together over three weeks."
 
 
@@ -26,9 +26,9 @@ def _stub(payload: str):
 def _mock_gpt2(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_V6_TOPK_SURGICAL", "1")   # default is OFF; enable for these tests
     monkeypatch.setattr(ts, "_sentence_topk",
-                        lambda s, k: 0.20 if "spoken with" in s else (0.60 if "consulted repeatedly" in s else 0.30))
+                        lambda s, k: 0.20 if "repeatedly consulted" in s else (0.60 if "consulted repeatedly" in s else 0.30))
     monkeypatch.setattr(ts, "_doc_topk",
-                        lambda t, k: 0.45 if "spoken with" in t else 0.70)
+                        lambda t, k: 0.45 if "repeatedly consulted" in t else 0.70)
 
 
 def test_enabled_default_off(monkeypatch):
@@ -56,6 +56,24 @@ def test_gate_rejects_non_lowering_fix(monkeypatch):
     payload = json.dumps({"fixes": [{"i": 0, "text": bad}]})
     out, applied = ts.apply_surgical(HIGH + " " + LOW, gateway=_stub(payload))
     assert applied == [] and HIGH in out           # nothing applied
+
+
+def test_gate_rejects_detail_dropping_fix_even_when_topk_lowers(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_TOPK_SURGICAL", "1")
+    candidate = "Students built a working filter together during the class."
+    monkeypatch.setattr(ts, "_sentence_topk", lambda s, k: 0.20 if s == candidate else 0.80)
+    assert ts._is_safe_fix(LOW, candidate, 10) is False
+
+
+def test_apply_rejects_fix_without_full_document_topk_drop(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_TOPK_SURGICAL", "1")
+    monkeypatch.setattr(ts, "_sentence_topk",
+                        lambda s, k: 0.20 if "repeatedly consulted" in s else (0.60 if "consulted repeatedly" in s else 0.30))
+    monkeypatch.setattr(ts, "_doc_topk", lambda t, k: 0.70)
+    payload = json.dumps({"fixes": [{"i": 0, "text": FIX}]})
+    out, applied = ts.apply_surgical(HIGH + " " + LOW, gateway=_stub(payload))
+    assert applied == []
+    assert HIGH in out and FIX not in out
 
 
 def test_noop_when_already_at_target(monkeypatch):

@@ -10,14 +10,14 @@ third-party detectors -- proven this session (a clean reword moved GPTZero 78->1
 the DISPLAYED top-k; it is NOT proven to lower real GPTZero/Turnitin flagging. Keep the external
 estimate honest (see feedback_expose_ugly_side) and validate against GPTZero before trusting it.
 
-allow-hardcode: the _SYSTEM / prompt strings below are the LLM rewrite instructions, not a
-detect/allow word-list or scoring oracle.
+The prompt strings below are LLM rewrite instructions, not a detect/allow word-list or scoring oracle.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+from collections import Counter
 from typing import Any, Callable
 
 
@@ -170,6 +170,34 @@ def build_prompt(sentences: list[str]) -> str:
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False)
 
 
+def _stem(word: str) -> str:
+    value = word.casefold()
+    for suffix in ("ing", "ed", "es", "s", "d"):
+        if value.endswith(suffix) and len(value) - len(suffix) >= 3:
+            return value[: -len(suffix)]
+    return value
+
+
+def _content_key(text: str) -> Counter:
+    return Counter(_stem(word) for word in re.findall(r"[A-Za-z]{4,}", str(text or "")))
+
+
+def _token_key(text: str) -> Counter:
+    return Counter(_stem(word) for word in re.findall(r"[A-Za-z0-9]+", str(text or "")))
+
+
+def _numbers(text: str) -> Counter:
+    return Counter(re.findall(r"\d[\d,\.]*%?", str(text or "")))
+
+
+def _preserves_sentence_content(original: str, candidate: str) -> bool:
+    return bool(
+        _content_key(original) == _content_key(candidate)
+        and _token_key(original) == _token_key(candidate)
+        and _numbers(original) == _numbers(candidate)
+    )
+
+
 def _is_safe_fix(original: str, candidate: str, k: int) -> bool:
     """Gate: keep a fix ONLY if it genuinely lowers the sentence's top-k AND stays fluent + faithful.
     Fluent = not broken grammar; faithful = no polarity inversion + length within +/-40% of source."""
@@ -181,6 +209,8 @@ def _is_safe_fix(original: str, candidate: str, k: int) -> bool:
         return False
     ow = len(original.split())
     if not (0.6 * ow <= len(c.split()) <= 1.4 * ow + 4):
+        return False
+    if not _preserves_sentence_content(original, c):
         return False
     if _has_broken_grammar(c):
         return False
@@ -226,12 +256,21 @@ def apply_surgical(
         current = text
         applied: list[dict[str, Any]] = []
         for i, original in enumerate(candidates):
-            if _doc_topk(current, k) <= _target():
+            before_doc_topk = _doc_topk(current, k)
+            if before_doc_topk <= _target():
                 break  # moderate: stop once balanced
             cand = str((fixes.get(i) or {}).get("text") or "").strip()
             if cand and original in current and _is_safe_fix(original, cand, k):
-                current = current.replace(original, cand, 1)
-                applied.append({"original": original, "revised": cand})
+                patched = current.replace(original, cand, 1)
+                after_doc_topk = _doc_topk(patched, k)
+                if after_doc_topk < before_doc_topk:
+                    current = patched
+                    applied.append({
+                        "original": original,
+                        "revised": cand,
+                        "doc_topk_before": before_doc_topk,
+                        "doc_topk_after": after_doc_topk,
+                    })
         return current, applied
     except Exception:
         return text, []

@@ -10,8 +10,7 @@ content-word multiset (>=4 letters) and the numbers must be unchanged, so the re
 and fix agreement but can NOT reword, drop, or invent content. A fix that alters content is rejected
 and the original sentence is kept. Never raises; on any failure the text is returned unchanged.
 
-allow-hardcode: the _SYSTEM / prompt strings are the LLM grammar-fix instructions, not a detect/allow
-word-list or scoring oracle.
+The prompt strings are LLM grammar-fix instructions, not a detect/allow word-list or scoring oracle.
 """
 from __future__ import annotations
 
@@ -51,13 +50,32 @@ def _content_key(text: str) -> Counter:
     return Counter(_stem(w) for w in re.findall(r"[A-Za-z]{4,}", text))
 
 
+def _semantic_token_key(text: str) -> Counter:
+    """General meaning-preservation key for short tokens.
+
+    This deliberately avoids curated semantic word lists. All alphabetic tokens with two or more
+    letters must remain present after crude stemming; a grammar fix may only add one-letter tokens
+    such as a missing article.
+    """
+    return Counter(_stem(w) for w in re.findall(r"[A-Za-z]{2,}", str(text or "")))
+
+
 def _numbers(text: str) -> Counter:
     return Counter(re.findall(r"\d[\d,\.]*%?", text))
 
 
+# Articles a grammar fix may legitimately INSERT (closed grammatical function-word set, not content).
+_INSERTABLE_FUNCTION_WORDS = frozenset({"a", "an", "the"})
+
+
 def _is_grammar_only(original: str, fixed: str) -> bool:
     """Accept a fix ONLY if it changed grammar, not content: it differs from the original, preserves
-    the stemmed content-word multiset and all numbers, and does not balloon in length."""
+    the >=4-letter content multiset and all numbers, removes/changes NO short token, and may only
+    INSERT articles (a/an/the). Agreement inflections (bring->brings) survive via stemming. This
+    allows the dominant dropped-article fix ('on same topic' -> 'on the same topic') -- which the
+    earlier strict ">=2-letter tokens must be identical" gate wrongly rejected -- while still
+    protecting 2-3 letter content words (a dropped/swapped short content word fails the `removed`
+    check) and rejecting any reword."""
     f = (fixed or "").strip()
     if not f or f == original.strip() or len(f.split()) < 3:
         return False
@@ -65,6 +83,11 @@ def _is_grammar_only(original: str, fixed: str) -> bool:
         return False
     if _numbers(original) != _numbers(f):
         return False
+    short_before, short_after = _semantic_token_key(original), _semantic_token_key(f)
+    if short_before - short_after:                       # a short token was dropped or changed
+        return False
+    if any(tok not in _INSERTABLE_FUNCTION_WORDS for tok in (short_after - short_before)):
+        return False                                     # only article insertions are allowed
     ow = len(original.split())
     return ow <= len(f.split()) <= int(ow * 1.5) + 4
 
