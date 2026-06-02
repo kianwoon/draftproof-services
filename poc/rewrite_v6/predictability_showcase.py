@@ -1,35 +1,44 @@
-"""Predictability SHOWCASE -- a TEACHING layer that runs AFTER the QC reviewer.
+"""Grounding SHOWCASE -- a TEACHING layer that runs AFTER the QC reviewer.
 
-It is NOT a humanizer and NOT a mutation of the shipped rewrite. It ANNOTATES the final reviewed text
-with worked examples so the user LEARNS to write more distinctively themselves. For each
-high-predictability sentence it surfaces: the statistically-predictable words (GPT-2 top-k hits), a
-less-predictable but meaning/grammar/fact-preserving alternative (LLM), and the MEASURED reduction.
-Only validated reductions are shown, so every example teaches something true.
+It SHOWS the user worked before->after examples that turn a GENERIC claim into GROUNDED, specific
+writing, then says "now use your OWN real detail." DraftProof does the teaching (demonstrates the
+technique on a concrete example); the user supplies their truth -- the normal teacher/student split,
+not a hand-off of responsibility.
 
-Why a showcase and not an auto-fix: top-k predictability is the intrinsic LLM-prose floor and cannot
-be honestly lowered by rewriting the *submission* (proven -- gaming it backfires/produces gibberish,
-external detectors are unmoved). The only genuine lever is a human writing more distinctively, so the
-product's job is to TEACH that by example. This module is that engine. Never expose
-'perplexity'/'top-k' jargon to end users -- the report copy frames it as "predictable phrasing".
+Two hard rules from the product owner:
+  1. Only GENUINELY GOOD examples are shown -- a generic sentence that actually becomes concretely
+     grounded, faithful, and grammatical. If none clear the bar, nothing is shown. We never teach a
+     weak example: "if the showcase is no good, then no teaching."
+  2. Graded on GROUNDING (real, movable, honest), NOT on AI-detector scores. The detector is a noisy
+     oracle that over-flags even genuine human writing and often moves the WRONG way when writing
+     improves -- so showing it next to a lesson makes a good lesson look like a failure. We measure
+     the thing we teach: did the writing get concretely grounded?
+
+Annotate-only: never mutates the shipped rewrite. Content-agnostic (reuses the scanner's structural
+concreteness check -- no banned/allow word lists). No GPT-2/LLM-detector loop -> light and safe.
+Never expose 'perplexity'/'top-k'/'AI-detector' jargon to end users in the copy.
+
+allow-hardcode: the _SYSTEM string and build_showcase_prompt rules below are the LLM coaching prompt
+(instructions + output schema), human-reviewed guidance -- NOT a detect/allow word-list or scoring oracle.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 
 def showcase_enabled() -> bool:
-    """Feature flag, default ON (enabled in production by request). Set
-    DRAFTPROOF_V6_PREDICTABILITY_SHOWCASE=0 to disable. Annotate-only, so toggling never changes the
-    shipped rewrite -- only whether the teaching layer runs (it adds GPT-2 + LLM latency per rewrite)."""
+    """Feature flag, default ON. Set DRAFTPROOF_V6_PREDICTABILITY_SHOWCASE=0 to disable. Annotate-only,
+    so toggling never changes the shipped rewrite -- only whether the teaching layer runs."""
     return os.environ.get("DRAFTPROOF_V6_PREDICTABILITY_SHOWCASE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name, "").strip()
+def _max_sentences() -> int:
+    """Cap on showcased examples -- the most useful generic sentences, to bound LLM cost."""
+    raw = os.environ.get("DRAFTPROOF_V6_SHOWCASE_MAX_SENTENCES", "").strip()
     if raw:
         try:
             value = int(raw)
@@ -37,94 +46,24 @@ def _env_int(name: str, default: int) -> int:
                 return value
         except ValueError:
             pass
-    return default
+    return 8
 
 
-def _topk() -> int:
-    """A content word counts as 'predictable' if its GPT-2 next-token rank is within this k."""
-    return _env_int("DRAFTPROOF_V6_SHOWCASE_TOPK", 10)
-
-
-def _max_sentences() -> int:
-    """Cap on showcased examples -- the most-predictable sentences, to bound latency/cost."""
-    return _env_int("DRAFTPROOF_V6_SHOWCASE_MAX_SENTENCES", 8)
-
-
-# ---------------------------------------------------------------------------
-# GPT-2 word-rank scoring (same model the predictability scanner uses)
-# ---------------------------------------------------------------------------
-_MODEL = None
-_TOKENIZER = None
-_GPT2_UNAVAILABLE = False
-
-
-def _ensure_gpt2():
-    """Lazy-load gpt2 once. Returns (model, tokenizer) or (None, None) if torch/transformers are
-    unavailable -- the feature then no-ops gracefully rather than breaking the rewrite."""
-    global _MODEL, _TOKENIZER, _GPT2_UNAVAILABLE
-    if _GPT2_UNAVAILABLE:
-        return None, None
-    if _MODEL is None:
+def _is_grounded(sentence: str) -> bool | None:
+    """Reuse the scanner's content-agnostic structural-concreteness check (numbers, named entities,
+    quotes, first-person lived detail, exemplification, temporal anchors). True = the sentence has
+    real grounding; False = generic claim. None if the detector can't be imported (fail-open)."""
+    try:
+        from detect.layer3_scoring import _sentence_has_concrete_or_context
+    except Exception:
         try:
-            from transformers import GPT2LMHeadModel, GPT2TokenizerFast
-            _TOKENIZER = GPT2TokenizerFast.from_pretrained("gpt2")
-            _MODEL = GPT2LMHeadModel.from_pretrained("gpt2").eval()
+            from poc.detect.layer3_scoring import _sentence_has_concrete_or_context
         except Exception:
-            _GPT2_UNAVAILABLE = True
-            return None, None
-    return _MODEL, _TOKENIZER
-
-
-def _is_content_token(decoded: str) -> bool:
-    """A word-initial (leading-space) alphabetic token of >=4 chars. The >=4 length is a
-    content-agnostic filter (no banned-word list): it drops the short function words ('the', 'of',
-    'to') whose predictability isn't useful to teach, keeping meaning-bearing words."""
-    return decoded[:1] == " " and decoded.strip().isalpha() and len(decoded.strip()) >= 4
-
-
-def _word_ranks(text: str) -> list[tuple[str, int]]:
-    """Per content word, its GPT-2 next-token rank in the sentence context. Returns
-    [(word, rank), ...]; empty if GPT-2 is unavailable or text is too short."""
-    model, tok = _ensure_gpt2()
-    if model is None or not text.strip():
-        return []
-    import torch
-    ids = tok(text)["input_ids"][:1024]
-    if len(ids) < 2:
-        return []
-    with torch.no_grad():
-        logits = model(torch.tensor([ids])).logits[0]
-    out: list[tuple[str, int]] = []
-    for i in range(1, len(ids)):
-        decoded = tok.decode([ids[i]])
-        if not _is_content_token(decoded):
-            continue
-        dist = logits[i - 1]
-        rank = int((dist > dist[ids[i]]).sum().item())
-        out.append((decoded.strip(), rank))
-    return out
-
-
-def _predictability(text: str, k: int) -> float:
-    """Fraction of content words whose GPT-2 rank is within top-k (0..1). This is the showcase's
-    self-consistent 'predictability' metric for before/after comparison."""
-    ranks = _word_ranks(text)
-    if not ranks:
-        return 0.0
-    hits = sum(1 for _, r in ranks if r < k)
-    return round(hits / len(ranks), 4)
-
-
-def _flagged_words(text: str, k: int) -> list[str]:
-    """The content words GPT-2 finds predictable (rank < k), de-duplicated, original order."""
-    seen: set[str] = set()
-    flagged: list[str] = []
-    for w, r in _word_ranks(text):
-        key = w.lower()
-        if r < k and key not in seen:
-            seen.add(key)
-            flagged.append(w)
-    return flagged
+            return None
+    try:
+        return bool(_sentence_has_concrete_or_context(sentence))
+    except Exception:
+        return None
 
 
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
@@ -134,96 +73,86 @@ def _sentences(text: str) -> list[str]:
     return [s.strip() for s in _SENT_SPLIT.split(str(text or "").replace("\n", " ").strip()) if s.strip()]
 
 
+def _generic_candidates(text: str, limit: int) -> list[str]:
+    """The generic (un-grounded) sentences -- the ones grounding can genuinely improve. These are the
+    teachable cases; a sentence that is already grounded has no lesson to show."""
+    out: list[str] = []
+    for s in _sentences(text):
+        if len(s.split()) < 6:           # too short to ground meaningfully
+            continue
+        if _is_grounded(s) is False:      # only flag confidently-generic sentences
+            out.append(s)
+        if len(out) >= limit:
+            break
+    return out
+
+
 @dataclass
 class ShowcaseItem:
-    sentence: str
-    flagged_words: list[str]
-    suggestion: str
-    why: str
-    score_before: float
-    score_after: float
-
-    @property
-    def reduction(self) -> float:
-        return round(self.score_before - self.score_after, 4)
+    sentence: str          # the generic original
+    suggestion: str        # a grounded worked example (the user replaces specifics with their own)
+    why: str               # one-line, plain language: what concrete detail was added
+    grounded_before: bool = False
+    grounded_after: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "sentence": self.sentence,
-            "flagged_words": self.flagged_words,
             "suggestion": self.suggestion,
             "why": self.why,
-            "predictability_before": self.score_before,
-            "predictability_after": self.score_after,
-            "reduction": self.reduction,
+            "grounded_before": self.grounded_before,
+            "grounded_after": self.grounded_after,
         }
 
 
-def _candidate_sentences(text: str, k: int, limit: int) -> list[dict[str, Any]]:
-    """The most-predictable sentences worth a lesson: those with flagged content words, ranked by
-    predictability score, capped at `limit`."""
-    cands: list[dict[str, Any]] = []
-    for s in _sentences(text):
-        flagged = _flagged_words(s, k)
-        if not flagged:
-            continue
-        cands.append({"sentence": s, "flagged_words": flagged, "score": _predictability(s, k)})
-    cands.sort(key=lambda c: c["score"], reverse=True)
-    return cands[:limit]
+_SYSTEM = (
+    "You are a writing coach. You receive sentences that state a claim WITHOUT concrete grounding. For "
+    "each, show a more grounded version of the SAME claim -- anchored in a specific moment, number, "
+    "name, or first-hand detail -- as an ILLUSTRATIVE example the writer will replace with their own "
+    "real specifics. Keep the claim's meaning and stance; keep grammar clean. Return only JSON."
+)
 
 
-def build_showcase_prompt(candidates: list[dict[str, Any]]) -> str:
+def build_showcase_prompt(candidates: list[str]) -> str:
     payload = {
-        "task": "teach_less_predictable_phrasing",
-        "note": "Each sentence relies on statistically predictable word choices (listed). Show a more distinctive way to say the SAME thing.",
+        "task": "teach_grounding_by_worked_example",
+        "note": "Each sentence states a claim without concrete grounding. Show how to ground it.",
         "rules": [
-            "Preserve the exact meaning, all facts, numbers, names, dates, and correct grammar. Add nothing, drop nothing.",
-            "Make the wording less generic/predictable -- more specific, concrete, or distinctive -- not just rarer synonyms.",
-            "'why' is one short plain-language sentence on what made the original read as templated. Never use the words 'perplexity' or 'top-k'.",
+            "Keep the original claim's meaning and stance; never reverse it. Add concrete specifics (a number, a named example, a first-hand moment); keep grammar clean.",
+            "Make the specifics realistic but clearly example-level -- the writer will swap in their own real detail.",
+            "'why' is one short plain sentence naming the concrete detail you added. Do not mention detectors, perplexity, or AI scores.",
         ],
-        "sentences": [{"i": i, "text": c["sentence"], "predictable_words": c["flagged_words"]} for i, c in enumerate(candidates)],
-        "output_schema": {"examples": [{"i": 0, "suggestion": "more distinctive version", "why": "one-line reason"}]},
+        "sentences": [{"i": i, "text": s} for i, s in enumerate(candidates)],
+        "output_schema": {"examples": [{"i": 0, "grounded": "a more grounded version of the same claim", "why": "adds a specific ..."}]},
     }
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False)
 
 
-_SYSTEM = (
-    "You are a writing coach. You receive sentences whose wording is statistically predictable and the "
-    "specific predictable words. For each, show a more distinctive way to say the SAME thing -- "
-    "preserving meaning, facts, and grammar exactly -- plus a one-line reason. Return only JSON."
-)
-
-
-def _is_teachable(item: ShowcaseItem) -> bool:
-    """Validation gate: a suggestion is only shown if it actually teaches something true.
-
-    Default rule (tune via the constants below): the suggestion must genuinely REDUCE measured
-    predictability, stay grammatical, differ from the original, and not be a stub. This is the
-    quality bar that keeps the showcase honest -- no example with a fake or zero 'reduction'.
-    """
+def _is_teachable(original: str, grounded: str) -> bool:
+    """The quality gate: show ONLY genuinely good examples. The grounded version must actually become
+    grounded (concrete anchors present), stay grammatical, be non-trivial, and differ from the
+    original. If it doesn't truly improve, it is not taught."""
     from .direct_rewrite import _has_broken_grammar
-    s = (item.suggestion or "").strip()
-    if not s or len(s.split()) < 3 or s == item.sentence:
+    g = (grounded or "").strip()
+    if not g or len(g.split()) < 5 or g == original.strip():
         return False
-    if _has_broken_grammar(s):
+    if _is_grounded(g) is not True:        # must actually be grounded now
         return False
-    return item.reduction >= _min_reduction()
+    if _has_broken_grammar(g):
+        return False
+    return True
 
 
-def _min_reduction() -> float:
-    """Minimum measured predictability drop for an example to be shown (default 0.05 = 5 points).
-    Env-tunable (DRAFTPROOF_V6_SHOWCASE_MIN_REDUCTION) so example frequency can be dialed without a
-    redeploy: a cleaner rewrite yields fewer validated lessons, so lower this to surface more -- at
-    the cost of weaker lessons. Placement is (a): the showcase runs on the post-reviewer rewrite."""
-    raw = os.environ.get("DRAFTPROOF_V6_SHOWCASE_MIN_REDUCTION", "").strip()
+def _showcase_max_tokens() -> int:
+    raw = os.environ.get("DRAFTPROOF_V6_SHOWCASE_MAX_TOKENS", "").strip()
     if raw:
         try:
-            value = float(raw)
-            if value >= 0:
+            value = int(raw)
+            if value > 0:
                 return value
         except ValueError:
             pass
-    return 0.05
+    return 8000
 
 
 def generate_showcase(
@@ -232,15 +161,15 @@ def generate_showcase(
     gateway: Any,
     cancellation_check: Callable[[], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Produce validated teaching examples for `text`. Never raises; returns [] on disable/any
-    failure/GPT-2 unavailable (the rewrite is unaffected -- this is annotate-only)."""
+    """Produce validated grounding examples for `text`. Never raises; returns [] on disable / no
+    generic sentences / no good examples / any failure (annotate-only: the rewrite is unaffected).
+    [] is a correct outcome -- we'd rather show nothing than a weak lesson."""
     if not showcase_enabled():
         return []
     if cancellation_check:
         cancellation_check()
     try:
-        k = _topk()
-        candidates = _candidate_sentences(text, k, _max_sentences())
+        candidates = _generic_candidates(text, _max_sentences())
         if not candidates:
             return []
         from .json_io import parse_json
@@ -249,31 +178,26 @@ def generate_showcase(
             system=_SYSTEM,
             temperature=0.7,
             top_p=0.95,
-            max_tokens=_env_int("DRAFTPROOF_V6_SHOWCASE_MAX_TOKENS", 8000),
+            max_tokens=_showcase_max_tokens(),
             response_format={"type": "json_object"},
-            app_label="PredictabilityShowcase",
+            app_label="GroundingShowcase",
         )
         raw = getattr(response, "raw_content", "") or getattr(response, "content", "") or ""
         data = parse_json(raw)
         examples = {e["i"]: e for e in (data.get("examples") or []) if isinstance(e, dict) and "i" in e} if isinstance(data, dict) else {}
         items: list[dict[str, Any]] = []
-        for i, c in enumerate(candidates):
+        for i, original in enumerate(candidates):
             ex = examples.get(i)
             if not ex:
                 continue
-            suggestion = str(ex.get("suggestion") or "").strip()
-            if not suggestion:
+            grounded = str(ex.get("grounded") or ex.get("suggestion") or "").strip()
+            if not _is_teachable(original, grounded):
                 continue
-            item = ShowcaseItem(
-                sentence=c["sentence"],
-                flagged_words=c["flagged_words"],
-                suggestion=suggestion,
+            items.append(ShowcaseItem(
+                sentence=original,
+                suggestion=grounded,
                 why=str(ex.get("why") or "").strip(),
-                score_before=c["score"],
-                score_after=_predictability(suggestion, k),
-            )
-            if _is_teachable(item):
-                items.append(item.to_dict())
+            ).to_dict())
         return items
     except Exception:
         return []
