@@ -27,6 +27,7 @@ from .db import (
     get_scan_user_email,
     update_job_status,
     capture_credits,
+    release_scan_credits,
     get_rewrite_job,
     get_rewrite_user_email,
     is_rewrite_canceled,
@@ -1781,6 +1782,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
             return {"status": "completed", "tier": tier, "findings": finding_count}
 
     except SoftTimeLimitExceeded:
+        release_scan_credits(job_id)
         _best_effort_scan_status_update(
             job_id,
             "failed",
@@ -1806,6 +1808,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
             )
             raise self.retry(exc=e)
         else:
+            release_scan_credits(job_id)
             _best_effort_scan_status_update(
                 job_id,
                 "failed",

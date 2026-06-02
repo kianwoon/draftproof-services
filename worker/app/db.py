@@ -292,6 +292,31 @@ def update_rewrite_status(
         return _execute(include_progress=False)
 
 
+def release_scan_credits(job_id: str):
+    """Release reserved tokens back to available balance on scan failure/timeout (idempotent).
+
+    Mirrors release_rewrite_credits. Atomic compare-and-swap: only one caller
+    flips an 'active' reservation to 'released', so a redelivered task or a
+    concurrent API-side stale-recovery call no-ops safely.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """UPDATE credit_reservations
+               SET status = 'released'
+               WHERE job_id = %s AND status = 'active'
+               RETURNING credit_account_id, tokens_reserved""",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return
+        cur.execute(
+            "UPDATE credit_accounts SET reserved_tokens = reserved_tokens - %s WHERE id = %s",
+            (row["tokens_reserved"], row["credit_account_id"]),
+        )
+
+
 def release_rewrite_credits(job_id: str):
     """Release reserved tokens back to available balance on failure/cancel (idempotent).
 
