@@ -23,6 +23,8 @@ export default function Dashboard() {
   const tokenLabel = balance === null ? t('common.checking') : t('common.token', { count: balance });
   const steps = t('dashboard.steps', { returnObjects: true });
   const rewriteSteps = t('dashboard.rewriteSteps', { returnObjects: true });
+  const scanSteps = steps.slice(0, 3);
+  const reportStep = steps[3];
 
   return (
     <main className="dash-shell">
@@ -101,14 +103,14 @@ export default function Dashboard() {
             <h2>{t('dashboard.workflowTitle')}</h2>
           </div>
 
-          <div className="dash-workflow-grid">
-            <div className="dash-workflow-panel">
+          <div className="dash-flow-map">
+            <div className="dash-flow-panel dash-flow-panel-scan">
               <div className="dash-workflow-panel-heading">
                 <span className="brand-pill">{t('dashboard.scanWorkflowLabel')}</span>
                 <h3>{t('dashboard.scanWorkflowTitle')}</h3>
               </div>
               <ol className="dash-steps">
-                {steps.map((step, index) => (
+                {scanSteps.map((step, index) => (
                   <li className="dash-step" key={step.title}>
                     <span className="step-num">{index + 1}</span>
                     <strong>{step.title}</strong>
@@ -119,9 +121,22 @@ export default function Dashboard() {
               <Link to="/scan" className="dash-workflow-link">{t('dashboard.startScan')}</Link>
             </div>
 
-            <div className="dash-workflow-panel">
+            {reportStep && (
+              <div className="dash-report-gate">
+                <span className="dash-report-gate-line" aria-hidden="true" />
+                <div className="dash-report-node">
+                  <span>{t('dashboard.reportGateLabel')}</span>
+                  <strong>{reportStep.title}</strong>
+                  <p>{reportStep.body}</p>
+                </div>
+                <span className="dash-report-gate-line" aria-hidden="true" />
+              </div>
+            )}
+
+            <div className="dash-flow-panel dash-flow-panel-rewrite">
               <div className="dash-workflow-panel-heading">
                 <span className="brand-pill">{t('dashboard.rewriteWorkflowLabel')}</span>
+                <span className="dash-unlock-pill">{t('dashboard.unlockAfterReport')}</span>
                 <h3>{t('dashboard.rewriteWorkflowTitle')}</h3>
               </div>
               <ol className="dash-steps">
