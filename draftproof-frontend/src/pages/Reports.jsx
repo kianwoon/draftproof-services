@@ -100,6 +100,7 @@ export default function Reports() {
             <p className="eyebrow">{t('reports.library')}</p>
             <h1>{t('reports.title')}</h1>
             <p>{t('reports.body')}</p>
+            <p className="reports-retention-note">{t('reports.retentionNotice')}</p>
           </div>
           <div className="reports-hero-actions">
             <div className="app-hero-stat">
@@ -199,7 +200,10 @@ export default function Reports() {
                 </tbody>
               </table>
             </div>
-            <p className="reports-ai-footnote">{t('reports.aiSignalFootnote')}</p>
+            <div className="reports-footnotes">
+              <p>{t('reports.retentionFootnote')}</p>
+              <p>{t('reports.aiSignalFootnote')}</p>
+            </div>
           </>
         )}
 

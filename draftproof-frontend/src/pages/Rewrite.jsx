@@ -606,6 +606,7 @@ export default function Rewrite() {
             <button type="button" className="btn btn-primary" onClick={() => handleDownload('pdf')}>
               {t('rewritePage.downloadPdf')}
             </button>
+            <p className="report-download-retention">{t('rewritePage.retentionNotice')}</p>
           </div>
         )}
       </div>

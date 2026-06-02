@@ -4977,6 +4977,15 @@ td:first-child {
   white-space: nowrap;
 }
 
+.reports-retention-note {
+  max-width: 780px;
+  margin: .85rem 0 0;
+  color: rgba(255, 255, 255, .78);
+  font-size: .9rem;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
 .reports-page h1 {
   font-size: clamp(2rem, 4vw, 2.8rem);
   margin-bottom: .2rem;
@@ -5165,13 +5174,21 @@ td:first-child {
 .td-findings, .td-words, .td-score { color: var(--muted); }
 .muted-link { color: var(--muted); font-size: .84rem; }
 
-.reports-ai-footnote {
+.reports-footnotes {
   max-width: 860px;
   margin: 14px 0 0;
   color: var(--muted);
   font-size: .82rem;
   font-weight: 650;
   line-height: 1.55;
+}
+
+.reports-footnotes p {
+  margin: 0;
+}
+
+.reports-footnotes p + p {
+  margin-top: .45rem;
 }
 .td-actions {
   display: flex;
@@ -5353,6 +5370,30 @@ td:first-child {
   gap: clamp(1rem, 2.4vw, 1.5rem);
   flex-wrap: wrap;
   width: 100%;
+}
+
+.report-download-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .4rem;
+  max-width: min(34rem, 100%);
+}
+
+.report-download-group span {
+  color: #64748b;
+  font-size: .78rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.report-download-retention {
+  max-width: 38rem;
+  margin: .65rem 0 0;
+  color: #64748b;
+  font-size: .82rem;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .rewrite-action-group {

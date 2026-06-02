@@ -107,6 +107,8 @@ def build_rewrite_completion_email(
         "Rewritten content\n"
         "-----------------\n"
         f"{delivered_text}\n\n"
+        "DraftProof keeps rewrite report records in the system for 3 days. Keep this email "
+        "as your own copy after the system copy expires.\n\n"
         "DraftProof Support\n"
         f"{settings.EMAIL_FROM_ADDRESS}"
     )
@@ -179,6 +181,8 @@ def build_scan_completion_email(
         "Hi,\n\n"
         "Your DraftProof scan is complete. A PDF copy of your report is attached.\n\n"
         f"{details_text}\n\n"
+        "DraftProof keeps scan report records in the system for 3 days. Keep this email or the attached PDF "
+        "as your own copy after the system copy expires.\n\n"
         "You can also open DraftProof to review the full interactive report and start a guided rewrite when available.\n\n"
         "DraftProof Support\n"
         f"{settings.EMAIL_FROM_ADDRESS}"

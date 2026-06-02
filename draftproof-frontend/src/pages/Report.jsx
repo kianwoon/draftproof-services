@@ -1890,12 +1890,15 @@ export default function Report() {
           {(report.report_pdf_url || canStartRewrite || rewriteLoading || rewriteInProgress) && (
             <div className="report-hero-actions">
               {report.report_pdf_url && (
-                <a href={report.report_pdf_url} target="_blank" rel="noopener noreferrer" className="download-pdf-btn">
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path d="M3 10v2.5A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V10M8 2v8M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                  {t('report.downloadPdf')}
-                </a>
+                <div className="report-download-group">
+                  <a href={report.report_pdf_url} target="_blank" rel="noopener noreferrer" className="download-pdf-btn">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path d="M3 10v2.5A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V10M8 2v8M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    {t('report.downloadPdf')}
+                  </a>
+                  <span>{t('report.retentionNotice')}</span>
+                </div>
               )}
               {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
                 <div className="rewrite-action-group">

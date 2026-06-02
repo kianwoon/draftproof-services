@@ -41,6 +41,7 @@ def test_build_rewrite_completion_email_includes_final_text():
     assert "Rewritten content here." in payload["text"]
     assert "rewrite-1" in payload["text"]
     assert "scan-1" in payload["text"]
+    assert "keeps rewrite report records in the system for 3 days" in payload["text"]
 
 
 def test_build_rewrite_completion_email_attaches_pdf():
@@ -97,6 +98,8 @@ def test_build_scan_completion_email_attaches_report_pdf():
     assert "AI likelihood score: 42%" in payload["text"]  # full score, NOT halved
     assert "Writing score: 81%" in payload["text"]
     assert "Findings: 3" in payload["text"]
+    assert "keeps scan report records in the system for 3 days" in payload["text"]
+    assert "attached PDF" in payload["text"]
     assert payload["attachments"] == [
         {
             "filename": "draftproof-scan-scan-1.pdf",
