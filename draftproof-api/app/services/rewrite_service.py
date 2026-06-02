@@ -59,7 +59,7 @@ def _flatten_report_findings(report_json: dict) -> list[dict]:
     return findings
 
 
-def _has_rewriteable_findings(report_json: dict) -> bool:
+def has_rewriteable_findings(report_json: dict) -> bool:
     rewrite_decision = report_json.get("rewrite_decision")
     if isinstance(rewrite_decision, dict) and rewrite_decision.get("run_rewrite") is False:
         return False
@@ -341,7 +341,7 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
             )
 
         report_json = await _fetch_scan_report_json(scan_id)
-        if report_json is not None and not _has_rewriteable_findings(report_json):
+        if report_json is not None and not has_rewriteable_findings(report_json):
             if stale_jobs:
                 await session.commit()
             raise NoRewriteableFindingsError(REVIEW_ONLY_REWRITE_MESSAGE)

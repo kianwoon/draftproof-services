@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from app.config import R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME
 from app.models.db import async_session, ScanJob, RewriteJob
+from app.services.rewrite_service import has_rewriteable_findings
 from app.services.scan_service import _rewrite_cost
 
 logger = logging.getLogger("report_service")
@@ -212,6 +213,7 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
             "writing_score": writing_score,
             "word_count": job.word_count,
             "rewrite_token_cost": _rewrite_cost(job.word_count),
+            "can_start_rewrite": has_rewriteable_findings(results_json or {}),
             "ai_risk_badge": results_json.get("ai_risk_badge") if results_json else None,
             "report_md_url": report_md_url,
             "report_pdf_url": report_pdf_url,

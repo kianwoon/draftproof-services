@@ -55,6 +55,7 @@ class ReportOut(BaseModel):
     writing_score: Optional[float] = None
     word_count: Optional[int] = None
     rewrite_token_cost: Optional[int] = None
+    can_start_rewrite: Optional[bool] = None
     ai_risk_badge: Optional[Any] = None
     report_md_url: Optional[str] = None
     report_pdf_url: Optional[str] = None

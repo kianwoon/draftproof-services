@@ -47,6 +47,34 @@ def test_rewrite_progress_message_keeps_current_worker_message():
     )
 
 
+def test_has_rewriteable_findings_accepts_auto_rewrite_candidate():
+    assert rewrite_service.has_rewriteable_findings({
+        "findings": {
+            "medium": [
+                {
+                    "title": "specificity",
+                    "actionability": "auto_rewrite_candidate",
+                }
+            ]
+        }
+    }) is True
+
+
+def test_has_rewriteable_findings_honors_disabled_rewrite_decision():
+    assert rewrite_service.has_rewriteable_findings({
+        "rewrite_decision": {"run_rewrite": False},
+        "findings": {
+            "medium": [
+                {
+                    "title": "generic_phrase",
+                    "actionability": "auto_rewrite_candidate",
+                    "recommendation": "Make the claim more specific.",
+                }
+            ]
+        },
+    }) is False
+
+
 def test_completed_v4_rewrite_with_comparison_scores_is_reusable():
     assert (
         rewrite_service._completed_rewrite_report_is_reusable(

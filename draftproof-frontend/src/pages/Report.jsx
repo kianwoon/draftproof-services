@@ -340,7 +340,7 @@ function highlightedEditorParts(text, range) {
 export default function Report() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { refreshBalance } = useAuth();
+  const { refreshBalance, balance, logout } = useAuth();
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en-SG';
   const [report, setReport] = useState(null);
@@ -368,6 +368,7 @@ export default function Report() {
   const [submittedRescanBusy, setSubmittedRescanBusy] = useState(false);
   const [submittedRescanStatus, setSubmittedRescanStatus] = useState(null);
   const [submittedRescanError, setSubmittedRescanError] = useState(null);
+  const [submittedRescanNeedsTokens, setSubmittedRescanNeedsTokens] = useState(false);
   const [submittedHighlightRanges, setSubmittedHighlightRanges] = useState({});
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
@@ -569,6 +570,7 @@ export default function Report() {
     setSubmittedRescanBusy(false);
     setSubmittedRescanStatus(null);
     setSubmittedRescanError(null);
+    setSubmittedRescanNeedsTokens(false);
     setSubmittedHighlightRanges({});
   }, [id, closeSubmittedEditor]);
 
@@ -1107,6 +1109,12 @@ export default function Report() {
       setSubmittedRescanError(t('report.submitted.editor.emptyDraft'));
       return;
     }
+    if (balance !== null && balance < submittedDraftTokensRequired) {
+      setSubmittedRescanNeedsTokens(true);
+      setSubmittedRescanError(null);
+      setSubmittedRescanStatus(null);
+      return;
+    }
 
     setSubmittedRescanBusy(true);
     setSubmittedRescanError(null);
@@ -1140,7 +1148,28 @@ export default function Report() {
 
       throw new Error(t('report.submitted.editor.rescanTimedOut'));
     } catch (err) {
-      setSubmittedRescanError(err.response?.data?.detail || err.message || t('report.submitted.editor.rescanFailed'));
+      const msg = err.response?.data?.detail || err.message || t('report.submitted.editor.rescanFailed');
+      const httpStatus = err.response?.status;
+      const isAuthExpired = httpStatus === 401 || (
+        httpStatus === 403 &&
+        String(msg).toLowerCase().includes('not authenticated')
+      );
+      const isInsufficient = (httpStatus === 400 || httpStatus === 402) && (
+        String(msg).toLowerCase().includes('insufficient') ||
+        String(msg).toLowerCase().includes('no credit account') ||
+        String(msg).toLowerCase().includes('purchase')
+      );
+      if (isAuthExpired) {
+        sessionStorage.setItem('auth_next', `/report/${id}`);
+        await logout?.();
+        navigate('/signin?error=Session expired. Please sign in again.', { replace: true });
+        return;
+      }
+      if (isInsufficient) {
+        setSubmittedRescanNeedsTokens(true);
+      } else {
+        setSubmittedRescanError(msg);
+      }
       setSubmittedRescanStatus(null);
       setSubmittedRescanBusy(false);
     }
@@ -1187,7 +1216,9 @@ export default function Report() {
     // would compete with the headline or imply a detector pass.
     ? t('report.transformation.verdict.groundingDetail')
     : formatAuthorshipSealDetailWithReference(authorshipSealDetail, sealReferenceScore, t);
-  const canStartRewrite = hasAIFindings && !hasRewriteResult;
+  const reportAllowsRewrite = report.can_start_rewrite ?? hasAIFindings;
+  const canStartRewrite = reportAllowsRewrite === true && !hasRewriteResult;
+  const showNoRewriteableNotice = reportAllowsRewrite === false && !hasRewriteResult && !rewriteInProgress && !rewriteLoading && !rewriteError;
   const rewriteProgress = currentRewrite
     ? Math.max(0, Math.min(100, Number(currentRewrite.progress_percent) || (rewriteInProgress ? 5 : hasCompletedRewrite ? 100 : 0)))
     : 0;
@@ -1853,6 +1884,14 @@ export default function Report() {
           if (!rewriteCanceling) setShowCancelRewriteDialog(false);
         }}
       />
+      <ConfirmDialog
+        open={submittedRescanNeedsTokens}
+        title={t('scan.notEnoughTitle')}
+        message={t('scan.notEnoughMessage')}
+        confirmLabel={t('scan.buyTokens')}
+        onConfirm={() => navigate('/buy')}
+        onCancel={() => setSubmittedRescanNeedsTokens(false)}
+      />
       <div className="container">
         {/* Back link */}
         <Link to="/reports" className="report-back">
@@ -1966,6 +2005,12 @@ export default function Report() {
               )}
             </div>
           </div>
+        )}
+        {showNoRewriteableNotice && (
+          <section className="rewrite-status-alert">
+            <strong>{t('report.rewrite.noRewriteableTitle')}</strong>
+            <p>{t('report.rewrite.noRewriteableMessage')}</p>
+          </section>
         )}
 
         {rewriteCompletionBand}
