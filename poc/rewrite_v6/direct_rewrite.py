@@ -273,11 +273,8 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "copy the example wording.",
             "Rewrite the WHOLE paragraph. Across EVERY sentence, replace generic or predictable "
             "phrasing with concrete, specific wording. Change the sentence ROUTE, not just synonyms.",
-            "Vary sentence rhythm naturally and at the source's register -- let a longer, analytical "
-            "sentence sit next to a shorter, pointed one. NEVER sacrifice fluency, correctness, or "
-            "sophistication for variation, and do not produce choppy or telegraphic sentences. Start "
-            "sentences differently; avoid a uniform cadence. Cut hedging (may, might, can, could, "
-            "should, often, generally) and generic filler.",
+            "VARY SENTENCE LENGTH deliberately -- this is a top priority, not a nicety. In EACH paragraph place at least one SHORT, pointed sentence (about 5-9 words) next to at least one LONG, flowing sentence (about 22+ words). Uniform medium-length sentences are the single most common machine-smoothed tell and the #1 rhythm defect -- do not emit a run of same-length sentences. Keep every sentence fluent and correct (never choppy or telegraphic). Start sentences differently; avoid a uniform cadence.",
+            "Cut hedging (may, might, can, could, should, often, generally) and generic filler.",
             "Preserve the author's actual argument and meaning, and stay in the same subject and "
             "register as the source. Do not shift a balanced 'not only X but also Y' into 'Y over X', "
             "and do not drop their existing ideas.",
@@ -579,7 +576,10 @@ def run_direct_rewrite_all(
             cancellation_check,
             authorship_evidence=authorship_evidence,
         )
-        score = _document_ai_risk(doc.rewritten_text) if attempts > 1 else 0.0
+        # Best-of-N selector: detector risk PLUS an explicit rhythm penalty. The rewrite
+        # systematically over-smooths sentence rhythm (measured: burstiness regressed in 8/10 docs),
+        # so weight varied sentence length in selection, not just the AI-risk score.
+        score = (_document_ai_risk(doc.rewritten_text) + 25.0 * _rhythm_risk(doc.rewritten_text)) if attempts > 1 else 0.0
         if best_doc is None or score < best_score:
             best_doc, best_score = doc, score
     # rewrite -> residual fix (pass 2) -> QC -> scan. Pass 2 re-scans the rewritten draft and fixes
@@ -593,6 +593,22 @@ def run_direct_rewrite_all(
     reviewed = _apply_reviewer(best_doc, gateway, cancellation_check=cancellation_check)
     # writer -> residual-fix -> reviewer -> SHOWCASE (teaching annotations) -> done.
     return _apply_showcase(reviewed, gateway, cancellation_check=cancellation_check)
+
+
+def _rhythm_risk(text: str) -> float:
+    """Burstiness risk (0..~0.85) -- higher = more uniform sentence length = worse rhythm. Used to
+    weight best-of-N toward varied rhythm. Reuses the scanner's measure; 0.0 if unavailable."""
+    try:
+        from detect.layer3_scoring import estimate_burstiness_risk
+    except Exception:
+        try:
+            from poc.detect.layer3_scoring import estimate_burstiness_risk
+        except Exception:
+            return 0.0
+    try:
+        return float(estimate_burstiness_risk(text))
+    except Exception:
+        return 0.0
 
 
 def _best_of_n() -> int:
