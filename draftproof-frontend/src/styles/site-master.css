@@ -7928,12 +7928,14 @@ td:first-child {
   background: #fee2e2;
 }
 
-/* predictable (top-10) word runs: dotted underline */
+/* predictable (top-10) word runs: prominent solid underline */
 .topk-mark.is-word {
   text-decoration: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: #ef4444;
-  text-underline-offset: 3px;
+  text-decoration-style: solid;
+  text-decoration-color: #dc2626;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+  background: rgba(254, 202, 202, .35);
 }
 
 .topk-legend {
