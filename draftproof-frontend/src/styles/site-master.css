@@ -7928,14 +7928,18 @@ td:first-child {
   background: #fee2e2;
 }
 
-/* predictable (top-10) word runs: prominent solid underline */
+/* predictable (top-10) word runs: bold highlighter (solid marker + heavy underline) */
 .topk-mark.is-word {
+  background: #fecaca;
+  color: #7f1d1d;
+  font-weight: 700;
+  border-radius: 2px;
+  padding: 0 1px;
   text-decoration: underline;
   text-decoration-style: solid;
-  text-decoration-color: #dc2626;
-  text-decoration-thickness: 2px;
+  text-decoration-color: #b91c1c;
+  text-decoration-thickness: 2.5px;
   text-underline-offset: 2px;
-  background: rgba(254, 202, 202, .35);
 }
 
 .topk-legend {
