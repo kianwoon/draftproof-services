@@ -115,6 +115,86 @@ function renderPlaceholderText(value) {
   });
 }
 
+// Post-rewrite residual: the highest-severity buckets from the re-scan of the FINAL draft.
+// "low" is omitted as noise.
+const RESIDUAL_BUCKETS = ['critical', 'high', 'medium'];
+
+function humanizeTitle(value) {
+  const text = String(value || '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+}
+
+// Predictability / top-k is the intrinsic statistical floor of any LLM-assisted draft: it does NOT
+// drop by reshuffling or formalising words. Everything else (genericness, grounding) is genuinely
+// strengthenable with the user's own real content. Classification keys off scan DATA fields, never
+// off hardcoded prose, so it stays detector-agnostic.
+function isIntrinsicFinding(finding) {
+  const haystack = `${finding?.signal_category || ''} ${finding?.title || ''} ${finding?.category || ''}`.toLowerCase();
+  return /predict|top[\s_-]?k|perplex|burstiness/.test(haystack);
+}
+
+function collectResidualFindings(rewrittenScan) {
+  const buckets = rewrittenScan?.findings;
+  if (!buckets || typeof buckets !== 'object') return [];
+  const out = [];
+  const seen = new Set();
+  RESIDUAL_BUCKETS.forEach((severity) => {
+    const rows = Array.isArray(buckets[severity]) ? buckets[severity] : [];
+    rows.forEach((finding) => {
+      if (!finding || typeof finding !== 'object') return;
+      const passageRaw = String(finding.evidence || '').trim();
+      const id = finding.finding_id || finding.id || `${severity}:${passageRaw.slice(0, 48)}`;
+      if (seen.has(id)) return;
+      seen.add(id);
+      out.push({
+        ...finding,
+        severity,
+        _passageRaw: passageRaw,
+        _passage: normalizeSentence(passageRaw),
+        _intrinsic: isIntrinsicFinding(finding),
+      });
+    });
+  });
+  return out;
+}
+
+// Best-effort inline highlight of residual passages inside the rewritten document. Matches the
+// flagged passage verbatim; if smart quotes / whitespace differ it silently skips that passage
+// (the review cards still carry it, so no information is lost and the render never breaks).
+function renderResidualHighlighted(text, passages) {
+  const source = String(text || '');
+  const spans = (passages || []).filter((p) => p && p.length >= 12);
+  if (!source || !spans.length) return source;
+
+  const ranges = [];
+  spans.forEach((needle) => {
+    const idx = source.indexOf(needle);
+    if (idx !== -1) ranges.push([idx, idx + needle.length]);
+  });
+  if (!ranges.length) return source;
+
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  ranges.forEach(([start, end]) => {
+    const last = merged[merged.length - 1];
+    if (last && start <= last[1]) {
+      last[1] = Math.max(last[1], end);
+    } else {
+      merged.push([start, end]);
+    }
+  });
+
+  const nodes = [];
+  let cursor = 0;
+  merged.forEach(([start, end], i) => {
+    if (start > cursor) nodes.push(<span key={`res-pre-${i}`}>{source.slice(cursor, start)}</span>);
+    nodes.push(<mark key={`res-mark-${i}`} className="rewrite-residual-mark">{source.slice(start, end)}</mark>);
+    cursor = end;
+  });
+  if (cursor < source.length) nodes.push(<span key="res-tail">{source.slice(cursor)}</span>);
+  return nodes;
+}
+
 export default function Rewrite() {
   const { rewriteId } = useParams();
   const { refreshBalance } = useAuth();
@@ -272,6 +352,17 @@ export default function Rewrite() {
   const rewrittenWordCount = countWords(report?.final_text);
   const originalText = report?.original_text || summary.original_text || '';
   const documentDiff = buildSplitDiff(originalText, report?.final_text || '');
+  const rewrittenScan = summary?.detect_scan_rewritten || report?.detect_scan_rewritten || null;
+  const residualFindings = collectResidualFindings(rewrittenScan);
+  // Fixable findings (genericness, grounding) are distinct and actionable -> show each. Intrinsic
+  // predictability/top-k findings all carry the SAME honest message and recur per-sentence (dozens
+  // of identical rows), so they collapse into one card -- repeating them would bury the actionable
+  // ones and read as noise. Inline highlighting marks only the actionable passages; predictability
+  // is document-wide and intrinsic, not a discrete "part" to point at.
+  const fixableFindings = residualFindings.filter((f) => !f._intrinsic);
+  const intrinsicFindings = residualFindings.filter((f) => f._intrinsic);
+  const residualPassages = fixableFindings.map((f) => f._passageRaw).filter(Boolean);
+  const residualCardCount = fixableFindings.length + (intrinsicFindings.length > 0 ? 1 : 0);
 
   return (
     <main className="dash-shell">
@@ -422,7 +513,69 @@ export default function Rewrite() {
               </button>
             </div>
             <div className="rewritten-document-content">
-              {report.final_text}
+              {residualPassages.length
+                ? renderResidualHighlighted(report.final_text, residualPassages)
+                : report.final_text}
+            </div>
+          </section>
+        )}
+
+        {residualCardCount > 0 && (
+          <section className="rewrite-review-section rewrite-residual-section">
+            <div className="rewrite-review-heading">
+              <div>
+                <span className="rewrite-review-kicker">{t('rewritePage.residual.kicker')}</span>
+                <h3>{t('rewritePage.residual.title')}</h3>
+              </div>
+              <span className="rewrite-review-count">
+                {t('rewritePage.residual.count', { count: residualCardCount })}
+              </span>
+            </div>
+            <p className="rewrite-review-copy">{t('rewritePage.residual.copy')}</p>
+            <div className="rewrite-suggestion-grid">
+              {fixableFindings.slice(0, 10).map((item, i) => (
+                <article
+                  className="rewrite-suggestion-card rewrite-residual-card is-fixable"
+                  key={`${item.finding_id || 'residual'}-${i}`}
+                >
+                  <div className="rewrite-suggestion-meta">
+                    <span>{humanizeTitle(item.title || item.signal_category || item.category)}</span>
+                    <span className="rewrite-residual-badge">{t('rewritePage.residual.badgeFixable')}</span>
+                  </div>
+                  {item._passage && (
+                    <div className="rewrite-target-block">
+                      <span>{t('rewritePage.residual.passageLabel')}</span>
+                      <p>{item._passage}</p>
+                    </div>
+                  )}
+                  {item.detail && (
+                    <div className="rewrite-target-block">
+                      <span>{t('rewritePage.residual.whyLabel')}</span>
+                      <p>{item.detail}</p>
+                    </div>
+                  )}
+                  <div className="rewrite-addition-block">
+                    <span>{t('rewritePage.residual.actionLabel')}</span>
+                    <p>{t('rewritePage.residual.actionFixable')}</p>
+                  </div>
+                </article>
+              ))}
+              {intrinsicFindings.length > 0 && (
+                <article className="rewrite-suggestion-card rewrite-residual-card is-intrinsic">
+                  <div className="rewrite-suggestion-meta">
+                    <span>{t('rewritePage.residual.intrinsicTitle')}</span>
+                    <span className="rewrite-residual-badge">{t('rewritePage.residual.badgeIntrinsic')}</span>
+                  </div>
+                  <div className="rewrite-target-block">
+                    <span>{t('rewritePage.residual.passageLabel')}</span>
+                    <p>{t('rewritePage.residual.intrinsicSummary', { count: intrinsicFindings.length })}</p>
+                  </div>
+                  <div className="rewrite-addition-block">
+                    <span>{t('rewritePage.residual.actionLabel')}</span>
+                    <p>{t('rewritePage.residual.actionIntrinsic')}</p>
+                  </div>
+                </article>
+              )}
             </div>
           </section>
         )}

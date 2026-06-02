@@ -116,21 +116,37 @@ def _compact_findings(value: Any) -> dict[str, list[dict[str, Any]]]:
         rows = findings.get(severity)
         if not isinstance(rows, list):
             continue
-        compact[severity] = [
-            _copy_present(
-                _dict(item),
-                (
-                    "finding_id",
-                    "id",
-                    "title",
-                    "category",
-                    "severity",
-                    "confidence",
-                    "score",
-                ),
-            )
-            for item in rows[:20]
-        ]
+        compact[severity] = [_compact_finding(_dict(item)) for item in rows[:20]]
+    return compact
+
+
+def _compact_finding(item: dict[str, Any]) -> dict[str, Any]:
+    """Keep the fields the rewrite report's post-rewrite "review & act" section needs.
+
+    The flagged passage (``evidence``), the factual ``detail``, and ``actionability`` are
+    retained (truncated) so the UI can show users WHICH part of the rewritten draft still
+    carries risk and let them act on it -- not just a bare title. Without this the fields
+    are dropped during compaction (which runs on every real report) and never reach the UI.
+    """
+    compact = _copy_present(
+        item,
+        (
+            "finding_id",
+            "id",
+            "sentence_id",
+            "title",
+            "category",
+            "signal_category",
+            "severity",
+            "confidence",
+            "actionability",
+            "score",
+        ),
+    )
+    for key, limit in (("evidence", 600), ("detail", 400)):
+        text = item.get(key)
+        if isinstance(text, str) and text.strip():
+            compact[key] = text if len(text) <= limit else text[:limit].rstrip() + "..."
     return compact
 
 
