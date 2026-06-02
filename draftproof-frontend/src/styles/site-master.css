@@ -489,9 +489,20 @@ svg { display: block; }
   isolation: isolate;
 }
 
+.signin-trust-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(180deg, rgba(8, 17, 25, .15), rgba(8, 17, 25, .72) 52%, rgba(8, 17, 25, .96)),
+    linear-gradient(90deg, rgba(8, 17, 25, .92), rgba(8, 17, 25, .54) 58%, rgba(8, 17, 25, .9));
+  pointer-events: none;
+}
+
 .signin-trust-panel > :not(.code-texture) {
   position: relative;
-  z-index: 2;
+  z-index: 3;
 }
 
 .signin-trust-panel h1 {
@@ -601,6 +612,12 @@ svg { display: block; }
   }
   .signin-trust-panel {
     min-height: auto;
+  }
+  .signin-trust-panel .code-texture {
+    inset: -8% -42% auto;
+    width: 184%;
+    height: 52%;
+    opacity: .56;
   }
 }
 
@@ -1694,7 +1711,10 @@ td:first-child {
 }
 
 .signin-trust-panel .code-texture {
-  opacity: .82;
+  inset: -6% -18% auto;
+  width: 136%;
+  height: 58%;
+  opacity: .72;
 }
 
 .code-texture-layer text {

@@ -37,7 +37,7 @@ export default function SignIn() {
     <main className="app-page signin-shell">
       <div className="container signin-layout">
         <section className="signin-trust-panel">
-          <CodeTexture id="signinTrust" />
+          <CodeTexture id="signinTrust" preserveAspectRatio="xMidYMid slice" />
           <p className="brand-pill">{t('signin.trustPill')}</p>
           <h1>{t('signin.title')}</h1>
           <p>{t('signin.body')}</p>

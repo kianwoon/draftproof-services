@@ -1,4 +1,4 @@
-export default function CodeTexture({ className = '', id = 'codeTexture' }) {
+export default function CodeTexture({ className = '', id = 'codeTexture', preserveAspectRatio = 'none' }) {
   const gradientId = `${id}Fade`;
   const maskId = `${id}Mask`;
 
@@ -8,7 +8,7 @@ export default function CodeTexture({ className = '', id = 'codeTexture' }) {
       viewBox="0 0 1440 640"
       aria-hidden="true"
       focusable="false"
-      preserveAspectRatio="none"
+      preserveAspectRatio={preserveAspectRatio}
     >
       <defs>
         <linearGradient id={gradientId} x1="0" x2="1" y1="0" y2="0">
