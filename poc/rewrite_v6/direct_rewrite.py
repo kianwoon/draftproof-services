@@ -633,11 +633,10 @@ def run_direct_rewrite_all(
         authorship_evidence=authorship_evidence,
     )
     reviewed = _apply_reviewer(best_doc, gateway, cancellation_check=cancellation_check)
-    # writer -> residual-fix -> reviewer -> SURGICAL top-k (moderate) -> SHOWCASE (annotate) -> done.
-    surgical = _apply_topk_surgical(reviewed, gateway, cancellation_check=cancellation_check)
-    # writer -> residual -> reviewer -> surgical(off) -> GRAMMAR REPAIR -> SHOWCASE(annotate) -> done.
-    repaired = _apply_grammar_repair(surgical, gateway, cancellation_check=cancellation_check)
-    return _apply_showcase(repaired, gateway, cancellation_check=cancellation_check)
+    # writer -> residual -> reviewer -> GRAMMAR REPAIR -> SURGICAL top-k (off by default) -> SHOWCASE.
+    repaired = _apply_grammar_repair(reviewed, gateway, cancellation_check=cancellation_check)
+    surgical = _apply_topk_surgical(repaired, gateway, cancellation_check=cancellation_check)
+    return _apply_showcase(surgical, gateway, cancellation_check=cancellation_check)
 
 
 def _rhythm_risk(text: str) -> float:
