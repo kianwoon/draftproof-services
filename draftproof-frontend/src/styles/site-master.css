@@ -7952,37 +7952,6 @@ td:first-child {
   color: #475569;
 }
 
-.rewrite-residual-legend {
-  margin: .65rem 0 0;
-  font-size: .85rem;
-  line-height: 1.55;
-  color: #64748b;
-}
-
-.rewrite-residual-legend .rewrite-residual-mark {
-  font-weight: 700;
-}
-
-.rewrite-residual-passages {
-  margin: .5rem 0 0;
-  padding-left: 1.1rem;
-  display: grid;
-  gap: .35rem;
-}
-
-.rewrite-residual-passages li {
-  color: #334155;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.rewrite-residual-passages li.rewrite-residual-more {
-  list-style: none;
-  margin-left: -1.1rem;
-  color: #64748b;
-  font-style: italic;
-}
-
 /* Loading */
 .report-loading {
   display: flex;

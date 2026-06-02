@@ -359,21 +359,10 @@ export default function Rewrite() {
   // of identical rows), so they collapse into one card -- repeating them would bury the actionable
   // ones and read as noise. Inline highlighting marks only the actionable passages; predictability
   // is document-wide and intrinsic, not a discrete "part" to point at.
-  // PRECISION RULE: only surface findings anchored to a SPECIFIC passage in the rewritten draft.
-  // A finding is "anchored" if its flagged text appears verbatim in the draft. Document-level scores
-  // (e.g. an overall low-specificity %) carry no single passage -- pointing at "the whole draft" is
-  // not guidance, it just says "rewrite everything", so those are dropped entirely. Every card and
-  // every underline maps to an exact passage the user can act on.
-  const finalText = report?.final_text || '';
-  const isAnchored = (f) => Boolean(f._passageRaw && f._passageRaw.length >= 12 && finalText.includes(f._passageRaw));
-  const anchoredFixable = residualFindings.filter((f) => !f._intrinsic && isAnchored(f));
+  const fixableFindings = residualFindings.filter((f) => !f._intrinsic);
   const intrinsicFindings = residualFindings.filter((f) => f._intrinsic);
-  const residualPassages = anchoredFixable.map((f) => f._passageRaw);
-  // De-duplicated list of the specific predictability passages, so "N passages" is never a mystery.
-  const intrinsicPassages = Array.from(
-    new Set(intrinsicFindings.map((f) => f._passage).filter((p) => p && p.length >= 12)),
-  );
-  const residualCardCount = anchoredFixable.length + (intrinsicPassages.length > 0 ? 1 : 0);
+  const residualPassages = fixableFindings.map((f) => f._passageRaw).filter(Boolean);
+  const residualCardCount = fixableFindings.length + (intrinsicFindings.length > 0 ? 1 : 0);
 
   return (
     <main className="dash-shell">
@@ -528,13 +517,6 @@ export default function Rewrite() {
                 ? renderResidualHighlighted(report.final_text, residualPassages)
                 : report.final_text}
             </div>
-            {residualPassages.length > 0 && (
-              <p className="rewrite-residual-legend">
-                <mark className="rewrite-residual-mark">{t('rewritePage.residual.legendSample')}</mark>
-                {' '}
-                {t('rewritePage.residual.legend')}
-              </p>
-            )}
           </section>
         )}
 
@@ -551,7 +533,7 @@ export default function Rewrite() {
             </div>
             <p className="rewrite-review-copy">{t('rewritePage.residual.copy')}</p>
             <div className="rewrite-suggestion-grid">
-              {anchoredFixable.slice(0, 10).map((item, i) => (
+              {fixableFindings.slice(0, 10).map((item, i) => (
                 <article
                   className="rewrite-suggestion-card rewrite-residual-card is-fixable"
                   key={`${item.finding_id || 'residual'}-${i}`}
@@ -560,10 +542,12 @@ export default function Rewrite() {
                     <span>{humanizeTitle(item.title || item.signal_category || item.category)}</span>
                     <span className="rewrite-residual-badge">{t('rewritePage.residual.badgeFixable')}</span>
                   </div>
-                  <div className="rewrite-target-block">
-                    <span>{t('rewritePage.residual.passageLabel')}</span>
-                    <p>{item._passage}</p>
-                  </div>
+                  {item._passage && (
+                    <div className="rewrite-target-block">
+                      <span>{t('rewritePage.residual.passageLabel')}</span>
+                      <p>{item._passage}</p>
+                    </div>
+                  )}
                   {item.detail && (
                     <div className="rewrite-target-block">
                       <span>{t('rewritePage.residual.whyLabel')}</span>
@@ -576,27 +560,15 @@ export default function Rewrite() {
                   </div>
                 </article>
               ))}
-              {intrinsicPassages.length > 0 && (
+              {intrinsicFindings.length > 0 && (
                 <article className="rewrite-suggestion-card rewrite-residual-card is-intrinsic">
                   <div className="rewrite-suggestion-meta">
                     <span>{t('rewritePage.residual.intrinsicTitle')}</span>
                     <span className="rewrite-residual-badge">{t('rewritePage.residual.badgeIntrinsic')}</span>
                   </div>
                   <div className="rewrite-target-block">
-                    <span>{t('rewritePage.residual.passagesListLabel')}</span>
-                    <p>{t('rewritePage.residual.intrinsicSummary', { count: intrinsicPassages.length })}</p>
-                    {intrinsicPassages.length > 0 && (
-                      <ul className="rewrite-residual-passages">
-                        {intrinsicPassages.slice(0, 6).map((p, i) => (
-                          <li key={`intrinsic-${i}`}>{p}</li>
-                        ))}
-                        {intrinsicPassages.length > 6 && (
-                          <li className="rewrite-residual-more">
-                            {t('rewritePage.residual.morePassages', { count: intrinsicPassages.length - 6 })}
-                          </li>
-                        )}
-                      </ul>
-                    )}
+                    <span>{t('rewritePage.residual.passageLabel')}</span>
+                    <p>{t('rewritePage.residual.intrinsicSummary', { count: intrinsicFindings.length })}</p>
                   </div>
                   <div className="rewrite-addition-block">
                     <span>{t('rewritePage.residual.actionLabel')}</span>
