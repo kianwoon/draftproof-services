@@ -22,10 +22,10 @@ from typing import Any, Callable
 
 
 def showcase_enabled() -> bool:
-    """Feature flag. Default OFF: this teaching layer adds GPT-2 + LLM latency to every rewrite and
-    has no UI yet, so it ships dark. Enable with DRAFTPROOF_V6_PREDICTABILITY_SHOWCASE=1 once the
-    frontend renders it. Annotate-only, so toggling never changes the shipped rewrite."""
-    return os.environ.get("DRAFTPROOF_V6_PREDICTABILITY_SHOWCASE", "0").strip().lower() in {"1", "true", "yes", "on"}
+    """Feature flag, default ON (enabled in production by request). Set
+    DRAFTPROOF_V6_PREDICTABILITY_SHOWCASE=0 to disable. Annotate-only, so toggling never changes the
+    shipped rewrite -- only whether the teaching layer runs (it adds GPT-2 + LLM latency per rewrite)."""
+    return os.environ.get("DRAFTPROOF_V6_PREDICTABILITY_SHOWCASE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _env_int(name: str, default: int) -> int:

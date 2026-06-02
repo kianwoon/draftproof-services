@@ -23,12 +23,12 @@ def _stub(payload: str):
     return _G()
 
 
-def test_showcase_enabled_default_off(monkeypatch):
-    # ships dark (adds latency, no UI yet); explicit opt-in
+def test_showcase_enabled_default_on(monkeypatch):
+    # enabled in production by request; env=0 is the kill switch
     monkeypatch.delenv("DRAFTPROOF_V6_PREDICTABILITY_SHOWCASE", raising=False)
-    assert ps.showcase_enabled() is False
-    monkeypatch.setenv("DRAFTPROOF_V6_PREDICTABILITY_SHOWCASE", "1")
     assert ps.showcase_enabled() is True
+    monkeypatch.setenv("DRAFTPROOF_V6_PREDICTABILITY_SHOWCASE", "0")
+    assert ps.showcase_enabled() is False
 
 
 def test_generate_showcase_keeps_validated_reduction(monkeypatch):
