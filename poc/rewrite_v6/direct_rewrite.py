@@ -521,6 +521,24 @@ def _apply_reviewer(
     return _rebuilt(result.text, scan_text(result.text), trace)
 
 
+def _apply_showcase(doc, gateway, *, cancellation_check: Callable[[], None] | None):
+    """Annotate the reviewed document with predictability TEACHING examples (runs after the QC
+    reviewer). Annotate-only: never touches rewritten_text or final_scan -- it only attaches
+    `predictability_showcase` so the user learns to write more distinctively. On disable / no
+    examples / any failure, the document is returned unchanged (the rewrite is never affected)."""
+    from dataclasses import replace
+    from .predictability_showcase import generate_showcase, showcase_enabled
+    if not showcase_enabled():
+        return doc
+    items = generate_showcase(doc.rewritten_text, gateway=gateway, cancellation_check=cancellation_check)
+    trace = list(doc.pass_trace) + [{
+        "selected_source": "predictability_showcase",
+        "status": "annotated" if items else "no_examples",
+        "examples": len(items),
+    }]
+    return replace(doc, predictability_showcase=(items or None), pass_trace=trace)
+
+
 def run_direct_rewrite_all(
     text: str,
     *,
@@ -572,7 +590,9 @@ def run_direct_rewrite_all(
         cancellation_check=cancellation_check,
         authorship_evidence=authorship_evidence,
     )
-    return _apply_reviewer(best_doc, gateway, cancellation_check=cancellation_check)
+    reviewed = _apply_reviewer(best_doc, gateway, cancellation_check=cancellation_check)
+    # writer -> residual-fix -> reviewer -> SHOWCASE (teaching annotations) -> done.
+    return _apply_showcase(reviewed, gateway, cancellation_check=cancellation_check)
 
 
 def _best_of_n() -> int:

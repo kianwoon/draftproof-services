@@ -93,6 +93,9 @@ class DocumentResult:
     final_text_before_quality_repair: str | None = None
     quality_repair: QualityRepairResult | None = None
     naturalisation_repair: NaturalisationResult | None = None
+    # Teaching layer (annotate-only, runs after the QC reviewer): validated "predictable phrasing ->
+    # more distinctive alternative" examples so the user learns. Never mutates rewritten_text.
+    predictability_showcase: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -104,6 +107,7 @@ class DocumentResult:
             "final_text_before_quality_repair": self.final_text_before_quality_repair,
             "quality_repair": self.quality_repair.to_dict() if self.quality_repair else None,
             "naturalisation_repair": self.naturalisation_repair.to_dict() if self.naturalisation_repair else None,
+            "predictability_showcase": list(self.predictability_showcase) if self.predictability_showcase else None,
         }
 
 
