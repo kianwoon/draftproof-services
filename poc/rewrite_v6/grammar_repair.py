@@ -72,10 +72,10 @@ def _is_grammar_only(original: str, fixed: str) -> bool:
     """Accept a fix ONLY if it changed grammar, not content: it differs from the original, preserves
     the >=4-letter content multiset and all numbers, removes/changes NO short token, and may only
     INSERT articles (a/an/the). Agreement inflections (bring->brings) survive via stemming. This
-    allows the dominant dropped-article fix ('on same topic' -> 'on the same topic') -- which the
-    earlier strict ">=2-letter tokens must be identical" gate wrongly rejected -- while still
-    protecting 2-3 letter content words (a dropped/swapped short content word fails the `removed`
-    check) and rejecting any reword."""
+    allows the dominant dropped-article fix ('on same topic' -> 'on the same topic') -- which a
+    strict ">=2-letter tokens must be identical" gate wrongly rejects -- while still protecting
+    2-3 letter content words (a dropped/swapped short content word fails the `removed` check) and
+    rejecting any reword."""
     f = (fixed or "").strip()
     if not f or f == original.strip() or len(f.split()) < 3:
         return False

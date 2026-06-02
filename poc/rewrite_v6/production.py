@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -21,6 +22,13 @@ except ModuleNotFoundError:
 
 from .pipeline import _planner_model, _writer_model, run_v6_rewrite_all
 from .direct_rewrite import direct_rewrite_enabled, run_direct_rewrite_all
+from .llm_config import (
+    resolve_v6_api_key,
+    resolve_v6_base_url,
+    resolve_v6_model,
+    writer_extra_body,
+    writer_llm_profile,
+)
 
 try:
     from report.authorship_evidence import build_authorship_evidence, preserved_idea_spans, strengthen_anchor_sentences
@@ -32,7 +40,12 @@ try:
 except ImportError:
     from poc.detect.layer3_scoring import estimate_external_detector_likelihood
 from .report_contracts import extract_paragraph_diagnoses, extract_report_signal_contracts, paragraph_diagnoses_context
-from .scan import scan_text_with_report
+from .scan import scan_text, scan_text_with_report
+
+try:
+    from poc.llm.gateway import LLMConfig, LLMGateway
+except ImportError:
+    from llm.gateway import LLMConfig, LLMGateway
 
 
 def run_rewrite_pipeline_v6(
@@ -118,6 +131,50 @@ def run_rewrite_pipeline_v6(
         return value
 
     final_text = document.rewritten_text
+    from poc.predictability.highlight_spans import compute_predictability_highlights
+    from .highlight_topk_repair import apply_highlight_topk_repair, highlight_topk_repair_enabled
+
+    if highlight_topk_repair_enabled():
+        repair_highlights = timed_stage(
+            "predictability_highlight_scan",
+            79,
+            "Checking highlighted top-k spans",
+            lambda: compute_predictability_highlights(final_text),
+        )
+        has_predictability_highlights = (
+            bool(repair_highlights.get("sentences") or repair_highlights.get("words"))
+            if isinstance(repair_highlights, dict) else False
+        )
+        if has_predictability_highlights:
+            repair_gateway = _highlight_repair_gateway(
+                model=resolved_writer_model,
+                api_key=api_key,
+                base_url=base_url,
+                text=final_text,
+                cancellation_check=raise_if_canceled,
+            )
+            repaired_text, highlight_repair = timed_stage(
+                "highlight_topk_repair",
+                79,
+                "Repairing highlighted top-k spans",
+                lambda: apply_highlight_topk_repair(
+                    final_text,
+                    repair_highlights,
+                    gateway=repair_gateway,
+                    cancellation_check=raise_if_canceled,
+                ),
+            )
+            trace = list(document.pass_trace) + [highlight_repair.to_trace()]
+            if highlight_repair.changed:
+                final_text = repaired_text
+                document = replace(
+                    document,
+                    rewritten_text=final_text,
+                    final_scan=scan_text(final_text),
+                    pass_trace=trace,
+                )
+            else:
+                document = replace(document, pass_trace=trace)
     changed = final_text.strip() != original_text.strip()
     cleared = not document.final_scan.findings
     status = "ai_mitigated" if changed and cleared else "partial_candidate_not_strict_safe" if changed else "original_preserved"
@@ -201,8 +258,6 @@ def run_rewrite_pipeline_v6(
     summary["external_detector_estimate"] = _external_estimate_from_scan(rewritten_scan_report)
     # Exact char spans (HIGH top-k sentences + predictable word runs) for the rewritten-document
     # highlight on /rewrite. Never raises -> {} on any failure, so it can't break the rewrite.
-    from poc.predictability.highlight_spans import compute_predictability_highlights
-
     summary["predictability_highlights"] = compute_predictability_highlights(final_text)
 
     result_obj = SimpleNamespace(
@@ -334,6 +389,27 @@ def _scan_report_for_summary(text: str, *, provided: dict[str, Any] | None, fall
     except Exception:
         pass
     return _scan_report_shape(fallback_scan)
+
+
+def _highlight_repair_gateway(
+    *,
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+    text: str,
+    cancellation_check: Callable[[], None] | None,
+) -> LLMGateway:
+    resolved = resolve_v6_model(model) or model
+    return LLMGateway(LLMConfig(
+        model=resolved,
+        api_key=resolve_v6_api_key(api_key),
+        base_url=resolve_v6_base_url(base_url),
+        **writer_llm_profile(resolved, text),
+        extra_body=writer_extra_body(resolved),
+        max_retries=1,
+        timeout=120,
+        cancellation_check=cancellation_check,
+    ))
 
 
 def _v6_runtime_budget_seconds(started_at: float) -> int:
