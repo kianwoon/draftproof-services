@@ -518,6 +518,27 @@ def _apply_reviewer(
     return _rebuilt(result.text, scan_text(result.text), trace)
 
 
+def _apply_grammar_repair(doc, gateway, *, cancellation_check: Callable[[], None] | None):
+    """Final grammar pass: fix ONLY grammar (dropped articles, agreement, telegraphic) without
+    changing content -- the writer/reviewer can leave broken grammar the heuristic gate misses, and
+    the draft is shown to the user, so it must read cleanly. Content-gated; MUTATES rewritten_text (and
+    re-scans) only for content-preserving fixes; on disable/no change/failure returns doc unchanged."""
+    from dataclasses import replace
+    from .grammar_repair import apply_repair, grammar_repair_enabled
+    if not grammar_repair_enabled():
+        return doc
+    new_text, applied = apply_repair(doc.rewritten_text, gateway=gateway, cancellation_check=cancellation_check)
+    trace = list(doc.pass_trace) + [{
+        "selected_source": "grammar_repair",
+        "status": "accepted" if applied else "no_change",
+        "applied": len(applied),
+        "fixes": applied[:12],
+    }]
+    if not applied:
+        return replace(doc, pass_trace=trace)
+    return replace(doc, rewritten_text=new_text, final_scan=scan_text(new_text), pass_trace=trace)
+
+
 def _apply_topk_surgical(doc, gateway, *, cancellation_check: Callable[[], None] | None):
     """MODERATE surgical top-k reduction after the QC reviewer (product-owner directed): rewrite only
     the highest-top-k sentences, gated to stay fluent + faithful, stopping at the ~0.50 target.
@@ -614,7 +635,9 @@ def run_direct_rewrite_all(
     reviewed = _apply_reviewer(best_doc, gateway, cancellation_check=cancellation_check)
     # writer -> residual-fix -> reviewer -> SURGICAL top-k (moderate) -> SHOWCASE (annotate) -> done.
     surgical = _apply_topk_surgical(reviewed, gateway, cancellation_check=cancellation_check)
-    return _apply_showcase(surgical, gateway, cancellation_check=cancellation_check)
+    # writer -> residual -> reviewer -> surgical(off) -> GRAMMAR REPAIR -> SHOWCASE(annotate) -> done.
+    repaired = _apply_grammar_repair(surgical, gateway, cancellation_check=cancellation_check)
+    return _apply_showcase(repaired, gateway, cancellation_check=cancellation_check)
 
 
 def _rhythm_risk(text: str) -> float:
