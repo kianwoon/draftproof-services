@@ -38,6 +38,14 @@ def writer_model() -> str:
     return os.environ.get("DRAFTPROOF_V6_WRITER_MODEL") or DEFAULT_V6_MODEL
 
 
+def full_doc_rewrite_model() -> str | None:
+    return os.environ.get("DRAFTPROOF_V6_FULL_DOC_REWRITE_MODEL") or None
+
+
+def grammar_model() -> str | None:
+    return os.environ.get("DRAFTPROOF_V6_GRAMMAR_MODEL") or None
+
+
 def planner_model() -> str:
     return (
         os.environ.get("DRAFTPROOF_V6_PLANNER_MODEL")
@@ -82,6 +90,57 @@ def selector_gateway(
             **selector_llm_profile(model),
             provider=provider_from_env("SELECTOR", model),
             extra_body=selector_extra_body(model),
+            cancellation_check=cancellation_check,
+        )
+    )
+
+
+def full_doc_rewrite_gateway(
+    *,
+    api_key: str | None,
+    base_url: str | None,
+    text: str = "",
+    cancellation_check: Callable[[], None] | None = None,
+) -> LLMGateway | None:
+    model = full_doc_rewrite_model()
+    if not model:
+        return None
+    return LLMGateway(
+        LLMConfig(
+            model=model,
+            api_key=_first_env("DRAFTPROOF_V6_FULL_DOC_REWRITE_API_KEY", "OPENROUTER_API_KEY") or api_key,
+            base_url=_first_env("DRAFTPROOF_V6_FULL_DOC_REWRITE_BASE_URL", "LLM_BASE_URL") or base_url,
+            **full_doc_rewrite_llm_profile(model, text),
+            provider=provider_from_env("FULL_DOC_REWRITE", model),
+            extra_body=full_doc_rewrite_extra_body(model),
+            app_label="FullDocRewrite",
+            max_retries=1,
+            timeout=_int_env("DRAFTPROOF_V6_FULL_DOC_REWRITE_TIMEOUT", 180),
+            cancellation_check=cancellation_check,
+        )
+    )
+
+
+def grammar_gateway(
+    *,
+    api_key: str | None,
+    base_url: str | None,
+    cancellation_check: Callable[[], None] | None = None,
+) -> LLMGateway | None:
+    model = grammar_model()
+    if not model:
+        return None
+    return LLMGateway(
+        LLMConfig(
+            model=model,
+            api_key=_first_env("DRAFTPROOF_V6_GRAMMAR_API_KEY", "OPENROUTER_API_KEY") or api_key,
+            base_url=_first_env("DRAFTPROOF_V6_GRAMMAR_BASE_URL", "LLM_BASE_URL") or base_url,
+            **grammar_llm_profile(model),
+            provider=provider_from_env("GRAMMAR", model),
+            extra_body=grammar_extra_body(model),
+            app_label="GrammarRepair",
+            max_retries=1,
+            timeout=_int_env("DRAFTPROOF_V6_GRAMMAR_TIMEOUT", 120),
             cancellation_check=cancellation_check,
         )
     )
@@ -179,6 +238,24 @@ def writer_extra_body(model: str) -> dict[str, Any] | None:
     return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 64}, "include_reasoning": False}
 
 
+def full_doc_rewrite_extra_body(model: str) -> dict[str, Any] | None:
+    normalized = str(model or "").casefold()
+    if "gpt-oss" in normalized:
+        return _gpt_oss_reasoning_extra("full_doc_rewrite")
+    if "thinking" in normalized:
+        return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 64}, "include_reasoning": False}
+    return {"reasoning": {"enabled": False}, "include_reasoning": False} if not using_cerebras_direct() else None
+
+
+def grammar_extra_body(model: str) -> dict[str, Any] | None:
+    normalized = str(model or "").casefold()
+    if "gpt-oss" in normalized:
+        return _gpt_oss_reasoning_extra("grammar")
+    if "thinking" in normalized:
+        return {"reasoning": {"enabled": True, "exclude": True, "max_tokens": 64}, "include_reasoning": False}
+    return {"reasoning": {"enabled": False}, "include_reasoning": False} if not using_cerebras_direct() else None
+
+
 def planner_llm_profile(model: str) -> dict[str, Any]:
     if "gpt-oss" in str(model or "").casefold():
         profile = {"max_tokens": None, "temperature": 0.2, "top_p": 0.9, "top_k": 0, "presence_penalty": 0, "frequency_penalty": 0, "repetition_penalty": 1.0}
@@ -208,6 +285,24 @@ def writer_llm_profile(model: str, text: str = "") -> dict[str, Any]:
             "frequency_penalty": 0.1 if source_sensitive else 0.15,
             "repetition_penalty": 1.03 if source_sensitive else 1.05,
         }
+    return _as_deterministic(profile) if deterministic_mode() else profile
+
+
+def full_doc_rewrite_llm_profile(model: str, text: str = "") -> dict[str, Any]:
+    if "gpt-oss" in str(model or "").casefold():
+        profile = writer_llm_profile(model, text)
+        profile["temperature"] = min(float(profile.get("temperature") or 0.45), 0.45)
+        profile["top_p"] = min(float(profile.get("top_p") or 0.9), 0.9)
+    else:
+        profile = {"max_tokens": None, "temperature": 0.2, "top_p": 0.85}
+    return _as_deterministic(profile) if deterministic_mode() else profile
+
+
+def grammar_llm_profile(model: str) -> dict[str, Any]:
+    if "gpt-oss" in str(model or "").casefold():
+        profile = {"max_tokens": None, "temperature": 0.1, "top_p": 0.9, "top_k": 0}
+    else:
+        profile = {"max_tokens": None, "temperature": 0.1, "top_p": 0.9}
     return _as_deterministic(profile) if deterministic_mode() else profile
 
 
@@ -278,3 +373,13 @@ def _bool_env(name: str) -> bool | None:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return None
+
+
+def _int_env(name: str, default: int) -> int:
+    value = _first_env(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default

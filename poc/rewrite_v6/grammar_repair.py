@@ -60,6 +60,10 @@ def _semantic_token_key(text: str) -> Counter:
     return Counter(_stem(w) for w in re.findall(r"[A-Za-z]{2,}", str(text or "")))
 
 
+def _surface_token_key(text: str) -> Counter:
+    return Counter(w.lower() for w in re.findall(r"[A-Za-z]+", str(text or "")))
+
+
 def _numbers(text: str) -> Counter:
     return Counter(re.findall(r"\d[\d,\.]*%?", text))
 
@@ -78,6 +82,8 @@ def _is_grammar_only(original: str, fixed: str) -> bool:
     rejecting any reword."""
     f = (fixed or "").strip()
     if not f or f == original.strip() or len(f.split()) < 3:
+        return False
+    if _surface_token_key(original) == _surface_token_key(f):
         return False
     if _content_key(original) != _content_key(f):
         return False

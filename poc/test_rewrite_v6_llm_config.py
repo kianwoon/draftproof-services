@@ -4,6 +4,8 @@ import json
 
 from poc.rewrite_v6.llm_config import (
     cerebras_model_name,
+    grammar_gateway,
+    grammar_model,
     planner_gateway,
     planner_extra_body,
     planner_llm_profile,
@@ -52,12 +54,14 @@ def test_v6_roles_default_to_gpt_oss_when_env_is_absent(monkeypatch):
         "DRAFTPROOF_PLANNER_MODEL",
         "DRAFTPROOF_REWRITE_V5_PLANNER_MODEL",
         "DRAFTPROOF_V6_WRITER_MODEL",
+        "DRAFTPROOF_V6_GRAMMAR_MODEL",
         "LLM_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
 
     assert planner_model() == "openai/gpt-oss-120b"
     assert writer_model() == "openai/gpt-oss-120b"
+    assert grammar_model() is None
     assert _grammer_model() == "openai/gpt-oss-120b"
 
 
@@ -84,6 +88,20 @@ def test_v6_cerebras_direct_maps_planner_and_selector_gateways(monkeypatch):
     assert planner.base_url == "https://api.cerebras.ai/v1"
     assert selector.model == "gpt-oss-120b"
     assert selector.base_url == "https://api.cerebras.ai/v1"
+
+
+def test_v6_grammar_gateway_uses_role_specific_provider_config(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_CEREBRAS_DIRECT", "1")
+    monkeypatch.setenv("DRAFTPROOF_V6_GRAMMAR_MODEL", "provider/grammar-model")
+    monkeypatch.setenv("DRAFTPROOF_V6_GRAMMAR_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("DRAFTPROOF_V6_GRAMMAR_API_KEY", "grammar-key")
+
+    gateway = grammar_gateway(api_key="writer-key", base_url="https://api.cerebras.ai/v1")
+
+    assert gateway is not None
+    assert gateway.model == "provider/grammar-model"
+    assert gateway.base_url == "https://openrouter.ai/api/v1"
+    assert gateway.api_key == "grammar-key"
 
 
 def test_v6_gpt_oss_writer_uses_source_sensitive_profile_for_citations():

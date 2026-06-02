@@ -70,6 +70,13 @@ def test_gate_rejects_identical():
     assert gr._is_grammar_only(BROKEN, BROKEN) is False             # nothing changed
 
 
+def test_gate_rejects_punctuation_only_polish():
+    assert gr._is_grammar_only("Each semester my class checks drafts.",
+                               "Each semester, my class checks drafts.") is False
+    assert gr._is_grammar_only("The thirty‑page packet arrived today.",
+                               "The thirty-page packet arrived today.") is False
+
+
 def test_apply_repair_splices_only_grammar_fix():
     clean = "Students improve water quality through careful testing."
     text = BROKEN + " " + clean
@@ -99,6 +106,7 @@ def test_apply_repair_bad_json_fails_open():
 
 # --- wiring: mutates + re-scans + traces ---
 from poc.rewrite_v6 import direct_rewrite as dr
+from poc.rewrite_v6 import llm_config
 from poc.rewrite_v6.pipeline import DocumentResult
 from poc.rewrite_v6.scan import scan_text
 
@@ -113,3 +121,18 @@ def test_apply_grammar_repair_mutates_and_rescans():
     assert "prototype a water filter" in out.rewritten_text
     assert out.final_scan.source_text == out.rewritten_text
     assert any(r.get("selected_source") == "grammar_repair" and r.get("applied") == 1 for r in out.pass_trace)
+
+
+def test_apply_grammar_repair_uses_role_gateway_when_configured(monkeypatch):
+    clean = "Students improve water quality through careful testing every week."
+    txt = BROKEN + " " + clean
+    doc = DocumentResult(initial_scan=scan_text(txt), final_scan=scan_text(txt),
+                         rewritten_text=txt, passes=[], pass_trace=[])
+    fallback = _stub(json.dumps({"fixed": [{"i": 0, "text": REWORDED}]}))
+    role_gateway = _stub(json.dumps({"fixed": [{"i": 0, "text": FIXED}, {"i": 1, "text": clean}]}))
+    monkeypatch.setattr(llm_config, "grammar_gateway", lambda **_kwargs: role_gateway)
+
+    out = dr._apply_grammar_repair(doc, fallback, api_key=None, base_url=None, cancellation_check=None)
+
+    assert "prototype a water filter" in out.rewritten_text
+    assert REWORDED not in out.rewritten_text

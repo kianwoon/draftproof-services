@@ -518,16 +518,29 @@ def _apply_reviewer(
     return _rebuilt(result.text, scan_text(result.text), trace)
 
 
-def _apply_grammar_repair(doc, gateway, *, cancellation_check: Callable[[], None] | None):
+def _apply_grammar_repair(
+    doc,
+    gateway,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    cancellation_check: Callable[[], None] | None,
+):
     """Final grammar pass: fix ONLY grammar (dropped articles, agreement, telegraphic) without
     changing content -- the writer/reviewer can leave broken grammar the heuristic gate misses, and
     the draft is shown to the user, so it must read cleanly. Content-gated; MUTATES rewritten_text (and
     re-scans) only for content-preserving fixes; on disable/no change/failure returns doc unchanged."""
     from dataclasses import replace
     from .grammar_repair import apply_repair, grammar_repair_enabled
+    from .llm_config import grammar_gateway
     if not grammar_repair_enabled():
         return doc
-    new_text, applied = apply_repair(doc.rewritten_text, gateway=gateway, cancellation_check=cancellation_check)
+    repair_gateway = grammar_gateway(
+        api_key=api_key,
+        base_url=base_url,
+        cancellation_check=cancellation_check,
+    ) or gateway
+    new_text, applied = apply_repair(doc.rewritten_text, gateway=repair_gateway, cancellation_check=cancellation_check)
     trace = list(doc.pass_trace) + [{
         "selected_source": "grammar_repair",
         "status": "accepted" if applied else "no_change",
@@ -535,6 +548,37 @@ def _apply_grammar_repair(doc, gateway, *, cancellation_check: Callable[[], None
         "fixes": applied[:12],
     }]
     if not applied:
+        return replace(doc, pass_trace=trace)
+    return replace(doc, rewritten_text=new_text, final_scan=scan_text(new_text), pass_trace=trace)
+
+
+def _apply_full_doc_rewrite(
+    doc,
+    *,
+    api_key: str | None,
+    base_url: str | None,
+    cancellation_check: Callable[[], None] | None,
+):
+    """Optional post-grammar full-document candidate. The model proposes; scorer gates accept."""
+    from dataclasses import replace
+    from .full_doc_rewrite import apply_full_doc_rewrite, full_doc_rewrite_enabled
+    from .llm_config import full_doc_rewrite_gateway
+
+    if not full_doc_rewrite_enabled():
+        return doc
+    gateway = full_doc_rewrite_gateway(
+        api_key=api_key,
+        base_url=base_url,
+        text=doc.rewritten_text,
+        cancellation_check=cancellation_check,
+    )
+    new_text, result = apply_full_doc_rewrite(
+        doc.rewritten_text,
+        gateway=gateway,
+        cancellation_check=cancellation_check,
+    )
+    trace = list(doc.pass_trace) + [result.to_trace()]
+    if not result.changed:
         return replace(doc, pass_trace=trace)
     return replace(doc, rewritten_text=new_text, final_scan=scan_text(new_text), pass_trace=trace)
 
@@ -612,9 +656,22 @@ def run_direct_rewrite_all(
         authorship_evidence=authorship_evidence,
     )
     reviewed = _apply_reviewer(best_doc, gateway, cancellation_check=cancellation_check)
-    # writer -> residual-fix -> reviewer -> GRAMMAR REPAIR -> SHOWCASE (annotate) -> done.
-    repaired = _apply_grammar_repair(reviewed, gateway, cancellation_check=cancellation_check)
-    return _apply_showcase(repaired, gateway, cancellation_check=cancellation_check)
+    # writer -> residual-fix -> reviewer -> GRAMMAR REPAIR -> optional full-doc candidate
+    # -> SHOWCASE (annotate) -> done.
+    repaired = _apply_grammar_repair(
+        reviewed,
+        gateway,
+        api_key=api_key,
+        base_url=base_url,
+        cancellation_check=cancellation_check,
+    )
+    full_doc_rewritten = _apply_full_doc_rewrite(
+        repaired,
+        api_key=api_key,
+        base_url=base_url,
+        cancellation_check=cancellation_check,
+    )
+    return _apply_showcase(full_doc_rewritten, gateway, cancellation_check=cancellation_check)
 
 
 def _rhythm_risk(text: str) -> float:
