@@ -903,27 +903,6 @@ export const resources = {
         downloadDetectJson: 'Download Detect Scan JSON',
         downloadDebugLog: 'Download Rewrite Debug Log',
         copyCommandFailed: 'Copy command failed',
-        // allow-hardcode: i18n UI translation strings (human-facing copy for the post-rewrite
-        // review section), not a detect/scoring/matching list. All logic keys off scan DATA fields
-        // (actionability / signal_category), never off these phrases.
-        residual: {
-          kicker: 'After the rewrite',
-          title: 'What still needs your eyes',
-          copy: 'This rewrite is a draft to learn from — not a finished, detector-clean submission. The passages below still carry AI-pattern risk after rewriting. We cannot remove this for you by reshuffling words; only your own real, specific content can. Read each one and replace it with the genuine detail only you have.',
-          count_one: '{{count}} passage to review',
-          count_other: '{{count}} passages to review',
-          passageLabel: 'Flagged passage in the rewritten draft',
-          whyLabel: 'Why it is still flagged',
-          actionLabel: 'What only you can do',
-          actionFixable: 'Replace this with a specific, lived detail only you have — a real number, a real moment from your own experience, or a real source you actually used. Generic phrasing is what gets flagged; your real specifics break the pattern.',
-          actionIntrinsic: 'This is the statistical predictability that comes with any AI-assisted draft. It does NOT drop by swapping in fancier or more formal words — that reads even more like AI. It only changes when the wording becomes genuinely yours. Be aware of it and rewrite this passage in your own voice.',
-          badgeIntrinsic: 'Intrinsic to AI drafting',
-          badgeFixable: 'You can strengthen this',
-          intrinsicTitle: 'Statistical predictability (top-k)',
-          intrinsicSummary_one: '{{count}} passage in the rewritten draft reads as statistically predictable — the inherent signal of LLM-assisted text.',
-          intrinsicSummary_other: '{{count}} passages in the rewritten draft read as statistically predictable — the inherent signal of LLM-assisted text.',
-          none: 'No residual high-risk passages were detected in the rewritten draft. Even so, review the full draft against your own evidence before using or submitting it.',
-        },
         outcomes: {
           completed: 'completed',
           ai_mitigated: 'safe partial mitigation applied',
@@ -1986,25 +1965,6 @@ export const resources = {
         downloadDetectJson: '下载检测扫描 JSON',
         downloadDebugLog: '下载改写调试日志',
         copyCommandFailed: '复制命令失败',
-        // allow-hardcode: i18n UI translation strings (human-facing copy), not a detect/scoring list.
-        residual: {
-          kicker: '改写之后',
-          title: '仍需你亲自把关的部分',
-          copy: '这份改写只是用于学习的草稿——并不是可直接提交、已规避检测的成品。下列段落在改写后仍带有 AI 写作特征的风险。我们无法靠替换词语替你消除它；只有你自己真实、具体的内容才能做到。请逐条阅读，并用只有你才拥有的真实细节去替换。',
-          count_one: '{{count}} 处待复核',
-          count_other: '{{count}} 处待复核',
-          passageLabel: '改写稿中被标记的段落',
-          whyLabel: '为何仍被标记',
-          actionLabel: '只有你能做的事',
-          actionFixable: '用只有你才有的具体、亲历的细节替换它——真实的数字、你自己经历中的真实时刻，或你确实用过的真实出处。被标记的是泛泛而谈的措辞；你的真实细节才能打破这种模式。',
-          actionIntrinsic: '这是任何 AI 辅助草稿都会带有的统计可预测性。它不会因为换上更花哨或更正式的词语而下降——那样反而更像 AI。只有当措辞真正成为你自己的表达时它才会改变。请意识到这一点，并用你自己的语气重写这一段。',
-          badgeIntrinsic: 'AI 写作固有特征',
-          badgeFixable: '你可以加强',
-          intrinsicTitle: '统计可预测性（top-k）',
-          intrinsicSummary_one: '改写稿中有 {{count}} 处读起来在统计上可预测——这是 LLM 辅助文本固有的特征信号。',
-          intrinsicSummary_other: '改写稿中有 {{count}} 处读起来在统计上可预测——这是 LLM 辅助文本固有的特征信号。',
-          none: '改写稿中未检测到仍属高风险的段落。即便如此，使用或提交前仍请对照你自己的依据复核全文。',
-        },
         outcomes: {
           completed: '已完成',
           ai_mitigated: '已应用安全部分缓解',
