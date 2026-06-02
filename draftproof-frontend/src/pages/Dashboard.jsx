@@ -123,13 +123,17 @@ export default function Dashboard() {
 
             {reportStep && (
               <div className="dash-report-gate">
-                <span className="dash-report-gate-line" aria-hidden="true" />
                 <div className="dash-report-node">
+                  <div className="dash-report-flow-label dash-report-flow-label-top">
+                    {t('dashboard.scanCreatesReport')}
+                  </div>
                   <span>{t('dashboard.reportGateLabel')}</span>
                   <strong>{reportStep.title}</strong>
                   <p>{reportStep.body}</p>
+                  <div className="dash-report-flow-label dash-report-flow-label-bottom">
+                    {t('dashboard.rewriteStartsFromReport')}
+                  </div>
                 </div>
-                <span className="dash-report-gate-line" aria-hidden="true" />
               </div>
             )}
 

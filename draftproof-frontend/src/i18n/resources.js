@@ -469,6 +469,8 @@ export const resources = {
         rewriteWorkflowTitle: 'Turn weak spots into a grounded draft',
         reportGateLabel: 'Report',
         unlockAfterReport: 'Unlocks after report',
+        scanCreatesReport: 'Scan creates this report',
+        rewriteStartsFromReport: 'Rewrite starts from this report',
         openReports: 'Open reports',
         steps: [
           { title: 'Paste your draft', body: 'Drop in the text you want to check before you submit.' },
@@ -1547,6 +1549,8 @@ export const resources = {
         rewriteWorkflowTitle: '把薄弱处改成有依据的草稿',
         reportGateLabel: '报告',
         unlockAfterReport: '报告完成后解锁',
+        scanCreatesReport: '扫描会生成这份报告',
+        rewriteStartsFromReport: '改写从这份报告开始',
         openReports: '打开报告',
         steps: [
           { title: '粘贴草稿', body: '把提交前想检查的文字放进扫描页面。' },
