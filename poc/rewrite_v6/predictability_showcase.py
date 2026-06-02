@@ -207,12 +207,23 @@ def _is_teachable(item: ShowcaseItem) -> bool:
         return False
     if _has_broken_grammar(s):
         return False
-    return item.reduction >= _MIN_REDUCTION
+    return item.reduction >= _min_reduction()
 
 
-# Minimum measured predictability drop (fraction of content words leaving top-k) for an example to be
-# worth showing. 0.05 = at least a 5-percentage-point reduction. Tune to taste.
-_MIN_REDUCTION = 0.05
+def _min_reduction() -> float:
+    """Minimum measured predictability drop for an example to be shown (default 0.05 = 5 points).
+    Env-tunable (DRAFTPROOF_V6_SHOWCASE_MIN_REDUCTION) so example frequency can be dialed without a
+    redeploy: a cleaner rewrite yields fewer validated lessons, so lower this to surface more -- at
+    the cost of weaker lessons. Placement is (a): the showcase runs on the post-reviewer rewrite."""
+    raw = os.environ.get("DRAFTPROOF_V6_SHOWCASE_MIN_REDUCTION", "").strip()
+    if raw:
+        try:
+            value = float(raw)
+            if value >= 0:
+                return value
+        except ValueError:
+            pass
+    return 0.05
 
 
 def generate_showcase(
