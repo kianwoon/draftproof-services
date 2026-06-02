@@ -115,6 +115,46 @@ function renderPlaceholderText(value) {
   });
 }
 
+function sanitizeSpans(spans, length) {
+  return (Array.isArray(spans) ? spans : [])
+    .map((s) => (Array.isArray(s) ? [Number(s[0]), Number(s[1])] : null))
+    .filter((s) => s && Number.isInteger(s[0]) && Number.isInteger(s[1]) && s[0] >= 0 && s[1] <= length && s[0] < s[1]);
+}
+
+// Render `text` with two exact, offset-based highlight layers: HIGH top-k sentences (shaded)
+// and predictable word runs (underlined). Spans are [start, end] char ranges from the scanner;
+// overlapping layers compose (a word run inside a HIGH sentence gets both classes). Pure offset
+// segmentation -- no string matching -- so what is marked is exactly what the scanner measured.
+function renderTopkHighlights(text, sentenceSpans, wordSpans) {
+  const source = String(text || '');
+  const n = source.length;
+  const sents = sanitizeSpans(sentenceSpans, n);
+  const words = sanitizeSpans(wordSpans, n);
+  if (!sents.length && !words.length) return source;
+
+  const cuts = new Set([0, n]);
+  [...sents, ...words].forEach(([s, e]) => { cuts.add(s); cuts.add(e); });
+  const points = Array.from(cuts).filter((p) => p >= 0 && p <= n).sort((a, b) => a - b);
+  const covers = (spans, a, b) => spans.some(([s, e]) => s <= a && e >= b);
+
+  const nodes = [];
+  for (let k = 0; k < points.length - 1; k += 1) {
+    const a = points[k];
+    const b = points[k + 1];
+    if (a >= b) continue;
+    const seg = source.slice(a, b);
+    const inSentence = covers(sents, a, b);
+    const inWord = covers(words, a, b);
+    if (!inSentence && !inWord) {
+      nodes.push(<span key={`tk-${a}`}>{seg}</span>);
+    } else {
+      const cls = `topk-mark${inSentence ? ' is-sentence' : ''}${inWord ? ' is-word' : ''}`;
+      nodes.push(<mark key={`tk-${a}`} className={cls}>{seg}</mark>);
+    }
+  }
+  return nodes;
+}
+
 export default function Rewrite() {
   const { rewriteId } = useParams();
   const { refreshBalance } = useAuth();
@@ -272,6 +312,11 @@ export default function Rewrite() {
   const rewrittenWordCount = countWords(report?.final_text);
   const originalText = report?.original_text || summary.original_text || '';
   const documentDiff = buildSplitDiff(originalText, report?.final_text || '');
+  // Exact top-k highlight spans for the rewritten document (HIGH sentences + predictable word runs).
+  const topkHighlights = summary?.predictability_highlights || report?.predictability_highlights || null;
+  const topkSentenceSpans = topkHighlights?.sentences || [];
+  const topkWordSpans = topkHighlights?.words || [];
+  const hasTopkHighlights = (topkSentenceSpans.length || topkWordSpans.length) && report?.final_text;
 
   return (
     <main className="dash-shell">
@@ -421,8 +466,17 @@ export default function Rewrite() {
                 {copyStatus === 'copied' ? t('rewritePage.copied') : copyStatus === 'error' ? t('rewritePage.copyFailed') : t('rewritePage.copy')}
               </button>
             </div>
+            {hasTopkHighlights ? (
+              <p className="topk-legend">
+                <mark className="topk-mark is-sentence">{t('rewritePage.topk.legendSentence')}</mark>
+                <mark className="topk-mark is-word">{t('rewritePage.topk.legendWord')}</mark>
+                <span>{t('rewritePage.topk.legendNote')}</span>
+              </p>
+            ) : null}
             <div className="rewritten-document-content">
-              {report.final_text}
+              {hasTopkHighlights
+                ? renderTopkHighlights(report.final_text, topkSentenceSpans, topkWordSpans)
+                : report.final_text}
             </div>
           </section>
         )}

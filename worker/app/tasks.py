@@ -624,6 +624,7 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         "original_scores",
         "attempted_scores",
         "final_scores",
+        "predictability_highlights",
     )
     compact_summary = {}
     for key in compact_summary_keys:
@@ -635,6 +636,11 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
             compact_summary[key] = _compact_candidate_generation_status(summary.get(key))
         elif key in {"detect_scan_original_saved", "detect_scan_original", "detect_scan_rewritten"}:
             compact_summary[key] = compact_rewrite_scan_summary(summary.get(key))
+        elif key == "predictability_highlights":
+            # Exact [start, end] char spans for the rewritten-doc highlight. Copy verbatim:
+            # the generic compactor truncates inner lists to 8 and injects markers, which would
+            # corrupt the offsets. The helper already caps span counts, so this stays bounded.
+            compact_summary[key] = summary.get(key)
         else:
             compact_summary[key] = _compact_debug_value(summary.get(key))
     compact_payload = {

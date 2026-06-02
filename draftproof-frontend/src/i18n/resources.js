@@ -903,6 +903,14 @@ export const resources = {
         downloadDetectJson: 'Download Detect Scan JSON',
         downloadDebugLog: 'Download Rewrite Debug Log',
         copyCommandFailed: 'Copy command failed',
+        // allow-hardcode: i18n UI translation strings (labels for the top-k highlight legend), not a
+        // detect/scoring/matching list. Highlighting is driven by exact char-offset spans from the
+        // scanner, never by these phrases.
+        topk: {
+          legendSentence: 'HIGH top-k sentence',
+          legendWord: 'predictable words',
+          legendNote: 'Shaded sentences score HIGH for top-k predictability; underlined runs are the predictable (top-10) words. This is the intrinsic AI-text signal — a rewrite does not remove it; only your own wording does.',
+        },
         outcomes: {
           completed: 'completed',
           ai_mitigated: 'safe partial mitigation applied',
@@ -1965,6 +1973,12 @@ export const resources = {
         downloadDetectJson: '下载检测扫描 JSON',
         downloadDebugLog: '下载改写调试日志',
         copyCommandFailed: '复制命令失败',
+        // allow-hardcode: i18n UI translation strings (top-k highlight legend labels), not a detect list.
+        topk: {
+          legendSentence: 'top-k 高可预测句',
+          legendWord: '可预测词',
+          legendNote: '阴影句子的 top-k 可预测性为「高」；带下划线的连续片段是可预测（top-10）的词。这是 AI 文本固有的信号——改写无法消除它，只有你自己的措辞才能改变。',
+        },
         outcomes: {
           completed: '已完成',
           ai_mitigated: '已应用安全部分缓解',

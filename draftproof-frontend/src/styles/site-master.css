@@ -7917,6 +7917,51 @@ td:first-child {
   font-weight: 750;
 }
 
+/* Top-k predictability highlight on the rewritten document (two exact, offset-based layers) */
+.topk-mark {
+  background: transparent;
+  color: inherit;
+}
+
+/* HIGH top-k sentence: shaded background */
+.topk-mark.is-sentence {
+  background: #fee2e2;
+}
+
+/* predictable (top-10) word runs: dotted underline */
+.topk-mark.is-word {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: #ef4444;
+  text-underline-offset: 3px;
+}
+
+.topk-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem .75rem;
+  margin: 0 0 .75rem;
+  font-size: .82rem;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.topk-legend .topk-mark {
+  padding: .05rem .35rem;
+  border-radius: 4px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.topk-legend .topk-mark.is-word {
+  background: transparent;
+}
+
+.topk-legend span {
+  flex: 1 1 16rem;
+}
+
 /* Loading */
 .report-loading {
   display: flex;

@@ -199,6 +199,11 @@ def run_rewrite_pipeline_v6(
     authorship_evidence["preserved_ideas"] = preserved_idea_spans(original_text, final_text)
     summary["authorship_evidence"] = authorship_evidence
     summary["external_detector_estimate"] = _external_estimate_from_scan(rewritten_scan_report)
+    # Exact char spans (HIGH top-k sentences + predictable word runs) for the rewritten-document
+    # highlight on /rewrite. Never raises -> {} on any failure, so it can't break the rewrite.
+    from poc.predictability.highlight_spans import compute_predictability_highlights
+
+    summary["predictability_highlights"] = compute_predictability_highlights(final_text)
 
     result_obj = SimpleNamespace(
         summary=summary,
