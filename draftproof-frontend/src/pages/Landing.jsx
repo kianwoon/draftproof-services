@@ -18,6 +18,9 @@ export default function Landing() {
   const reportValueCards = t('landing.reportValueCards', { returnObjects: true });
   const humanWrittenSignals = t('landing.humanWrittenSignals', { returnObjects: true });
   const humanizerSignals = t('landing.humanizerSignals', { returnObjects: true });
+  const heroTitle = t('landing.heroTitle');
+  const heroTitleHighlight = t('landing.heroTitleHighlight');
+  const [heroTitleBefore, heroTitleAfter = ''] = heroTitle.split(heroTitleHighlight);
 
   return (
     <main className="landing-page">
@@ -27,7 +30,7 @@ export default function Landing() {
           <div className="hero-copy">
             <p className="brand-pill">{t('landing.heroPill')}</p>
             <h1>
-              {t('landing.heroTitle').replace(t('landing.heroTitleHighlight'), '')}<span>{t('landing.heroTitleHighlight')}</span>
+              {heroTitleBefore}<span>{heroTitleHighlight}</span>{heroTitleAfter}
             </h1>
             <p className="lead">{t('landing.heroLead')}</p>
 
