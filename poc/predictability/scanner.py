@@ -27,10 +27,24 @@ GENERIC_PHRASES = get_generic_phrases()
 
 SCANNER_VERSION = "vectorized-gpt2-v2"
 
-# Preloaded model cache — set by worker entrypoint to avoid re-loading on first scan
+# Preloaded model cache — set by the worker entrypoint preload AND backfilled by
+# the first lazy scanner load, so repeated PredictabilityScanner construction in a
+# worker child reuses one in-memory model instead of reloading it from disk.
 _PRELOADED_MODEL = None
 _PRELOADED_TOKENIZER = None
 _PRELOADED_MODEL_NAME = None
+_PRELOAD_CACHE_LOCK = threading.RLock()
+
+
+def _cache_predictability_model(model_name, tokenizer, model) -> None:
+    """Populate the process-level model cache once (first writer wins)."""
+    global _PRELOADED_MODEL, _PRELOADED_TOKENIZER, _PRELOADED_MODEL_NAME
+    with _PRELOAD_CACHE_LOCK:
+        if _PRELOADED_MODEL is None:
+            _PRELOADED_MODEL = model
+            _PRELOADED_TOKENIZER = tokenizer
+            _PRELOADED_MODEL_NAME = model_name
+
 
 _SENTENCE_CACHE_LOCK = threading.RLock()
 _SENTENCE_CACHE: "OrderedDict[str, SentenceResult]" = OrderedDict()
@@ -145,6 +159,16 @@ class PredictabilityScanner:
                 self.model = AutoModelForCausalLM.from_pretrained(model_name)
             self.model.to(self.device)
             self.model.eval()
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            # Backfill the process-level cache so the first lazy load warms it for
+            # every later scanner in this worker child. Without this, each re-scan
+            # (the rewrite pipeline re-scans many times per job) reloads the model
+            # from disk -- the repeated "no preload cache found" loads. The explicit
+            # entrypoint preload then becomes a pure latency optimization, not a
+            # correctness requirement. First load for a given name wins; a different
+            # model_name later still loads fresh (single-model is the norm).
+            _cache_predictability_model(model_name, self.tokenizer, self.model)
 
         logger.info(
             "Scanner ready: version=%s model=%s device=%s params=%s",
