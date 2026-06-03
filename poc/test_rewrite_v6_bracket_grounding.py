@@ -55,6 +55,19 @@ def test_improved_is_clean_text_with_green_span(monkeypatch):
         assert 0 <= s["start"] < s["end"] <= len(out)
 
 
+def test_qwen_failure_falls_back_to_amber_kept(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_BRACKET_GROUNDING", "1")
+
+    class _BoomGateway:
+        def chat(self, *a, **k):
+            raise RuntimeError("simulated qwen timeout in production")
+
+    out, spans = bg.apply_bracket_grounding(TEXT, gateway=_BoomGateway())
+    # qwen failed -> do NOT vanish; fall back to amber-kept spans on the generic sentences
+    assert spans and all(s["kind"] == "kept" for s in spans)
+    assert "[" not in out
+
+
 def test_all_kept_when_model_declines(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_V6_BRACKET_GROUNDING", "1")
     gw = _StubGateway([{"i": 0, "improved": ""}, {"i": 1, "improved": ""}])

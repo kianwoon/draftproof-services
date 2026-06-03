@@ -90,19 +90,27 @@ def apply_bracket_grounding(
         candidates = _generic_candidates(original, _max_sentences())
         if not candidates:
             return original, []
-        response = gateway.chat(
-            _build_prompt(candidates),
-            system=_SYSTEM,
-            temperature=0.4,
-            top_p=0.9,
-            max_tokens=_max_tokens(),
-            response_format={"type": "json_object"},
-            app_label="BracketGrounding",
-        )
-        raw = getattr(response, "raw_content", "") or getattr(response, "content", "") or ""
-        data = parse_json(raw)
-        results = {r["i"]: (r.get("improved") or "").strip()
-                   for r in (data.get("results") or []) if isinstance(r, dict) and "i" in r} if isinstance(data, dict) else {}
+        # Ask qwen to improve each generic sentence. If the call fails (timeout / network / parse),
+        # FALL BACK to empty results -> every candidate becomes a 'kept' (amber) span, so the writer
+        # still sees the generic sentences flagged instead of the feature silently producing nothing.
+        results = {}
+        try:
+            response = gateway.chat(
+                _build_prompt(candidates),
+                system=_SYSTEM,
+                temperature=0.4,
+                top_p=0.9,
+                max_tokens=_max_tokens(),
+                response_format={"type": "json_object"},
+                app_label="BracketGrounding",
+            )
+            raw = getattr(response, "raw_content", "") or getattr(response, "content", "") or ""
+            data = parse_json(raw)
+            results = {r["i"]: (r.get("improved") or "").strip()
+                       for r in (data.get("results") or []) if isinstance(r, dict) and "i" in r} if isinstance(data, dict) else {}
+        except Exception:
+            logger.warning("bracket_grounding qwen call failed; falling back to amber-kept spans", exc_info=True)
+            results = {}
 
         # locate each candidate; choose its clean replacement + colour kind
         located = []
