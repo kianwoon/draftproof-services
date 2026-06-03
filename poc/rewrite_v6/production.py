@@ -289,10 +289,10 @@ def run_rewrite_pipeline_v6(
     authorship_evidence["preserved_ideas"] = preserved_idea_spans(original_text, final_text)
     summary["authorship_evidence"] = authorship_evidence
     summary["external_detector_estimate"] = _external_estimate_from_scan(rewritten_scan_report)
-    # Exact char spans (HIGH top-k sentences + predictable word runs) for the rewritten-document
-    # highlight on /rewrite. Never raises -> {} on any failure, so it can't break the rewrite.
-    summary["predictability_highlights"] = compute_predictability_highlights(final_text)
-    # Bracket-grounding colour spans over final_text: kind 'improved' -> green, 'kept' -> amber.
+    # Red top-k highlighting is intentionally NOT emitted for /rewrite: it false-positives on ordinary
+    # predictable phrasing (predictable != AI -- e.g. "rote memorisation rather than"), which misleads
+    # the writer. The bracket-grounding colour spans below are the validated signal:
+    #   green ('improved') = qwen's generated version accepted;  amber ('kept') = not accepted / original kept.
     summary["bracket_grounding_spans"] = bracket_grounding_spans
 
     result_obj = SimpleNamespace(
