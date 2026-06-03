@@ -62,36 +62,38 @@ def _max_tokens() -> int:
 
 
 # allow-hardcode: _SYSTEM and the `rules` below are the model coaching PROMPT (human-reviewed
-# guidance), not a detect/allow/scoring word-list in code logic. The few illustrative connective
-# words are examples shown to the model, never matched against the input.
+# guidance), not a detect/allow/scoring word-list in code logic. The few illustrative filler words are
+# examples shown to the model, never matched against the input.
+# IMPORTANT: this prompt MUST stay aligned with `_is_genuine_improvement` -- it asks ONLY for faithful
+# improvement with NO new facts, because the gate rejects any invented number/name/specific. Asking
+# qwen to "add a concrete anchor" (the old prompt) produced exactly what the gate throws away -> all amber.
 _SYSTEM = (
-    "You are a writing coach. You receive sentences that state a claim WITHOUT concrete grounding. "
-    "Rewrite a sentence ONLY when you can anchor the SAME claim in a concrete, illustrative detail -- a "
-    "specific moment, number, name, place, or first-hand observation -- that the author will later "
-    "replace with their own real specifics. Keep the claim's meaning and stance. If the only change "
-    "you could make is rewording, reordering, or adding linking words, do not rewrite it. Return only "
-    "valid JSON."
+    "You are a precise line editor. You receive sentences that state a claim too generically. Improve "
+    "the SAME claim WITHOUT adding any new fact, number, name, date, place, example, or event -- you "
+    "have no source, so inventing specifics is forbidden. Improve only with what is already there: cut "
+    "vague hedging and filler, choose precise and direct wording, and tighten the structure. Keep the "
+    "meaning, stance, and every existing fact. If you cannot improve it without inventing something, "
+    "return an empty string. Return only valid JSON."
 )
 
 
 def _build_prompt(candidates: list[str]) -> str:
     # allow-hardcode: the `rules` strings are model coaching guidance (a prompt), not code logic.
     payload = {
-        "task": "ground_if_possible",
+        "task": "tighten_without_inventing",
         "rules": [
-            # Aligned with the objective: grounding (adding a concrete illustrative anchor) IS the fix;
-            # synonym-swapping / reordering / linking words stay generic and are NOT a fix.
-            "Rewrite a sentence ONLY if you can add a CONCRETE illustrative anchor (a specific moment, "
-            "number, name, place, or first-hand detail) that grounds the SAME claim. The anchor is an "
-            "example the author will swap for their own real detail -- keep the claim's meaning and stance.",
-            "Do NOT merely reword, swap synonyms, reorder clauses, or add transition/linking words "
-            "(e.g. however, moreover, subsequently, next, this combination): that does not ground the "
-            "claim. If you cannot add a concrete anchor, return 'improved' as an empty string -- the "
-            "original sentence is then kept unchanged.",
-            "Keep grammar clean and the sentence self-contained.",
+            "Improve the SAME claim using ONLY information already in the sentence: remove vague hedges "
+            "and filler (e.g. very, really, a lot, in many ways), pick precise verbs and nouns, and "
+            "tighten the structure.",
+            "Do NOT add any new fact, number, name, date, place, example, statistic, or event. You have "
+            "no source; inventing specifics is forbidden and will be rejected.",
+            "Keep the meaning, stance, and all existing facts/numbers/names. Return one clean, natural "
+            "sentence.",
+            "If the only way to improve it would be to invent a specific, return 'improved' as an empty "
+            "string -- the original is then kept for the author to ground with their own real detail.",
         ],
         "sentences": [{"i": i, "text": s} for i, s in enumerate(candidates)],
-        "output_schema": {"results": [{"i": 0, "improved": "grounded sentence, or empty string if you cannot ground it"}]},
+        "output_schema": {"results": [{"i": 0, "improved": "tighter, more precise version of the SAME claim with NO new facts, or empty string"}]},
     }
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False)
 
