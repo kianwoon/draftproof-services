@@ -215,6 +215,7 @@ def run_rewrite_pipeline_v6(
         status = "original_preserved_external_guard"
     else:
         status = ""
+    final_text = _strip_markdown_emphasis(final_text)
     changed = final_text.strip() != original_text.strip()
     cleared = bool(changed and not document.final_scan.findings)
     if not status:
@@ -571,6 +572,16 @@ def _external_guard_severe_threshold() -> float:
 
 def _external_guard_unanchored_threshold() -> float:
     return _float_env("DRAFTPROOF_V6_EXTERNAL_GUARD_UNANCHORED_THRESHOLD", 85.0, minimum=0.0, maximum=100.0)
+
+
+def _strip_markdown_emphasis(text: str) -> str:
+    """Strip *…* and _…_ inline emphasis that the writer LLM emits for titles/terms.
+    Only removes single-marker pairs (not bold **…** or code). Content-safe: the words
+    inside the markers are preserved; only the markers are dropped."""
+    import re
+    text = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", str(text or ""))
+    text = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", text)
+    return text
 
 
 def _external_guard_worsen_margin() -> float:
