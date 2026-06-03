@@ -136,18 +136,18 @@ def _variants() -> int:
     """Number of faithful alternatives requested per candidate (best-of-N). Env-tunable."""
     raw = os.environ.get("DRAFTPROOF_V6_BRACKET_VARIANTS", "").strip()
     try:
-        return max(1, min(6, int(raw)))
+        return max(1, min(8, int(raw)))
     except (TypeError, ValueError):
-        return 3
+        return 5
 
 
 def _feedback_rounds() -> int:
     """Extra amber->green retry rounds with targeted feedback (0 = single pass). Env-tunable."""
     raw = os.environ.get("DRAFTPROOF_V6_BRACKET_FEEDBACK_ROUNDS", "").strip()
     try:
-        return max(0, min(4, int(raw)))
+        return max(0, min(5, int(raw)))
     except (TypeError, ValueError):
-        return 2
+        return 3
 
 
 def _lever_feedback(sentence: str, attempted: bool) -> str:
@@ -172,34 +172,41 @@ def _lever_feedback(sentence: str, attempted: bool) -> str:
     return "; ".join(hints) or "make a bolder faithful structural change (shorten, de-hedge, vary the opening) -- add no new facts"
 
 
-def _grounding_signal_count(text: str) -> int:
-    """Count the scanner's content-agnostic concreteness/anchor patterns present (numbers, codes, named
-    entities, citations, quotes, first-hand verbs, exemplification/temporal/conditional anchors). Reuses
-    the regex lists from detect.layer3_scoring -- NOT the boolean oracle `_sentence_has_concrete_or_context`
-    (gating green on that oracle is circular: it IS the badge's grounding scorer)."""
+# allow-hardcode: a CLOSED linguistic class (cardinal/ordinal number words), not a domain/detect list.
+# Used to catch INVENTED numbers written as words ("forty percent") that the digit regex misses.
+_WORD_NUMBERS = frozenset((
+    "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+    "seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred thousand "
+    "million billion dozen first second third fourth fifth sixth seventh eighth ninth tenth"
+).split())
+
+
+def _specific_tokens(sentence: str) -> set[str]:
+    """The verifiable SPECIFICS in a sentence: digit numbers/percentages, number-words, and named
+    entities / acronyms (capitalised mid-sentence tokens). These cannot be produced by faithfully
+    rephrasing existing generic words -- so a specific present in the replacement but NOT the original
+    is INVENTED (fabrication). Deliberately ignores generic STRUCTURE (first-person 'in my X',
+    'when/such as/if' anchors, synonym swaps), which faithful rephrasing legitimately introduces and
+    which previously caused false 'fabricated' rejections."""
     import re
-    try:
-        from detect.layer3_scoring import (
-            CONCRETE_DETAIL_PATTERNS, CONTEXTUAL_ANCHOR_PATTERNS, NAMED_ENTITY_DETAIL_PATTERN,
-        )
-    except Exception:
-        try:
-            from poc.detect.layer3_scoring import (
-                CONCRETE_DETAIL_PATTERNS, CONTEXTUAL_ANCHOR_PATTERNS, NAMED_ENTITY_DETAIL_PATTERN,
-            )
-        except Exception:
-            return 0
-    n = sum(1 for p in CONCRETE_DETAIL_PATTERNS
-            if re.search(p, text, flags=0 if p == NAMED_ENTITY_DETAIL_PATTERN else re.I))
-    n += sum(1 for p in CONTEXTUAL_ANCHOR_PATTERNS if re.search(p, text, flags=re.I))
-    return n
+    s = str(sentence or "").strip()
+    toks: set[str] = set(re.findall(r"\d[\d,\.]*%?", s))                       # 47, 12%, 2020
+    toks |= {w for w in re.findall(r"[a-z]+", s.lower()) if w in _WORD_NUMBERS}  # forty, ten, third
+    caps = re.findall(r"\b[A-Z][A-Za-z]{2,}\b", s)                            # Chicago, Discord, STEM
+    if caps:  # drop the sentence's first word (capitalised by position, not an entity)
+        first = re.findall(r"[A-Za-z]+", s)[:1]
+        if first and caps and caps[0] == first[0]:
+            caps = caps[1:]
+    toks |= set(caps)
+    return toks
 
 
 def _is_genuine_improvement(original: str, replacement: str) -> tuple[bool, dict[str, Any]]:
     """Decide GREEN (use replacement) vs AMBER (keep original) by a deterministic, generator-independent
     comparison -- never qwen's self-report. Returns (accept, audit_detail). Green requires ALL of:
-      (1) NOT fabricated: no new number and no new concreteness/anchor signal vs the original
-          (qwen has no source, so any added specific is invented);
+      (1) NOT fabricated: introduces no new SPECIFIC token (number, number-word, named entity/acronym)
+          vs the original. Generic reframes ('in my X', 'when/such as') and synonym swaps are NOT
+          fabrication (token-based check -- avoids the old anchor-pattern false positives);
       (2) grammar/quality clean: no hard (non-advisory) integrity blocker, no fragment/trace sentence;
       (3) not worse on the structural A/B: scan_text finding_count and mean_sentence_shape_risk do not
           regress vs the original -- the same scores write.py::_has_meaningful_movement trusts.
@@ -210,19 +217,11 @@ def _is_genuine_improvement(original: str, replacement: str) -> tuple[bool, dict
         detail["decision"] = "no_change"
         return False, detail
 
-    # (1) fabrication: new numbers or a new concreteness/anchor signal the original lacked
-    new_numbers = False
-    try:
-        from .grammar_repair import _numbers
-        new_numbers = bool(_numbers(repl) - _numbers(original))
-    except Exception:
-        new_numbers = False
-    sig_before, sig_after = _grounding_signal_count(original), _grounding_signal_count(repl)
-    fabricated = new_numbers or sig_after > sig_before
-    detail.update({
-        "new_numbers": new_numbers, "signal_before": sig_before, "signal_after": sig_after,
-        "fabricated": fabricated,
-    })
+    # (1) fabrication: a verifiable SPECIFIC (number, number-word, named entity/acronym) present in the
+    # replacement but NOT the original is invented. Generic reframes / synonym swaps are NOT fabrication.
+    added_specifics = sorted(_specific_tokens(repl) - _specific_tokens(original))
+    fabricated = bool(added_specifics)
+    detail.update({"added_specifics": added_specifics, "fabricated": fabricated})
     if fabricated:
         detail["decision"] = "fabricated"
         return False, detail
