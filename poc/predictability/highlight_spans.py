@@ -28,6 +28,10 @@ _DEFAULT_ACTIONABLE_MIN_LEXICAL_CHARS = 6
 _DEFAULT_ACTIONABLE_MIN_VISIBLE_CHARS = 12
 _DEFAULT_ACTIONABLE_MIN_TERMS = 2
 _TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’-]*")
+# A high-top-k sentence is only worth repairing if it is a generic, un-grounded CLAIM -- not a short
+# courtesy/idiomatic phrase. Raw top-k is an indicator, not a verdict: predictable != AI. Mirrors the
+# showcase selector's >=6-term bar so the stage never rewrites human phrasing like "thank you for your help".
+_GENERIC_CLAIM_MIN_TERMS = 6
 
 
 def _trim(text: str, start: int, end: int) -> tuple[int, int]:
@@ -122,6 +126,10 @@ def compute_predictability_highlights(
             raw_words.extend(sentence_raw_words)
             if topk_grounding_gate_enabled():
                 sentence_actionable_words = _apply_grounding_gate(body, sentence, sentence_actionable_words)
+                # Top-k screens; grounding decides. Only a generic, un-grounded CLAIM is repairable --
+                # never a courtesy / idiomatic / too-short phrase (predictable != AI).
+                if not _sentence_is_generic_candidate(sentence):
+                    sentence_actionable_words = []
             actionable_words.extend(sentence_actionable_words)
             if high_sentence and sentence_actionable_words:
                 actionable_sentences.append(sentence_span)
@@ -248,6 +256,15 @@ def _apply_grounding_gate(body: str, sentence: str, spans: list[list[int]]) -> l
     if _sentence_is_grounded(sentence):
         return []
     return [sp for sp in spans if not _run_is_anchor(body[sp[0]:sp[1]])]
+
+
+def _sentence_is_generic_candidate(sentence: str) -> bool:
+    """Top-k SCREENS; grounding DECIDES. A high-top-k sentence is only worth repairing if it is a
+    generic, UN-grounded CLAIM: long enough to be a claim (not a courtesy/idiomatic phrase) and not
+    already grounded. 'thank you for your help' is ~100% raw top-k but human -- excluded by length."""
+    if len(_TERM_RE.findall(str(sentence or ""))) < _GENERIC_CLAIM_MIN_TERMS:
+        return False
+    return not _sentence_is_grounded(sentence)
 
 
 def _is_actionable_predictable_run(value: str) -> bool:

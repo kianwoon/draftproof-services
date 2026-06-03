@@ -202,7 +202,10 @@ def _best_option(original: str, options: list[str], gateway: Any) -> tuple[str, 
             report["accepted"] = False
             report["reasons"].append("llm_safety_verifier_rejected")
             continue
-        if best is None or report["topk_after"] < best[1]["topk_after"]:
+        # Rank by structural improvement (findings then risk), NOT raw top-k.
+        rank = (report.get("finding_drop", 0), report.get("risk_drop", 0.0))
+        best_rank = (best[1].get("finding_drop", 0), best[1].get("risk_drop", 0.0)) if best else None
+        if best is None or rank > best_rank:
             best = (option, report)
     return best
 
@@ -256,6 +259,11 @@ def _verifier_enabled() -> bool:
     return os.environ.get("DRAFTPROOF_V6_HIGHLIGHT_TOPK_VERIFY", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
+# Max allowed rise in mean sentence-shape risk for a reword to still count as "not worse"
+# (mirrors write.py::_has_meaningful_movement's `risk_drop >= -2.0`).
+_AB_RISK_TOLERANCE = 2.0
+
+
 def _safe_option_report(original: str, candidate: str, before: float | None = None) -> dict[str, Any]:
     from .direct_rewrite import _has_broken_grammar
     from .selector_diagnostics import _severe_polarity_inversion
@@ -289,11 +297,25 @@ def _safe_option_report(original: str, candidate: str, before: float | None = No
     if _severe_polarity_inversion(c, Paragraph(id="tk", index=0, text=original, sentences=[])):
         report["reasons"].append("polarity_inversion")
         return report
-    after = _sentence_topk(c)
+    # Do NOT gate on raw top-k (predictable != AI; chasing it games our own score on an unmitigable
+    # floor -- "thank you for your help" is ~100% top-k yet human). Keep top-k for AUDIT only; accept a
+    # faithful reword only if it does not make the structural scan WORSE -- the same finding/risk signal
+    # write.py::_has_meaningful_movement trusts.
     report["topk_before"] = before if isinstance(before, (int, float)) else _sentence_topk(original)
-    report["topk_after"] = after
-    if after >= report["topk_before"]:
-        report["reasons"].append("topk_not_lower")
+    report["topk_after"] = _sentence_topk(c)
+    try:
+        from .scan import scan_text
+        b = scan_text(original).scores
+        a = scan_text(c).scores
+        report["finding_drop"] = b.get("finding_count", 0) - a.get("finding_count", 0)
+        report["risk_drop"] = round(
+            b.get("mean_sentence_shape_risk", 0.0) - a.get("mean_sentence_shape_risk", 0.0), 3
+        )
+    except Exception:
+        report["reasons"].append("scan_unavailable")
+        return report
+    if report["finding_drop"] < 0 or report["risk_drop"] < -_AB_RISK_TOLERANCE:
+        report["reasons"].append("structural_regression")
         return report
     report["accepted"] = True
     return report
