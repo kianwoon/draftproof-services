@@ -48,5 +48,29 @@ def test_predictability_highlights_keep_raw_but_hide_grammar_glue_runs():
 def test_predictability_run_actionability_is_content_agnostic_not_phrase_based():
     assert hs._is_actionable_predictable_run("I've seen the") is False
     assert hs._is_actionable_predictable_run("to the") is False
+    assert hs._is_actionable_predictable_run("implemented,") is False
+    assert hs._is_actionable_predictable_run("at least two new") is False
+    assert hs._is_actionable_predictable_run("lectures, and") is False
     assert hs._is_actionable_predictable_run("students bombarded") is True
+    assert hs._is_actionable_predictable_run("scrambling to keep pace") is True
     assert hs._is_actionable_predictable_run("tutorials on fractions") is True
+
+
+def test_actionable_spans_expand_token_fragments_to_word_boundaries():
+    text = "I ask them to compare scholarly articles before accepting the claim."
+    raw_words: list[list[int]] = []
+    actionable_words: list[list[int]] = []
+    start = text.index("olarly")
+    end = text.index("articles") + len("articles")
+
+    hs._flush_run(
+        text,
+        0,
+        [0, 1],
+        [(0, 0), (start, start + len("olarly")), (text.index("articles"), end)],
+        raw_words,
+        actionable_words,
+    )
+
+    assert [text[start:end] for start, end in raw_words] == ["olarly articles"]
+    assert [text[start:end] for start, end in actionable_words] == ["scholarly articles"]

@@ -2,9 +2,9 @@
 
 Produces precise (start_char, end_char) ranges over a document so the UI can shade
 actionable sentences that score HIGH for top-k predictability and underline actionable
-runs of predictable (GPT-2 top-10) tokens inside them. Raw spans are retained separately
-for audit. Every span is an EXACT char range derived from the tokenizer's offset mapping
--- never a string match -- so highlighted text stays tied to scanner evidence.
+runs around predictable (GPT-2 top-10) tokens inside them. Raw spans are retained
+separately for audit. Raw spans are exact tokenizer offsets; actionable spans are derived
+from those offsets and expanded only to readable word boundaries for editing.
 
 Why exact offsets: many grammatical tokens are naturally top-10, so predictable tokens are
 pervasive. Fuzzy string-matching short tokens would be imprecise, so this module maps each
@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 _MIN_RUN_TOKENS = 2
 _MAX_SENTENCE_SPANS = 400
 _MAX_WORD_SPANS = 800
-_DEFAULT_ACTIONABLE_MIN_LEXICAL_CHARS = 5
+_DEFAULT_ACTIONABLE_MIN_LEXICAL_CHARS = 6
 _DEFAULT_ACTIONABLE_MIN_VISIBLE_CHARS = 12
+_DEFAULT_ACTIONABLE_MIN_TERMS = 2
 _TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’-]*")
 
 
@@ -154,8 +155,34 @@ def _flush_run(
     char_start, char_end = _trim(body, char_start, char_end)
     if char_end > char_start:
         raw_words.append([char_start, char_end])
-        if _is_actionable_predictable_run(body[char_start:char_end]):
-            actionable_words.append([char_start, char_end])
+        action_start, action_end = _expand_to_word_boundaries(body, char_start, char_end)
+        if action_end > action_start and _is_actionable_predictable_run(body[action_start:action_end]):
+            actionable_words.append([action_start, action_end])
+
+
+def _expand_to_word_boundaries(text: str, start: int, end: int) -> tuple[int, int]:
+    """Expand a tokenizer fragment span to whole readable words for repair targeting."""
+    body = str(text or "")
+    n = len(body)
+    start = max(0, min(int(start), n))
+    end = max(start, min(int(end), n))
+    while start > 0 and _is_word_body_char(body[start - 1]):
+        start -= 1
+    while end < n and _is_word_body_char(body[end]):
+        end += 1
+    return _trim_edge_punctuation(body, *_trim(body, start, end))
+
+
+def _is_word_body_char(ch: str) -> bool:
+    return ch.isalnum() or ch in {"'", "’", "-", "‑", "–"}
+
+
+def _trim_edge_punctuation(text: str, start: int, end: int) -> tuple[int, int]:
+    while start < end and not text[start].isalnum():
+        start += 1
+    while end > start and not text[end - 1].isalnum():
+        end -= 1
+    return start, end
 
 
 def _is_actionable_predictable_run(value: str) -> bool:
@@ -170,12 +197,17 @@ def _is_actionable_predictable_run(value: str) -> bool:
     if not text:
         return False
     terms = _TERM_RE.findall(text)
-    if not terms:
+    if len(terms) < _actionable_min_terms():
         return False
     visible = sum(1 for ch in text if not ch.isspace())
     if visible < _actionable_min_visible_chars():
         return False
-    return any(_has_lexical_mass(term) for term in terms)
+    lexical_terms = [term for term in terms if _has_lexical_mass(term)]
+    if len(lexical_terms) >= 2:
+        return True
+    if len(lexical_terms) == 1 and len(re.sub(r"[^A-Za-z0-9]", "", lexical_terms[0])) >= 9 and len(terms) >= 3:
+        return True
+    return False
 
 
 def _has_lexical_mass(term: str) -> bool:
@@ -198,6 +230,13 @@ def _actionable_min_visible_chars() -> int:
     return _positive_int_env(
         "DRAFTPROOF_TOPK_HIGHLIGHT_ACTIONABLE_MIN_VISIBLE_CHARS",
         _DEFAULT_ACTIONABLE_MIN_VISIBLE_CHARS,
+    )
+
+
+def _actionable_min_terms() -> int:
+    return _positive_int_env(
+        "DRAFTPROOF_TOPK_HIGHLIGHT_ACTIONABLE_MIN_TERMS",
+        _DEFAULT_ACTIONABLE_MIN_TERMS,
     )
 
 
