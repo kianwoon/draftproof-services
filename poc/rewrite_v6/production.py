@@ -623,14 +623,21 @@ def _apply_final_bracket_grounding(text, *, model, api_key, base_url, cancellati
     where spans = [{start,end,kind}] (kind 'improved' -> green, 'kept' -> amber) for the frontend, and
     diag carries the per-candidate gate audit (original/replacement/decision/scan delta). NO literal
     brackets in the text. Default OFF; (text, [], {}) on disable/failure."""
+    import os
     from .bracket_grounding import apply_bracket_grounding, bracket_grounding_enabled
-    from .llm_config import grammar_gateway
     if not bracket_grounding_enabled():
         return text, [], {}
     diag: dict[str, Any] = {}
     try:
-        gateway = grammar_gateway(api_key=api_key, base_url=base_url, cancellation_check=cancellation_check) \
-            or _highlight_repair_gateway(model=model, api_key=api_key, base_url=base_url, text=text, cancellation_check=cancellation_check)
+        # Run on the WRITER model (gpt-oss-120b), NOT the small qwen grammar model: the experiment
+        # showed qwen-7b can only lower the structural score by deleting content (telegraphic) -> the
+        # fidelity floor rejects it -> ~0 good greens, while gpt-oss produces faithful, full-length
+        # improvements (6/8 good greens on content11). Override with DRAFTPROOF_V6_BRACKET_MODEL.
+        bracket_model = os.environ.get("DRAFTPROOF_V6_BRACKET_MODEL", "").strip() or model
+        gateway = _highlight_repair_gateway(
+            model=bracket_model, api_key=api_key, base_url=base_url, text=text,
+            cancellation_check=cancellation_check,
+        )
         new_text, spans = apply_bracket_grounding(text, gateway=gateway, cancellation_check=cancellation_check, diag=diag)
         return new_text, spans, diag
     except Exception:

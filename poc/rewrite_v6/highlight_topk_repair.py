@@ -262,6 +262,9 @@ def _verifier_enabled() -> bool:
 # Max allowed rise in mean sentence-shape risk for a reword to still count as "not worse"
 # (mirrors write.py::_has_meaningful_movement's `risk_drop >= -2.0`).
 _AB_RISK_TOLERANCE = 2.0
+# A reword must GENUINELY improve the structural score to be accepted -- a finding removed or at least
+# this much drop in mean sentence-shape risk -- not merely not-worse. Faithful-but-flat -> rejected.
+_MIN_RISK_IMPROVEMENT = 1.0
 
 
 def _safe_option_report(original: str, candidate: str, before: float | None = None) -> dict[str, Any]:
@@ -316,6 +319,10 @@ def _safe_option_report(original: str, candidate: str, before: float | None = No
         return report
     if report["finding_drop"] < 0 or report["risk_drop"] < -_AB_RISK_TOLERANCE:
         report["reasons"].append("structural_regression")
+        return report
+    # Require a GENUINE improvement, not merely not-worse (a finding removed or a real risk drop).
+    if not (report["finding_drop"] >= 1 or report["risk_drop"] >= _MIN_RISK_IMPROVEMENT):
+        report["reasons"].append("no_structural_improvement")
         return report
     report["accepted"] = True
     return report
