@@ -120,6 +120,8 @@ def compute_predictability_highlights(
                 run = []
             _flush_run(body, base, run, offsets, sentence_raw_words, sentence_actionable_words)
             raw_words.extend(sentence_raw_words)
+            if topk_grounding_gate_enabled():
+                sentence_actionable_words = _apply_grounding_gate(body, sentence, sentence_actionable_words)
             actionable_words.extend(sentence_actionable_words)
             if high_sentence and sentence_actionable_words:
                 actionable_sentences.append(sentence_span)
@@ -183,6 +185,69 @@ def _trim_edge_punctuation(text: str, start: int, end: int) -> tuple[int, int]:
     while end > start and not text[end - 1].isalnum():
         end -= 1
     return start, end
+
+
+# --- grounding gate (EXPERIMENT, off by default) -------------------------------------------------
+# Differentiates a REAL top-k problem from a false alarm. A high-top-k run is a false alarm when it
+# is a concrete anchor or sits inside a grounded sentence (proven n=9: ~73-89% of flagged spans).
+# This gate drops those from the ACTIONABLE/displayed set so the report stops red-flagging good
+# content; the genuinely-formulaic (un-grounded, non-anchor) runs survive -- the real problem.
+# Display-only: raw_words / raw sentences are never touched (audit trail preserved).
+# Opt in with DRAFTPROOF_TOPK_GROUNDING_GATE=1. Content-agnostic: it reuses the scanner's structural
+# concreteness check + pure text shape (digits, numerals, hyphen compounds) -- no phrase/word lists.
+_DIGIT_RE = re.compile(r"\d")
+_COMPOUND_RE = re.compile(r"[A-Za-z0-9]+[‐‑–—-][A-Za-z0-9]+")
+# Numerals are a CLOSED LINGUISTIC CLASS (like digits), not a content/answer list. Patched here
+# because the shared concreteness detector counts digits but misses spelled-out quantities.
+_NUMWORD_RE = re.compile(
+    r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
+    r"sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+    r"hundred|thousand|million|billion|dozen|half|third|quarter|quarters|thirds|first|second|fourth|fifth)\b",
+    re.IGNORECASE,
+)
+
+
+def topk_grounding_gate_enabled() -> bool:
+    return os.environ.get("DRAFTPROOF_TOPK_GROUNDING_GATE", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _has_numeral(text: str) -> bool:
+    return bool(_DIGIT_RE.search(str(text or "")) or _NUMWORD_RE.search(str(text or "")))
+
+
+def _structurally_concrete(text: str) -> bool:
+    """The scanner's content-agnostic concreteness check (numbers, named entities, quotes, first-person
+    lived detail, temporal anchors). Fail-open to False so a missing import never hides a real run."""
+    try:
+        from poc.detect.layer3_scoring import _sentence_has_concrete_or_context
+    except Exception:
+        try:
+            from detect.layer3_scoring import _sentence_has_concrete_or_context
+        except Exception:
+            return False
+    try:
+        return bool(_sentence_has_concrete_or_context(str(text or "")))
+    except Exception:
+        return False
+
+
+def _run_is_anchor(run_text: str) -> bool:
+    """A run that itself carries concrete content (number, hyphen compound, or named/lived detail)."""
+    t = str(run_text or "")
+    return _has_numeral(t) or bool(_COMPOUND_RE.search(t)) or _structurally_concrete(t)
+
+
+def _sentence_is_grounded(sentence: str) -> bool:
+    s = str(sentence or "")
+    return _has_numeral(s) or _structurally_concrete(s)
+
+
+def _apply_grounding_gate(body: str, sentence: str, spans: list[list[int]]) -> list[list[int]]:
+    """Drop the false-alarm runs. If the whole sentence is grounded (anchor-context), none of its
+    predictable runs is actionable; otherwise drop only the runs that are themselves anchors."""
+    if _sentence_is_grounded(sentence):
+        return []
+    return [sp for sp in spans if not _run_is_anchor(body[sp[0]:sp[1]])]
 
 
 def _is_actionable_predictable_run(value: str) -> bool:

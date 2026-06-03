@@ -617,6 +617,29 @@ def _apply_showcase(doc, gateway, *, cancellation_check: Callable[[], None] | No
     return replace(doc, predictability_showcase=(items or None), pass_trace=trace)
 
 
+def _apply_bracket_grounding(doc, gateway, *, api_key: str | None, base_url: str | None,
+                             cancellation_check: Callable[[], None] | None):
+    """Last-stage: bracket generic sentences -- [suggestion] when qwen can improve, [[original]] when
+    it cannot -- so the writer knows exactly which spans to verify or ground with their own detail.
+    Uses the qwen grammar gateway. MUTATES rewritten_text. Default OFF; doc unchanged on disable/no-op."""
+    from dataclasses import replace
+    from .bracket_grounding import apply_bracket_grounding, bracket_grounding_enabled
+    from .llm_config import grammar_gateway
+    if not bracket_grounding_enabled():
+        return doc
+    qwen_gateway = grammar_gateway(api_key=api_key, base_url=base_url, cancellation_check=cancellation_check) or gateway
+    new_text, applied = apply_bracket_grounding(doc.rewritten_text, gateway=qwen_gateway, cancellation_check=cancellation_check)
+    trace = list(doc.pass_trace) + [{
+        "selected_source": "bracket_grounding",
+        "status": "accepted" if applied else "no_change",
+        "applied": len(applied),
+        "brackets": applied[:12],
+    }]
+    if not applied:
+        return replace(doc, pass_trace=trace)
+    return replace(doc, rewritten_text=new_text, final_scan=scan_text_preserve_blocks(new_text), pass_trace=trace)
+
+
 def run_direct_rewrite_all(
     text: str,
     *,
@@ -687,7 +710,13 @@ def run_direct_rewrite_all(
         base_url=base_url,
         cancellation_check=cancellation_check,
     )
-    return _apply_showcase(full_doc_rewritten, gateway, cancellation_check=cancellation_check)
+    showcased = _apply_showcase(full_doc_rewritten, gateway, cancellation_check=cancellation_check)
+    return _apply_bracket_grounding(
+        showcased, gateway,
+        api_key=api_key,
+        base_url=base_url,
+        cancellation_check=cancellation_check,
+    )
 
 
 def _rhythm_risk(text: str) -> float:

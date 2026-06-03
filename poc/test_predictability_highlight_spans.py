@@ -56,6 +56,41 @@ def test_predictability_run_actionability_is_content_agnostic_not_phrase_based()
     assert hs._is_actionable_predictable_run("tutorials on fractions") is True
 
 
+def test_grounding_gate_off_by_default_keeps_actionable(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_TOPK_GROUNDING_GATE", raising=False)
+    text = "In 2023 I assigned tutorials on fractions."
+    scanner = _FakeScanner({"tutorials", "on", "fractions"})
+
+    out = hs.compute_predictability_highlights(text, scanner=scanner)
+
+    assert "tutorials on fractions" in [text[s:e] for s, e in out["words"]]
+
+
+def test_grounding_gate_suppresses_runs_in_grounded_sentence(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_TOPK_GROUNDING_GATE", "1")
+    monkeypatch.setattr(hs, "_structurally_concrete", lambda t: False)  # isolate: only the digit grounds it
+    text = "In 2023 I assigned tutorials on fractions."
+    scanner = _FakeScanner({"tutorials", "on", "fractions"})
+
+    out = hs.compute_predictability_highlights(text, scanner=scanner)
+
+    assert "tutorials on fractions" in [text[s:e] for s, e in out["raw_words"]]  # raw audit trail kept
+    assert out["words"] == []                 # sentence grounded by "2023" -> no actionable run shown
+    assert out["actionable_sentences"] == []  # and the sentence is no longer shaded
+
+
+def test_grounding_gate_drops_anchor_run_when_sentence_not_grounded(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_TOPK_GROUNDING_GATE", "1")
+    monkeypatch.setattr(hs, "_structurally_concrete", lambda t: False)
+    text = "They kept the textbook-lecture-quiz approach unchanged."
+    scanner = _FakeScanner({"textbook-lecture-quiz", "approach"})
+
+    out = hs.compute_predictability_highlights(text, scanner=scanner)
+
+    actionable = [text[s:e] for s, e in out["words"]]
+    assert all("textbook-lecture-quiz" not in a for a in actionable)  # hyphen-compound anchor dropped
+
+
 def test_actionable_spans_expand_token_fragments_to_word_boundaries():
     text = "I ask them to compare scholarly articles before accepting the claim."
     raw_words: list[list[int]] = []
