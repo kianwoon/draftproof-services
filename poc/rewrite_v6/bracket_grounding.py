@@ -17,8 +17,11 @@ detect/allow/scoring word-list in code logic.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 
 def bracket_grounding_enabled() -> bool:
@@ -105,11 +108,15 @@ def apply_bracket_grounding(
                 continue  # couldn't locate verbatim (e.g. spans a line break) -> leave untouched
             improved = results.get(i, "")
             if improved and improved != sentence:
-                replacement, kind = f"[{improved}]", "single"
+                # qwen generated a better version -> DOUBLE brackets (heavily AI-generated, review it)
+                replacement, kind = f"[[{improved}]]", "double"
             else:
-                replacement, kind = f"[[{sentence}]]", "double"
+                # qwen could not improve it -> keep the original in SINGLE brackets (lightly flagged)
+                replacement, kind = f"[{sentence}]", "single"
             current = current.replace(sentence, replacement, 1)
             applied.append({"original": sentence, "replacement": replacement, "bracket": kind})
+        logger.info("bracket_grounding: candidates=%d applied=%d", len(candidates), len(applied))
         return current, applied
     except Exception:
+        logger.warning("bracket_grounding failed", exc_info=True)
         return original, []

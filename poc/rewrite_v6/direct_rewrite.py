@@ -710,13 +710,9 @@ def run_direct_rewrite_all(
         base_url=base_url,
         cancellation_check=cancellation_check,
     )
-    showcased = _apply_showcase(full_doc_rewritten, gateway, cancellation_check=cancellation_check)
-    return _apply_bracket_grounding(
-        showcased, gateway,
-        api_key=api_key,
-        base_url=base_url,
-        cancellation_check=cancellation_check,
-    )
+    # NOTE: bracket-grounding runs as the TRUE last stage in production.py on the final text
+    # (after highlight_topk_repair + markdown strip), so it is NOT applied here in the mid-pipeline.
+    return _apply_showcase(full_doc_rewritten, gateway, cancellation_check=cancellation_check)
 
 
 def _rhythm_risk(text: str) -> float:

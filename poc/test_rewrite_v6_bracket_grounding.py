@@ -37,22 +37,24 @@ def test_disabled_by_default_is_noop(monkeypatch):
     assert out == TEXT and applied == []
 
 
-def test_single_bracket_when_model_improves(monkeypatch):
+def test_double_bracket_when_model_improves(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_V6_BRACKET_GROUNDING", "1")
     gw = _StubGateway([
         {"i": 0, "improved": "Employers in my district now ask for more than memorized facts."},
         {"i": 1, "improved": ""},
     ])
     out, applied = bg.apply_bracket_grounding(TEXT, gateway=gw)
-    assert "[Employers in my district now ask for more than memorized facts.]" in out  # single bracket
-    assert "[[I want my students to become thoughtful and skeptical readers over time.]]" in out  # double bracket
-    kinds = {a["bracket"] for a in applied}
-    assert kinds == {"single", "double"}
+    # qwen IMPROVED -> double brackets around the generated sentence
+    assert "[[Employers in my district now ask for more than memorized facts.]]" in out
+    # qwen could NOT improve -> single brackets around the kept original
+    assert "[I want my students to become thoughtful and skeptical readers over time.]" in out
+    assert {a["bracket"] for a in applied} == {"single", "double"}
 
 
-def test_double_bracket_when_model_declines(monkeypatch):
+def test_single_bracket_when_model_declines(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_V6_BRACKET_GROUNDING", "1")
     gw = _StubGateway([{"i": 0, "improved": ""}, {"i": 1, "improved": ""}])
     out, applied = bg.apply_bracket_grounding(TEXT, gateway=gw)
-    assert all(a["bracket"] == "double" for a in applied) and applied
-    assert "[[" in out
+    # nothing improved -> all originals kept in single brackets, no double brackets
+    assert all(a["bracket"] == "single" for a in applied) and applied
+    assert "[[" not in out

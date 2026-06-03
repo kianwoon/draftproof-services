@@ -216,6 +216,17 @@ def run_rewrite_pipeline_v6(
     else:
         status = ""
     final_text = _strip_markdown_emphasis(final_text)
+    # TRUE last stage: bracket generic sentences -- [[qwen suggestion]] when it can improve,
+    # [original] kept when it cannot -- for the writer to review/edit. Skip if the rewrite was
+    # reverted to the original by the external guard (nothing to ground).
+    if status != "original_preserved_external_guard":
+        final_text = _apply_final_bracket_grounding(
+            final_text,
+            model=resolved_writer_model,
+            api_key=api_key,
+            base_url=base_url,
+            cancellation_check=raise_if_canceled,
+        )
     changed = final_text.strip() != original_text.strip()
     cleared = bool(changed and not document.final_scan.findings)
     if not status:
@@ -582,6 +593,23 @@ def _strip_markdown_emphasis(text: str) -> str:
     text = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", str(text or ""))
     text = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", text)
     return text
+
+
+def _apply_final_bracket_grounding(text, *, model, api_key, base_url, cancellation_check):
+    """TRUE last-stage bracket-grounding on the final shipped text (proven to fire here, unlike the
+    mid-pipeline stage). Uses the qwen grammar gateway. Default OFF; returns text unchanged on
+    disable / no candidates / any failure."""
+    from .bracket_grounding import apply_bracket_grounding, bracket_grounding_enabled
+    from .llm_config import grammar_gateway
+    if not bracket_grounding_enabled():
+        return text
+    try:
+        gateway = grammar_gateway(api_key=api_key, base_url=base_url, cancellation_check=cancellation_check) \
+            or _highlight_repair_gateway(model=model, api_key=api_key, base_url=base_url, text=text, cancellation_check=cancellation_check)
+        new_text, _applied = apply_bracket_grounding(text, gateway=gateway, cancellation_check=cancellation_check)
+        return new_text
+    except Exception:
+        return text
 
 
 def _external_guard_worsen_margin() -> float:
