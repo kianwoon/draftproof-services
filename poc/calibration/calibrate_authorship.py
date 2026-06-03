@@ -21,7 +21,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-DIRS = [HERE / "authorship_cases", HERE / "turnitin_cases"]
+DIRS = [HERE / "authorship_cases", HERE / "authorship_cases_local", HERE / "turnitin_cases"]
 OUT = REPO / "test_output" / "_authorship_calibration.json"
 
 MIN_PER_CLASS = 3
@@ -96,7 +96,10 @@ def main() -> int:
             auth = c.get("authorship")
             if auth not in ("human", "ai"):
                 continue
-            rows.append({"case_id": c["case_id"], "authorship": auth, "signals": _signals(c["text"])})
+            src = str(c.get("source") or "?")
+            grp = "persuade" if src.startswith("persuade") else "gutenberg" if src.startswith("gutenberg") else src
+            rows.append({"case_id": c["case_id"], "authorship": auth, "src_group": grp,
+                         "signals": _signals(c["text"])})
 
     human = [r for r in rows if r["authorship"] == "human"]
     ai = [r for r in rows if r["authorship"] == "ai"]
@@ -116,6 +119,14 @@ def main() -> int:
     if human:
         false_high = sum(1 for r in human if (r["signals"].get("ai_likelihood_score") or 0) >= GREEN_MAX)
         print(f"  HUMAN false-high (amber+): {false_high}/{len(human)}")
+        # domain-bias test: false-high rate per human source (modern PERSUADE vs old Gutenberg)
+        from collections import defaultdict
+        bysrc = defaultdict(list)
+        for r in human:
+            bysrc[r["src_group"]].append(r["signals"].get("ai_likelihood_score") or 0)
+        for grp, scores in sorted(bysrc.items()):
+            fh = sum(1 for s in scores if s >= GREEN_MAX)
+            print(f"     {grp:<12} false-high {fh}/{len(scores)}  mean_score={sum(scores)/len(scores):.1f}")
     if ai:
         false_low = sum(1 for r in ai if (r["signals"].get("ai_likelihood_score") or 0) < GREEN_MAX)
         print(f"  AI false-low (green):      {false_low}/{len(ai)}")

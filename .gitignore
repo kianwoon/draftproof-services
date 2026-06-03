@@ -28,3 +28,7 @@ uploads/
 # DB
 *.db
 *.sqlite3
+
+# NonCommercial calibration data (PERSUADE) — internal only, never redistribute
+poc/calibration/authorship_cases_local/
+poc/calibration/_persuade_raw/
