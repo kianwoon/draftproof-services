@@ -142,7 +142,7 @@ def run_rewrite_pipeline_v6(
             lambda: compute_predictability_highlights(final_text),
         )
         has_predictability_highlights = (
-            bool(repair_highlights.get("sentences") or repair_highlights.get("words"))
+            bool(repair_highlights.get("actionable_sentences") or repair_highlights.get("actionable_words") or repair_highlights.get("words"))
             if isinstance(repair_highlights, dict) else False
         )
         if has_predictability_highlights:

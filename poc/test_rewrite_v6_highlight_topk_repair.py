@@ -115,3 +115,22 @@ def test_highlight_topk_repair_targets_word_run_sentence_when_no_sentence_span(m
     assert replacement in out
     assert second in out
     assert result.changed is True
+
+
+def test_highlight_topk_repair_skips_raw_only_false_alarm_spans(monkeypatch):
+    sentence = "I've seen the district roll out new standards before spring."
+    highlights = {
+        "sentences": [[0, len(sentence)]],
+        "actionable_sentences": [],
+        "words": [],
+        "actionable_words": [],
+        "raw_words": [[0, len("I've seen the")]],
+    }
+    monkeypatch.setattr(htr, "_sentence_topk", lambda _value: 0.80)
+    gateway = _stub({"alternatives": ["The district has rolled out new standards before spring, as I have seen."]})
+
+    out, result = htr.apply_highlight_topk_repair(sentence, highlights, gateway=gateway)
+
+    assert out == sentence
+    assert result.changed is False
+    assert gateway.calls == []

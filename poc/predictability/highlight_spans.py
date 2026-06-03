@@ -1,19 +1,20 @@
 """Exact character spans for top-k predictability highlighting.
 
-Produces precise (start_char, end_char) ranges over a document so the UI can shade the
-sentences that score HIGH for top-k predictability and underline the runs of predictable
-(GPT-2 top-10) tokens inside them. Every span is an EXACT char range derived from the
-tokenizer's offset mapping -- never a string match -- so what is highlighted is exactly
-what the scanner measured.
+Produces precise (start_char, end_char) ranges over a document so the UI can shade
+actionable sentences that score HIGH for top-k predictability and underline actionable
+runs of predictable (GPT-2 top-10) tokens inside them. Raw spans are retained separately
+for audit. Every span is an EXACT char range derived from the tokenizer's offset mapping
+-- never a string match -- so highlighted text stays tied to scanner evidence.
 
-Why exact offsets: ~70% of grammatical English is function words that are always top-10,
-so predictable tokens are pervasive. Highlighting them honestly shows the intrinsic AI-text
-signal (a rewrite does not remove it); fuzzy string-matching short tokens like "the"/"of"
-would be imprecise, so this module maps each token to its real character position instead.
+Why exact offsets: many grammatical tokens are naturally top-10, so predictable tokens are
+pervasive. Fuzzy string-matching short tokens would be imprecise, so this module maps each
+token to its real character position and then separates raw evidence from editable spans.
 """
 from __future__ import annotations
 
 import logging
+import os
+import re
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,9 @@ logger = logging.getLogger(__name__)
 _MIN_RUN_TOKENS = 2
 _MAX_SENTENCE_SPANS = 400
 _MAX_WORD_SPANS = 800
+_DEFAULT_ACTIONABLE_MIN_LEXICAL_CHARS = 5
+_DEFAULT_ACTIONABLE_MIN_VISIBLE_CHARS = 12
+_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’-]*")
 
 
 def _trim(text: str, start: int, end: int) -> tuple[int, int]:
@@ -43,14 +47,17 @@ def compute_predictability_highlights(
     """Return exact char spans for top-k highlighting of ``text``.
 
     {
-        "sentences": [[start, end], ...],  # sentences whose risk_label == "high"
-        "words":     [[start, end], ...],  # runs of >=2 consecutive top-10 tokens
+        "sentences":             [[start, end], ...],  # raw HIGH top-k sentences
+        "actionable_sentences":  [[start, end], ...],  # HIGH sentences with editable runs
+        "words":                 [[start, end], ...],  # actionable predictable runs
+        "actionable_words":      [[start, end], ...],  # explicit alias for words
+        "raw_words":             [[start, end], ...],  # all runs of >=2 top-10 tokens
     }
 
     Spans index ``text`` directly: ``text[start:end]`` is the highlighted slice. Never
     raises; returns empty lists on any failure so it can never break the rewrite pipeline.
     """
-    empty = {"sentences": [], "words": []}
+    empty = {"sentences": [], "actionable_sentences": [], "words": [], "actionable_words": [], "raw_words": []}
     body = str(text or "")
     if not body.strip():
         return empty
@@ -63,7 +70,9 @@ def compute_predictability_highlights(
             scanner = PredictabilityScanner(model_name="gpt2")
 
         sentences: list[list[int]] = []
-        words: list[list[int]] = []
+        actionable_sentences: list[list[int]] = []
+        raw_words: list[list[int]] = []
+        actionable_words: list[list[int]] = []
 
         for row in structured_sentence_segments(body):
             sentence = str(row.get("sentence") or "")
@@ -83,8 +92,10 @@ def compute_predictability_highlights(
             if not token_results:
                 continue
 
-            if str(getattr(result, "risk_label", "")).lower() == "high":
-                sentences.append([base, base + len(sentence)])
+            high_sentence = str(getattr(result, "risk_label", "")).lower() == "high"
+            sentence_span = [base, base + len(sentence)]
+            if high_sentence:
+                sentences.append(sentence_span)
 
             encoded = scanner.tokenizer(
                 sentence,
@@ -97,21 +108,30 @@ def compute_predictability_highlights(
             if len(offsets) < len(token_results) + 1:
                 continue
 
+            sentence_raw_words: list[list[int]] = []
+            sentence_actionable_words: list[list[int]] = []
             run: list[int] = []
             for i, tok in enumerate(token_results):
                 if getattr(tok, "top_10", False):
                     run.append(i)
                     continue
-                _flush_run(body, base, run, offsets, words)
+                _flush_run(body, base, run, offsets, sentence_raw_words, sentence_actionable_words)
                 run = []
-            _flush_run(body, base, run, offsets, words)
+            _flush_run(body, base, run, offsets, sentence_raw_words, sentence_actionable_words)
+            raw_words.extend(sentence_raw_words)
+            actionable_words.extend(sentence_actionable_words)
+            if high_sentence and sentence_actionable_words:
+                actionable_sentences.append(sentence_span)
 
-            if len(sentences) >= _MAX_SENTENCE_SPANS or len(words) >= _MAX_WORD_SPANS:
+            if len(sentences) >= _MAX_SENTENCE_SPANS or len(raw_words) >= _MAX_WORD_SPANS:
                 break
 
         return {
             "sentences": sentences[:_MAX_SENTENCE_SPANS],
-            "words": words[:_MAX_WORD_SPANS],
+            "actionable_sentences": actionable_sentences[:_MAX_SENTENCE_SPANS],
+            "words": actionable_words[:_MAX_WORD_SPANS],
+            "actionable_words": actionable_words[:_MAX_WORD_SPANS],
+            "raw_words": raw_words[:_MAX_WORD_SPANS],
         }
     except Exception:
         logger.warning("Predictability highlight computation failed", exc_info=True)
@@ -123,7 +143,8 @@ def _flush_run(
     base: int,
     run: list[int],
     offsets: list[Any],
-    words: list[list[int]],
+    raw_words: list[list[int]],
+    actionable_words: list[list[int]],
 ) -> None:
     if len(run) < _MIN_RUN_TOKENS:
         return
@@ -132,4 +153,59 @@ def _flush_run(
     char_end = base + int(offsets[last + 1][1])
     char_start, char_end = _trim(body, char_start, char_end)
     if char_end > char_start:
-        words.append([char_start, char_end])
+        raw_words.append([char_start, char_end])
+        if _is_actionable_predictable_run(body[char_start:char_end]):
+            actionable_words.append([char_start, char_end])
+
+
+def _is_actionable_predictable_run(value: str) -> bool:
+    """Return True when a raw top-10 run has enough lexical mass to edit safely.
+
+    GPT-2 top-10 runs often contain only grammatical scaffolding. Those runs are real
+    measurements, but they are poor rewrite targets: changing them usually damages grammar
+    more than it moves document-level top-k. This gate uses only text shape, not phrase
+    lists, so it stays content-agnostic.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return False
+    terms = _TERM_RE.findall(text)
+    if not terms:
+        return False
+    visible = sum(1 for ch in text if not ch.isspace())
+    if visible < _actionable_min_visible_chars():
+        return False
+    return any(_has_lexical_mass(term) for term in terms)
+
+
+def _has_lexical_mass(term: str) -> bool:
+    core = re.sub(r"[^A-Za-z0-9]", "", str(term or ""))
+    if not core:
+        return False
+    if any(ch.isdigit() for ch in core):
+        return True
+    return sum(1 for ch in core if ch.isalpha()) >= _actionable_min_lexical_chars()
+
+
+def _actionable_min_lexical_chars() -> int:
+    return _positive_int_env(
+        "DRAFTPROOF_TOPK_HIGHLIGHT_ACTIONABLE_MIN_LEXICAL_CHARS",
+        _DEFAULT_ACTIONABLE_MIN_LEXICAL_CHARS,
+    )
+
+
+def _actionable_min_visible_chars() -> int:
+    return _positive_int_env(
+        "DRAFTPROOF_TOPK_HIGHLIGHT_ACTIONABLE_MIN_VISIBLE_CHARS",
+        _DEFAULT_ACTIONABLE_MIN_VISIBLE_CHARS,
+    )
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, ""))
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return default

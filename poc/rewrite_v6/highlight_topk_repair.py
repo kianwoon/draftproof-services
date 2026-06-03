@@ -86,8 +86,14 @@ def _max_sentences() -> int:
 
 
 def _target_sentences(text: str, highlights: dict[str, Any] | None, *, limit: int) -> list[dict[str, Any]]:
-    sentence_spans = _spans(highlights.get("sentences") if isinstance(highlights, dict) else [], len(text))
-    word_spans = _spans(highlights.get("words") if isinstance(highlights, dict) else [], len(text))
+    if isinstance(highlights, dict):
+        sentence_source = highlights.get("actionable_sentences") or highlights.get("sentences")
+        word_source = highlights.get("actionable_words") or highlights.get("words")
+    else:
+        sentence_source = []
+        word_source = []
+    sentence_spans = _spans(sentence_source, len(text))
+    word_spans = _spans(word_source, len(text))
     if not sentence_spans and word_spans:
         sentence_spans = _sentence_spans_covering_words(text, word_spans)
     rows: list[dict[str, Any]] = []
@@ -100,6 +106,8 @@ def _target_sentences(text: str, highlights: dict[str, Any] | None, *, limit: in
             for ws, we in word_spans
             if ws < end and we > start and text[max(ws, start):min(we, end)].strip()
         ]
+        if not runs:
+            continue
         rows.append({
             "start": start,
             "end": end,

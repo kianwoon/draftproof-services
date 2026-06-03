@@ -121,10 +121,9 @@ function sanitizeSpans(spans, length) {
     .filter((s) => s && Number.isInteger(s[0]) && Number.isInteger(s[1]) && s[0] >= 0 && s[1] <= length && s[0] < s[1]);
 }
 
-// Render `text` with two exact, offset-based highlight layers: HIGH top-k sentences (shaded)
-// and predictable word runs (underlined). Spans are [start, end] char ranges from the scanner;
-// overlapping layers compose (a word run inside a HIGH sentence gets both classes). Pure offset
-// segmentation -- no string matching -- so what is marked is exactly what the scanner measured.
+// Render `text` with two exact, offset-based highlight layers: actionable HIGH top-k sentences
+// (shaded) and actionable predictable word runs (underlined). Spans are [start, end] char ranges
+// from scanner offsets; overlapping layers compose. Pure offset segmentation -- no string matching.
 function renderTopkHighlights(text, sentenceSpans, wordSpans) {
   const source = String(text || '');
   const n = source.length;
@@ -312,10 +311,10 @@ export default function Rewrite() {
   const rewrittenWordCount = countWords(report?.final_text);
   const originalText = report?.original_text || summary.original_text || '';
   const documentDiff = buildSplitDiff(originalText, report?.final_text || '');
-  // Exact top-k highlight spans for the rewritten document (HIGH sentences + predictable word runs).
+  // Exact top-k highlight spans for the rewritten document (actionable HIGH sentences + word runs).
   const topkHighlights = summary?.predictability_highlights || report?.predictability_highlights || null;
-  const topkSentenceSpans = topkHighlights?.sentences || [];
-  const topkWordSpans = topkHighlights?.words || [];
+  const topkSentenceSpans = topkHighlights?.actionable_sentences || topkHighlights?.sentences || [];
+  const topkWordSpans = topkHighlights?.actionable_words || topkHighlights?.words || [];
   const hasTopkHighlights = (topkSentenceSpans.length || topkWordSpans.length) && report?.final_text;
 
   return (
