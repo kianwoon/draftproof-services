@@ -1,0 +1,22 @@
+export const seo = {
+  "defaultTitle": "Essay Grounding and Integrity Review | DraftProof",
+  "defaultDescription": "Review essays before submission for citation gaps, weak claim grounding, source fit, similarity risk, and AI-like writing signals.",
+  "whyTitle": "Why Human-Written Essays Can Look AI-Generated | DraftProof",
+  "whyDescription": "Learn why human-written essays can carry AI-like signals and how DraftProof explains writing risks before submission.",
+  "essayCheckerTitle": "Essay Checker for AI-Like Writing and Citations | DraftProof",
+  "essayCheckerDescription": "Check essays before submission for citation gaps, weak grounding, similarity risk, and AI-like writing signals.",
+  "pricingTitle": "DraftProof Pricing | Essay Grounding Review Tokens",
+  "pricingDescription": "Simple pricing for college and university students who want pre-submission review for citation gaps, source grounding, similarity risk, and AI-like writing signals.",
+  "faqTitle": "DraftProof FAQ | Essay Review, Rewrite, and Reports",
+  "faqDescription": "Common questions about how DraftProof helps students review essays before submission, understand reports, use guided rewrite, and manage tokens.",
+  "privacyTitle": "Privacy Policy | DraftProof",
+  "privacyDescription": "How DraftProof handles account data, documents, reports, payments, cookies, storage, and deletion requests.",
+  "securityTitle": "Security | DraftProof",
+  "securityDescription": "How DraftProof protects academic documents with encrypted storage, OAuth sign-in, secure payments, and user-controlled deletion.",
+  "signInTitle": "Sign In | DraftProof",
+  "signInDescription": "Sign in to DraftProof to review essay grounding, citations, source fit, and fixable writing signals before submission.",
+  "privateTitle": "DraftProof Dignose",
+  "privateDescription": "DraftProof account workspace for pre-submission essay reviews.",
+  "imageAlt": "DraftProof essay grounding and integrity review dashboard preview",
+  "offerDescription": "Pre-submission essay review per 1,000 words"
+};

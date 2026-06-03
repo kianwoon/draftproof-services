@@ -18,6 +18,8 @@ export default function Landing() {
   const reportValueCards = t('landing.reportValueCards', { returnObjects: true });
   const humanWrittenSignals = t('landing.humanWrittenSignals', { returnObjects: true });
   const humanizerSignals = t('landing.humanizerSignals', { returnObjects: true });
+  const anchorCards = t('landing.anchorCards', { returnObjects: true });
+  const anchorWorkflow = t('landing.anchorWorkflow', { returnObjects: true });
   const heroTitle = t('landing.heroTitle');
   const heroTitleHighlight = t('landing.heroTitleHighlight');
   const [heroTitleBefore, heroTitleAfter = ''] = heroTitle.split(heroTitleHighlight);
@@ -82,6 +84,34 @@ export default function Landing() {
           <span>{t('landing.pdfReport')}</span>
           <span>{t('landing.citationGrounding')}</span>
           <span>{t('landing.contentAwareRewrite')}</span>
+        </div>
+      </section>
+
+      <section className="landing-section anchor-section">
+        <div className="section-inner anchor-layout">
+          <div className="anchor-copy">
+            <p className="eyebrow">{t('landing.anchorEyebrow')}</p>
+            <h2>{t('landing.anchorTitle')}</h2>
+            <p>{t('landing.anchorBody1')}</p>
+            <p>{t('landing.anchorBody2')}</p>
+          </div>
+
+          <div className="anchor-panel" aria-label={t('landing.anchorCardsLabel')}>
+            <div className="anchor-card-grid">
+              {anchorCards.map((card) => (
+                <article className="anchor-card" key={card.title}>
+                  <span>{card.label}</span>
+                  <h3>{card.title}</h3>
+                  <p>{card.body}</p>
+                </article>
+              ))}
+            </div>
+            <ol className="anchor-workflow" aria-label={t('landing.anchorWorkflowLabel')}>
+              {anchorWorkflow.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ol>
+          </div>
         </div>
       </section>
 

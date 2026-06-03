@@ -1,0 +1,12 @@
+export const footer = {
+  "product": "Product",
+  "howItWorks": "How it works",
+  "sampleReport": "Sample report",
+  "essayChecker": "Essay checker",
+  "pricing": "Pricing",
+  "faq": "FAQ",
+  "privacy": "Privacy",
+  "security": "Security",
+  "supportEmail": "support@draftproof.app",
+  "disclaimer": "DraftProof provides writing integrity signals and review guidance. It does not determine misconduct, plagiarism, or AI authorship."
+};

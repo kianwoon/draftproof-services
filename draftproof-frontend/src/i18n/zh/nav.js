@@ -1,0 +1,23 @@
+export const nav = {
+  "main": "主导航",
+  "primary": "主要导航",
+  "home": "DraftProof 首页",
+  "dashboard": "仪表盘",
+  "scan": "扫描",
+  "scanning": "开始扫描",
+  "reports": "报告",
+  "viewReports": "查看报告",
+  "buyTokens": "购买令牌",
+  "history": "历史记录",
+  "why": "为什么选择我们",
+  "essayChecker": "论文检查器",
+  "pricing": "价格",
+  "faq": "常见问题",
+  "sampleReport": "示例报告",
+  "signOut": "退出登录",
+  "startReview": "开始审阅",
+  "toggleMenu": "切换菜单",
+  "language": "语言",
+  "english": "English",
+  "chinese": "简体中文"
+};

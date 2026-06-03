@@ -1,0 +1,23 @@
+export const nav = {
+  "main": "Main navigation",
+  "primary": "Primary",
+  "home": "DraftProof home",
+  "dashboard": "Dashboard",
+  "scan": "Scan",
+  "scanning": "Scanning",
+  "reports": "Reports",
+  "viewReports": "View Reports",
+  "buyTokens": "Buy Tokens",
+  "history": "History",
+  "why": "Why",
+  "essayChecker": "Essay checker",
+  "pricing": "Pricing",
+  "faq": "FAQ",
+  "sampleReport": "Sample report",
+  "signOut": "Sign out",
+  "startReview": "Start review",
+  "toggleMenu": "Toggle menu",
+  "language": "Language",
+  "english": "English",
+  "chinese": "简体中文"
+};

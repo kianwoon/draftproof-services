@@ -1,0 +1,47 @@
+import { common } from './zh/common.js';
+import { nav } from './zh/nav.js';
+import { footer } from './zh/footer.js';
+import { seo } from './zh/seo.js';
+import { landing } from './zh/landing.js';
+import { scan } from './zh/scan.js';
+import { pricing } from './zh/pricing.js';
+import { essayChecker } from './zh/essayChecker.js';
+import { faqPage } from './zh/faqPage.js';
+import { dashboard } from './zh/dashboard.js';
+import { reports } from './zh/reports.js';
+import { report } from './zh/report.js';
+import { rewritePage } from './zh/rewritePage.js';
+import { buy } from './zh/buy.js';
+import { history } from './zh/history.js';
+import { signin } from './zh/signin.js';
+import { legal } from './zh/legal.js';
+import { whyPage } from './zh/whyPage.js';
+import { authorshipEvidence } from './zh/authorshipEvidence.js';
+import { rewriteFraming } from './zh/rewriteFraming.js';
+import { dialog } from './zh/dialog.js';
+import { errorReload } from './zh/errorReload.js';
+
+export const zhTranslation = {
+  "common": common,
+  "nav": nav,
+  "footer": footer,
+  "seo": seo,
+  "landing": landing,
+  "scan": scan,
+  "pricing": pricing,
+  "essayChecker": essayChecker,
+  "faqPage": faqPage,
+  "dashboard": dashboard,
+  "reports": reports,
+  "report": report,
+  "rewritePage": rewritePage,
+  "buy": buy,
+  "history": history,
+  "signin": signin,
+  "legal": legal,
+  "whyPage": whyPage,
+  "authorshipEvidence": authorshipEvidence,
+  "rewriteFraming": rewriteFraming,
+  "dialog": dialog,
+  "errorReload": errorReload,
+};

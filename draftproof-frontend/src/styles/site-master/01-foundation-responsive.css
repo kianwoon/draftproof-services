@@ -1,0 +1,151 @@
+@media (max-width: 760px) {
+  :root { --header-h: 68px; }
+  .snap-shell { height: auto; overflow-y: visible; scroll-snap-type: none; }
+  .snap-section {
+    min-height: auto;
+    scroll-snap-align: none;
+    padding: calc(var(--header-h) + 1.25rem) 1.25rem 2.4rem;
+  }
+  .hero-section {
+    padding-top: calc(var(--header-h) + 1rem);
+  }
+  h1 {
+    font-size: clamp(2.65rem, 14vw, 4rem);
+    line-height: .96;
+    margin-bottom: 1rem;
+  }
+  h2 {
+    font-size: clamp(1.9rem, 10vw, 2.8rem);
+  }
+  .lead {
+    font-size: 1rem;
+    line-height: 1.55;
+    margin-bottom: 1.25rem;
+  }
+  .hero-grid {
+    gap: 1.4rem;
+  }
+  .hero-actions {
+    gap: .75rem;
+    margin-bottom: 1rem;
+  }
+  .hero-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .value-strip {
+    gap: .45rem;
+    margin-bottom: 1rem;
+  }
+  .value-strip span {
+    border-radius: 8px;
+    flex: 1 1 150px;
+  }
+  .trust-note {
+    align-items: flex-start;
+    line-height: 1.35;
+  }
+  .summary-card {
+    padding: 1.45rem;
+    border-radius: 14px;
+  }
+  .card-top {
+    gap: 1rem;
+    margin-bottom: 1.1rem;
+  }
+  .card-top h2 {
+    font-size: 2.1rem;
+  }
+  .site-header { gap: 1rem; }
+  .brand { font-size: 1.35rem; }
+  .hero-grid, .belief-grid, .process-line, .feature-grid, .audience-grid, .trust-grid { grid-template-columns: 1fr; }
+  .metric-grid, .mini-stats, .report-metrics { grid-template-columns: 1fr; }
+  .action-grid { grid-template-columns: 1fr; }
+  .action-row, .action-row:nth-child(2n), .action-row:nth-last-child(-n+2) { border-right: 0; border-bottom: 1px solid var(--line); }
+  .action-row:last-child { border-bottom: 0; }
+  .process-line::before { display: none; }
+  .process-line {
+    gap: 1.15rem;
+  }
+  .process-line > div {
+    display: grid;
+    grid-template-columns: 54px 1fr;
+    column-gap: 1rem;
+    align-items: start;
+  }
+  .process-line h3,
+  .process-line p {
+    grid-column: 2;
+  }
+  .step-icon {
+    grid-row: 1 / span 2;
+    width: 54px;
+    height: 54px;
+    margin: 0;
+  }
+  .step-icon svg {
+    width: 22px;
+    height: 22px;
+  }
+  .report-metrics div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .report-metrics div:last-child { border-bottom: 0; }
+  table { display: block; overflow-x: auto; white-space: normal; }
+  .report-body table,
+  .report-body thead,
+  .report-body tbody,
+  .report-body tr,
+  .report-body td {
+    display: block;
+    width: 100%;
+  }
+  .report-body thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .report-body tr {
+    padding: .8rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .report-body tr:last-child {
+    border-bottom: 0;
+  }
+  .report-body td {
+    padding: .35rem 0;
+    border-bottom: 0;
+  }
+  .report-body td::before {
+    display: block;
+    margin-bottom: .12rem;
+    color: var(--muted);
+    font-size: .72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .report-body td:nth-child(1)::before { content: "Claim"; }
+  .report-body td:nth-child(2)::before { content: "Evidence issue"; }
+  .report-body td:nth-child(3)::before { content: "Severity"; }
+  .report-body td:nth-child(4)::before { content: "Suggested fix"; }
+  .footer-links {
+    flex-wrap: wrap;
+    row-gap: .8rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .snap-shell { scroll-snap-type: none; }
+  .btn { transition: none; }
+  .code-row { animation: none !important; }
+  .scan-progress-fill::after,
+  .rewrite-progress-pulse,
+  .submitted-editor-backdrop,
+  .submitted-editor-backdrop.is-closing,
+  .submitted-editor-sheet,
+  .submitted-editor-backdrop.is-closing .submitted-editor-sheet,
+  .sample-report-preview:not(.is-paused) .sample-preview-tabs button.is-active::after,
+  .sample-preview-panel > * { animation: none !important; }
+}
