@@ -17,6 +17,7 @@ from detect.turnitin_like import (
     TURNITIN_LIKE_TARGET_AI_SCORE,
     turnitin_like_ai_profile_from_report,
 )
+from poc.report.contribution import contribution_pair
 
 
 def _float_env(name: str, default: float) -> float:
@@ -43,6 +44,16 @@ def _feature_percent(report_dict: dict | None, key: str):
     return value * 100.0 if abs(value) <= 1.0 else value
 
 
+def _contribution_score_dict(human, ai_transformation) -> dict:
+    human_score, ai_score = contribution_pair(human, ai_transformation)
+    if human_score is None and ai_score is None:
+        return {"human": None, "ai_transformation": None}
+    return {
+        "human": round(float(human_score or 0.0), 3),
+        "ai_transformation": round(float(ai_score or 0.0), 3),
+    }
+
+
 def _contribution_scores(report_dict: dict | None) -> dict:
     """Extract the Human Contribution / AI Transformation product scores."""
     if not isinstance(report_dict, dict):
@@ -58,14 +69,7 @@ def _contribution_scores(report_dict: dict | None) -> dict:
         human_score = human_layer.get("score")
         transform_score = transform_layer.get("score")
         if isinstance(human_score, (int, float)) or isinstance(transform_score, (int, float)):
-            if not isinstance(human_score, (int, float)) and isinstance(transform_score, (int, float)):
-                human_score = 100.0 - float(transform_score)
-            if not isinstance(transform_score, (int, float)) and isinstance(human_score, (int, float)):
-                transform_score = 100.0 - float(human_score)
-            return {
-                "human": float(human_score),
-                "ai_transformation": float(transform_score),
-            }
+            return _contribution_score_dict(human_score, transform_score)
     contribution = (
         ((report_dict.get("scan_intelligence") or {}).get("transformation") or {})
         .get("contribution")
@@ -85,11 +89,7 @@ def _contribution_scores(report_dict: dict | None) -> dict:
         "ai_transformation",
         "transformation_ratio",
     )
-    if human is None and ai_transformation is not None:
-        human = round(100.0 - ai_transformation, 3)
-    if ai_transformation is None and human is not None:
-        ai_transformation = round(100.0 - human, 3)
-    return {"human": human, "ai_transformation": ai_transformation}
+    return _contribution_score_dict(human, ai_transformation)
 
 
 def _integrity_scores(report_dict: dict | None) -> dict:

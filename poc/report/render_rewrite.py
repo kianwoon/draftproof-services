@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 
 # Single source for the external-band -> friendly label map (shared with the scan PDF /
 # page / email so the rewrite PDF's Turnitin row reads identically).
+from .contribution import contribution_pair, contribution_pair_int
 from .render import _EXTERNAL_BAND_LABELS, EXTERNAL_ESTIMATE_DISPLAY_ENABLED
 
 
@@ -214,7 +215,7 @@ def _scan_contribution(scan: dict) -> dict:
     )
     human_layer = layers.get("human_contribution_signal") or {}
     ai_layer = layers.get("ai_transformation_risk") or {}
-    human = _pct(
+    raw_human = (
         contribution.get("human_contribution_ratio")
         if contribution.get("human_contribution_ratio") is not None
         else contribution.get("human_contribution")
@@ -223,7 +224,7 @@ def _scan_contribution(scan: dict) -> dict:
         if contribution.get("human_ratio") is not None
         else human_layer.get("score")
     )
-    ai = _pct(
+    raw_ai = (
         contribution.get("ai_transformation_ratio")
         if contribution.get("ai_transformation_ratio") is not None
         else contribution.get("ai_transformation")
@@ -232,10 +233,7 @@ def _scan_contribution(scan: dict) -> dict:
         if contribution.get("transformation_ratio") is not None
         else ai_layer.get("score")
     )
-    if human is None and ai is not None:
-        human = max(0, min(100, 100 - ai))
-    if ai is None and human is not None:
-        ai = max(0, min(100, 100 - human))
+    human, ai = contribution_pair_int(raw_human, raw_ai)
     return {
         "human": human,
         "ai": ai,
@@ -640,10 +638,14 @@ def render_rewrite_report(
         wq_delta = new_wq - orig_wq
         orig_contribution = _scan_contribution(orig_scan)
         new_contribution = _scan_contribution(new_scan)
-        orig_human = _first_metric(detect_scores.get("original_human_contribution"), orig_contribution.get("human"))
-        new_human = _first_metric(detect_scores.get("rewritten_human_contribution"), new_contribution.get("human"))
-        orig_transformation = _first_metric(detect_scores.get("original_ai_transformation"), orig_contribution.get("ai"))
-        new_transformation = _first_metric(detect_scores.get("rewritten_ai_transformation"), new_contribution.get("ai"))
+        orig_human, orig_transformation = contribution_pair(
+            _first_metric(detect_scores.get("original_human_contribution"), orig_contribution.get("human")),
+            _first_metric(detect_scores.get("original_ai_transformation"), orig_contribution.get("ai")),
+        )
+        new_human, new_transformation = contribution_pair(
+            _first_metric(detect_scores.get("rewritten_human_contribution"), new_contribution.get("human")),
+            _first_metric(detect_scores.get("rewritten_ai_transformation"), new_contribution.get("ai")),
+        )
 
         orig_findings = orig_scan.get("findings", {})
         new_findings = new_scan.get("findings", {})

@@ -31,6 +31,7 @@ from detect.transformation import (
 )
 from detect.topk_calibration import calibrate_topk_risk
 from detect.turnitin_like import turnitin_like_ai_profile
+from report.contribution import contribution_pair_int
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -2362,6 +2363,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         grounding_score = _grounding_quality_score(writing_components)
         ai_transformation_score = int(contribution.get("ai_transformation_ratio") or _pct(features.get("calibrated_ai_risk")))
         human_score = int(contribution.get("human_contribution_ratio") or _pct(features.get("human_anchor_score")))
+        human_score, ai_transformation_score = contribution_pair_int(human_score, ai_transformation_score)
         interpretation = _combined_integrity_label(ai_authorship_score, grounding_score)
         return {
             "schema_version": "integrity_layers.v1",

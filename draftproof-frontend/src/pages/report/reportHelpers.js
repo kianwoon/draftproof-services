@@ -1,4 +1,8 @@
 import { buildApiEventUrl } from '../../api/draftproofApi';
+import {
+  buildRewriteContributionOverride,
+  getScanContributionSummary,
+} from './reportContributionHelpers';
 
 const TIER_CONFIG = {
   low:      { label: 'Low Risk',      color: '#22c55e', bg: '#f0fdf4', icon: 'M12 15.5l-3-3 1.4-1.4L12 12.6l4.6-4.6L18 9.5z' },
@@ -1008,33 +1012,6 @@ function getScanTransformationSignals(scan) {
   return appended;
 }
 
-function getScanContributionSummary(scan) {
-  if (!scan) return null;
-  const intelligence = getScanIntelligence(scan);
-  const contribution = intelligence.transformation?.contribution || {};
-  const layers = scan.integrity_layers?.layers || intelligence.integrity_layers?.layers || {};
-  const humanLayerScore = layers.human_contribution_signal?.score;
-  const aiLayerScore = layers.ai_transformation_risk?.score;
-  const human = clampPercent(
-    contribution.human_contribution_ratio ?? contribution.human_contribution ?? contribution.human_ratio ?? humanLayerScore
-  );
-  const ai = clampPercent(
-    contribution.ai_transformation_ratio ?? contribution.ai_transformation ?? contribution.transformation_ratio ?? aiLayerScore
-  );
-
-  if (human == null && ai == null) return null;
-  return {
-    humanContribution: Math.round(human ?? 100 - ai),
-    aiTransformation: Math.round(ai ?? 100 - human),
-    adjustedAiRisk: Math.round(clampPercent(contribution.calibrated_ai_risk ?? contribution.adjusted_ai_risk) ?? 0),
-    rawAdjustedAiRisk: Math.round(clampPercent(contribution.adjusted_ai_risk ?? contribution.calibrated_ai_risk) ?? 0),
-    humanAnchorDiscount: Math.round(clampPercent(contribution.human_anchor_discount) ?? 0),
-    calibrationConfidence: Math.round(clampPercent(contribution.calibration_confidence) ?? 0),
-    reportingSuppression: Math.round(clampPercent(contribution.reporting_suppression) ?? 0),
-    summary: contribution.summary || '',
-  };
-}
-
 function mergeTransformationSummary(baseSummary, authoritativeSummary) {
   if (!authoritativeSummary) return baseSummary;
   if (!baseSummary) return authoritativeSummary;
@@ -1099,25 +1076,6 @@ function buildRewriteResultSummary(rewriteReport) {
     original_findings: originalFindings,
     rewritten_findings: rewrittenFindings,
     changed_sentences: changedSentences,
-  };
-}
-
-function buildRewriteContributionOverride(rewriteResultSummary, variant = 'rewritten') {
-  if (!rewriteResultSummary) return null;
-  const human = clampPercent(
-    variant === 'original'
-      ? rewriteResultSummary.original_human_contribution
-      : rewriteResultSummary.rewritten_human_contribution
-  );
-  const ai = clampPercent(
-    variant === 'original'
-      ? rewriteResultSummary.original_ai_transformation
-      : rewriteResultSummary.rewritten_ai_transformation
-  );
-  if (human == null && ai == null) return null;
-  return {
-    humanContribution: human ?? 100 - ai,
-    aiTransformation: ai ?? 100 - human,
   };
 }
 

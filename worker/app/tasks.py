@@ -36,6 +36,7 @@ from .db import (
     capture_rewrite_credits,
     release_rewrite_credits,
 )
+from report.contribution import contribution_pair_int
 from .email_service import send_rewrite_completion_email, send_scan_completion_email
 from .rewrite_scan_compaction import compact_rewrite_scan_summary
 from celery.signals import worker_process_init
@@ -313,11 +314,14 @@ def _debug_integrity_layers(report_json: dict | None, badge: dict | None) -> dic
         if contribution.get("ai_transformation_ratio") is not None
         else ((transformation.get("features") or {}).get("calibrated_ai_risk"))
     )
-    human = _pct_score(
+    human, ai_transformation = contribution_pair_int(
         contribution.get("human_contribution_ratio")
         if contribution.get("human_contribution_ratio") is not None
-        else 100 - ai_transformation
+        else None,
+        ai_transformation,
     )
+    human = int(human or 0)
+    ai_transformation = int(ai_transformation or 0)
     ai_band = "High AI" if ai_score >= 50 else "Low AI"
     grounding_band = "Weakly grounded" if grounding_score >= 50 else "Well grounded"
     return {
