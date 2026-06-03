@@ -74,7 +74,10 @@ def apply_bracket_grounding(
     gateway: Any,
     cancellation_check: Callable[[], None] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Bracket the generic sentences. Returns (new_text, applied). (text, []) on disable/no-op/failure."""
+    """Ground the generic sentences. Returns (clean_text, spans) -- NO literal brackets in the text.
+    spans = [{"start","end","kind"}] over clean_text, kind 'improved' (qwen generated a better version,
+    rendered GREEN) or 'kept' (qwen could not improve, original kept, rendered AMBER).
+    (text, []) on disable / no candidates / failure."""
     original = str(text or "")
     if not bracket_grounding_enabled() or not original.strip():
         return original, []
@@ -101,22 +104,37 @@ def apply_bracket_grounding(
         results = {r["i"]: (r.get("improved") or "").strip()
                    for r in (data.get("results") or []) if isinstance(r, dict) and "i" in r} if isinstance(data, dict) else {}
 
-        current = original
-        applied: list[dict[str, Any]] = []
+        # locate each candidate; choose its clean replacement + colour kind
+        located = []
         for i, sentence in enumerate(candidates):
-            if sentence not in current:
-                continue  # couldn't locate verbatim (e.g. spans a line break) -> leave untouched
+            idx = original.find(sentence)
+            if idx < 0:
+                continue  # not locatable verbatim (e.g. spans a line break) -> leave untouched
             improved = results.get(i, "")
             if improved and improved != sentence:
-                # qwen generated a better version -> DOUBLE brackets (heavily AI-generated, review it)
-                replacement, kind = f"[[{improved}]]", "double"
+                located.append((idx, idx + len(sentence), improved, "improved"))
             else:
-                # qwen could not improve it -> keep the original in SINGLE brackets (lightly flagged)
-                replacement, kind = f"[{sentence}]", "single"
-            current = current.replace(sentence, replacement, 1)
-            applied.append({"original": sentence, "replacement": replacement, "bracket": kind})
-        logger.info("bracket_grounding: candidates=%d applied=%d", len(candidates), len(applied))
-        return current, applied
+                located.append((idx, idx + len(sentence), sentence, "kept"))
+        located.sort()
+
+        # rebuild CLEAN text, tracking each replacement's offset span in the new text
+        out: list[str] = []
+        spans: list[dict[str, Any]] = []
+        cursor = 0
+        pos = 0
+        for start_o, end_o, replacement, kind in located:
+            if start_o < cursor:
+                continue  # overlapping / duplicate match -> skip
+            gap = original[cursor:start_o]
+            out.append(gap); pos += len(gap)
+            span_start = pos
+            out.append(replacement); pos += len(replacement)
+            spans.append({"start": span_start, "end": pos, "kind": kind})
+            cursor = end_o
+        out.append(original[cursor:])
+        new_text = "".join(out)
+        logger.info("bracket_grounding: candidates=%d spans=%d", len(candidates), len(spans))
+        return new_text, spans
     except Exception:
         logger.warning("bracket_grounding failed", exc_info=True)
         return original, []

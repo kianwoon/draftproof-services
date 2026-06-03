@@ -8122,6 +8122,32 @@ td:first-child {
   text-underline-offset: 2px;
 }
 
+/* bracket-grounding: qwen GENERATED a better version (review it) -> green */
+.topk-mark.is-improved {
+  background: #dcfce7;
+  color: #14532d;
+  border-radius: 2px;
+  padding: 0 1px;
+  text-decoration: underline;
+  text-decoration-style: solid;
+  text-decoration-color: #16a34a;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
+/* bracket-grounding: qwen KEPT the original (could not improve, ground it yourself) -> amber */
+.topk-mark.is-kept {
+  background: #fef3c7;
+  color: #78350f;
+  border-radius: 2px;
+  padding: 0 1px;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: #d97706;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
 .topk-legend {
   display: flex;
   flex-wrap: wrap;

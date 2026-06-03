@@ -216,11 +216,11 @@ def run_rewrite_pipeline_v6(
     else:
         status = ""
     final_text = _strip_markdown_emphasis(final_text)
-    # TRUE last stage: bracket generic sentences -- [[qwen suggestion]] when it can improve,
-    # [original] kept when it cannot -- for the writer to review/edit. Skip if the rewrite was
-    # reverted to the original by the external guard (nothing to ground).
+    # TRUE last stage: ground generic sentences -> clean text + colour spans (green = qwen improved,
+    # amber = original kept) for the frontend. Skip if the external guard reverted to the original.
+    bracket_grounding_spans: list[dict[str, Any]] = []
     if status != "original_preserved_external_guard":
-        final_text = _apply_final_bracket_grounding(
+        final_text, bracket_grounding_spans = _apply_final_bracket_grounding(
             final_text,
             model=resolved_writer_model,
             api_key=api_key,
@@ -292,6 +292,8 @@ def run_rewrite_pipeline_v6(
     # Exact char spans (HIGH top-k sentences + predictable word runs) for the rewritten-document
     # highlight on /rewrite. Never raises -> {} on any failure, so it can't break the rewrite.
     summary["predictability_highlights"] = compute_predictability_highlights(final_text)
+    # Bracket-grounding colour spans over final_text: kind 'improved' -> green, 'kept' -> amber.
+    summary["bracket_grounding_spans"] = bracket_grounding_spans
 
     result_obj = SimpleNamespace(
         summary=summary,
@@ -596,20 +598,19 @@ def _strip_markdown_emphasis(text: str) -> str:
 
 
 def _apply_final_bracket_grounding(text, *, model, api_key, base_url, cancellation_check):
-    """TRUE last-stage bracket-grounding on the final shipped text (proven to fire here, unlike the
-    mid-pipeline stage). Uses the qwen grammar gateway. Default OFF; returns text unchanged on
-    disable / no candidates / any failure."""
+    """TRUE last-stage bracket-grounding on the final shipped text. Returns (clean_text, spans) where
+    spans = [{start,end,kind}] over clean_text (kind 'improved' -> green, 'kept' -> amber) for the
+    frontend to colour. NO literal brackets in the text. Default OFF; (text, []) on disable/failure."""
     from .bracket_grounding import apply_bracket_grounding, bracket_grounding_enabled
     from .llm_config import grammar_gateway
     if not bracket_grounding_enabled():
-        return text
+        return text, []
     try:
         gateway = grammar_gateway(api_key=api_key, base_url=base_url, cancellation_check=cancellation_check) \
             or _highlight_repair_gateway(model=model, api_key=api_key, base_url=base_url, text=text, cancellation_check=cancellation_check)
-        new_text, _applied = apply_bracket_grounding(text, gateway=gateway, cancellation_check=cancellation_check)
-        return new_text
+        return apply_bracket_grounding(text, gateway=gateway, cancellation_check=cancellation_check)
     except Exception:
-        return text
+        return text, []
 
 
 def _external_guard_worsen_margin() -> float:

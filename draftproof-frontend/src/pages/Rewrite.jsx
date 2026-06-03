@@ -124,15 +124,24 @@ function sanitizeSpans(spans, length) {
 // Render `text` with two exact, offset-based highlight layers: actionable HIGH top-k sentences
 // (shaded) and actionable predictable word runs (underlined). Spans are [start, end] char ranges
 // from scanner offsets; overlapping layers compose. Pure offset segmentation -- no string matching.
-function renderTopkHighlights(text, sentenceSpans, wordSpans) {
+function bracketSpansByKind(spans, length, wanted) {
+  return (Array.isArray(spans) ? spans : [])
+    .filter((b) => b && b.kind === wanted && Number.isInteger(b.start) && Number.isInteger(b.end)
+      && b.start >= 0 && b.end <= length && b.start < b.end)
+    .map((b) => [b.start, b.end]);
+}
+
+function renderTopkHighlights(text, sentenceSpans, wordSpans, bracketSpans) {
   const source = String(text || '');
   const n = source.length;
   const sents = sanitizeSpans(sentenceSpans, n);
   const words = sanitizeSpans(wordSpans, n);
-  if (!sents.length && !words.length) return source;
+  const improved = bracketSpansByKind(bracketSpans, n, 'improved');  // green: qwen generated a better version
+  const kept = bracketSpansByKind(bracketSpans, n, 'kept');          // amber: original kept, ground it yourself
+  if (!sents.length && !words.length && !improved.length && !kept.length) return source;
 
   const cuts = new Set([0, n]);
-  [...sents, ...words].forEach(([s, e]) => { cuts.add(s); cuts.add(e); });
+  [...sents, ...words, ...improved, ...kept].forEach(([s, e]) => { cuts.add(s); cuts.add(e); });
   const points = Array.from(cuts).filter((p) => p >= 0 && p <= n).sort((a, b) => a - b);
   const covers = (spans, a, b) => spans.some(([s, e]) => s <= a && e >= b);
 
@@ -144,10 +153,13 @@ function renderTopkHighlights(text, sentenceSpans, wordSpans) {
     const seg = source.slice(a, b);
     const inSentence = covers(sents, a, b);
     const inWord = covers(words, a, b);
-    if (!inSentence && !inWord) {
+    const inImproved = covers(improved, a, b);
+    const inKept = covers(kept, a, b);
+    if (!inSentence && !inWord && !inImproved && !inKept) {
       nodes.push(<span key={`tk-${a}`}>{seg}</span>);
     } else {
-      const cls = `topk-mark${inSentence ? ' is-sentence' : ''}${inWord ? ' is-word' : ''}`;
+      const cls = `topk-mark${inSentence ? ' is-sentence' : ''}${inWord ? ' is-word' : ''}`
+        + `${inImproved ? ' is-improved' : ''}${inKept ? ' is-kept' : ''}`;
       nodes.push(<mark key={`tk-${a}`} className={cls}>{seg}</mark>);
     }
   }
@@ -316,6 +328,9 @@ export default function Rewrite() {
   const topkSentenceSpans = topkHighlights?.actionable_sentences || topkHighlights?.sentences || [];
   const topkWordSpans = topkHighlights?.actionable_words || topkHighlights?.words || [];
   const hasTopkHighlights = (topkSentenceSpans.length || topkWordSpans.length) && report?.final_text;
+  // bracket-grounding colour spans: kind 'improved' -> green, 'kept' -> amber
+  const bracketSpans = summary?.bracket_grounding_spans || report?.bracket_grounding_spans || [];
+  const hasDocHighlights = Boolean((hasTopkHighlights || bracketSpans.length) && report?.final_text);
 
   return (
     <main className="dash-shell">
@@ -473,8 +488,8 @@ export default function Rewrite() {
               </p>
             ) : null}
             <div className="rewritten-document-content">
-              {hasTopkHighlights
-                ? renderTopkHighlights(report.final_text, topkSentenceSpans, topkWordSpans)
+              {hasDocHighlights
+                ? renderTopkHighlights(report.final_text, topkSentenceSpans, topkWordSpans, bracketSpans)
                 : report.final_text}
             </div>
           </section>

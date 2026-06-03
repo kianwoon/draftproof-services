@@ -37,24 +37,27 @@ def test_disabled_by_default_is_noop(monkeypatch):
     assert out == TEXT and applied == []
 
 
-def test_double_bracket_when_model_improves(monkeypatch):
+def test_improved_is_clean_text_with_green_span(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_V6_BRACKET_GROUNDING", "1")
     gw = _StubGateway([
         {"i": 0, "improved": "Employers in my district now ask for more than memorized facts."},
         {"i": 1, "improved": ""},
     ])
-    out, applied = bg.apply_bracket_grounding(TEXT, gateway=gw)
-    # qwen IMPROVED -> double brackets around the generated sentence
-    assert "[[Employers in my district now ask for more than memorized facts.]]" in out
-    # qwen could NOT improve -> single brackets around the kept original
-    assert "[I want my students to become thoughtful and skeptical readers over time.]" in out
-    assert {a["bracket"] for a in applied} == {"single", "double"}
+    out, spans = bg.apply_bracket_grounding(TEXT, gateway=gw)
+    assert "[" not in out and "]" not in out  # NO literal brackets in shipped text
+    # qwen improved -> the generated sentence is present, marked 'improved' (green)
+    assert "Employers in my district now ask for more than memorized facts." in out
+    # qwen declined -> original kept, marked 'kept' (amber)
+    assert "I want my students to become thoughtful and skeptical readers over time." in out
+    assert {s["kind"] for s in spans} == {"improved", "kept"}
+    # spans index the returned clean text correctly
+    for s in spans:
+        assert 0 <= s["start"] < s["end"] <= len(out)
 
 
-def test_single_bracket_when_model_declines(monkeypatch):
+def test_all_kept_when_model_declines(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_V6_BRACKET_GROUNDING", "1")
     gw = _StubGateway([{"i": 0, "improved": ""}, {"i": 1, "improved": ""}])
-    out, applied = bg.apply_bracket_grounding(TEXT, gateway=gw)
-    # nothing improved -> all originals kept in single brackets, no double brackets
-    assert all(a["bracket"] == "single" for a in applied) and applied
-    assert "[[" not in out
+    out, spans = bg.apply_bracket_grounding(TEXT, gateway=gw)
+    assert "[" not in out
+    assert spans and all(s["kind"] == "kept" for s in spans)
