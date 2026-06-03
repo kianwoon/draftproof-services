@@ -1,5 +1,7 @@
 """Worker configuration - reads from environment / .env."""
 
+import os
+
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -8,6 +10,15 @@ from dotenv import load_dotenv
 # os.environ. Loading .env here keeps local worker runs aligned with production
 # service environment variables, without overriding real production env values.
 load_dotenv(override=False)
+
+# Enable the last-stage top-k features for the WORKER (poc code defaults are OFF; this turns them on
+# in the running worker). setdefault keeps any explicit service-env override (set =0 to disable).
+# worker/app/ is git-pulled live at startup, so this takes effect on redeploy without an image rebuild.
+# The bracket pass also needs OPENROUTER_API_KEY (service env) and the qwen grammar model below.
+os.environ.setdefault("DRAFTPROOF_TOPK_GROUNDING_GATE", "1")
+os.environ.setdefault("DRAFTPROOF_V6_BRACKET_GROUNDING", "1")
+os.environ.setdefault("DRAFTPROOF_V6_GRAMMAR_MODEL", "qwen/qwen-2.5-7b-instruct")
+os.environ.setdefault("DRAFTPROOF_V6_GRAMMAR_BASE_URL", "https://openrouter.ai/api/v1")
 
 
 class Settings(BaseSettings):
