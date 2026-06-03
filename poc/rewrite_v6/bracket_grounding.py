@@ -8,9 +8,10 @@ that the author will later replace with their own real specifics:
 
 The shipped draft is a SHOWN solution: green = a machine-grounded example to verify/replace, amber =
 "you still need to ground this in your own words". Mere rewording / synonym-swap / linking words are
-NOT grounding and the prompt forbids them, so a sentence that only gets reworded comes back empty ->
-amber (kept), never green. The model decides (it returns empty when it cannot ground); there is no
-code quality gate beyond the empty-vs-nonempty self-report. Content-agnostic selection (reuses the
+NOT grounding. The model PROPOSES; a deterministic GATE decides: a replacement is accepted as green
+ONLY if it passes the scanner's structural-concreteness oracle (_is_grounded) that the original
+failed -- qwen's self-report is NOT trusted (it never returns empty; it appends filler and self-rates
+"improved"). Replacements the gate can't confirm grounded fall to amber (kept). Content-agnostic selection (reuses the
 scanner's structural-concreteness check via _generic_candidates). MUTATES rewritten_text -- the caller
 MUST re-scan the shipped text after this stage so the report's scores describe the bytes the user
 receives. Never raises; on disable / no candidates / any failure the text is returned unchanged.
@@ -109,7 +110,7 @@ def apply_bracket_grounding(
     if cancellation_check:
         cancellation_check()
     try:
-        from .predictability_showcase import _generic_candidates
+        from .predictability_showcase import _generic_candidates, _is_grounded
         from .json_io import parse_json
 
         candidates = _generic_candidates(original, _max_sentences())
@@ -144,7 +145,13 @@ def apply_bracket_grounding(
             if idx < 0:
                 continue  # not locatable verbatim (e.g. spans a line break) -> leave untouched
             improved = results.get(i, "")
-            if improved and improved != sentence:
+            # GATE over trust (do NOT believe qwen's self-report -- it never returns empty, it always
+            # appends filler and self-rates "improved"). Accept the replacement as GREEN only if it
+            # PASSES the scanner's own structural-concreteness check that the original FAILED (the
+            # candidate was selected because _is_grounded(original) is False). Same signal the detector
+            # scores grounding with -> "improved" is consistent with how the product measures grounding.
+            # Anything the gate doesn't confirm grounded -> AMBER ("kept"), original preserved.
+            if improved and improved != sentence and _is_grounded(improved) is True:
                 located.append((idx, idx + len(sentence), improved, "improved"))
             else:
                 located.append((idx, idx + len(sentence), sentence, "kept"))
