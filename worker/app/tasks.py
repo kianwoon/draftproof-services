@@ -632,6 +632,7 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         "final_scores",
         "predictability_highlights",
         "bracket_grounding_spans",
+        "bracket_grounding_audit",
     )
     compact_summary = {}
     for key in compact_summary_keys:

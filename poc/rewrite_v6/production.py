@@ -219,15 +219,17 @@ def run_rewrite_pipeline_v6(
     # TRUE last stage: ground generic sentences -> clean text + colour spans (green = qwen improved,
     # amber = original kept) for the frontend. Skip if the external guard reverted to the original.
     bracket_grounding_spans: list[dict[str, Any]] = []
+    bracket_grounding_audit: list[dict[str, Any]] = []
     if status != "original_preserved_external_guard":
         pre_bracket_text = final_text
-        final_text, bracket_grounding_spans = _apply_final_bracket_grounding(
+        final_text, bracket_grounding_spans, bracket_grounding_diag = _apply_final_bracket_grounding(
             final_text,
             model=resolved_writer_model,
             api_key=api_key,
             base_url=base_url,
             cancellation_check=raise_if_canceled,
         )
+        bracket_grounding_audit = (bracket_grounding_diag or {}).get("candidates") or []
         # Bracket-grounding MUTATES the shipped text (green spans replace the writer's sentence with
         # qwen's). The authoritative scan above ran on the PRE-bracket text, so re-scan the shipped
         # bytes here -- otherwise detect_scores / final_risk / detect_scan_rewritten / external estimate
@@ -310,6 +312,9 @@ def run_rewrite_pipeline_v6(
     # the writer. The bracket-grounding colour spans below are the validated signal:
     #   green ('improved') = qwen's generated version accepted;  amber ('kept') = not accepted / original kept.
     summary["bracket_grounding_spans"] = bracket_grounding_spans
+    # Per-candidate gate audit (original, replacement, decision, scan before/after) so the green/amber
+    # decision is reviewable from rewrite.json -- the stage is no longer a black box.
+    summary["bracket_grounding_audit"] = bracket_grounding_audit
 
     result_obj = SimpleNamespace(
         summary=summary,
@@ -614,19 +619,22 @@ def _strip_markdown_emphasis(text: str) -> str:
 
 
 def _apply_final_bracket_grounding(text, *, model, api_key, base_url, cancellation_check):
-    """TRUE last-stage bracket-grounding on the final shipped text. Returns (clean_text, spans) where
-    spans = [{start,end,kind}] over clean_text (kind 'improved' -> green, 'kept' -> amber) for the
-    frontend to colour. NO literal brackets in the text. Default OFF; (text, []) on disable/failure."""
+    """TRUE last-stage bracket-grounding on the final shipped text. Returns (clean_text, spans, diag)
+    where spans = [{start,end,kind}] (kind 'improved' -> green, 'kept' -> amber) for the frontend, and
+    diag carries the per-candidate gate audit (original/replacement/decision/scan delta). NO literal
+    brackets in the text. Default OFF; (text, [], {}) on disable/failure."""
     from .bracket_grounding import apply_bracket_grounding, bracket_grounding_enabled
     from .llm_config import grammar_gateway
     if not bracket_grounding_enabled():
-        return text, []
+        return text, [], {}
+    diag: dict[str, Any] = {}
     try:
         gateway = grammar_gateway(api_key=api_key, base_url=base_url, cancellation_check=cancellation_check) \
             or _highlight_repair_gateway(model=model, api_key=api_key, base_url=base_url, text=text, cancellation_check=cancellation_check)
-        return apply_bracket_grounding(text, gateway=gateway, cancellation_check=cancellation_check)
+        new_text, spans = apply_bracket_grounding(text, gateway=gateway, cancellation_check=cancellation_check, diag=diag)
+        return new_text, spans, diag
     except Exception:
-        return text, []
+        return text, [], diag
 
 
 def _external_guard_worsen_margin() -> float:
