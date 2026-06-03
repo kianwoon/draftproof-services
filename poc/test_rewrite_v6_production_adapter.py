@@ -4,9 +4,16 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from poc.rewrite_v6 import production as v6_production
 from poc.rewrite_v6.pipeline import _dynamic_pass_limit
 from poc.rewrite_v6.scan import scan_text, scan_text_with_report
+
+
+@pytest.fixture(autouse=True)
+def _use_legacy_adapter_path(monkeypatch):
+    monkeypatch.setattr(v6_production, "direct_rewrite_enabled", lambda: False)
 
 
 def test_v6_production_adapter_uses_configured_three_pass_budget(tmp_path, monkeypatch):
@@ -196,3 +203,101 @@ def test_v6_production_passes_scan_json_aligned_source_scan(tmp_path, monkeypatc
     assert captured["source_scan"].paragraphs[1].id == "p002"
     assert any(finding.sentence_id == "s020" for finding in captured["source_scan"].findings)
     assert summary["rewrite_effective_config"]["source_scan"] == "scan_json_aligned"
+
+
+def test_v6_external_guard_preserves_original_on_severe_regression(tmp_path, monkeypatch):
+    original = "Original classroom note with stable detector risk."
+    rewritten = "Candidate classroom note with worse detector risk."
+    scan = scan_text(original)
+
+    def fake_run_v6_rewrite_all(_text, **_kwargs):
+        return SimpleNamespace(
+            initial_scan=scan,
+            final_scan=scan_text(rewritten),
+            passes=[],
+            pass_trace=[],
+            rewritten_text=rewritten,
+            final_text_before_quality_repair=None,
+            quality_repair=None,
+        )
+
+    def fake_scan_report(text, **_kwargs):
+        score = 52 if text == original else 86
+        return _report_with_external_score(text, score)
+
+    monkeypatch.setattr(v6_production, "run_v6_rewrite_all", fake_run_v6_rewrite_all)
+    monkeypatch.setattr(v6_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+    monkeypatch.setattr(v6_production, "render_rewrite_report", lambda **_kwargs: "# Rewrite")
+    monkeypatch.setattr(v6_production, "_sentence_comparison", lambda original_text, final_text: [{"original": original_text, "final": final_text}])
+    monkeypatch.setattr(v6_production, "_scan_report_for_summary", fake_scan_report)
+
+    result = v6_production.run_rewrite_pipeline_v6(
+        detect_json={"input_text": original},
+        output_dir=str(tmp_path),
+        model="writer-model",
+    )
+    summary = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+
+    assert summary["status"] == "original_preserved_external_guard"
+    assert summary["final_text"] == original
+    assert summary["external_detector_guard"]["blocked"] is True
+    assert summary["external_detector_guard"]["candidate_score"] == 86
+    assert summary["external_detector_guard"]["original_score"] == 52
+    assert any(row.get("selected_source") == "external_detector_guard" for row in summary["v6_pass_trace"])
+
+
+def test_v6_external_guard_allows_non_regression(tmp_path, monkeypatch):
+    original = "Original classroom note with stable detector risk."
+    rewritten = "Candidate classroom note with lower detector risk."
+    scan = scan_text(original)
+
+    def fake_run_v6_rewrite_all(_text, **_kwargs):
+        return SimpleNamespace(
+            initial_scan=scan,
+            final_scan=scan_text(rewritten),
+            passes=[],
+            pass_trace=[],
+            rewritten_text=rewritten,
+            final_text_before_quality_repair=None,
+            quality_repair=None,
+        )
+
+    def fake_scan_report(text, **_kwargs):
+        score = 70 if text == original else 62
+        return _report_with_external_score(text, score)
+
+    monkeypatch.setattr(v6_production, "run_v6_rewrite_all", fake_run_v6_rewrite_all)
+    monkeypatch.setattr(v6_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+    monkeypatch.setattr(v6_production, "render_rewrite_report", lambda **_kwargs: "# Rewrite")
+    monkeypatch.setattr(v6_production, "_sentence_comparison", lambda _original, _final: [])
+    monkeypatch.setattr(v6_production, "_scan_report_for_summary", fake_scan_report)
+
+    result = v6_production.run_rewrite_pipeline_v6(
+        detect_json={"input_text": original},
+        output_dir=str(tmp_path),
+        model="writer-model",
+    )
+    summary = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+
+    assert summary["final_text"] == rewritten
+    assert summary["external_detector_guard"]["blocked"] is False
+    assert summary["external_detector_guard"]["candidate_score"] == 62
+
+
+def _report_with_external_score(text: str, score: float) -> dict:
+    return {
+        "input_text": text,
+        "ai_score": score,
+        "findings": [],
+        "ai_risk_badge": {
+            "ai_likelihood_score": score,
+            "external_detector_estimate": {"score": score, "band": "high" if score >= 75 else "low"},
+            "transformation_classification": {"label": "test"},
+        },
+        "scan_intelligence": {
+            "transformation": {
+                "contribution": {"human": 50},
+                "core_signals": [{"key": "test"}],
+            }
+        },
+    }

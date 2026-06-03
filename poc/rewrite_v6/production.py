@@ -175,16 +175,7 @@ def run_rewrite_pipeline_v6(
                 )
             else:
                 document = replace(document, pass_trace=trace)
-    changed = final_text.strip() != original_text.strip()
-    cleared = not document.final_scan.findings
-    status = "ai_mitigated" if changed and cleared else "partial_candidate_not_strict_safe" if changed else "original_preserved"
     elapsed = time.time() - started
-    sentence_comparison = timed_stage(
-        "sentence_comparison",
-        80,
-        "Comparing original and rewritten sentences",
-        lambda: _sentence_comparison(original_text, final_text),
-    )
     original_scan_report = timed_stage(
         "original_scan_summary",
         81,
@@ -204,6 +195,35 @@ def run_rewrite_pipeline_v6(
             provided=None,
             fallback_scan=document.final_scan.to_dict(),
         ),
+    )
+    external_guard = _external_guard_decision(original_scan_report, rewritten_scan_report)
+    if external_guard.get("blocked"):
+        final_text = original_text
+        document = _replace_document(
+            document,
+            rewritten_text=final_text,
+            final_scan=document.initial_scan,
+            pass_trace=list(document.pass_trace) + [{
+                "selected_source": "external_detector_guard",
+                "status": "rejected",
+                "reason": external_guard.get("reason"),
+                "original_external_score": external_guard.get("original_score"),
+                "candidate_external_score": external_guard.get("candidate_score"),
+            }],
+        )
+        rewritten_scan_report = original_scan_report
+        status = "original_preserved_external_guard"
+    else:
+        status = ""
+    changed = final_text.strip() != original_text.strip()
+    cleared = bool(changed and not document.final_scan.findings)
+    if not status:
+        status = "ai_mitigated" if changed and cleared else "partial_candidate_not_strict_safe" if changed else "original_preserved"
+    sentence_comparison = timed_stage(
+        "sentence_comparison",
+        84,
+        "Comparing original and rewritten sentences",
+        lambda: _sentence_comparison(original_text, final_text),
     )
     detect_scores = _detect_scores_for_summary(original_scan_report, rewritten_scan_report)
     summary = {
@@ -245,6 +265,7 @@ def run_rewrite_pipeline_v6(
         "detect_scores": detect_scores,
         "original_risk": detect_scores.get("original_ai"),
         "final_risk": detect_scores.get("rewritten_ai"),
+        "external_detector_guard": external_guard,
         "detect_scan_original_saved": original_scan_report,
         "detect_scan_original": original_scan_report,
         "detect_scan_rewritten": rewritten_scan_report,
@@ -452,6 +473,16 @@ def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
+def _float_env(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    import os
+
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
 def _has_full_report_shape(report: dict[str, Any] | None) -> bool:
     if not isinstance(report, dict):
         return False
@@ -479,6 +510,80 @@ def _external_estimate_from_scan(scan_report: dict | None) -> dict | None:
     if isinstance(components, dict) and components:
         return estimate_external_detector_likelihood(components)
     return None
+
+
+def _external_guard_decision(original_scan: dict | None, candidate_scan: dict | None) -> dict[str, Any]:
+    if not _external_guard_enabled():
+        return {"blocked": False, "status": "disabled"}
+    original_estimate = _external_estimate_from_scan(original_scan)
+    candidate_estimate = _external_estimate_from_scan(candidate_scan)
+    original_score = _external_score(original_estimate)
+    candidate_score = _external_score(candidate_estimate)
+    decision: dict[str, Any] = {
+        "blocked": False,
+        "status": "checked",
+        "original_score": original_score,
+        "candidate_score": candidate_score,
+        "severe_threshold": _external_guard_severe_threshold(),
+        "worsen_margin": _external_guard_worsen_margin(),
+    }
+    if candidate_score is None:
+        decision["status"] = "candidate_external_unavailable"
+        return decision
+    if original_score is None:
+        unanchored_threshold = _external_guard_unanchored_threshold()
+        decision["unanchored_threshold"] = unanchored_threshold
+        if candidate_score >= unanchored_threshold:
+            decision.update({
+                "blocked": True,
+                "reason": "candidate_external_score_severe_without_original_anchor",
+            })
+        return decision
+    if (
+        candidate_score >= _external_guard_severe_threshold()
+        and candidate_score - original_score >= _external_guard_worsen_margin()
+    ):
+        decision.update({
+            "blocked": True,
+            "reason": "candidate_external_score_regressed",
+        })
+    return decision
+
+
+def _external_score(estimate: dict | None) -> float | None:
+    if not isinstance(estimate, dict):
+        return None
+    try:
+        return float(estimate.get("score"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _external_guard_enabled() -> bool:
+    import os
+
+    return os.environ.get("DRAFTPROOF_V6_EXTERNAL_GUARD", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _external_guard_severe_threshold() -> float:
+    return _float_env("DRAFTPROOF_V6_EXTERNAL_GUARD_SEVERE_THRESHOLD", 80.0, minimum=0.0, maximum=100.0)
+
+
+def _external_guard_unanchored_threshold() -> float:
+    return _float_env("DRAFTPROOF_V6_EXTERNAL_GUARD_UNANCHORED_THRESHOLD", 85.0, minimum=0.0, maximum=100.0)
+
+
+def _external_guard_worsen_margin() -> float:
+    return _float_env("DRAFTPROOF_V6_EXTERNAL_GUARD_WORSEN_MARGIN", 3.0, minimum=0.0, maximum=100.0)
+
+
+def _replace_document(document: Any, **changes: Any) -> Any:
+    try:
+        return replace(document, **changes)
+    except TypeError:
+        data = dict(getattr(document, "__dict__", {}))
+        data.update(changes)
+        return SimpleNamespace(**data)
 
 
 def _detect_scores_for_summary(original_report: dict[str, Any], rewritten_report: dict[str, Any]) -> dict[str, Any]:
