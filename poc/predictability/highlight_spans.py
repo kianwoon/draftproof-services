@@ -193,7 +193,7 @@ def _trim_edge_punctuation(text: str, start: int, end: int) -> tuple[int, int]:
 # This gate drops those from the ACTIONABLE/displayed set so the report stops red-flagging good
 # content; the genuinely-formulaic (un-grounded, non-anchor) runs survive -- the real problem.
 # Display-only: raw_words / raw sentences are never touched (audit trail preserved).
-# Opt in with DRAFTPROOF_TOPK_GROUNDING_GATE=1. Content-agnostic: it reuses the scanner's structural
+# Enable with DRAFTPROOF_TOPK_GROUNDING_GATE=1 (production sets it via the worker entrypoint). Content-agnostic: reuses the scanner's structural
 # concreteness check + pure text shape (digits, numerals, hyphen compounds) -- no phrase/word lists.
 _DIGIT_RE = re.compile(r"\d")
 _COMPOUND_RE = re.compile(r"[A-Za-z0-9]+[‐‑–—-][A-Za-z0-9]+")

@@ -22,7 +22,8 @@ from typing import Any, Callable
 
 
 def bracket_grounding_enabled() -> bool:
-    """Feature flag, default OFF. Set DRAFTPROOF_V6_BRACKET_GROUNDING=1 to enable."""
+    """Feature flag. Code default OFF; production enables it via the worker entrypoint. Set
+    DRAFTPROOF_V6_BRACKET_GROUNDING=1 to enable, =0 to disable."""
     return os.environ.get("DRAFTPROOF_V6_BRACKET_GROUNDING", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 

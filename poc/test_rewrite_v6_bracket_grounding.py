@@ -32,7 +32,7 @@ TEXT = (
 
 
 def test_disabled_by_default_is_noop(monkeypatch):
-    monkeypatch.delenv("DRAFTPROOF_V6_BRACKET_GROUNDING", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_V6_BRACKET_GROUNDING", raising=False)  # code default is OFF
     out, applied = bg.apply_bracket_grounding(TEXT, gateway=_StubGateway([]))
     assert out == TEXT and applied == []
 

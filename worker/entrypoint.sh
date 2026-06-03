@@ -17,6 +17,14 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-8}"
 export TORCH_NUM_THREADS="${TORCH_NUM_THREADS:-${OMP_NUM_THREADS}}"
 
+# Last-stage top-k features ON in production (code default OFF). Overridable by Koyeb env (set =0 to
+# disable). Bracket-grounding uses the qwen grammar model; the model + base_url default here, but the
+# qwen call needs OPENROUTER_API_KEY set on the Koyeb worker -- without it the pass no-ops safely.
+export DRAFTPROOF_TOPK_GROUNDING_GATE="${DRAFTPROOF_TOPK_GROUNDING_GATE:-1}"
+export DRAFTPROOF_V6_BRACKET_GROUNDING="${DRAFTPROOF_V6_BRACKET_GROUNDING:-1}"
+export DRAFTPROOF_V6_GRAMMAR_MODEL="${DRAFTPROOF_V6_GRAMMAR_MODEL:-qwen/qwen-2.5-7b-instruct}"
+export DRAFTPROOF_V6_GRAMMAR_BASE_URL="${DRAFTPROOF_V6_GRAMMAR_BASE_URL:-https://openrouter.ai/api/v1}"
+
 echo "[entrypoint] ============================================"
 echo "[entrypoint] DraftProof Worker Startup"
 echo "[entrypoint] HF_HOME=${HF_HOME}"
@@ -27,6 +35,8 @@ echo "[entrypoint] OMP_NUM_THREADS=${OMP_NUM_THREADS}"
 echo "[entrypoint] MKL_NUM_THREADS=${MKL_NUM_THREADS}"
 echo "[entrypoint] TORCH_NUM_THREADS=${TORCH_NUM_THREADS}"
 echo "[entrypoint] CELERY_WORKER_CONCURRENCY=${CELERY_WORKER_CONCURRENCY}"
+echo "[entrypoint] DRAFTPROOF_TOPK_GROUNDING_GATE=${DRAFTPROOF_TOPK_GROUNDING_GATE}"
+echo "[entrypoint] DRAFTPROOF_V6_BRACKET_GROUNDING=${DRAFTPROOF_V6_BRACKET_GROUNDING} (model=${DRAFTPROOF_V6_GRAMMAR_MODEL})"
 echo "[entrypoint] Marker: ${MODEL_MARKER}"
 echo "[entrypoint] Semantic marker: ${SEMANTIC_MARKER}"
 echo "[entrypoint] ============================================"

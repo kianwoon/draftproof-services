@@ -57,7 +57,7 @@ def test_predictability_run_actionability_is_content_agnostic_not_phrase_based()
 
 
 def test_grounding_gate_off_by_default_keeps_actionable(monkeypatch):
-    monkeypatch.delenv("DRAFTPROOF_TOPK_GROUNDING_GATE", raising=False)
+    monkeypatch.delenv("DRAFTPROOF_TOPK_GROUNDING_GATE", raising=False)  # code default is OFF
     text = "In 2023 I assigned tutorials on fractions."
     scanner = _FakeScanner({"tutorials", "on", "fractions"})
 
