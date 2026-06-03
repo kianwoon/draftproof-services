@@ -136,8 +136,8 @@ function renderTopkHighlights(text, sentenceSpans, wordSpans, bracketSpans) {
   const n = source.length;
   const sents = sanitizeSpans(sentenceSpans, n);
   const words = sanitizeSpans(wordSpans, n);
-  const improved = bracketSpansByKind(bracketSpans, n, 'improved');  // green: qwen generated a better version
-  const kept = bracketSpansByKind(bracketSpans, n, 'kept');          // amber: original kept, ground it yourself
+  const improved = bracketSpansByKind(bracketSpans, n, 'improved');  // green: rewrite improved the span
+  const kept = bracketSpansByKind(bracketSpans, n, 'kept');          // amber: kept span; user should edit it
   if (!sents.length && !words.length && !improved.length && !kept.length) return source;
 
   const cuts = new Set([0, n]);
@@ -330,7 +330,8 @@ export default function Rewrite() {
   const hasTopkHighlights = (topkSentenceSpans.length || topkWordSpans.length) && report?.final_text;
   // bracket-grounding colour spans: kind 'improved' -> green, 'kept' -> amber
   const bracketSpans = summary?.bracket_grounding_spans || report?.bracket_grounding_spans || [];
-  const hasDocHighlights = Boolean((hasTopkHighlights || bracketSpans.length) && report?.final_text);
+  const hasBracketHighlights = Boolean(bracketSpans.length && report?.final_text);
+  const hasDocHighlights = Boolean((hasTopkHighlights || hasBracketHighlights) && report?.final_text);
 
   return (
     <main className="dash-shell">
@@ -485,6 +486,13 @@ export default function Rewrite() {
                 <mark className="topk-mark is-sentence">{t('rewritePage.topk.legendSentence')}</mark>
                 <mark className="topk-mark is-word">{t('rewritePage.topk.legendWord')}</mark>
                 <span>{t('rewritePage.topk.legendNote')}</span>
+              </p>
+            ) : null}
+            {hasBracketHighlights ? (
+              <p className="topk-legend">
+                <mark className="topk-mark is-improved">{t('rewritePage.bracketLegend.improved')}</mark>
+                <mark className="topk-mark is-kept">{t('rewritePage.bracketLegend.kept')}</mark>
+                <span>{t('rewritePage.bracketLegend.note')}</span>
               </p>
             ) : null}
             <div className="rewritten-document-content">

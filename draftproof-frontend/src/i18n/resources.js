@@ -919,6 +919,13 @@ export const resources = {
           legendWord: 'predictable words',
           legendNote: 'Shaded sentences score HIGH for top-k predictability; underlined runs are the predictable (top-10) words. This is the intrinsic AI-text signal — a rewrite does not remove it; only your own wording does.',
         },
+        // allow-hardcode: i18n UI translation strings for model-returned highlight span kinds.
+        // The span placement is driven by scanner/rewrite offsets, not by these labels.
+        bracketLegend: {
+          improved: 'Green: improved',
+          kept: 'Amber: edit yourself',
+          note: 'Green marks text the rewrite improved. Amber marks text kept because the system could not safely improve it; edit those amber sentences yourself.',
+        },
         outcomes: {
           completed: 'completed',
           ai_mitigated: 'grounding draft applied',
@@ -1994,6 +2001,13 @@ export const resources = {
           legendSentence: 'top-k 高可预测句',
           legendWord: '可预测词',
           legendNote: '阴影句子的 top-k 可预测性为「高」；带下划线的连续片段是可预测（top-10）的词。这是 AI 文本固有的信号——改写无法消除它，只有你自己的措辞才能改变。',
+        },
+        // allow-hardcode: i18n UI translation strings for model-returned highlight span kinds.
+        // The span placement is driven by scanner/rewrite offsets, not by these labels.
+        bracketLegend: {
+          improved: '绿色：已改进',
+          kept: '琥珀色：请自行修改',
+          note: '绿色表示改写已改善该文本。琥珀色表示系统无法安全改进而保留原文；请自行修改这些琥珀色句子。',
         },
         outcomes: {
           completed: '已完成',
