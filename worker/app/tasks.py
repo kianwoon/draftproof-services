@@ -608,6 +608,7 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         "detect_scores",
         "original_risk",
         "final_risk",
+        "external_detector_estimate",
         "partial_rewrite_preserved",
         "partial_rewrite_preservation_reason",
         "converged",

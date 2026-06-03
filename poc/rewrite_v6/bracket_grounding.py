@@ -1,15 +1,19 @@
 """Bracket-grounding -- the last-stage treatment for generic (un-grounded) sentences.
 
-For each generic sentence the showcase selector finds, ask the model (qwen) to make it more concrete
-WITHOUT inventing facts:
-  - model returns an improvement -> single bracket  [suggested replacement]   (writer verifies/edits)
-  - model returns nothing        -> double bracket  [[original sentence]]      (writer grounds it)
+For each generic sentence the showcase selector finds, ask the model (qwen) to GROUND it -- anchor the
+same claim in a concrete illustrative detail (a specific moment, number, name, or first-hand detail)
+that the author will later replace with their own real specifics:
+  - model grounds it      -> GREEN span ('improved')  the grounded version replaces the original
+  - model cannot ground it -> AMBER span ('kept')      the original sentence is kept, flagged to ground
 
-The brackets are the point: the shipped draft is a SHOWN solution, and the brackets tell the writer
-exactly which spans are machine suggestions to verify or replace with their own real detail. No code
-quality gate -- the model decides; the bracket flags it for the human. Content-agnostic selection
-(reuses the scanner's structural-concreteness check via _generic_candidates). MUTATES rewritten_text.
-Never raises; on disable / no candidates / any failure the text is returned unchanged.
+The shipped draft is a SHOWN solution: green = a machine-grounded example to verify/replace, amber =
+"you still need to ground this in your own words". Mere rewording / synonym-swap / linking words are
+NOT grounding and the prompt forbids them, so a sentence that only gets reworded comes back empty ->
+amber (kept), never green. The model decides (it returns empty when it cannot ground); there is no
+code quality gate beyond the empty-vs-nonempty self-report. Content-agnostic selection (reuses the
+scanner's structural-concreteness check via _generic_candidates). MUTATES rewritten_text -- the caller
+MUST re-scan the shipped text after this stage so the report's scores describe the bytes the user
+receives. Never raises; on disable / no candidates / any failure the text is returned unchanged.
 
 allow-hardcode: the `rules` below are the model coaching PROMPT (human-reviewed guidance), not a
 detect/allow/scoring word-list in code logic.
@@ -52,18 +56,37 @@ def _max_tokens() -> int:
     return 8000
 
 
-_SYSTEM = "You are a writing coach. Return only valid JSON."
+# allow-hardcode: _SYSTEM and the `rules` below are the model coaching PROMPT (human-reviewed
+# guidance), not a detect/allow/scoring word-list in code logic. The few illustrative connective
+# words are examples shown to the model, never matched against the input.
+_SYSTEM = (
+    "You are a writing coach. You receive sentences that state a claim WITHOUT concrete grounding. "
+    "Rewrite a sentence ONLY when you can anchor the SAME claim in a concrete, illustrative detail -- a "
+    "specific moment, number, name, place, or first-hand observation -- that the author will later "
+    "replace with their own real specifics. Keep the claim's meaning and stance. If the only change "
+    "you could make is rewording, reordering, or adding linking words, do not rewrite it. Return only "
+    "valid JSON."
+)
 
 
 def _build_prompt(candidates: list[str]) -> str:
+    # allow-hardcode: the `rules` strings are model coaching guidance (a prompt), not code logic.
     payload = {
-        "task": "improve_if_possible",
+        "task": "ground_if_possible",
         "rules": [
-            "Make each sentence more concrete and specific WITHOUT inventing any facts (no fake numbers, names, companies, statistics, or events).",
-            "If you can honestly improve it, return the improved sentence in 'improved'. If you cannot, return 'improved' as an empty string.",
+            # Aligned with the objective: grounding (adding a concrete illustrative anchor) IS the fix;
+            # synonym-swapping / reordering / linking words stay generic and are NOT a fix.
+            "Rewrite a sentence ONLY if you can add a CONCRETE illustrative anchor (a specific moment, "
+            "number, name, place, or first-hand detail) that grounds the SAME claim. The anchor is an "
+            "example the author will swap for their own real detail -- keep the claim's meaning and stance.",
+            "Do NOT merely reword, swap synonyms, reorder clauses, or add transition/linking words "
+            "(e.g. however, moreover, subsequently, next, this combination): that does not ground the "
+            "claim. If you cannot add a concrete anchor, return 'improved' as an empty string -- the "
+            "original sentence is then kept unchanged.",
+            "Keep grammar clean and the sentence self-contained.",
         ],
         "sentences": [{"i": i, "text": s} for i, s in enumerate(candidates)],
-        "output_schema": {"results": [{"i": 0, "improved": "improved sentence or empty string"}]},
+        "output_schema": {"results": [{"i": 0, "improved": "grounded sentence, or empty string if you cannot ground it"}]},
     }
     return "Return valid JSON only.\n" + json.dumps(payload, ensure_ascii=False)
 
@@ -72,7 +95,9 @@ def apply_bracket_grounding(
     text: str,
     *,
     gateway: Any,
+    fallback_gateway: Any = None,
     cancellation_check: Callable[[], None] | None = None,
+    diag: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Ground the generic sentences. Returns (clean_text, spans) -- NO literal brackets in the text.
     spans = [{"start","end","kind"}] over clean_text, kind 'improved' (qwen generated a better version,

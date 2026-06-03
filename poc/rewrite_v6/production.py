@@ -220,6 +220,7 @@ def run_rewrite_pipeline_v6(
     # amber = original kept) for the frontend. Skip if the external guard reverted to the original.
     bracket_grounding_spans: list[dict[str, Any]] = []
     if status != "original_preserved_external_guard":
+        pre_bracket_text = final_text
         final_text, bracket_grounding_spans = _apply_final_bracket_grounding(
             final_text,
             model=resolved_writer_model,
@@ -227,6 +228,21 @@ def run_rewrite_pipeline_v6(
             base_url=base_url,
             cancellation_check=raise_if_canceled,
         )
+        # Bracket-grounding MUTATES the shipped text (green spans replace the writer's sentence with
+        # qwen's). The authoritative scan above ran on the PRE-bracket text, so re-scan the shipped
+        # bytes here -- otherwise detect_scores / final_risk / detect_scan_rewritten / external estimate
+        # all describe text the user never receives (the badge would be stale by construction).
+        if final_text.strip() != pre_bracket_text.strip():
+            document = replace(
+                document,
+                rewritten_text=final_text,
+                final_scan=scan_text_preserve_blocks(final_text),
+            )
+            rewritten_scan_report = _scan_report_for_summary(
+                final_text,
+                provided=None,
+                fallback_scan=document.final_scan.to_dict(),
+            )
     changed = final_text.strip() != original_text.strip()
     cleared = bool(changed and not document.final_scan.findings)
     if not status:
