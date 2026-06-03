@@ -57,51 +57,13 @@ class Scan:
 
 def scan_text(text: str) -> Scan:
     text = normalize_paragraph_blocks(text)
-    paragraphs = split_paragraphs(text)
-    sentences = [sentence for paragraph in paragraphs for sentence in paragraph.sentences]
-    risks = [_risk(sentence) for sentence in sentences]
-    threshold = max(12.0, mean(risks) if risks else 0.0)
-    findings: list[Finding] = []
-    seen_findings: set[tuple[str, str]] = set()
-    for sentence, risk in zip(sentences, risks, strict=False):
-        tags = _tags(sentence)
-        if risk >= threshold:
-            tags.append("paragraph_rhythm")
-        tags = _dedupe(tags)
-        if tags and risk >= 12.0:
-            for tag in tags:
-                seen_findings.add((sentence.id, tag))
-            findings.append(
-                Finding(
-                    sentence_id=sentence.id,
-                    paragraph_id=sentence.paragraph_id,
-                    tags=tags,
-                    severity=round(risk, 3),
-                    evidence={
-                        "text": sentence.text,
-                        "word_count": sentence.word_count,
-                        "list_pressure": round(_list_pressure(sentence.text), 3),
-                        "abstract_pressure": round(_abstract_pressure(sentence.text), 3),
-                    },
-                )
-            )
-    for finding in _repeated_frame_findings(paragraphs):
-        key = (finding.sentence_id, "repeated_sentence_frame")
-        if key in seen_findings:
-            continue
-        findings.append(finding)
-        seen_findings.add(key)
-    return Scan(
-        source_text=text,
-        paragraphs=paragraphs,
-        findings=findings,
-        scores={
-            "finding_count": float(len(findings)),
-            "paragraph_count": float(len(paragraphs)),
-            "sentence_count": float(len(sentences)),
-            "mean_sentence_shape_risk": round(mean(risks), 3) if risks else 0.0,
-        },
-    )
+    return _scan_from_paragraphs(text, split_paragraphs(text))
+
+
+def scan_text_preserve_blocks(text: str) -> Scan:
+    """Scan rewritten output without creating virtual paragraphs from oversized blocks."""
+    visible = str(text or "")
+    return _scan_from_paragraphs(visible, split_paragraphs(visible))
 
 
 def scan_text_with_report(text: str, report: dict[str, Any] | None) -> Scan:

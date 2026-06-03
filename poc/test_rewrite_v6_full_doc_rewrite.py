@@ -47,7 +47,7 @@ def test_full_doc_rewrite_rejects_number_change_even_when_score_improves(monkeyp
     assert "numbers_changed" in result.reasons
 
 
-def test_full_doc_rewrite_allows_duplicate_number_count_change(monkeypatch):
+def test_full_doc_rewrite_rejects_duplicate_number_count_change(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_V6_FULL_DOC_REWRITE", "1")
     monkeypatch.setattr(fdr, "_score", lambda text: 8.0)
 
@@ -56,10 +56,12 @@ def test_full_doc_rewrite_allows_duplicate_number_count_change(monkeypatch):
         gateway=_Gateway("I opened the 2023 packet and noticed the same line repeated."),
     )
 
-    assert out == "I opened the 2023 packet and noticed the same line repeated."
-    assert result.changed is True
+    assert out == "I opened the 2023 packet. The 2023 packet repeated the same line."
+    assert result.changed is False
+    assert result.status == "rejected"
     assert result.metrics["numbers_preserved"] is True
     assert result.metrics["number_multiset_preserved"] is False
+    assert "number_count_changed" in result.reasons
 
 
 def test_full_doc_rewrite_allows_small_score_regression(monkeypatch):

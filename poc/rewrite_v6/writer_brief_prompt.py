@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections import Counter
 from typing import Any
 
 from .plan import Plan
@@ -180,7 +181,49 @@ def build_writer_brief_prompt(paragraph: Paragraph, plan: Plan) -> str:
             "Before returning, scan each variant against route_sequence_guards and discard it if a final-consequence term appears too early.",
         ],
     }
+    if _writer_topk_pressure_enabled():
+        pressure = _topk_pressure(paragraph.text)
+        if pressure:
+            payload["topk_pressure"] = pressure
     return "Return valid JSON only with a variants array.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _writer_topk_pressure_enabled() -> bool:
+    return os.environ.get("DRAFTPROOF_V6_WRITER_TOPK_PRESSURE", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _topk_pressure(text: str) -> dict[str, Any]:
+    """Scanner-derived top-k pressure for writer prompts."""
+    try:
+        from poc.predictability.scanner import PredictabilityScanner
+    except ImportError:
+        from predictability.scanner import PredictabilityScanner
+    try:
+        scanner = PredictabilityScanner(model_name="gpt2")
+        result = scanner.scan_sentence(str(text or ""))
+        tokens = getattr(result, "token_results", None) or []
+        if not tokens:
+            return {}
+        top_tokens = [getattr(token, "token", "") for token in tokens if getattr(token, "top_10", False)]
+        return {
+            "purpose": "scanner-derived predictability pressure",
+            "source_topk_fraction": round(
+                sum(1 for token in tokens if getattr(token, "top_10", False)) / max(len(tokens), 1),
+                4,
+            ),
+            "topk_k": 10,
+            "high_topk_token_ledger": [
+                {"token": token, "hits": count}
+                for token, count in Counter(top_tokens).most_common(12)
+                if token
+            ],
+            "rules": [
+                "Use this as pressure to change predictable sentence routes.",
+                "Do not damage grammar, meaning, names, or numbers.",
+            ],
+        }
+    except Exception:
+        return {}
 
 
 def _planner_brief(plan: Plan) -> dict[str, Any]:

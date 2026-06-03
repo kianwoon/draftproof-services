@@ -40,7 +40,7 @@ try:
 except ImportError:
     from poc.detect.layer3_scoring import estimate_external_detector_likelihood
 from .report_contracts import extract_paragraph_diagnoses, extract_report_signal_contracts, paragraph_diagnoses_context
-from .scan import scan_text, scan_text_with_report
+from .scan import scan_text, scan_text_preserve_blocks, scan_text_with_report
 
 try:
     from poc.llm.gateway import LLMConfig, LLMGateway
@@ -170,7 +170,7 @@ def run_rewrite_pipeline_v6(
                 document = replace(
                     document,
                     rewritten_text=final_text,
-                    final_scan=scan_text(final_text),
+                    final_scan=scan_text_preserve_blocks(final_text),
                     pass_trace=trace,
                 )
             else:

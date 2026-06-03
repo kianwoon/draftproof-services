@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections import Counter
 from typing import Any, Callable
 
 try:
@@ -36,7 +37,7 @@ from .json_io import parse_json
 from .llm_config import resolve_v6_api_key, resolve_v6_base_url, resolve_v6_model, writer_extra_body, writer_llm_profile, writer_model
 from .report_contracts import paragraph_diagnosis
 from .rewrite_playbook import playbook_entries
-from .scan import Scan, findings_for_paragraph, scan_text
+from .scan import Scan, findings_for_paragraph, scan_text, scan_text_preserve_blocks
 from .selector_diagnostics import _severe_polarity_inversion
 from .text import Paragraph
 try:
@@ -132,9 +133,20 @@ def _apply_residual_fix(
     if not residual_fix_enabled():
         return doc
     try:
-        residual_scan = scan_text(doc.rewritten_text)
+        residual_scan = scan_text_preserve_blocks(doc.rewritten_text)
     except Exception:
         return doc
+    expected_paragraphs = len(getattr(doc.initial_scan, "paragraphs", []) or [])
+    actual_paragraphs = len(getattr(residual_scan, "paragraphs", []) or [])
+    if expected_paragraphs and actual_paragraphs != expected_paragraphs:
+        from dataclasses import replace
+        trace = list(doc.pass_trace) + [{
+            "selected_source": "residual_checker",
+            "status": "skipped_shape_mismatch",
+            "expected_paragraphs": expected_paragraphs,
+            "actual_paragraphs": actual_paragraphs,
+        }]
+        return replace(doc, pass_trace=trace)
 
     paragraphs = list(residual_scan.paragraphs)
     rewritten: list[str] = []
@@ -189,7 +201,7 @@ def _apply_residual_fix(
     fixed_text = "\n\n".join(rewritten)
     return DocumentResult(
         initial_scan=doc.initial_scan,
-        final_scan=scan_text(fixed_text),
+        final_scan=scan_text_preserve_blocks(fixed_text),
         passes=doc.passes,
         rewritten_text=fixed_text,
         pass_trace=trace,
@@ -289,6 +301,10 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "only as the shape of the fix, never as wording to copy.",
         ],
     }
+    if _writer_topk_pressure_enabled():
+        pressure = _topk_pressure(paragraph_text)
+        if pressure:
+            payload["topk_pressure"] = pressure
     authorship_targets = authorship_targets or {}
     protected = authorship_targets.get("protected_spans") or []
     grounding = authorship_targets.get("grounding_targets") or []
@@ -515,7 +531,7 @@ def _apply_reviewer(
     if not result.corrections:
         # No text change, but the pass is now always recorded (no more silent failures).
         return _rebuilt(doc.rewritten_text, doc.final_scan, trace)
-    return _rebuilt(result.text, scan_text(result.text), trace)
+    return _rebuilt(result.text, scan_text_preserve_blocks(result.text), trace)
 
 
 def _apply_grammar_repair(
@@ -549,7 +565,7 @@ def _apply_grammar_repair(
     }]
     if not applied:
         return replace(doc, pass_trace=trace)
-    return replace(doc, rewritten_text=new_text, final_scan=scan_text(new_text), pass_trace=trace)
+    return replace(doc, rewritten_text=new_text, final_scan=scan_text_preserve_blocks(new_text), pass_trace=trace)
 
 
 def _apply_full_doc_rewrite(
@@ -580,7 +596,7 @@ def _apply_full_doc_rewrite(
     trace = list(doc.pass_trace) + [result.to_trace()]
     if not result.changed:
         return replace(doc, pass_trace=trace)
-    return replace(doc, rewritten_text=new_text, final_scan=scan_text(new_text), pass_trace=trace)
+    return replace(doc, rewritten_text=new_text, final_scan=scan_text_preserve_blocks(new_text), pass_trace=trace)
 
 
 def _apply_showcase(doc, gateway, *, cancellation_check: Callable[[], None] | None):
@@ -644,7 +660,7 @@ def run_direct_rewrite_all(
         # Best-of-N selector: detector risk PLUS an explicit rhythm penalty. The rewrite
         # systematically over-smooths sentence rhythm (measured: burstiness regressed in 8/10 docs),
         # so weight varied sentence length in selection, not just the AI-risk score.
-        score = (_document_ai_risk(doc.rewritten_text) + 25.0 * _rhythm_risk(doc.rewritten_text)) if attempts > 1 else 0.0
+        score = _document_selection_score(doc.rewritten_text) if attempts > 1 else 0.0
         if best_doc is None or score < best_score:
             best_doc, best_score = doc, score
     # rewrite -> residual fix (pass 2) -> QC -> scan. Pass 2 re-scans the rewritten draft and fixes
@@ -690,6 +706,49 @@ def _rhythm_risk(text: str) -> float:
         return 0.0
 
 
+def _writer_topk_pressure_enabled() -> bool:
+    return os.environ.get("DRAFTPROOF_V6_WRITER_TOPK_PRESSURE", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _topk_pressure(text: str) -> dict[str, Any]:
+    """Scanner-derived top-k pressure for the direct writer prompt.
+
+    This is descriptive context, not a hard reject list: the tokens come from the active
+    predictability scanner for the paragraph being rewritten.
+    """
+    try:
+        from poc.predictability.scanner import PredictabilityScanner
+    except ImportError:
+        from predictability.scanner import PredictabilityScanner
+    try:
+        scanner = PredictabilityScanner(model_name="gpt2")
+        result = scanner.scan_sentence(str(text or ""))
+        tokens = getattr(result, "token_results", None) or []
+        if not tokens:
+            return {}
+        top_tokens = [getattr(token, "token", "") for token in tokens if getattr(token, "top_10", False)]
+        ledger = [
+            {"token": token, "hits": count}
+            for token, count in Counter(top_tokens).most_common(12)
+            if token
+        ]
+        return {
+            "purpose": "scanner-derived predictability pressure",
+            "source_topk_fraction": round(
+                sum(1 for token in tokens if getattr(token, "top_10", False)) / max(len(tokens), 1),
+                4,
+            ),
+            "topk_k": 10,
+            "high_topk_token_ledger": ledger,
+            "rules": [
+                "Use this as pressure to change predictable sentence routes.",
+                "Do not damage grammar, meaning, names, or numbers.",
+            ],
+        }
+    except Exception:
+        return {}
+
+
 def _best_of_n() -> int:
     try:
         value = int(os.environ.get("DRAFTPROOF_V6_DIRECT_BEST_OF_N", "2"))
@@ -714,6 +773,71 @@ def _document_ai_risk(text: str) -> float:
         return float(ai) if ai is not None else float("inf")
     except Exception:
         return float("inf")
+
+
+def _document_scan_report(text: str) -> dict[str, Any]:
+    try:
+        try:
+            from poc.rewrite_v3.pipeline import _scan_report
+        except ImportError:
+            from rewrite_v3.pipeline import _scan_report
+        report = _scan_report(text)
+        return report if isinstance(report, dict) else {}
+    except Exception:
+        return {}
+
+
+def _component(report: dict[str, Any], name: str, default: float = 0.0) -> float:
+    badge = report.get("ai_risk_badge", {}) if isinstance(report.get("ai_risk_badge"), dict) else {}
+    components = badge.get("ai_components", {}) if isinstance(badge.get("ai_components"), dict) else {}
+    value = components.get(name, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _headline_ai_score(report: dict[str, Any]) -> float:
+    badge = report.get("ai_risk_badge", {}) if isinstance(report.get("ai_risk_badge"), dict) else {}
+    value = report.get("ai_score")
+    if value is None:
+        value = badge.get("ai_likelihood_score")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _document_selection_score(text: str) -> float:
+    """Best-of-N selector score.
+
+    The reported headline can drop while raw top-k remains high, so selection prices both the
+    headline and the scanner's top-k components. Weights are env-tunable and content-agnostic.
+    """
+    report = _document_scan_report(text)
+    if not report:
+        return float("inf")
+    ai = _headline_ai_score(report)
+    raw_topk = _component(report, "topk_pattern_raw", _component(report, "topk_pattern", 0.0))
+    calibrated_topk = _component(report, "topk_calibrated_risk", 0.0)
+    generic = _component(report, "generic_assertion_risk", 0.0)
+    return (
+        ai * _float_env("DRAFTPROOF_V6_SELECTION_AI_WEIGHT", 1.0)
+        + raw_topk * _float_env("DRAFTPROOF_V6_SELECTION_RAW_TOPK_WEIGHT", 0.35)
+        + calibrated_topk * _float_env("DRAFTPROOF_V6_SELECTION_CALIBRATED_TOPK_WEIGHT", 0.2)
+        + generic * _float_env("DRAFTPROOF_V6_SELECTION_GENERIC_WEIGHT", 0.05)
+        + 25.0 * _rhythm_risk(text)
+    )
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 # The per-paragraph rewrite phase occupies the 40..78 band of the overall job
@@ -819,7 +943,7 @@ def _rewrite_document_once(
     final_text = "\n\n".join(rewritten)
     return DocumentResult(
         initial_scan=scan,
-        final_scan=scan_text(final_text),
+        final_scan=scan_text_preserve_blocks(final_text),
         passes=[],
         rewritten_text=final_text,
         pass_trace=pass_trace,
@@ -865,6 +989,32 @@ def _normalize_punctuation(text: str) -> str:
     return _STRAY_PERIOD_BEFORE_COMMA.sub(r"\1,", text or "")
 
 
+def _collapse_paragraph_breaks(text: str) -> str:
+    """A paragraph rewrite must remain one paragraph.
+
+    The document assembler joins one candidate per source paragraph with blank lines. If the model
+    returns an internal blank line, the next scan treats that as a new document paragraph and later
+    stages can start repairing a synthetic p009/p010. Collapse paragraph breaks inside a candidate
+    to spaces while preserving ordinary sentence spacing.
+    """
+    return re.sub(r"\s*[\r\n\u2028\u2029]+\s*", " ", str(text or "")).strip()
+
+
+def _candidate_word_bounds(paragraph: Paragraph) -> tuple[int, int]:
+    source_words = max(1, len(str(paragraph.text or "").split()))
+    min_ratio = _float_env("DRAFTPROOF_V6_PARAGRAPH_MIN_WORD_RATIO", 0.55)
+    max_ratio = _float_env("DRAFTPROOF_V6_PARAGRAPH_MAX_WORD_RATIO", 1.75)
+    min_ratio = max(0.25, min(0.95, min_ratio))
+    max_ratio = max(1.0, min(2.5, max_ratio))
+    return max(8, int(source_words * min_ratio)), max(12, int(source_words * max_ratio) + 1)
+
+
+def _within_candidate_word_bounds(candidate: str, paragraph: Paragraph) -> bool:
+    words = len(str(candidate or "").split())
+    lower, upper = _candidate_word_bounds(paragraph)
+    return lower <= words <= upper
+
+
 def _clean_candidate(
     gateway: LLMGateway,
     paragraph: Paragraph,
@@ -885,8 +1035,11 @@ def _clean_candidate(
     for _ in range(max(1, attempts)):
         candidate, review_items = _rewrite_paragraph(gateway, paragraph, diagnosis, findings, authorship_targets=authorship_targets)
         candidate = _normalize_punctuation(candidate) if candidate else candidate
+        candidate = _collapse_paragraph_breaks(candidate) if candidate else candidate
         cand = candidate or ""
-        if not _is_usable(cand, paragraph) or _has_broken_grammar(cand):
+        if not _is_usable(cand, paragraph) or not _within_candidate_word_bounds(cand, paragraph) or _has_broken_grammar(cand):
+            continue
+        if _severe_polarity_inversion(cand, paragraph) or _severe_beat_loss(cand, paragraph):
             continue
         if _is_quote_fragmented(cand):
             if salvage is None:

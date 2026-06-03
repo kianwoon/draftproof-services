@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from poc.rewrite_v6.prose_quality import catalogue_sentence_chain, repair_generated_prose, robotic_sentence_chain
 from poc.rewrite_v6.prose_quality import has_fragment_or_trace_sentences
+from poc.rewrite_v6 import writer_brief_prompt as wbp
+from poc.rewrite_v6.plan import Plan
 from poc.rewrite_v6.scan import scan_text
 from poc.rewrite_v6.selector_diagnostics import selection_diagnostics
 from poc.rewrite_v6.integrity_guard import candidate_integrity_blockers, candidate_integrity_warnings
 from poc.rewrite_v6.source_quality import source_quality_blockers
 from poc.rewrite_v6.write import Variant, _candidate_contract_violation, choose_variant
+import json
 
 
 def test_v6_writer_quality_marks_robotic_sentence_chains_as_soft_warnings():
@@ -36,6 +39,56 @@ def test_v6_writer_quality_marks_robotic_sentence_chains_as_soft_warnings():
     assert "candidate_contract_warning" in diagnostics["quality_warnings"]
     assert "mechanical_sentence_chain" in diagnostics["blockers"]
     assert choose_variant(variants, paragraph).source == "source_preserved"
+
+
+def test_writer_brief_can_include_scanner_derived_topk_pressure(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_V6_WRITER_TOPK_PRESSURE", raising=False)
+    monkeypatch.setattr(
+        wbp,
+        "_topk_pressure",
+        lambda _text: {
+            "purpose": "scanner-derived predictability pressure",
+            "source_topk_fraction": 0.72,
+            "topk_k": 10,
+            "high_topk_token_ledger": [{"token": " the", "hits": 3}],
+            "rules": ["Do not damage grammar."],
+        },
+    )
+    paragraph = scan_text("Students use online tools, and they also compare source reliability.").paragraphs[0]
+    plan = Plan(
+        paragraph_id=paragraph.id,
+        route_goal="rewrite while preserving meaning",
+        opening_terms=[],
+        actions=[],
+        paragraph_strategy={},
+        author_proxy_context={},
+        ai_safe_route={},
+    )
+
+    prompt = wbp.build_writer_brief_prompt(paragraph, plan)
+    payload = json.loads(prompt.split("\n", 1)[1])
+
+    assert payload["topk_pressure"]["source_topk_fraction"] == 0.72
+    assert payload["topk_pressure"]["high_topk_token_ledger"] == [{"token": " the", "hits": 3}]
+    assert "topk_pressure" not in payload["hard_reject_if"]
+
+
+def test_writer_brief_topk_pressure_kill_switch(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_V6_WRITER_TOPK_PRESSURE", "0")
+    monkeypatch.setattr(wbp, "_topk_pressure", lambda _text: {"source_topk_fraction": 0.72})
+    paragraph = scan_text("Students use online tools, and they also compare source reliability.").paragraphs[0]
+    plan = Plan(
+        paragraph_id=paragraph.id,
+        route_goal="rewrite while preserving meaning",
+        opening_terms=[],
+        actions=[],
+        paragraph_strategy={},
+        author_proxy_context={},
+        ai_safe_route={},
+    )
+    prompt = wbp.build_writer_brief_prompt(paragraph, plan)
+    payload = json.loads(prompt.split("\n", 1)[1])
+    assert "topk_pressure" not in payload
 
 
 def test_v6_writer_quality_blocks_external_narrator_reporting_chains():
