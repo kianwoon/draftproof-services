@@ -34,6 +34,10 @@ class FullDocRewriteResult:
             "score_before": self.score_before,
             "score_after": self.score_after,
             "metrics": dict(self.metrics),
+            # When accepted, the whole document was re-written in one pass, so the
+            # per-paragraph entries earlier in pass_trace no longer map to the final
+            # text. Flag it so trace consumers don't read stale paragraph provenance.
+            "supersedes_paragraph_provenance": bool(self.changed),
         }
 
 
@@ -87,7 +91,7 @@ def _request_candidate(text: str, gateway: Any) -> str:
         system=_SYSTEM,
         temperature=0.2,
         top_p=0.85,
-        max_tokens=None,
+        max_tokens=_max_output_tokens(text),
         app_label="FullDocRewrite",
     )
     raw = getattr(response, "raw_content", "") or getattr(response, "content", "") or ""
@@ -114,8 +118,14 @@ def _evaluate_candidate(original: str, candidate: str) -> tuple[bool, FullDocRew
         reasons.append("word_count_out_of_band")
     if not metrics["numbers_preserved"]:
         reasons.append("numbers_changed")
+    elif not metrics["number_multiset_preserved"]:
+        # Unique set matched but a duplicated figure was dropped/added
+        # (e.g. "5 sites and 5 controls" -> "5 sites and controls").
+        reasons.append("number_count_changed")
     if not metrics["paragraph_count_preserved"]:
         reasons.append("paragraph_count_changed")
+    if not metrics["ends_complete"]:
+        reasons.append("truncated_candidate")
     if candidate_score is None or candidate_score == float("inf"):
         reasons.append("candidate_unscorable")
     elif candidate_score > base_score + _score_regression_tolerance():
@@ -151,7 +161,25 @@ def _metrics(original: str, candidate: str) -> dict[str, Any]:
         "numbers_preserved": _unique_numbers(original) == _unique_numbers(candidate),
         "number_multiset_preserved": _numbers(original) == _numbers(candidate),
         "paragraph_count_preserved": _paragraph_count(original) == _paragraph_count(candidate),
+        # A max_tokens=None request can silently truncate mid-sentence; if the
+        # original ended on terminal punctuation, the candidate must too.
+        "ends_complete": _ends_complete(original, candidate),
     }
+
+
+_SENTENCE_END = tuple(".!?…")
+_CLOSERS = "\"')]}”’"
+
+
+def _ends_complete(original: str, candidate: str) -> bool:
+    if not _ends_on_terminal(original):
+        return True  # original itself isn't sentence-terminated; don't penalize
+    return _ends_on_terminal(candidate)
+
+
+def _ends_on_terminal(text: str) -> bool:
+    stripped = str(text or "").rstrip().rstrip(_CLOSERS).rstrip()
+    return bool(stripped) and stripped.endswith(_SENTENCE_END)
 
 
 def _word_count_band(word_count: int) -> tuple[int, int]:
@@ -178,6 +206,25 @@ def _score(text: str) -> float:
         return float(_document_ai_risk(text) + 25.0 * _rhythm_risk(text))
     except Exception:
         return float("inf")
+
+
+def _max_output_tokens(text: str) -> int:
+    """Cap output to a generous multiple of the input so a truncated candidate
+    is unlikely, while still bounding cost. The full-doc rewrite preserves length
+    (~+8% word band), so ~2 tokens/word plus a fixed floor is ample headroom.
+    Env override: DRAFTPROOF_V6_FULL_DOC_REWRITE_MAX_TOKENS (0/blank = auto)."""
+    override = os.environ.get("DRAFTPROOF_V6_FULL_DOC_REWRITE_MAX_TOKENS", "").strip()
+    if override:
+        try:
+            value = int(override)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    words = len(str(text or "").split())
+    factor = _float_env("DRAFTPROOF_V6_FULL_DOC_REWRITE_TOKEN_FACTOR", 2.0)
+    factor = max(1.5, min(4.0, factor))
+    return max(1024, int(words * factor) + 256)
 
 
 def _float_env(name: str, default: float) -> float:
