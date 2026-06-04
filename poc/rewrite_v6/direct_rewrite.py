@@ -27,9 +27,9 @@ except ImportError:  # pragma: no cover
     from poc.llm.gateway import LLMConfig, LLMGateway
 
 try:
-    from detect.layer3_scoring import _sentence_has_concrete_or_context, split_sentences
+    from detect.layer3_scoring import _sentence_has_concrete_or_context, _sentence_has_hard_concrete, split_sentences
 except ImportError:  # pragma: no cover
-    from poc.detect.layer3_scoring import _sentence_has_concrete_or_context, split_sentences
+    from poc.detect.layer3_scoring import _sentence_has_concrete_or_context, _sentence_has_hard_concrete, split_sentences
 
 from .coverage_guard import missing_required_source_beat_groups
 from .integrity_guard import candidate_integrity_blockers
@@ -399,7 +399,8 @@ def _ungrounded_claims(candidate: str, *, min_words: int = 5) -> list[str]:
     out: list[str] = []
     for sentence in split_sentences(candidate):
         s = sentence.strip()
-        if len(s.split()) >= min_words and not _sentence_has_concrete_or_context(s):
+        # SUBSTANTIVE grounding: a hard specific (number/name/quote), not just first-person/temporal form.
+        if len(s.split()) >= min_words and not _sentence_has_hard_concrete(s):
             out.append(s)
     return out
 

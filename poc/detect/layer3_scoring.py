@@ -933,6 +933,25 @@ def _sentence_has_concrete_or_context(sentence: str) -> bool:
     ) or any(re.search(p, sentence, flags=re.I) for p in CONTEXTUAL_ANCHOR_PATTERNS)
 
 
+# HARD, verifiable specifics only: digit numbers, alphanumeric codes, multi-word proper nouns,
+# citations, quotes (CONCRETE_DETAIL_PATTERNS[0:6]). Deliberately EXCLUDES the SOFT "frame" signals --
+# first-person verbs ("I've seen"), "in my X", plural first-person ([6:9]) -- and ALL contextual
+# anchors (such as / when / if / temporal). A sentence can carry the FORM of lived experience while
+# stating an abstract claim ("I've seen the curriculum shift toward relevance"); that form-only case
+# passes _sentence_has_concrete_or_context but has no real substance. Used by REWRITE candidate
+# selection only -- the detection badge keeps the lenient oracle above so badge scores do not move.
+_HARD_CONCRETE_PATTERNS = CONCRETE_DETAIL_PATTERNS[:6]
+
+
+def _sentence_has_hard_concrete(sentence: str) -> bool:
+    """True only if the sentence carries a hard, verifiable specific (number/code/proper-noun/
+    citation/quote) -- the SUBSTANCE of grounding, not just its first-person/temporal form."""
+    return any(
+        re.search(p, sentence, flags=0 if p == NAMED_ENTITY_DETAIL_PATTERN else re.I)
+        for p in _HARD_CONCRETE_PATTERNS
+    )
+
+
 def _contextual_anchor_density(sentences: list[str]) -> float:
     if not sentences:
         return 0.0

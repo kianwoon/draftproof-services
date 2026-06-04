@@ -66,6 +66,25 @@ def _is_grounded(sentence: str) -> bool | None:
         return None
 
 
+def _is_substantively_grounded(sentence: str) -> bool | None:
+    """Stricter than _is_grounded: True only when the sentence carries a HARD, verifiable anchor
+    (number/proper-noun/quote/citation/code) -- the SUBSTANCE of grounding, not merely its first-person
+    /temporal FORM. An abstract first-person claim ("I've seen the curriculum shift toward relevance")
+    is _is_grounded=True (form) but _is_substantively_grounded=False (no real specific) -> it SHOULD be
+    treated. None on import failure (fail-open, same as _is_grounded). REWRITE-side only; badge unchanged."""
+    try:
+        from detect.layer3_scoring import _sentence_has_hard_concrete
+    except Exception:
+        try:
+            from poc.detect.layer3_scoring import _sentence_has_hard_concrete
+        except Exception:
+            return None
+    try:
+        return bool(_sentence_has_hard_concrete(sentence))
+    except Exception:
+        return None
+
+
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -80,7 +99,9 @@ def _generic_candidates(text: str, limit: int) -> list[str]:
     for s in _sentences(text):
         if len(s.split()) < 6:           # too short to ground meaningfully
             continue
-        if _is_grounded(s) is False:      # only flag confidently-generic sentences
+        # treat a sentence as generic unless it has SUBSTANTIVE grounding (a hard specific) -- a
+        # first-person/temporal frame alone ("I've seen X shift toward Y") is NOT enough.
+        if _is_substantively_grounded(s) is False:
             out.append(s)
         if len(out) >= limit:
             break
