@@ -23,7 +23,8 @@ from detect.authorship_windows import build_ai_footprint_profile, build_authorsh
 from detect.document_structure import structured_sentence_segments
 from detect.repair_units import build_repair_units_v2
 from detect.rewrite_targets import build_problem_inventory, build_rewrite_target_profile
-from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text, estimate_external_detector_likelihood, estimate_external_detector_segment_fraction, combine_external_detector_estimates
+from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text, estimate_external_detector_likelihood, estimate_external_detector_segment_fraction
+from detect.external_grouped_scoring import estimate_external_grouped_score
 from detect.transformation import (
     TRANSFORMATION_SIGNAL_METADATA,
     classify_transformation_from_scan,
@@ -1467,16 +1468,21 @@ class ReportBuilder:
         # calibrated risk is a separate safe-band gate.
         ai_components["topk_pattern"] = topk_calibration.get("topk_pattern_raw", raw_topk_pattern)
 
-        # External-facing estimate of how strict third-party detectors (Turnitin/GPTZero) may rate
-        # this. The two estimators answer different questions and a document can saturate one while
-        # the other reads low (e.g. a fully AI-fluent rewrite: segment-fraction 6% "low" but GPTZero
-        # 100% / perplexity-blend 62% "high"). Surface the MORE CONSERVATIVE (higher-band) of the two
-        # so the dual-headline never UNDER-warns; both ride along under `alternates`. Additive only --
-        # does NOT affect the tier, ai_likelihood_score, or any rewrite gate.
+        writing_components = {k: round(v * 100, 2) for k, v in layer3.writing_phase.components.items()}
+
+        # External-facing detector proxy. This is additive only: it does NOT affect the tier,
+        # ai_likelihood_score, or any rewrite gate. Legacy estimates remain attached for auditability.
         _pred_sentences = self._pred_summary.sentences if self._pred_summary else None
-        external_detector_estimate = combine_external_detector_estimates(
-            estimate_external_detector_segment_fraction(_pred_sentences),
-            estimate_external_detector_likelihood(ai_components),
+        legacy_segment_fraction = estimate_external_detector_segment_fraction(_pred_sentences)
+        legacy_likelihood = estimate_external_detector_likelihood(ai_components)
+        external_detector_estimate = estimate_external_grouped_score(
+            sentences=_pred_sentences,
+            ai_components=ai_components,
+            writing_components=writing_components,
+            transformation_features=transformation.features,
+            criterion_scores=self._summaries.get("criterion_scores"),
+            legacy_segment_fraction=legacy_segment_fraction,
+            legacy_likelihood=legacy_likelihood,
         )
 
         ai_risk_badge = {
@@ -1494,7 +1500,7 @@ class ReportBuilder:
             # Writing Quality (Phase 2)
             "writing_quality_tier": layer3.writing_quality_tier.value,
             "writing_quality_score": round(layer3.writing_quality_score * 100, 2),
-            "writing_components": {k: round(v * 100, 2) for k, v in layer3.writing_phase.components.items()},
+            "writing_components": writing_components,
 
             # Combined
             "review_priority": layer3.review_priority,

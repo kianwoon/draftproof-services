@@ -23,9 +23,8 @@ _EXTERNAL_BAND_LABELS = {
     "high": "likely to be flagged",
 }
 
-# Keep in sync with report.render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED. The badge now carries the
-# calibrated 2-signal segment-fraction estimate (reproduced a real Turnitin 27% vs the old 62%),
-# so we email it again as an estimate.
+# Keep in sync with report.render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED. The badge carries DraftProof's
+# grouped external-detector proxy, so email surfaces it only as an estimate.
 EXTERNAL_ESTIMATE_DISPLAY_ENABLED = True
 
 

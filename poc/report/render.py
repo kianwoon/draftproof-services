@@ -331,11 +331,10 @@ _AI_LIKELIHOOD_WHY = (
     "grounding the content and finishing it in your own words."
 )
 
-# The badge's external_detector_estimate is the MORE CONSERVATIVE (higher-band) of two estimators
-# (detect.layer3_scoring.combine_external_detector_estimates): the Turnitin-style segment-fraction
-# model and the GPTZero-style perplexity blend. Either lens can saturate while the other reads low,
-# so we surface the stricter band to avoid under-warning; both ride along under `alternates`.
-# Surfaced as an ESTIMATE (limited calibration). Set False to suppress the number again.
+# The badge's external_detector_estimate is the grouped external-detector proxy
+# (detect.external_grouped_scoring.external_grouped_v1). Legacy segment/perplexity estimates may
+# ride along under `alternates` for auditability, but they no longer decide the visible number.
+# Surfaced as an ESTIMATE, not a vendor result. Set False to suppress the number again.
 EXTERNAL_ESTIMATE_DISPLAY_ENABLED = True
 
 _EXTERNAL_DEMOTED_NOTE = (

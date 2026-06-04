@@ -1368,8 +1368,8 @@ function buildRewriteEventsUrl(rewriteId) {
 const DRAFTPROOF_TIER_COLORS = { GREEN: '#16a34a', AMBER: '#d97706', ORANGE: '#ea580c', RED: '#dc2626' };
 const EXTERNAL_BAND_COLORS = { low: '#16a34a', elevated: '#d97706', high: '#dc2626' };
 
-// The badge now carries the calibrated 2-signal segment-fraction estimate (reproduced a real
-// Turnitin 27% vs the old perplexity-blend's 62%), so we surface it again as an ESTIMATE.
+// The badge carries DraftProof's grouped external-detector proxy. It is surfaced as an ESTIMATE,
+// not a Turnitin/vendor result; legacy estimates may appear under alternates for auditability.
 // Mirror of render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED — keep both in sync.
 const EXTERNAL_ESTIMATE_DISPLAY_ENABLED = true;
 
