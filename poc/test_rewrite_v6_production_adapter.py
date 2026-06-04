@@ -344,7 +344,7 @@ def test_v6_highlight_repair_reverts_score_regression(tmp_path, monkeypatch):
     assert row["pre_stage_score"] == 20
 
 
-def test_v6_bracket_grounding_reverts_score_regression(tmp_path, monkeypatch):
+def test_v6_bracket_grounding_ships_spans_without_score_revert(tmp_path, monkeypatch):
     original = "Original note with stable detector risk."
     rewritten = "Candidate note with lower detector risk."
     worse = "Candidate note with worse detector risk."
@@ -383,12 +383,16 @@ def test_v6_bracket_grounding_reverts_score_regression(tmp_path, monkeypatch):
     )
     summary = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
 
-    assert summary["final_text"] == rewritten
-    assert summary["final_risk"] == 20
+    # Bracket-grounding is a COACHING stage: even though the grounded text scores WORSE on the badge
+    # (30 vs 20), it must SHIP -- spans drive the frontend green/amber highlights and greens are faithful
+    # (per-span gated), not a badge lever. We re-scan only to keep the badge HONEST on the shipped bytes.
+    assert summary["final_text"] == worse
+    assert summary["final_risk"] == 30  # honest re-scan of the shipped (bracket-grounded) bytes
+    assert summary["bracket_grounding_spans"]  # spans preserved -> highlights render
     row = next(row for row in summary["v6_pass_trace"] if row.get("selected_source") == "bracket_grounding")
-    assert row["status"] == "rejected_score_regression"
-    assert row["candidate_score"] == 30
-    assert row["pre_stage_score"] == 20
+    assert row["status"] == "accepted"
+    assert row["applied"] == 1
+    assert "rejected_score_regression" not in row
 
 
 def _report_with_external_score(text: str, score: float) -> dict:

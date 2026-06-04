@@ -261,36 +261,28 @@ def run_rewrite_pipeline_v6(
                 provided=None,
                 fallback_scan=bracket_scan.to_dict(),
             )
-            if _scan_score_worse(bracket_scan_report, rewritten_scan_report):
-                bracket_grounding_spans = []
-                final_text = pre_bracket_text
-                document = _replace_document(document, rewritten_text=final_text)
-                bracket_grounding_diag = dict(bracket_grounding_diag or {})
-                bracket_grounding_diag["rejected_score_regression"] = {
-                    "pre_stage_score": _report_ai_score(rewritten_scan_report),
-                    "candidate_score": _report_ai_score(bracket_scan_report),
-                }
-            else:
-                document = _replace_document(
-                    document,
-                    rewritten_text=final_text,
-                    final_scan=bracket_scan,
-                )
-                rewritten_scan_report = bracket_scan_report
+            # Bracket-grounding is a COACHING stage: green spans are faithful (per-span fidelity /
+            # grammar / fabrication gated inside _apply_final_bracket_grounding) and are NOT a badge
+            # score-lever. We re-scan ONLY to keep the shipped badge HONEST on the mutated bytes -- we do
+            # NOT revert on a badge tick-up. The badge is high-variance and the prior compare was
+            # zero-margin strict (candidate > baseline), so reverting suppressed the green/amber coaching
+            # highlights on noise alone. "Guards must ANNOTATE, never SUPPRESS" (CLAUDE.md): always ship
+            # the spans; safety stays the per-span gates, not the document badge.
+            document = _replace_document(
+                document,
+                rewritten_text=final_text,
+                final_scan=bracket_scan,
+            )
+            rewritten_scan_report = bracket_scan_report
         # Observability: bracket-grounding runs AFTER the per-paragraph passes, so it isn't in
         # document.pass_trace yet -- record it so v6_pass_trace shows the true last stage.
         _bg_improved = sum(1 for sp in bracket_grounding_spans if sp.get("kind") == "improved")
         _bg_kept = sum(1 for sp in bracket_grounding_spans if sp.get("kind") == "kept")
         document = _replace_document(document, pass_trace=list(document.pass_trace) + [{
             "selected_source": "bracket_grounding",
-            "status": (
-                "rejected_score_regression"
-                if (bracket_grounding_diag or {}).get("rejected_score_regression")
-                else "accepted" if _bg_improved else "no_change"
-            ),
+            "status": "accepted" if _bg_improved else "no_change",
             "applied": _bg_improved,
             "kept": _bg_kept,
-            **((bracket_grounding_diag or {}).get("rejected_score_regression") or {}),
         }])
     changed = final_text.strip() != original_text.strip()
     cleared = bool(changed and not document.final_scan.findings)

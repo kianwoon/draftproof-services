@@ -633,6 +633,7 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         "predictability_highlights",
         "bracket_grounding_spans",
         "bracket_grounding_audit",
+        "v6_pass_trace",
     )
     compact_summary = {}
     for key in compact_summary_keys:
@@ -649,6 +650,18 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
             # Copy verbatim: the generic compactor truncates inner lists to 8 and injects markers, which
             # would corrupt the offsets. Both are already span-capped, so this stays bounded.
             compact_summary[key] = summary.get(key)
+        elif key == "v6_pass_trace":
+            # Per-stage trace (incl. the bracket_grounding last stage). Without this in the allowlist a
+            # >max_bytes payload (e.g. the 2-lane direct-rewrite traces) drops it entirely, so we cannot
+            # verify which stage shipped or diagnose monoculture. Compact each row via the existing
+            # row helper and cap to stay bounded.
+            trace = summary.get(key)
+            if isinstance(trace, list):
+                compact_summary[key] = [_compact_v6_pass_trace_row(row) for row in trace[:120]]
+                if len(trace) > 120:
+                    compact_summary[f"{key}_omitted"] = len(trace) - 120
+            else:
+                compact_summary[key] = _compact_debug_value(trace)
         else:
             compact_summary[key] = _compact_debug_value(summary.get(key))
     compact_payload = {
