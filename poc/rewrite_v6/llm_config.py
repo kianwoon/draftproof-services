@@ -127,6 +127,25 @@ def grammar_gateway(
     base_url: str | None,
     cancellation_check: Callable[[], None] | None = None,
 ) -> LLMGateway | None:
+    # When Cerebras-direct is available, run grammar repair on gpt-oss-120b: ~10x faster than
+    # qwen/OpenRouter (the prod GrammarRepair call was ~23s) and the _is_grammar_only gate keeps it
+    # faithful regardless of model. Still uses the low-temperature grammar profile. The OpenRouter
+    # path below is the fallback when Cerebras-direct is off (or set DRAFTPROOF_V6_CEREBRAS_DIRECT=0).
+    if using_cerebras_direct():
+        model = cerebras_model_name(writer_model())
+        return LLMGateway(
+            LLMConfig(
+                model=model,
+                api_key=resolve_v6_api_key(api_key),
+                base_url=resolve_v6_base_url(base_url),
+                **grammar_llm_profile(model),
+                extra_body=grammar_extra_body(model),
+                app_label="GrammarRepair",
+                max_retries=1,
+                timeout=_int_env("DRAFTPROOF_V6_GRAMMAR_TIMEOUT", 120),
+                cancellation_check=cancellation_check,
+            )
+        )
     model = grammar_model()
     if not model:
         return None
