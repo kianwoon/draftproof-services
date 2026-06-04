@@ -27,10 +27,17 @@ def register_coaching_enabled() -> bool:
 
 
 # Honest framing shown with every register-coaching surface. NOT a promise of a lower score.
+# allow-hardcode: this is a single human-facing COACHING COPY string shown in the report (PDF + page),
+# not a detect/scoring/matching word-list. Sentence selection is done by the content-agnostic
+# register_score signal below; this string only frames the coaching message. It names the recurring
+# machine-smooth/complete pattern holistically (polish, seamless anecdotes, flawless example lists)
+# rather than a single facet -- those are the spots to put back into the author's own messier voice.
 COACHING_NOTE = (
-    "Strict AI detectors flag polish and fluency, not grounding -- rewriting these spots in your own "
-    "plainer, more direct voice will NOT lower the detector score, but it makes the draft genuinely "
-    "yours. These are the lines that read most machine-polished; say them the way you actually would."
+    "Strict AI detectors flag writing that reads machine-smooth and machine-complete -- polished "
+    "phrasing, seamless personal anecdotes, and flawless lists of examples -- not grounding. Rewriting "
+    "these spots in your own messier, more selective voice will NOT lower the detector score, but it "
+    "makes the draft genuinely yours: keep the one real example you would actually mention, say it "
+    "plainly, and cut the seamless completeness."
 )
 
 
