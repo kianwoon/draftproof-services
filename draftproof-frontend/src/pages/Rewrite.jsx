@@ -332,6 +332,10 @@ export default function Rewrite() {
   const bracketSpans = summary?.bracket_grounding_spans || report?.bracket_grounding_spans || [];
   // honest register/polish coaching (NOT a score lever) -- backend supplies the note + selected lines
   const registerCoaching = summary?.register_coaching || report?.register_coaching || null;
+  // worked teaching examples: generic claim -> grounded version -> why (the "teacher works the problem")
+  const workedExamples = (summary?.predictability_showcase || report?.predictability_showcase || []).filter(
+    (it) => it && it.sentence && it.suggestion,
+  );
   const hasBracketHighlights = Boolean(bracketSpans.length && report?.final_text);
   const hasDocHighlights = Boolean((hasTopkHighlights || hasBracketHighlights) && report?.final_text);
 
@@ -501,6 +505,36 @@ export default function Rewrite() {
               {hasDocHighlights
                 ? renderTopkHighlights(report.final_text, topkSentenceSpans, topkWordSpans, bracketSpans)
                 : report.final_text}
+            </div>
+          </section>
+        )}
+
+        {workedExamples.length > 0 && (
+          <section className="rewrite-review-section">
+            <div className="rewrite-review-heading">
+              <div>
+                <span className="rewrite-review-kicker">{t('rewritePage.workedExamples.kicker')}</span>
+                <h3>{t('rewritePage.workedExamples.heading')}</h3>
+              </div>
+              <span className="rewrite-review-count">{workedExamples.length}</span>
+            </div>
+            <p className="rewrite-review-copy">{t('rewritePage.workedExamples.copy')}</p>
+            <div className="rewrite-suggestion-grid">
+              {workedExamples.map((item, i) => (
+                <article className="rewrite-suggestion-card" key={`worked-${i}`}>
+                  <div className="rewrite-target-block">
+                    <span>{t('rewritePage.workedExamples.generalClaim')}</span>
+                    <p>{item.sentence}</p>
+                  </div>
+                  <div className="rewrite-addition-block">
+                    <span>{t('rewritePage.workedExamples.moreGrounded')}</span>
+                    <p>{item.suggestion}</p>
+                  </div>
+                  {item.why && (
+                    <div className="rewrite-review-note"><p>{t('rewritePage.workedExamples.why')}: {item.why}</p></div>
+                  )}
+                </article>
+              ))}
             </div>
           </section>
         )}

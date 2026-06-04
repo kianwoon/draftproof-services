@@ -61,6 +61,15 @@ export const rewritePage = {
     "kept": "琥珀色：请自行修改",
     "note": "绿色表示改写已改善该文本。琥珀色表示系统无法安全改进而保留原文；请自行修改这些琥珀色句子。"
   },
+  // allow-hardcode: i18n UI label strings for the worked-examples teaching section, not a detect list.
+  "workedExamples": {
+    "kicker": "示范例子",
+    "heading": "如何为论断提供依据",
+    "copy": "每个例子取一个笼统的论断，并展示同一论断更有依据的版本。学习这种写法，然后用你自己的真实细节去套用——例子中的具体内容只是示意，应当替换成你自己的。",
+    "generalClaim": "笼统论断",
+    "moreGrounded": "更有依据",
+    "why": "为什么有效"
+  },
   // allow-hardcode: i18n UI label strings for the register-coaching section, not a detect/scoring list.
   "registerCoaching": {
     "kicker": "让它像你",

@@ -61,6 +61,15 @@ export const rewritePage = {
     "kept": "Amber: edit yourself",
     "note": "Green marks text the rewrite improved. Amber marks text kept because the system could not safely improve it; edit those amber sentences yourself."
   },
+  // allow-hardcode: i18n UI label strings for the worked-examples teaching section, not a detect list.
+  "workedExamples": {
+    "kicker": "Worked examples",
+    "heading": "How to ground a claim",
+    "copy": "Each example takes a general claim and shows a more grounded version of the same claim. Study the move, then apply it with your own real detail — the example specifics are illustrative, meant to be replaced.",
+    "generalClaim": "General claim",
+    "moreGrounded": "More grounded",
+    "why": "Why it works"
+  },
   // allow-hardcode: i18n UI label strings for the register-coaching section (headings/labels), not a
   // detect/scoring/matching word-list. Sentence selection is done server-side by register_score.
   "registerCoaching": {

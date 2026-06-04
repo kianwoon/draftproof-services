@@ -86,6 +86,19 @@ function addScoreProfileFeature(features, key, value) {
   }
 }
 
+// Stable grounding-quality headline: mean of the grounding signals the rewrite actually MOVES
+// (lived-detail, broad-claim, unsupported-claim). Deliberately EXCLUDES the binary citation signal
+// (source_grounding_risk) and the flat citation_weakness — those swing/don't move and live in the
+// separate "Citation grounding" row. Returns null if no component is available.
+function groundingQualityComposite(writingComponents) {
+  const wc = writingComponents || {};
+  const parts = ['lived_detail_risk', 'broad_claim_risk', 'unsupported_claim_risk']
+    .map((k) => clampPercent(wc[k]))
+    .filter((v) => v != null);
+  if (!parts.length) return null;
+  return parts.reduce((sum, v) => sum + v, 0) / parts.length;
+}
+
 function submittedContentToText(model) {
   return (model?.paragraphs || [])
     .map((paragraph) => paragraph.text || paragraph.segments.map((segment) => segment.text).join(' ').trim())
@@ -834,6 +847,7 @@ export default function Report() {
   addScoreProfileFeature(authorshipFeatures, 'human_anchor_discount', originalContributionOverride?.humanAnchorDiscount);
   addScoreProfileFeature(authorshipFeatures, 'calibration_confidence', originalContributionOverride?.calibrationConfidence);
   addScoreProfileFeature(authorshipFeatures, 'reporting_suppression', originalContributionOverride?.reportingSuppression);
+  addScoreProfileFeature(authorshipFeatures, 'grounding_quality_risk', groundingQualityComposite(originalWritingComponents));
   addScoreProfileFeature(authorshipFeatures, 'citation_grounding_risk', originalWritingComponents.source_grounding_risk ?? originalWritingComponents.unsupported_claim_risk ?? originalWritingComponents.citation_grounding_risk);
   const transformationSignals = buildTransformationSignals(authorshipFeatures, transformationSignalMetadata);
   const transformationSummary = transformation
@@ -867,6 +881,7 @@ export default function Report() {
   addScoreProfileFeature(rewrittenAuthorshipFeatures, 'human_anchor_discount', rewrittenContributionOverride?.humanAnchorDiscount);
   addScoreProfileFeature(rewrittenAuthorshipFeatures, 'calibration_confidence', rewrittenContributionOverride?.calibrationConfidence);
   addScoreProfileFeature(rewrittenAuthorshipFeatures, 'reporting_suppression', rewrittenContributionOverride?.reportingSuppression);
+  addScoreProfileFeature(rewrittenAuthorshipFeatures, 'grounding_quality_risk', groundingQualityComposite(rewrittenWritingComponents));
   addScoreProfileFeature(rewrittenAuthorshipFeatures, 'citation_grounding_risk', rewrittenWritingComponents.source_grounding_risk ?? rewrittenWritingComponents.unsupported_claim_risk ?? rewrittenWritingComponents.citation_grounding_risk);
   const rewrittenTransformationSignals = buildTransformationSignals(
     rewrittenAuthorshipFeatures,

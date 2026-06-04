@@ -635,6 +635,7 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         "bracket_grounding_audit",
         "v6_pass_trace",
         "register_coaching",
+        "predictability_showcase",
     )
     compact_summary = {}
     for key in compact_summary_keys:
@@ -646,11 +647,12 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
             compact_summary[key] = _compact_candidate_generation_status(summary.get(key))
         elif key in {"detect_scan_original_saved", "detect_scan_original", "detect_scan_rewritten"}:
             compact_summary[key] = compact_rewrite_scan_summary(summary.get(key))
-        elif key in {"predictability_highlights", "bracket_grounding_spans", "register_coaching"}:
+        elif key in {"predictability_highlights", "bracket_grounding_spans", "register_coaching", "predictability_showcase"}:
             # Exact [start, end] char spans for the rewritten-doc highlight / bracket-grounding colour,
-            # and the small register-coaching payload (<=4 offenders + 1 contrast). Copy verbatim: the
-            # generic compactor truncates inner lists to 8 / strings to 320 chars, which would corrupt
-            # span offsets and clip the coaching sentence text. All are already small/capped.
+            # the small register-coaching payload (<=4 offenders + 1 contrast), and the worked teaching
+            # examples (showcase, capped at _max_sentences). Copy verbatim: the generic compactor
+            # truncates inner lists to 8 / strings to 320 chars, which would corrupt span offsets and
+            # clip the coaching/example sentence text. All are already small/capped.
             compact_summary[key] = summary.get(key)
         elif key == "v6_pass_trace":
             # Per-stage trace (incl. the bracket_grounding last stage). Without this in the allowlist a
