@@ -92,20 +92,43 @@ def _sentences(text: str) -> list[str]:
     return [s.strip() for s in _SENT_SPLIT.split(str(text or "").replace("\n", " ").strip()) if s.strip()]
 
 
+_SCANNER = None
+
+
+def _predictability_score(sentence: str) -> float:
+    """gpt2 top-10 token fraction (higher = more AI-predictable). Used ONLY to RANK generic candidates
+    so the bracket budget targets the worst offenders. 0.0 on any failure (fail-open: such candidates
+    rank last via doc-order, never dropped). Reuses one cached PredictabilityScanner (gpt2)."""
+    global _SCANNER
+    try:
+        if _SCANNER is None:
+            try:
+                from predictability.scanner import PredictabilityScanner
+            except Exception:
+                from poc.predictability.scanner import PredictabilityScanner
+            _SCANNER = PredictabilityScanner(model_name="gpt2")
+        result = _SCANNER.scan_sentence(sentence)
+        toks = getattr(result, "token_results", None) or []
+        if not toks:
+            return 0.0
+        return sum(1 for t in toks if getattr(t, "top_10", False)) / len(toks)
+    except Exception:
+        return 0.0
+
+
 def _generic_candidates(text: str, limit: int) -> list[str]:
-    """The generic (un-grounded) sentences -- the ones grounding can genuinely improve. These are the
-    teachable cases; a sentence that is already grounded has no lesson to show."""
-    out: list[str] = []
-    for s in _sentences(text):
-        if len(s.split()) < 6:           # too short to ground meaningfully
-            continue
-        # treat a sentence as generic unless it has SUBSTANTIVE grounding (a hard specific) -- a
-        # first-person/temporal frame alone ("I've seen X shift toward Y") is NOT enough.
-        if _is_substantively_grounded(s) is False:
-            out.append(s)
-        if len(out) >= limit:
-            break
-    return out
+    """The generic (un-grounded) sentences worth grounding. When more than `limit` exist, rank by gpt2
+    predictability (top-10 fraction) and keep the WORST -- so the bracket budget treats the ACTUAL
+    offenders, not whichever generic sentences come first in the document. Falls back to document order
+    when the scorer is unavailable (all scores 0 -> sort is stable on doc order)."""
+    generic = [s for s in _sentences(text)
+               if len(s.split()) >= 6 and _is_substantively_grounded(s) is False]
+    if len(generic) <= limit:
+        return generic
+    scored = [(_predictability_score(s), i, s) for i, s in enumerate(generic)]
+    # most-predictable first; document order (i) breaks ties AND is the fail-open fallback.
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    return [s for _, _, s in scored[:limit]]
 
 
 @dataclass
