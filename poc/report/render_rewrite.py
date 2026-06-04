@@ -1485,6 +1485,45 @@ def render_rewrite_report(
             lines.append(f"| {i} | {tier_change} | {ratio_change} | {orig_text} | {new_text} |")
         lines.append("")
 
+    # ── Register / Polish Coaching ───────────────────────────────────
+    # Honest coaching (NOT a score lever): the spots that read most machine-polished, plus a worked
+    # plain/polished contrast from the user's own text. The copy states plainly it will not lower the
+    # external detector score -- the value is a draft the user can finish in their own plainer voice.
+    # allow-hardcode: the strings below are human-facing REPORT COPY (section heading + instructions),
+    # not a detect/scoring/matching word-list. Sentence selection is done by the content-agnostic
+    # register_score signal in rewrite_v6/register_coaching.py; this block only renders that result.
+    register_coaching = summary.get("register_coaching") if isinstance(summary.get("register_coaching"), dict) else {}
+    if register_coaching:
+        lines.append("## Make It Sound Like You")
+        lines.append("")
+        note = str(register_coaching.get("note", "")).strip()
+        if note:
+            lines.append(note)
+            lines.append("")
+        contrast = register_coaching.get("worked_contrast") if isinstance(register_coaching.get("worked_contrast"), dict) else {}
+        polished = (contrast.get("polished") or {}) if isinstance(contrast, dict) else {}
+        plain = (contrast.get("plain") or {}) if isinstance(contrast, dict) else {}
+        if polished.get("text") and plain.get("text"):
+            lines.append("**From your own draft -- same writer, two registers:**")
+            lines.append("")
+            lines.append(f"- More machine-polished: \"{str(polished.get('text')).strip()}\"")
+            lines.append(f"- Plainer / more direct: \"{str(plain.get('text')).strip()}\"")
+            lines.append("")
+        offenders = register_coaching.get("offenders") if isinstance(register_coaching.get("offenders"), list) else []
+        if offenders:
+            lines.append("**Lines that read most polished -- try saying them the way you actually would:**")
+            lines.append("")
+            for item in offenders[:4]:
+                if isinstance(item, dict) and item.get("text"):
+                    lines.append(f"- \"{str(item.get('text')).strip()}\"")
+            lines.append("")
+        if register_coaching.get("rhythm_even") is True:
+            lines.append(
+                "Your sentences also run at a fairly even length and rhythm -- mixing in some shorter, "
+                "blunter sentences in your own voice reads less machine-smooth."
+            )
+            lines.append("")
+
     # ── Legend ───────────────────────────────────────────────────────
     lines.append("---")
     lines.append("")

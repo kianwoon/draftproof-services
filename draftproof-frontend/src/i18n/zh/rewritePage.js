@@ -61,6 +61,16 @@ export const rewritePage = {
     "kept": "琥珀色：请自行修改",
     "note": "绿色表示改写已改善该文本。琥珀色表示系统无法安全改进而保留原文；请自行修改这些琥珀色句子。"
   },
+  // allow-hardcode: i18n UI label strings for the register-coaching section, not a detect/scoring list.
+  "registerCoaching": {
+    "kicker": "让它像你",
+    "heading": "让它读起来像你写的",
+    "contrastHeading": "出自你自己的草稿——同一作者，两种语气",
+    "polishedLabel": "更像机器的精致表达",
+    "plainLabel": "更朴实、更直接",
+    "offendersHeading": "读起来最精致的句子——用你平时真正会说的方式重写",
+    "rhythmNote": "你的句子长度和节奏也相当均匀——用你自己的语气加入一些更短、更直白的句子，会减少机器般的平滑感。"
+  },
   "outcomes": {
     "completed": "已完成",
     "ai_mitigated": "已应用依据草稿",

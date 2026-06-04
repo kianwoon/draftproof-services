@@ -330,6 +330,8 @@ export default function Rewrite() {
   const hasTopkHighlights = (topkSentenceSpans.length || topkWordSpans.length) && report?.final_text;
   // bracket-grounding colour spans: kind 'improved' -> green, 'kept' -> amber
   const bracketSpans = summary?.bracket_grounding_spans || report?.bracket_grounding_spans || [];
+  // honest register/polish coaching (NOT a score lever) -- backend supplies the note + selected lines
+  const registerCoaching = summary?.register_coaching || report?.register_coaching || null;
   const hasBracketHighlights = Boolean(bracketSpans.length && report?.final_text);
   const hasDocHighlights = Boolean((hasTopkHighlights || hasBracketHighlights) && report?.final_text);
 
@@ -620,6 +622,50 @@ export default function Rewrite() {
                 </article>
               ))}
             </div>
+          </section>
+        )}
+
+        {registerCoaching && (registerCoaching.offenders?.length > 0 || registerCoaching.worked_contrast || registerCoaching.rhythm_even) && (
+          <section className="rewrite-review-section">
+            <div className="rewrite-review-heading">
+              <div>
+                <span className="rewrite-review-kicker">{t('rewritePage.registerCoaching.kicker')}</span>
+                <h3>{t('rewritePage.registerCoaching.heading')}</h3>
+              </div>
+            </div>
+            {registerCoaching.note && (
+              <p className="rewrite-review-copy">{registerCoaching.note}</p>
+            )}
+            {registerCoaching.worked_contrast?.polished?.text && registerCoaching.worked_contrast?.plain?.text && (
+              <article className="rewrite-suggestion-card">
+                <h4>{t('rewritePage.registerCoaching.contrastHeading')}</h4>
+                <div className="rewrite-target-block">
+                  <span>{t('rewritePage.registerCoaching.polishedLabel')}</span>
+                  <p>{registerCoaching.worked_contrast.polished.text}</p>
+                </div>
+                <div className="rewrite-addition-block">
+                  <span>{t('rewritePage.registerCoaching.plainLabel')}</span>
+                  <p>{registerCoaching.worked_contrast.plain.text}</p>
+                </div>
+              </article>
+            )}
+            {registerCoaching.offenders?.length > 0 && (
+              <div className="rewrite-suggestion-grid">
+                {registerCoaching.offenders.slice(0, 4).map((item, i) => (
+                  <article className="rewrite-suggestion-card" key={`register-${i}`}>
+                    <div className="rewrite-suggestion-meta">
+                      <span>{t('rewritePage.registerCoaching.offendersHeading')}</span>
+                    </div>
+                    <div className="rewrite-target-block">
+                      <p>{item.text}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+            {registerCoaching.rhythm_even && (
+              <p className="rewrite-review-copy">{t('rewritePage.registerCoaching.rhythmNote')}</p>
+            )}
           </section>
         )}
 

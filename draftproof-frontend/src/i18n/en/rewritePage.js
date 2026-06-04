@@ -61,6 +61,17 @@ export const rewritePage = {
     "kept": "Amber: edit yourself",
     "note": "Green marks text the rewrite improved. Amber marks text kept because the system could not safely improve it; edit those amber sentences yourself."
   },
+  // allow-hardcode: i18n UI label strings for the register-coaching section (headings/labels), not a
+  // detect/scoring/matching word-list. Sentence selection is done server-side by register_score.
+  "registerCoaching": {
+    "kicker": "Make it yours",
+    "heading": "Make It Sound Like You",
+    "contrastHeading": "From your own draft — same writer, two registers",
+    "polishedLabel": "More machine-polished",
+    "plainLabel": "Plainer / more direct",
+    "offendersHeading": "Lines that read most polished — say them the way you actually would",
+    "rhythmNote": "Your sentences also run at a fairly even length and rhythm — mixing in some shorter, blunter sentences in your own voice reads less machine-smooth."
+  },
   "outcomes": {
     "completed": "completed",
     "ai_mitigated": "grounding draft applied",

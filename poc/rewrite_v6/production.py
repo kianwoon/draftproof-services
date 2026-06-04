@@ -22,6 +22,7 @@ except ModuleNotFoundError:
 
 from .pipeline import _planner_model, _writer_model, run_v6_rewrite_all
 from .direct_rewrite import direct_rewrite_enabled, run_direct_rewrite_all
+from .register_coaching import build_register_coaching, register_coaching_enabled
 from .llm_config import (
     resolve_v6_api_key,
     resolve_v6_base_url,
@@ -362,6 +363,14 @@ def run_rewrite_pipeline_v6(
     # Per-candidate gate audit (original, replacement, decision, scan before/after) so the green/amber
     # decision is reviewable from rewrite.json -- the stage is no longer a black box.
     summary["bracket_grounding_audit"] = bracket_grounding_audit
+    # Honest register/polish coaching on the FINAL shown text (doc-level, like bracket spans). Points the
+    # user at the grounded-but-polished lines + a worked plain/polished contrast from their own text. This
+    # is COACHING, NOT a score lever -- it cannot and does not lower the external detector score (the copy
+    # says so). Kill switch: DRAFTPROOF_V6_REGISTER_COACHING=0. Fail-open (None -> key omitted).
+    if register_coaching_enabled():
+        register_coaching = build_register_coaching(final_text)
+        if register_coaching:
+            summary["register_coaching"] = register_coaching
 
     result_obj = SimpleNamespace(
         summary=summary,
