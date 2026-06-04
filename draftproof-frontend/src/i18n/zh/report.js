@@ -304,6 +304,22 @@ export const report = {
     "groundingRisk": "改写依据风险",
     "viewResult": "查看改写结果"
   },
+  // allow-hardcode: i18n UI strings for the per-paragraph severity bar, not a detect/scoring word-list.
+  "severityBar": {
+    "caption": "各段落的问题密度",
+    "ariaLabel": "覆盖 {{count}} 个段落的问题严重度热力图",
+    "tooltip": "第 {{index}} 段：{{count}} 个问题，最严重：{{tier}}",
+    "tooltipClean": "第 {{index}} 段：无问题",
+    "legendLow": "干净／问题较少",
+    "legendHigh": "更密集／更严重",
+    "tier": {
+      "critical": "严重",
+      "high": "高",
+      "medium": "中",
+      "low": "低",
+      "info": "提示"
+    }
+  },
   "submitted": {
     "sectionLabel": "带扫描信号的提交内容",
     "kicker": "提交内容",

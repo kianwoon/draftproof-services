@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, getScanStatus, startScanWithText } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
+import ParagraphSeverityBar from '../components/ParagraphSeverityBar';
 import { useAuth } from '../context/AuthContext';
 import { deleteReportDraft, getReportDraft, saveReportDraft } from '../utils/reportDraftStorage';
 import { countWords, scanTokensRequired } from '../utils/scanBilling';
@@ -52,6 +53,7 @@ import {
   buildRewriteResultSummary,
   buildRewriteContributionOverride,
   buildSubmittedContentModel,
+  buildParagraphSeverityBar,
   requiresRewriteAuthorReview,
   requiresRewriteExternalReview,
   isRewriteActive,
@@ -976,6 +978,8 @@ export default function Report() {
   issues.forEach((iss) => { if (issueCounts[iss.severity] !== undefined) issueCounts[iss.severity]++; });
   const normalizedReport = { ...report, issues };
   const submittedContent = buildSubmittedContentModel(normalizedReport);
+  // Per-paragraph severity heatmap bar (finding-tier-weighted density, proportional width).
+  const paragraphSeverityBar = buildParagraphSeverityBar(submittedContent.paragraphs);
   const selectedParagraph = (
     submittedContent.paragraphs.find((paragraph) => paragraph.id === selectedParagraphId) ||
     submittedContent.paragraphs.find((paragraph) => paragraph.signals.length > 0) ||
@@ -2108,6 +2112,9 @@ export default function Report() {
                 )}
               </div>
             </div>
+            {paragraphSeverityBar && paragraphSeverityBar.length > 0 && (
+              <ParagraphSeverityBar bar={paragraphSeverityBar} />
+            )}
             {submittedContent.legend.length > 0 && (
               <div className="submitted-signal-legend" aria-label={t('report.submitted.legend')}>
                 {submittedContent.legend.slice(0, 6).map((signal) => (

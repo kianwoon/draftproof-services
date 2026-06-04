@@ -304,6 +304,22 @@ export const report = {
     "groundingRisk": "Rewrite grounding risk",
     "viewResult": "View Rewrite Result"
   },
+  // allow-hardcode: i18n UI strings for the per-paragraph severity bar, not a detect/scoring word-list.
+  "severityBar": {
+    "caption": "Finding density by paragraph",
+    "ariaLabel": "Finding-severity heatmap across {{count}} paragraphs",
+    "tooltip": "Paragraph {{index}}: {{count}} finding(s), worst: {{tier}}",
+    "tooltipClean": "Paragraph {{index}}: no findings",
+    "legendLow": "Clean / fewer findings",
+    "legendHigh": "Denser / more severe",
+    "tier": {
+      "critical": "critical",
+      "high": "high",
+      "medium": "medium",
+      "low": "low",
+      "info": "info"
+    }
+  },
   "submitted": {
     "sectionLabel": "Submitted content with scan signals",
     "kicker": "Submitted Content",

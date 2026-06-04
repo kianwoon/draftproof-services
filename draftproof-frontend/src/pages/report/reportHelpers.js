@@ -1294,6 +1294,53 @@ function buildSubmittedContentModel(report) {
   };
 }
 
+// Tier-weighted severity for the per-paragraph density bar. critical worst -> low least; info trivial.
+const PARAGRAPH_SEVERITY_TIER_WEIGHT = { critical: 4, high: 3, medium: 2, low: 1, info: 0.5 };
+const PARAGRAPH_SEVERITY_TIER_RANK = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+
+// Build the per-paragraph severity heatmap bar from the submitted-content paragraph model.
+// Severity = tier-weighted finding density per paragraph (weight / length), normalised across the doc.
+// Width is proportional to each paragraph's share of the document length. Pure derivation from existing
+// scan data (findings tier via signal.tier) -- no new backend computation, works on existing reports.
+function buildParagraphSeverityBar(paragraphs) {
+  if (!Array.isArray(paragraphs) || paragraphs.length === 0) return null;
+  const rows = paragraphs.map((paragraph, index) => {
+    const signals = (paragraph.segments || []).flatMap((segment) => segment.signals || []);
+    let weight = 0;
+    let topTier = '';
+    let topRank = -1;
+    signals.forEach((signal) => {
+      const tier = String(signal.tier || '').toLowerCase();
+      weight += PARAGRAPH_SEVERITY_TIER_WEIGHT[tier] ?? 1;
+      const rank = PARAGRAPH_SEVERITY_TIER_RANK[tier] ?? 0;
+      if (rank > topRank) {
+        topRank = rank;
+        topTier = tier;
+      }
+    });
+    const length = Math.max(1, (paragraph.text || '').length);
+    return {
+      id: paragraph.id,
+      index: index + 1,
+      length,
+      findingCount: signals.length,
+      topTier,
+      density: weight / length,
+    };
+  });
+  const totalLength = rows.reduce((sum, row) => sum + row.length, 0) || 1;
+  const maxDensity = rows.reduce((max, row) => Math.max(max, row.density), 0);
+  return rows.map((row) => ({
+    id: row.id,
+    index: row.index,
+    findingCount: row.findingCount,
+    topTier: row.topTier,
+    widthPct: (row.length / totalLength) * 100,
+    // 0..1 relative heatmap: the most finding-dense paragraph reaches full intensity.
+    intensity: maxDensity > 0 ? row.density / maxDensity : 0,
+  }));
+}
+
 function formatRewriteStatus(status, t) {
   if (status === 'pending') return t('report.rewrite.queued');
   if (status === 'processing') return t('report.rewrite.processing');
@@ -1457,6 +1504,7 @@ export {
   buildRewriteResultSummary,
   buildRewriteContributionOverride,
   buildSubmittedContentModel,
+  buildParagraphSeverityBar,
   isRewriteActive,
   normalizeRewriteProgressMessage,
   normalizeRewriteJob,
