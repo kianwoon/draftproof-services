@@ -178,6 +178,7 @@ def test_residual_fix_runs_before_reviewer(monkeypatch):
     """Order guard: in run_direct_rewrite_all, residual fix must execute before the reviewer."""
     order = []
     monkeypatch.setattr(direct_rewrite, "_best_of_n", lambda: 1)
+    monkeypatch.setattr(direct_rewrite, "_author_proxy_diversity_enabled", lambda: False)
     monkeypatch.setattr(direct_rewrite, "_rewrite_document_once",
                         lambda *a, **k: _doc("P1.\n\nP2."))
     monkeypatch.setattr(direct_rewrite, "_apply_residual_fix",
@@ -187,6 +188,60 @@ def test_residual_fix_runs_before_reviewer(monkeypatch):
     monkeypatch.setattr(direct_rewrite, "LLMGateway", lambda *a, **k: None)
     direct_rewrite.run_direct_rewrite_all("some original text.\n\nsecond paragraph here.")
     assert order == ["residual", "reviewer"]
+
+
+def test_author_proxy_lane_selector_keeps_control_when_diversified_scores_worse(monkeypatch):
+    calls = []
+    monkeypatch.setattr(direct_rewrite, "_best_of_n", lambda: 1)
+    monkeypatch.setattr(direct_rewrite, "_author_proxy_diversity_enabled", lambda: True)
+    monkeypatch.setattr(direct_rewrite, "LLMGateway", lambda *a, **k: None)
+    monkeypatch.setattr(
+        direct_rewrite,
+        "_rewrite_document_once",
+        lambda *a, **k: _doc(f"{k['lane']} pre.\n\n{k['lane']} pre two."),
+    )
+
+    def _post(doc, *_args, **kwargs):
+        calls.append(kwargs["lane"])
+        return _doc(f"{kwargs['lane']} post.\n\n{kwargs['lane']} post two.")
+
+    monkeypatch.setattr(direct_rewrite, "_apply_direct_score_stages", _post)
+    monkeypatch.setattr(direct_rewrite, "_document_ai_risk", lambda text: 10.0 if text.startswith("control") else 20.0)
+    monkeypatch.setattr(direct_rewrite, "_apply_showcase", lambda doc, *a, **k: doc)
+
+    out = direct_rewrite.run_direct_rewrite_all("some original text.\n\nsecond paragraph here.")
+
+    assert out.rewritten_text == "control post.\n\ncontrol post two."
+    assert calls == ["control", "diversified"]
+    rows = [row for row in out.pass_trace if row.get("selected_source") == "author_proxy_lane_selector"]
+    assert [row["lane"] for row in rows] == ["control", "diversified"]
+    assert rows[0]["selected"] is True
+    assert rows[1]["selected"] is False
+
+
+def test_author_proxy_lane_selector_allows_diversified_on_equal_score(monkeypatch):
+    monkeypatch.setattr(direct_rewrite, "_best_of_n", lambda: 1)
+    monkeypatch.setattr(direct_rewrite, "_author_proxy_diversity_enabled", lambda: True)
+    monkeypatch.setattr(direct_rewrite, "LLMGateway", lambda *a, **k: None)
+    monkeypatch.setattr(
+        direct_rewrite,
+        "_rewrite_document_once",
+        lambda *a, **k: _doc(f"{k['lane']} pre.\n\n{k['lane']} pre two."),
+    )
+    monkeypatch.setattr(
+        direct_rewrite,
+        "_apply_direct_score_stages",
+        lambda doc, *_args, **kwargs: _doc(f"{kwargs['lane']} post.\n\n{kwargs['lane']} post two."),
+    )
+    monkeypatch.setattr(direct_rewrite, "_document_ai_risk", lambda _text: 10.0)
+    monkeypatch.setattr(direct_rewrite, "_apply_showcase", lambda doc, *a, **k: doc)
+
+    out = direct_rewrite.run_direct_rewrite_all("some original text.\n\nsecond paragraph here.")
+
+    assert out.rewritten_text == "diversified post.\n\ndiversified post two."
+    rows = [row for row in out.pass_trace if row.get("selected_source") == "author_proxy_lane_selector"]
+    assert rows[1]["lane"] == "diversified"
+    assert rows[1]["selected"] is True
 
 
 def test_document_selection_score_prices_raw_topk(monkeypatch):

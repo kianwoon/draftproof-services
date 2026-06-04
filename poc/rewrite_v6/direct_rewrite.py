@@ -32,6 +32,7 @@ except ImportError:  # pragma: no cover
     from poc.detect.layer3_scoring import _sentence_has_concrete_or_context, _sentence_has_hard_concrete, split_sentences
 
 from .coverage_guard import missing_required_source_beat_groups
+from .author_proxy_routes import select_author_proxy_routes
 from .integrity_guard import candidate_integrity_blockers
 from .json_io import parse_json
 from .llm_config import resolve_v6_api_key, resolve_v6_base_url, resolve_v6_model, writer_extra_body, writer_llm_profile, writer_model
@@ -117,6 +118,7 @@ def _apply_residual_fix(
     *,
     cancellation_check: Callable[[], None] | None,
     authorship_evidence: Any = None,
+    lane: str = "control",
 ):
     """Rewrite pass 2: a paragraph-level check on the rewriter's own output.
 
@@ -169,7 +171,7 @@ def _apply_residual_fix(
             )
             # diagnosis=None on purpose: fresh findings only, never stale original paragraph_diagnosis.
             candidate, review_items = _clean_candidate(
-                gateway, paragraph, None, findings, authorship_targets=targets
+                gateway, paragraph, None, findings, authorship_targets=targets, lane=lane
             )
         except Exception:
             # A writer failure on one paragraph must degrade to its pass-1 text, never discard the
@@ -239,10 +241,36 @@ _SYSTEM = (
 )
 
 
-def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags: list[str], authorship_targets: dict[str, Any] | None = None) -> str:
+_DIVERSIFIED_SYSTEM = (
+    "You produce a SUGGESTED rewrite of a flagged paragraph for the author to review and edit. The "
+    "author sees your changes in a before/after diff. Your goal is to lower AI-detection risk by "
+    "making the writing specific, concrete, author-owned, and plain-spoken while preserving the "
+    "source argument. Author-proxy is the spine: every broad claim you ground must use an author-owned "
+    "vantage, a concrete particular, and a clear claim purpose. Route diversity means changing the "
+    "shape of that author-proxy beat -- observed process, local constraint, decision moment, source "
+    "use, actor interaction, condition trigger, or risk consequence -- not replacing author-proxy with "
+    "detached examples. For reflective prose, first-person observation remains valid and often "
+    "strongest. For formal prose, use local actor/source/condition/risk framing without forcing first "
+    "person. Figures or scale details are optional support inside an author-proxy beat; they must not "
+    "be the paragraph spine. List added scenarios, observations, bridge wording, or figures in "
+    "author_review_items. Do not present a specific named real institution, real person, citation, "
+    "external fact, or exact statistic as verified unless it already appears in the source. "
+    'Return JSON only: {"rewrite": "...", "author_review_items": [{"added": "...", "why": "..."}]}.'
+)
+
+
+def _prompt(
+    paragraph_text: str,
+    diagnosis: dict[str, Any] | None,
+    finding_tags: list[str],
+    authorship_targets: dict[str, Any] | None = None,
+    *,
+    lane: str = "control",
+) -> str:
     source_words = len(str(paragraph_text or "").split())
     word_budget = max(40, int(source_words * 1.3))
     predictable_phrases = list((diagnosis or {}).get("predictable_phrases") or [])
+    diversified = lane == "diversified"
     payload: dict[str, Any] = {
         "paragraph": paragraph_text,
         "scanner_diagnosis": {
@@ -310,6 +338,34 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "only as the shape of the fix, never as wording to copy.",
         ],
     }
+    if diversified:
+        routes = select_author_proxy_routes(paragraph_text, diagnosis, finding_tags, authorship_targets)
+        payload["author_proxy_routes"] = routes
+        payload["instructions"] = [
+            "Most AI-detection risk here comes from content that is generic and unanchored. Ground "
+            "generic claims by rewriting the existing sentence into an author-owned concrete beat of "
+            "similar length; do not append a separate example after the vague sentence.",
+            "predictable_phrases are exact wordings the detector scored as statistically predictable. "
+            "Rewrite each one by changing the sentence route around it, not by swapping synonyms.",
+            "Author-proxy is mandatory for grounded claims. Use the author's vantage when reflective "
+            "or first-person prose fits; otherwise use a local actor, source relation, condition, "
+            "decision, constraint, or risk consequence tied to the source claim.",
+            "Use author_proxy_routes as alternate shapes inside strong author-proxy grounding. Each "
+            "grounded beat must still combine author-owned vantage, concrete particular, and claim "
+            "purpose.",
+            "Do not use numbers, percentages, or scale as the default anchor. Preserve submitted "
+            "scale when relevant, and use scale_detail only as optional support inside another route.",
+            "Do not copy route wording into the paragraph; use the route mode to decide the sentence "
+            "shape.",
+            "Vary sentence length deliberately while keeping prose fluent and plain. Avoid polished "
+            "essay cadence, broad moral generalisations, and decorative phrasing.",
+            "Preserve the author's actual argument, source facts, and register. Do not flip emphasis "
+            "or drop existing ideas.",
+            "Respect length_budget. Add a new sentence only when the claim cannot be grounded by "
+            "rewriting an existing one.",
+            "List any added scenario, author observation, bridge wording, or figure in "
+            "author_review_items so the author can confirm or replace it.",
+        ]
     if _writer_topk_pressure_enabled():
         pressure = _topk_pressure(paragraph_text)
         if pressure:
@@ -675,38 +731,69 @@ def run_direct_rewrite_all(
         cancellation_check=cancellation_check,
     ))
 
-    # Document best-of-N: the direct path is cheap (one call/paragraph), and runs vary a few points,
-    # so generate N whole-document rewrites and keep the one the real detector scores lowest.
+    # Control-vs-diversified lanes: control preserves the restored author-proxy behavior; diversified
+    # may only ship if its fully processed document score is no worse. No fixed fixture thresholds.
     attempts = _best_of_n()
-    best_doc = None
-    best_score = float("inf")
+    lanes = ["control", "diversified"] if _author_proxy_diversity_enabled() else ["control"]
+    scored_docs: list[tuple[float, int, str, Any]] = []
+    total_runs = max(1, attempts * len(lanes))
+    run_index = 0
     for attempt in range(attempts):
-        if cancellation_check:
-            cancellation_check()
-        doc = _rewrite_document_once(
-            scan,
-            gateway,
-            _attempt_progress(progress_callback, attempt, attempts),
-            cancellation_check,
-            authorship_evidence=authorship_evidence,
-        )
-        # Best-of-N selector: detector risk PLUS an explicit rhythm penalty. The rewrite
-        # systematically over-smooths sentence rhythm (measured: burstiness regressed in 8/10 docs),
-        # so weight varied sentence length in selection, not just the AI-risk score.
-        score = _document_selection_score(doc.rewritten_text) if attempts > 1 else 0.0
-        if best_doc is None or score < best_score:
-            best_doc, best_score = doc, score
-    # rewrite -> residual fix (pass 2) -> QC -> scan. Pass 2 re-scans the rewritten draft and fixes
-    # paragraph-level residuals the per-paragraph writer missed or introduced; then the whole-doc
-    # reviewer fixes cross-paragraph patterns; the authoritative final scan runs last, in the reviewer.
-    best_doc = _apply_residual_fix(
-        best_doc, gateway,
+        for lane in lanes:
+            if cancellation_check:
+                cancellation_check()
+            doc = _rewrite_document_once(
+                scan,
+                gateway,
+                _attempt_progress(progress_callback, run_index, total_runs),
+                cancellation_check,
+                authorship_evidence=authorship_evidence,
+                lane=lane,
+            )
+            processed = _apply_direct_score_stages(
+                doc,
+                gateway,
+                api_key=api_key,
+                base_url=base_url,
+                cancellation_check=cancellation_check,
+                authorship_evidence=authorship_evidence,
+                lane=lane,
+            )
+            score = _document_ai_risk(processed.rewritten_text)
+            scored_docs.append((score, attempt, lane, processed))
+            run_index += 1
+    best_score, best_attempt, best_lane, full_doc_rewritten = _choose_scored_lane(scored_docs)
+    from dataclasses import replace
+    selector_trace = [
+        _lane_selector_trace(score, attempt, lane, selected=(attempt == best_attempt and lane == best_lane))
+        for score, attempt, lane, _doc in scored_docs
+    ]
+    full_doc_rewritten = replace(
+        full_doc_rewritten,
+        pass_trace=list(full_doc_rewritten.pass_trace) + selector_trace,
+    )
+    # NOTE: bracket-grounding runs as the TRUE last stage in production.py on the final text
+    # (after highlight_topk_repair + markdown strip), so it is NOT applied here in the mid-pipeline.
+    return _apply_showcase(full_doc_rewritten, gateway, cancellation_check=cancellation_check)
+
+
+def _apply_direct_score_stages(
+    doc,
+    gateway,
+    *,
+    api_key: str | None,
+    base_url: str | None,
+    cancellation_check: Callable[[], None] | None,
+    authorship_evidence: Any,
+    lane: str,
+):
+    fixed = _apply_residual_fix(
+        doc, gateway,
         cancellation_check=cancellation_check,
         authorship_evidence=authorship_evidence,
+        lane=lane,
     )
-    reviewed = _apply_reviewer(best_doc, gateway, cancellation_check=cancellation_check)
-    # writer -> residual-fix -> reviewer -> GRAMMAR REPAIR -> optional full-doc candidate
-    # -> SHOWCASE (annotate) -> done.
+    reviewed = _apply_reviewer(fixed, gateway, cancellation_check=cancellation_check)
     repaired = _apply_grammar_repair(
         reviewed,
         gateway,
@@ -714,15 +801,43 @@ def run_direct_rewrite_all(
         base_url=base_url,
         cancellation_check=cancellation_check,
     )
-    full_doc_rewritten = _apply_full_doc_rewrite(
+    return _apply_full_doc_rewrite(
         repaired,
         api_key=api_key,
         base_url=base_url,
         cancellation_check=cancellation_check,
     )
-    # NOTE: bracket-grounding runs as the TRUE last stage in production.py on the final text
-    # (after highlight_topk_repair + markdown strip), so it is NOT applied here in the mid-pipeline.
-    return _apply_showcase(full_doc_rewritten, gateway, cancellation_check=cancellation_check)
+
+
+def _choose_scored_lane(scored_docs: list[tuple[float, int, str, Any]]) -> tuple[float, int, str, Any]:
+    if not scored_docs:
+        raise RuntimeError("direct rewrite produced no candidates")
+    best = scored_docs[0]
+    for row in scored_docs[1:]:
+        score, attempt, lane, _doc = row
+        best_score, best_attempt, best_lane, _best_doc = best
+        if score < best_score:
+            best = row
+        elif score == best_score and best_lane != "diversified" and lane == "diversified":
+            best = row
+        elif score == best_score and lane == best_lane and attempt < best_attempt:
+            best = row
+    return best
+
+
+def _lane_selector_trace(score: float, attempt: int, lane: str, *, selected: bool) -> dict[str, Any]:
+    return {
+        "selected_source": "author_proxy_lane_selector",
+        "status": "selected" if selected else "not_selected",
+        "attempt_index": attempt,
+        "lane": lane,
+        "score": round(score, 3) if score != float("inf") else score,
+        "selected": selected,
+    }
+
+
+def _author_proxy_diversity_enabled() -> bool:
+    return os.environ.get("DRAFTPROOF_V6_AUTHOR_PROXY_DIVERSITY", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _rhythm_risk(text: str) -> float:
@@ -930,6 +1045,7 @@ def _rewrite_document_once(
     progress_callback: Callable[[int, str], None] | None,
     cancellation_check: Callable[[], None] | None,
     authorship_evidence: Any = None,
+    lane: str = "control",
 ):
     from .pipeline import DocumentResult  # local import: pipeline must not depend on this module
 
@@ -962,7 +1078,7 @@ def _rewrite_document_once(
             else {}
         )
         candidate, review_items = _clean_candidate(
-            gateway, paragraph, diagnosis, findings, authorship_targets=targets
+            gateway, paragraph, diagnosis, findings, authorship_targets=targets, lane=lane
         )
         if candidate is None:
             # No usable, grammatically-clean rewrite after retries -> show the clean original rather
@@ -1058,6 +1174,7 @@ def _clean_candidate(
     *,
     attempts: int = 2,
     authorship_targets: dict[str, Any] | None = None,
+    lane: str = "control",
 ) -> tuple[str | None, list[dict[str, Any]]]:
     """Return the first usable, grammatically-clean rewrite within `attempts`, else (None, []).
 
@@ -1068,7 +1185,11 @@ def _clean_candidate(
     salvage is returned with a `writer_quote_degraded` flag rather than discarded."""
     salvage: tuple[str, list[dict[str, Any]]] | None = None
     for _ in range(max(1, attempts)):
-        candidate, review_items = _rewrite_paragraph(gateway, paragraph, diagnosis, findings, authorship_targets=authorship_targets)
+        candidate, review_items = _rewrite_paragraph(
+            gateway, paragraph, diagnosis, findings,
+            authorship_targets=authorship_targets,
+            lane=lane,
+        )
         candidate = _normalize_punctuation(candidate) if candidate else candidate
         candidate = _collapse_paragraph_breaks(candidate) if candidate else candidate
         cand = candidate or ""
@@ -1117,12 +1238,13 @@ def _rewrite_paragraph(
     diagnosis: dict[str, Any] | None,
     findings: list[Any],
     authorship_targets: dict[str, Any] | None = None,
+    lane: str = "control",
 ) -> tuple[str | None, list[dict[str, Any]]]:
     tags = sorted({tag for finding in findings for tag in (finding.tags or [])})
     try:
         response = gateway.chat(
-            _prompt(paragraph.text, diagnosis, tags, authorship_targets),
-            system=_SYSTEM,
+            _prompt(paragraph.text, diagnosis, tags, authorship_targets, lane=lane),
+            system=_DIVERSIFIED_SYSTEM if lane == "diversified" else _SYSTEM,
             temperature=0.4,
             top_p=0.9,
             # gpt-oss spends reasoning tokens FIRST and they count toward this cap; a content-heavy

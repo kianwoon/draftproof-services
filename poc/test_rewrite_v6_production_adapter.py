@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import sys
+import types
 
 import pytest
 
@@ -282,6 +284,111 @@ def test_v6_external_guard_allows_non_regression(tmp_path, monkeypatch):
     assert summary["final_text"] == rewritten
     assert summary["external_detector_guard"]["blocked"] is False
     assert summary["external_detector_guard"]["candidate_score"] == 62
+
+
+def test_v6_highlight_repair_reverts_score_regression(tmp_path, monkeypatch):
+    original = "Original note with stable detector risk."
+    rewritten = "Candidate note with lower detector risk."
+    worse = "Candidate note with worse detector risk."
+    scan = scan_text(original)
+
+    def fake_run_v6_rewrite_all(_text, **_kwargs):
+        return SimpleNamespace(
+            initial_scan=scan,
+            final_scan=scan_text(rewritten),
+            passes=[],
+            pass_trace=[],
+            rewritten_text=rewritten,
+            final_text_before_quality_repair=None,
+            quality_repair=None,
+        )
+
+    def fake_scan_report(text, **_kwargs):
+        scores = {original: 40, rewritten: 20, worse: 30}
+        return _report_with_external_score(text, scores[text])
+
+    highlight_module = types.SimpleNamespace(
+        compute_predictability_highlights=lambda _text: {"actionable_sentences": ["x"]},
+    )
+    repair_result = SimpleNamespace(
+        changed=True,
+        to_trace=lambda: {"selected_source": "highlight_topk_repair", "status": "accepted", "applied": 1},
+    )
+    repair_module = types.SimpleNamespace(
+        highlight_topk_repair_enabled=lambda: True,
+        apply_highlight_topk_repair=lambda *_args, **_kwargs: (worse, repair_result),
+    )
+
+    monkeypatch.setitem(sys.modules, "poc.predictability.highlight_spans", highlight_module)
+    monkeypatch.setitem(sys.modules, "poc.rewrite_v6.highlight_topk_repair", repair_module)
+    monkeypatch.setattr(v6_production, "run_v6_rewrite_all", fake_run_v6_rewrite_all)
+    monkeypatch.setattr(v6_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+    monkeypatch.setattr(v6_production, "render_rewrite_report", lambda **_kwargs: "# Rewrite")
+    monkeypatch.setattr(v6_production, "_sentence_comparison", lambda _original, _final: [])
+    monkeypatch.setattr(v6_production, "_scan_report_for_summary", fake_scan_report)
+    monkeypatch.setattr(v6_production, "_highlight_repair_gateway", lambda **_kwargs: None)
+    monkeypatch.setattr(v6_production, "_apply_final_bracket_grounding", lambda text, **_kwargs: (text, [], {}))
+
+    result = v6_production.run_rewrite_pipeline_v6(
+        detect_json={"input_text": original},
+        output_dir=str(tmp_path),
+        model="writer-model",
+    )
+    summary = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+
+    assert summary["final_text"] == rewritten
+    assert summary["final_risk"] == 20
+    row = next(row for row in summary["v6_pass_trace"] if row.get("selected_source") == "highlight_topk_repair")
+    assert row["status"] == "rejected_score_regression"
+    assert row["candidate_score"] == 30
+    assert row["pre_stage_score"] == 20
+
+
+def test_v6_bracket_grounding_reverts_score_regression(tmp_path, monkeypatch):
+    original = "Original note with stable detector risk."
+    rewritten = "Candidate note with lower detector risk."
+    worse = "Candidate note with worse detector risk."
+    scan = scan_text(original)
+
+    def fake_run_v6_rewrite_all(_text, **_kwargs):
+        return SimpleNamespace(
+            initial_scan=scan,
+            final_scan=scan_text(rewritten),
+            passes=[],
+            pass_trace=[],
+            rewritten_text=rewritten,
+            final_text_before_quality_repair=None,
+            quality_repair=None,
+        )
+
+    def fake_scan_report(text, **_kwargs):
+        scores = {original: 40, rewritten: 20, worse: 30}
+        return _report_with_external_score(text, scores[text])
+
+    monkeypatch.setattr(v6_production, "run_v6_rewrite_all", fake_run_v6_rewrite_all)
+    monkeypatch.setattr(v6_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+    monkeypatch.setattr(v6_production, "render_rewrite_report", lambda **_kwargs: "# Rewrite")
+    monkeypatch.setattr(v6_production, "_sentence_comparison", lambda _original, _final: [])
+    monkeypatch.setattr(v6_production, "_scan_report_for_summary", fake_scan_report)
+    monkeypatch.setattr(
+        v6_production,
+        "_apply_final_bracket_grounding",
+        lambda text, **_kwargs: (worse, [{"kind": "improved", "start": 0, "end": 4}], {"candidates": []}),
+    )
+
+    result = v6_production.run_rewrite_pipeline_v6(
+        detect_json={"input_text": original},
+        output_dir=str(tmp_path),
+        model="writer-model",
+    )
+    summary = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+
+    assert summary["final_text"] == rewritten
+    assert summary["final_risk"] == 20
+    row = next(row for row in summary["v6_pass_trace"] if row.get("selected_source") == "bracket_grounding")
+    assert row["status"] == "rejected_score_regression"
+    assert row["candidate_score"] == 30
+    assert row["pre_stage_score"] == 20
 
 
 def _report_with_external_score(text: str, score: float) -> dict:

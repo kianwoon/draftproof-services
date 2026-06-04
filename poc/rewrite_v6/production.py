@@ -146,6 +146,11 @@ def run_rewrite_pipeline_v6(
             if isinstance(repair_highlights, dict) else False
         )
         if has_predictability_highlights:
+            pre_highlight_report = _scan_report_for_summary(
+                final_text,
+                provided=None,
+                fallback_scan=document.final_scan.to_dict(),
+            )
             repair_gateway = _highlight_repair_gateway(
                 model=resolved_writer_model,
                 api_key=api_key,
@@ -164,17 +169,32 @@ def run_rewrite_pipeline_v6(
                     cancellation_check=raise_if_canceled,
                 ),
             )
-            trace = list(document.pass_trace) + [highlight_repair.to_trace()]
+            repair_trace = highlight_repair.to_trace()
             if highlight_repair.changed:
-                final_text = repaired_text
-                document = replace(
-                    document,
-                    rewritten_text=final_text,
-                    final_scan=scan_text_preserve_blocks(final_text),
-                    pass_trace=trace,
+                repaired_scan = scan_text_preserve_blocks(repaired_text)
+                repaired_report = _scan_report_for_summary(
+                    repaired_text,
+                    provided=None,
+                    fallback_scan=repaired_scan.to_dict(),
                 )
+                if _scan_score_worse(repaired_report, pre_highlight_report):
+                    repair_trace = dict(repair_trace)
+                    repair_trace.update({
+                        "status": "rejected_score_regression",
+                        "pre_stage_score": _report_ai_score(pre_highlight_report),
+                        "candidate_score": _report_ai_score(repaired_report),
+                    })
+                    document = _replace_document(document, pass_trace=list(document.pass_trace) + [repair_trace])
+                else:
+                    final_text = repaired_text
+                    document = _replace_document(
+                        document,
+                        rewritten_text=final_text,
+                        final_scan=repaired_scan,
+                        pass_trace=list(document.pass_trace) + [repair_trace],
+                    )
             else:
-                document = replace(document, pass_trace=trace)
+                document = _replace_document(document, pass_trace=list(document.pass_trace) + [repair_trace])
     elapsed = time.time() - started
     original_scan_report = timed_stage(
         "original_scan_summary",
@@ -235,25 +255,42 @@ def run_rewrite_pipeline_v6(
         # bytes here -- otherwise detect_scores / final_risk / detect_scan_rewritten / external estimate
         # all describe text the user never receives (the badge would be stale by construction).
         if final_text.strip() != pre_bracket_text.strip():
-            document = replace(
-                document,
-                rewritten_text=final_text,
-                final_scan=scan_text_preserve_blocks(final_text),
-            )
-            rewritten_scan_report = _scan_report_for_summary(
+            bracket_scan = scan_text_preserve_blocks(final_text)
+            bracket_scan_report = _scan_report_for_summary(
                 final_text,
                 provided=None,
-                fallback_scan=document.final_scan.to_dict(),
+                fallback_scan=bracket_scan.to_dict(),
             )
+            if _scan_score_worse(bracket_scan_report, rewritten_scan_report):
+                bracket_grounding_spans = []
+                final_text = pre_bracket_text
+                document = _replace_document(document, rewritten_text=final_text)
+                bracket_grounding_diag = dict(bracket_grounding_diag or {})
+                bracket_grounding_diag["rejected_score_regression"] = {
+                    "pre_stage_score": _report_ai_score(rewritten_scan_report),
+                    "candidate_score": _report_ai_score(bracket_scan_report),
+                }
+            else:
+                document = _replace_document(
+                    document,
+                    rewritten_text=final_text,
+                    final_scan=bracket_scan,
+                )
+                rewritten_scan_report = bracket_scan_report
         # Observability: bracket-grounding runs AFTER the per-paragraph passes, so it isn't in
         # document.pass_trace yet -- record it so v6_pass_trace shows the true last stage.
         _bg_improved = sum(1 for sp in bracket_grounding_spans if sp.get("kind") == "improved")
         _bg_kept = sum(1 for sp in bracket_grounding_spans if sp.get("kind") == "kept")
-        document = replace(document, pass_trace=list(document.pass_trace) + [{
+        document = _replace_document(document, pass_trace=list(document.pass_trace) + [{
             "selected_source": "bracket_grounding",
-            "status": "accepted" if _bg_improved else "no_change",
+            "status": (
+                "rejected_score_regression"
+                if (bracket_grounding_diag or {}).get("rejected_score_regression")
+                else "accepted" if _bg_improved else "no_change"
+            ),
             "applied": _bg_improved,
             "kept": _bg_kept,
+            **((bracket_grounding_diag or {}).get("rejected_score_regression") or {}),
         }])
     changed = final_text.strip() != original_text.strip()
     cleared = bool(changed and not document.final_scan.findings)
@@ -463,6 +500,27 @@ def _scan_report_for_summary(text: str, *, provided: dict[str, Any] | None, fall
     except Exception:
         pass
     return _scan_report_shape(fallback_scan)
+
+
+def _scan_score_worse(candidate_report: dict[str, Any], baseline_report: dict[str, Any]) -> bool:
+    candidate = _report_ai_score(candidate_report)
+    baseline = _report_ai_score(baseline_report)
+    if candidate is None or baseline is None:
+        return False
+    return candidate > baseline
+
+
+def _report_ai_score(report: dict[str, Any] | None) -> float | None:
+    if not isinstance(report, dict):
+        return None
+    badge = report.get("ai_risk_badge") if isinstance(report.get("ai_risk_badge"), dict) else {}
+    try:
+        value = report.get("ai_score")
+        if value is None:
+            value = badge.get("ai_likelihood_score")
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _highlight_repair_gateway(
