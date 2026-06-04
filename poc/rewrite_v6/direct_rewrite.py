@@ -215,8 +215,10 @@ _SYSTEM = (
     "You produce a SUGGESTED rewrite of a flagged paragraph for the author to review and edit. The "
     "author sees your changes in a before/after diff, so adding new content to fix the problem is "
     "expected and encouraged -- that is the mitigation. Your goal: lower AI-detection risk by making "
-    "the writing specific, concrete, and human, while staying in the same subject, register, and tone "
-    "as the source. Where the paragraph is generic or lacks a concrete anchor, ADD grounding AS THE "
+    "the writing specific, concrete, and human -- in the author's PLAIN, everyday voice, NOT an "
+    "elevated polished-essay register (avoid sweeping moral generalisations, clichéd metaphors, and a "
+    "smooth balanced cadence) -- while staying in the same subject and tone as the source. Where the "
+    "paragraph is generic or lacks a concrete anchor, ADD grounding AS THE "
     "AUTHOR WOULD -- you are the author's proxy. Ground EVERY generic claim in the author's "
     "FIRST-PERSON lived experience -- this is the single strongest way to cut the generic-assertion "
     "signal, so keep it on every grounded claim and NEVER trade it away for a bare figure. Then put "
@@ -287,6 +289,13 @@ def _prompt(paragraph_text: str, diagnosis: dict[str, Any] | None, finding_tags:
             "phrasing with concrete, specific wording. Change the sentence ROUTE, not just synonyms.",
             "VARY SENTENCE LENGTH deliberately -- this is a top priority, not a nicety. In EACH paragraph place at least one SHORT, pointed sentence (about 5-9 words) next to at least one LONG, flowing sentence (about 22+ words). Uniform medium-length sentences are the single most common machine-smoothed tell and the #1 rhythm defect -- do not emit a run of same-length sentences. Keep every sentence fluent and correct (never choppy or telegraphic). Start sentences differently; avoid a uniform cadence.",
             "Cut hedging (may, might, can, could, should, often, generally) and generic filler.",
+            # allow-hardcode: model coaching guidance (a prompt), not a detect/scoring word-list. The
+            # example phrases are illustrations shown to the model, never matched against input.
+            "Write in PLAIN, direct, everyday voice -- not a polished-essay register. Avoid sweeping "
+            "moral generalisations ('we must', 'it is essential that', 'society needs to'), clichéd or "
+            "figurative openers and metaphors, and an elevated, measured, balanced cadence. State each "
+            "concrete point plainly and directly, the way the author would actually say it -- not as a "
+            "smooth, ornamented set-piece. Plainness and concreteness beat polish.",
             "Preserve the author's actual argument and meaning, and stay in the same subject and "
             "register as the source. Do not shift a balanced 'not only X but also Y' into 'Y over X', "
             "and do not drop their existing ideas.",
