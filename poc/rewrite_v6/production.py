@@ -245,6 +245,16 @@ def run_rewrite_pipeline_v6(
                 provided=None,
                 fallback_scan=document.final_scan.to_dict(),
             )
+        # Observability: bracket-grounding runs AFTER the per-paragraph passes, so it isn't in
+        # document.pass_trace yet -- record it so v6_pass_trace shows the true last stage.
+        _bg_improved = sum(1 for sp in bracket_grounding_spans if sp.get("kind") == "improved")
+        _bg_kept = sum(1 for sp in bracket_grounding_spans if sp.get("kind") == "kept")
+        document = replace(document, pass_trace=list(document.pass_trace) + [{
+            "selected_source": "bracket_grounding",
+            "status": "accepted" if _bg_improved else "no_change",
+            "applied": _bg_improved,
+            "kept": _bg_kept,
+        }])
     changed = final_text.strip() != original_text.strip()
     cleared = bool(changed and not document.final_scan.findings)
     if not status:
@@ -279,8 +289,16 @@ def run_rewrite_pipeline_v6(
         },
         "rewrite_source": rewrite_source,
         "candidate_generation_status": {
-            "accepted_count": len(document.passes),
+            # The lean direct path sets document.passes=[]; accepted paragraph rewrites live in
+            # pass_trace as direct_llm/accepted entries. Fall back to that count so it isn't 0.
+            "accepted_count": len(document.passes) or sum(
+                1 for t in document.pass_trace
+                if isinstance(t, dict) and t.get("selected_source") == "direct_llm" and t.get("status") == "accepted"
+            ),
+            # NOTE: this is the lightweight rewrite-v6 INTERNAL Scan count -- a DIFFERENT scanner from
+            # detect_scores.rewritten_findings (the full detector report); the two can legitimately differ.
             "remaining_findings": len(document.final_scan.findings),
+            "remaining_findings_scanner": "rewrite_v6_internal_scan",
             "remaining_findings_by_paragraph": _findings_by_paragraph(document.final_scan.to_dict()),
             "pass_trace": document.pass_trace,
             "stop_reason": status,
@@ -678,6 +696,10 @@ def _detect_scores_for_summary(original_report: dict[str, Any], rewritten_report
         "rewritten_grounding_quality_risk": rewritten.get("grounding_quality_risk"),
         "original_findings": _finding_count(original_report.get("findings")),
         "rewritten_findings": _finding_count(rewritten_report.get("findings")),
+        # these counts come from the FULL detector report (distinct from candidate_generation_status'
+        # rewrite_v6 internal scan). Raw counts are NOT length-normalized: a longer rewrite that ADDS
+        # grounding content can show more absolute findings while the weighted ai score falls.
+        "findings_scanner": "full_detector_report",
         "human_shift_score": human_shift,
     }
 
