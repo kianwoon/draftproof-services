@@ -1405,8 +1405,17 @@ class ReportBuilder:
                 uncited_claims=uncited,
                 total_claims=total_claims,
             ) if self._cite_summary.bib_entry_count > 0 else 0.50
+        # sig["source_grounding"] is a CONCERN (0 = well grounded, 1 = fully unsupported -- see
+        # detect/criteria/source_grounding.py:210), so the grounding STRENGTH is its complement.
+        # Previously this concern was consumed directly as a strength, inverting the signal: a
+        # well-grounded text (concern -> 0) reported source_grounding_strength 0 -> risk 100% (worst),
+        # which is how a rewrite that REDUCED uncited claims showed Grounding risk jumping to 100%.
+        # Only invert when the signal is present; a missing signal contributes no strength (it falls
+        # through to the in-text citation estimator below), never a spurious "fully grounded".
+        sg_concern = sig.get("source_grounding")
+        sg_strength_signal = (1.0 - sg_concern) if isinstance(sg_concern, (int, float)) else 0.0
         source_grounding_strength = min(
-            sig.get("source_grounding", 0.0) or 0.0,
+            sg_strength_signal,
             0.30 if not (self._cite_summary and self._cite_summary.bib_entry_count > 0) else 1.0,
         )
         source_grounding_strength = max(
