@@ -188,6 +188,13 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
     }
 
 
+async def get_free_scan_usage(user_id: str) -> dict:
+    uid = uuid.UUID(user_id)
+    async with async_session() as session:
+        used = await _count_free_scans_used(session, uid)
+    return {"used": used, "limit": FREE_SCAN_LIMIT, "remaining": max(0, FREE_SCAN_LIMIT - used)}
+
+
 async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
     """List scan_jobs for a user with pagination, newest first."""
     page = max(1, page)

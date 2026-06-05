@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { startScanWithText, getScanStatus, buildApiEventUrl } from '../api/draftproofApi';
+import { startScanWithText, getScanStatus, buildApiEventUrl, getFreeScanUsage } from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import CodeTexture from '../components/CodeTexture';
@@ -22,6 +22,8 @@ export default function Scan() {
   const [error, setError] = useState(null);
   const [serverError, setServerError] = useState(null);
   const [insufficientTokens, setInsufficientTokens] = useState(false);
+  const [freeLimitReached, setFreeLimitReached] = useState(false);
+  const [freeUsage, setFreeUsage] = useState(null);
   const [authExpired, setAuthExpired] = useState(false);
   const navigate = useNavigate();
   const { refreshBalance, balance, logout } = useAuth();
@@ -37,6 +39,8 @@ export default function Scan() {
       setText(savedDraft);
       sessionStorage.removeItem('draftproof_scan_draft');
     }
+
+    getFreeScanUsage().then(({ data }) => setFreeUsage(data)).catch(() => {});
 
     return () => {
       if (abortRef.current) {
@@ -207,13 +211,18 @@ export default function Scan() {
         httpStatus === 403 &&
         String(msg).toLowerCase().includes('not authenticated')
       );
-      const isInsufficient = httpStatus === 400 && (
+      const isFreeLimitReached = httpStatus === 400 &&
+        msg.toLowerCase().includes('free scan limit');
+      const isInsufficient = httpStatus === 400 && !isFreeLimitReached && (
         msg.toLowerCase().includes('insufficient') ||
         msg.toLowerCase().includes('no credit account') ||
         msg.toLowerCase().includes('purchase')
       );
       if (isAuthExpired) {
         handleAuthExpired();
+      } else if (isFreeLimitReached) {
+        setShowProgress(false);
+        setFreeLimitReached(true);
       } else if (isInsufficient) {
         setShowProgress(false);
         setInsufficientTokens(true);
@@ -259,6 +268,14 @@ export default function Scan() {
               <span>{t('scan.documentHelp')}</span>
             </label>
             <p className="scan-pricing-note">{t('scan.pricingNote')}</p>
+            {freeUsage && (
+              <p className={`scan-free-usage-note${freeUsage.remaining === 0 ? ' scan-free-usage-exhausted' : ''}`}>
+                {t('scan.freeUsage', { used: freeUsage.used, limit: freeUsage.limit })}
+                {freeUsage.remaining > 0 && (
+                  <> — {t('scan.freeRemaining', { count: freeUsage.remaining })}</>
+                )}
+              </p>
+            )}
             <textarea
               id="scan-text"
               className="scan-textarea"
@@ -321,6 +338,15 @@ export default function Scan() {
 
         {error && <p className="error">{error}</p>}
         {serverError && <p className="error">{serverError}</p>}
+
+        <ConfirmDialog
+          open={freeLimitReached}
+          title={t('scan.freeLimitTitle')}
+          message={t('scan.freeLimitMessage')}
+          confirmLabel={t('scan.buyTokens')}
+          onConfirm={() => navigate('/buy')}
+          onCancel={() => setFreeLimitReached(false)}
+        />
 
         <ConfirmDialog
           open={insufficientTokens}

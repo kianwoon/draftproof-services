@@ -29,6 +29,7 @@ export const getScanStatus = (scanId, opts = {}) => api.get(`/scans/${scanId}`, 
 export const listScans = (page = 1, perPage = 10, opts = {}) =>
   api.get('/scans/', { params: { page, per_page: perPage }, signal: opts.signal });
 export const deleteScan = (scanId) => api.delete(`/scans/${scanId}`);
+export const getFreeScanUsage = () => api.get('/scans/free-usage');
 
 // Reports
 export const getReport = (reportId, opts = {}) => api.get(`/reports/${reportId}`, opts);

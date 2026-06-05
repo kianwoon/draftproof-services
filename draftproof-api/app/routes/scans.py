@@ -5,7 +5,7 @@ import re
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from app.models import ScanRequest, ScanOut
-from app.services.scan_service import create_scan, get_scan, list_scans, delete_scan
+from app.services.scan_service import create_scan, get_scan, list_scans, delete_scan, get_free_scan_usage
 from app.services import progress_stream
 from app.routes.auth import get_current_user
 
@@ -32,6 +32,11 @@ async def create_scan_route(req: ScanRequest, user: dict = Depends(get_current_u
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scan failed: {e}")
+
+
+@router.get("/free-usage")
+async def get_free_usage_route(user: dict = Depends(get_current_user)):
+    return await get_free_scan_usage(user["id"])
 
 
 @router.get("/{scan_id}/events")
