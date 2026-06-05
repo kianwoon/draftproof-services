@@ -2107,16 +2107,22 @@ export default function Report() {
             )}
             <div className="rewrite-addition-block authorship-bottom-line">
               <span>{t('authorshipEvidence.bottomLineTitle')}</span>
-              <p className="rewrite-review-copy">
-                {authorshipEvidence.present_markers?.length > 0
-                  ? t('authorshipEvidence.bottomLinePresent', { count: authorshipEvidence.present_markers.length })
-                  : t('authorshipEvidence.bottomLineNoMarkers')}
-                {authorshipEvidence.thin_signals?.length > 0
-                  ? t('authorshipEvidence.bottomLineAction', { action: authorshipEvidence.thin_signals[0].action })
-                  : ''}
-              </p>
-              {authorshipEvidence.strengthen_examples?.length > 0 && (
-                <p className="rewrite-review-copy">{t('authorshipEvidence.bottomLineClose')}</p>
+              {authorshipEvidence.confidence === 'low' ? (
+                <p className="rewrite-review-copy">{t('authorshipEvidence.bottomLineLowConfidence')}</p>
+              ) : (
+                <>
+                  <p className="rewrite-review-copy">
+                    {authorshipEvidence.present_markers?.length > 0
+                      ? t('authorshipEvidence.bottomLinePresent', { count: authorshipEvidence.present_markers.length })
+                      : t('authorshipEvidence.bottomLineNoMarkers')}
+                    {authorshipEvidence.thin_signals?.length > 0
+                      ? t('authorshipEvidence.bottomLineAction', { action: authorshipEvidence.thin_signals[0].action })
+                      : ''}
+                  </p>
+                  {authorshipEvidence.strengthen_examples?.length > 0 && (
+                    <p className="rewrite-review-copy">{t('authorshipEvidence.bottomLineClose')}</p>
+                  )}
+                </>
               )}
             </div>
           </section>

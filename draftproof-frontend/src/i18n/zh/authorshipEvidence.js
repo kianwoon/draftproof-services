@@ -17,6 +17,7 @@ export const authorshipEvidence = {
   "workedExampleAfter": "属于你的：「2023 年我的班级拿到笔记本电脑后，两个从不发言的学生开始在聊天框里提问。」",
   "workedExampleNote": "同样的意思 — 但落到了真实的时刻、日期和真实的人身上。这正是让一句话明确属于你的关键。（这只是示例 — 请用你自己的真实细节。）",
   "bottomLineTitle": "结论",
+  "bottomLineLowConfidence": "这是一份较短的提交，请仅作参考 — 文本不足以可靠判断作者身份。补上一些具体细节，才能让它明确属于你。",
   "bottomLinePresent": "你的草稿已经读起来像你写的 — 这里有 {{count}} 处属于你自己创作的印记。",
   "bottomLineNoMarkers": "只需少量补充，就能让这份草稿读起来明确是你写的。",
   "bottomLineAction": "你能做的最有用的一件事：{{action}}。",

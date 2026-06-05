@@ -17,6 +17,7 @@ export const authorshipEvidence = {
   "workedExampleAfter": "Yours: \"When my class got laptops in 2023, two students who never spoke up started asking questions in the chat.\"",
   "workedExampleNote": "Same idea — now anchored to a real moment, a date, and real people. That's what makes a line unmistakably yours. (This is just an illustration — use your own real details.)",
   "bottomLineTitle": "The bottom line",
+  "bottomLineLowConfidence": "This is a short submission, so read this lightly — there isn't enough text to judge authorship confidently. Adding a few concrete specifics is what would make it clearly yours.",
   "bottomLinePresent": "Your draft already reads as yours — {{count}} marker(s) of your own writing are here. ",
   "bottomLineNoMarkers": "A few small additions will make this draft read as unmistakably yours. ",
   "bottomLineAction": "The single most useful thing you can do: {{action}}. ",
