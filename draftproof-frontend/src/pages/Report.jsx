@@ -2078,20 +2078,6 @@ export default function Report() {
 
         <RepairSummary
           summary={repairSummary}
-          canEdit={canEditSubmittedDraft}
-          canRewrite={canStartRewrite || rewriteInProgress}
-          rewriteInProgress={rewriteInProgress}
-          rewriteLoading={rewriteLoading}
-          onEditDraft={() => {
-            openSubmittedEditor();
-            setSubmittedRescanError(null);
-            setSubmittedHighlightRanges((current) => buildSubmittedHighlightRanges(current));
-          }}
-          onRewrite={handleRewrite}
-          pdfUrl={report.report_pdf_url}
-          downloadLabel={t('report.downloadPdf')}
-          rewriteLabel={rewriteLoading ? t('report.rewrite.starting') : rewriteInProgress ? t('report.rewrite.resume') : t('report.rewrite.rewriteAiSections')}
-          editLabel={t('report.submitted.editor.editDraft')}
           ariaLabel={t('report.repairSummary.ariaLabel')}
           kicker={t('report.repairSummary.kicker')}
           mainRiskLabel={t('report.repairSummary.mainRisk')}

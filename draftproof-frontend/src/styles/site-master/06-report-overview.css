@@ -332,7 +332,6 @@
 
 .repair-summary-side {
   display: grid;
-  gap: .85rem;
   align-content: start;
   padding: .9rem;
   border: 1px solid #e2e8f0;
@@ -357,20 +356,6 @@
   color: #172033;
   font-size: .95rem;
   line-height: 1.35;
-}
-
-.repair-summary-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .55rem;
-}
-
-.repair-summary-actions .btn,
-.repair-summary-actions .rewrite-btn,
-.repair-summary-actions .download-pdf-btn {
-  min-height: 38px;
-  padding: .62rem .8rem;
-  font-size: .82rem;
 }
 
 .fix-first-card {
