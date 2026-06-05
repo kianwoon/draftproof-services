@@ -1465,6 +1465,110 @@ function rewriteDetectorVerdict(band, t) {
   return { label: t('report.transformation.verdict.reviewed'), tone: { color: '#334155', bg: '#f8fafc' } };
 }
 
+function firstNonEmpty(...values) {
+  return values.find((value) => typeof value === 'string' && value.trim())?.trim() || '';
+}
+
+function buildRepairSummary({
+  report,
+  submittedContent,
+  authorshipEvidence,
+  transformationSummary,
+  status,
+  pattern,
+  t,
+}) {
+  const highlightedCount = Number(submittedContent?.highlightedCount || 0);
+  const primaryParagraph = (submittedContent?.paragraphs || []).find((paragraph) => paragraph.primarySignal);
+  const primarySignal = primaryParagraph?.primarySignal;
+  const primarySignalLabel = primarySignal
+    ? signalLabel(primarySignal.key, primarySignal.label, t)
+    : '';
+  const statusText = firstNonEmpty(
+    status,
+    pattern?.label,
+    report?.ai_risk_badge?.authorship_rating_label,
+    t('report.repairSummary.statusFallback')
+  );
+  const mainRisk = firstNonEmpty(
+    primarySignalLabel,
+    transformationSummary?.summary,
+    t('report.repairSummary.mainRiskFallback')
+  );
+  const nextAction = highlightedCount > 0
+    ? t('report.repairSummary.nextActionHighlighted', { count: highlightedCount })
+    : authorshipEvidence?.thin_signals?.[0]?.action
+      ? authorshipEvidence.thin_signals[0].action
+      : t('report.repairSummary.nextActionFallback');
+
+  return {
+    status: statusText,
+    mainRisk,
+    nextAction,
+    highlightedCount,
+    confidenceNote: t('report.repairSummary.confidenceNote'),
+  };
+}
+
+function buildFixFirstItems({ submittedContent, authorshipEvidence, t }) {
+  const items = [];
+  const seen = new Set();
+  const addItem = (item) => {
+    const title = firstNonEmpty(item.title);
+    const body = firstNonEmpty(item.body);
+    const key = `${title}|${body}|${item.paragraphId || ''}`;
+    if (!title || seen.has(key)) return;
+    seen.add(key);
+    items.push({ ...item, title, body });
+  };
+
+  (submittedContent?.paragraphs || [])
+    .filter((paragraph) => paragraph.primarySignal)
+    .slice(0, 3)
+    .forEach((paragraph) => {
+      const guidance = paragraph.explanation || {};
+      const signal = paragraph.primarySignal;
+      addItem({
+        paragraphId: paragraph.id,
+        label: paragraph.sentence_id,
+        title: firstNonEmpty(
+          guidance.main_issue,
+          signalLabel(signal.key, signal.label, t),
+          t('report.whatToFixFirst.paragraphFallbackTitle')
+        ),
+        body: firstNonEmpty(
+          guidance.recommendation,
+          signal.recommendation,
+          guidance.rewrite_hint,
+          signalDescription(signal.key, signal.description, t)
+        ),
+      });
+    });
+
+  (authorshipEvidence?.thin_signals || []).slice(0, 2).forEach((signal) => {
+    addItem({
+      title: firstNonEmpty(signal.label, t('report.whatToFixFirst.authorshipFallbackTitle')),
+      body: firstNonEmpty(signal.action, t('report.whatToFixFirst.authorshipFallbackBody')),
+    });
+  });
+
+  (authorshipEvidence?.strengthen_examples || []).slice(0, 2).forEach((example, index) => {
+    addItem({
+      title: t('report.whatToFixFirst.exampleTitle', { count: index + 1 }),
+      body: example,
+    });
+  });
+
+  if (!items.length) {
+    addItem({
+      title: t('report.whatToFixFirst.reviewTitle'),
+      body: t('report.whatToFixFirst.reviewBody'),
+    });
+  }
+
+  return items.slice(0, 5);
+}
+
 export {
   TIER_CONFIG,
   SEVERITY_CONFIG,
@@ -1520,5 +1624,7 @@ export {
   buildRewriteEventsUrl,
   aiLikelihoodBands,
   rewriteDetectorVerdict,
+  buildRepairSummary,
+  buildFixFirstItems,
   EXTERNAL_ESTIMATE_DISPLAY_ENABLED,
 };

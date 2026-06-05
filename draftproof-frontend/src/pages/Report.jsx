@@ -13,6 +13,8 @@ import {
   showBrowserNotification,
 } from '../utils/browserNotifications';
 import RewriteNoticeDialog from './report/RewriteNoticeDialog';
+import RepairSummary from './report/RepairSummary';
+import FixFirstChecklist from './report/FixFirstChecklist';
 import {
   TIER_CONFIG,
   SEVERITY_CONFIG,
@@ -65,6 +67,8 @@ import {
   buildRewriteEventsUrl,
   aiLikelihoodBands,
   rewriteDetectorVerdict,
+  buildRepairSummary,
+  buildFixFirstItems,
   EXTERNAL_ESTIMATE_DISPLAY_ENABLED,
 } from './report/reportHelpers';
 
@@ -373,6 +377,7 @@ export default function Report() {
   const [rewriteResultReport, setRewriteResultReport] = useState(null);
   const [rewriteElapsedSeconds, setRewriteElapsedSeconds] = useState(0);
   const [selectedParagraphId, setSelectedParagraphId] = useState(null);
+  const [lockedParagraphId, setLockedParagraphId] = useState(null);
   const [activeProfileTab, setActiveProfileTab] = useState(null);
   const [submittedEditorOpen, setSubmittedEditorOpen] = useState(false);
   const [submittedEditorClosing, setSubmittedEditorClosing] = useState(false);
@@ -587,6 +592,7 @@ export default function Report() {
     setSubmittedRescanError(null);
     setSubmittedRescanNeedsTokens(false);
     setSubmittedHighlightRanges({});
+    setLockedParagraphId(null);
   }, [id, closeSubmittedEditor]);
 
   useEffect(() => () => clearSubmittedEditorCloseTimer(), [clearSubmittedEditorCloseTimer]);
@@ -1015,6 +1021,23 @@ export default function Report() {
     const targetScrollTop = container.scrollTop + (btnRect.top - containerRect.top) - 16;
     container.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
   };
+  const lockAndScrollParagraph = (paragraphId) => {
+    setLockedParagraphId(paragraphId);
+    selectAndScrollParagraph(paragraphId);
+  };
+  const previewParagraph = (paragraphId) => {
+    if (lockedParagraphId) return;
+    setSelectedParagraphId(paragraphId);
+  };
+  const highlightedParagraphs = submittedContent.paragraphs.filter((paragraph) => paragraph.signals.length > 0);
+  const selectedHighlightIndex = highlightedParagraphs.findIndex((paragraph) => paragraph.id === selectedParagraph?.id);
+  const selectedHighlightPosition = selectedHighlightIndex >= 0 ? selectedHighlightIndex + 1 : null;
+  const selectAdjacentHighlightedParagraph = (direction) => {
+    if (!highlightedParagraphs.length) return;
+    const currentIndex = selectedHighlightIndex >= 0 ? selectedHighlightIndex : 0;
+    const nextIndex = (currentIndex + direction + highlightedParagraphs.length) % highlightedParagraphs.length;
+    lockAndScrollParagraph(highlightedParagraphs[nextIndex].id);
+  };
   const selectedParagraphGuidance = selectedParagraph?.explanation || {};
   const selectedReaderSummary = (
     selectedParagraphGuidance.reader_summary ||
@@ -1036,7 +1059,7 @@ export default function Report() {
   const submittedTrackedDiff = submittedEditorOpen
     ? buildTrackedDiff(originalSubmittedText, submittedDraftText)
     : [];
-  const affectedParagraphs = submittedContent.paragraphs.filter((paragraph) => paragraph.signals.length > 0);
+  const affectedParagraphs = highlightedParagraphs;
   const originalAffectedRanges = buildOriginalSegmentRanges(originalSubmittedText, affectedParagraphs);
   const selectedParagraphDraftStatus = selectedParagraph?.text && submittedDraftText.includes(selectedParagraph.text)
     ? t('report.submitted.editor.paragraphUnchanged')
@@ -1046,6 +1069,16 @@ export default function Report() {
   const submittedEditorHighlightParts = highlightedEditorParts(submittedDraftText, submittedHighlightRange);
   const submittedDraftWordCount = countWords(submittedDraftText);
   const submittedDraftTokensRequired = scanTokensRequired(submittedDraftWordCount);
+  const repairSummary = buildRepairSummary({
+    report,
+    submittedContent,
+    authorshipEvidence,
+    transformationSummary,
+    status: authorshipRatingLabel,
+    pattern: transformation,
+    t,
+  });
+  const fixFirstItems = buildFixFirstItems({ submittedContent, authorshipEvidence, t });
 
   const resolveSubmittedParagraphRange = (paragraph, existingRanges = submittedHighlightRanges) => {
     if (!paragraph?.id || !paragraph.text) return null;
@@ -1107,6 +1140,17 @@ export default function Report() {
     if (!submittedEditorRef.current || !submittedHighlightRef.current) return;
     submittedHighlightRef.current.scrollTop = submittedEditorRef.current.scrollTop;
     submittedHighlightRef.current.scrollLeft = submittedEditorRef.current.scrollLeft;
+  };
+
+  const copySelectedParagraphGuidance = async () => {
+    if (!selectedParagraph?.primarySignal) return;
+    const parts = [
+      `${t('report.submitted.mainIssue')}: ${selectedMainIssue || signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t)}`,
+      selectedWhyFlagged.length > 0 ? `${t('report.submitted.whyFlagged')}: ${selectedWhyFlagged.join(' ')}` : '',
+      selectedRecommendation ? `${t('report.submitted.recommendation')}: ${selectedRecommendation}` : '',
+      selectedRewriteHint ? `${t('report.submitted.rewriteHint')}: ${selectedRewriteHint}` : '',
+    ].filter(Boolean);
+    await navigator.clipboard?.writeText(parts.join('\n'));
   };
 
   const resetSubmittedDraft = async () => {
@@ -1463,7 +1507,7 @@ export default function Report() {
           </div>
         </div>
         {summary && (
-          <details className="ai-likelihood-calibration" open>
+          <details className="ai-likelihood-calibration" open={hasRewriteSignalComparison}>
             <summary>{t('report.aiLikelihood.calibrateHeading')}</summary>
             <div className="transformation-ratio-summary">
               <div className="transformation-ratio-copy">
@@ -2032,25 +2076,35 @@ export default function Report() {
           </section>
         )}
 
-        {rewriteCompletionBand}
+        <RepairSummary
+          summary={repairSummary}
+          canEdit={canEditSubmittedDraft}
+          canRewrite={canStartRewrite || rewriteInProgress}
+          rewriteInProgress={rewriteInProgress}
+          rewriteLoading={rewriteLoading}
+          onEditDraft={() => {
+            openSubmittedEditor();
+            setSubmittedRescanError(null);
+            setSubmittedHighlightRanges((current) => buildSubmittedHighlightRanges(current));
+          }}
+          onRewrite={handleRewrite}
+          pdfUrl={report.report_pdf_url}
+          downloadLabel={t('report.downloadPdf')}
+          rewriteLabel={rewriteLoading ? t('report.rewrite.starting') : rewriteInProgress ? t('report.rewrite.resume') : t('report.rewrite.rewriteAiSections')}
+          editLabel={t('report.submitted.editor.editDraft')}
+          ariaLabel={t('report.repairSummary.ariaLabel')}
+          kicker={t('report.repairSummary.kicker')}
+          mainRiskLabel={t('report.repairSummary.mainRisk')}
+        />
 
-        {transformationScorecard ? (
-          <section className={`report-overview-card${hasRewriteSignalComparison ? ' is-rewrite-comparison' : ''}`} aria-label={t('report.overview')}>
-            {hasRewriteSignalComparison ? (
-              <>
-                {transformationScorecard}
-                <div className="report-baseline-summary" aria-label={t('report.originalScanSummary')}>
-                  <span className="report-baseline-label">{t('report.originalScanBaseline')}</span>
-                  {reportSummaryBar}
-                </div>
-              </>
-            ) : (
-              transformationScorecard
-            )}
-          </section>
-        ) : (
-          reportSummaryBar
-        )}
+        <FixFirstChecklist
+          items={fixFirstItems}
+          onSelectParagraph={lockAndScrollParagraph}
+          title={t('report.whatToFixFirst.title')}
+          kicker={t('report.whatToFixFirst.kicker')}
+        />
+
+        {rewriteCompletionBand}
 
         {authorshipEvidence && (
           <section className="rewrite-review-section">
@@ -2156,7 +2210,11 @@ export default function Report() {
               </div>
             </div>
             {paragraphSeverityBar && paragraphSeverityBar.length > 0 && (
-              <ParagraphSeverityBar bar={paragraphSeverityBar} />
+              <ParagraphSeverityBar
+                bar={paragraphSeverityBar}
+                selectedId={selectedParagraph?.id}
+                onSelect={lockAndScrollParagraph}
+              />
             )}
             {submittedContent.legend.length > 0 && (
               <div className="submitted-signal-legend" aria-label={t('report.submitted.legend')}>
@@ -2179,7 +2237,20 @@ export default function Report() {
                   const signal = paragraph.primarySignal;
                   const isSelected = selectedParagraph?.id === paragraph.id;
                   if (!signal) {
-                    return <p key={paragraph.id}>{paragraph.text}</p>;
+                    return (
+                      <p key={paragraph.id}>
+                        <button
+                          type="button"
+                          data-paragraph-id={paragraph.id}
+                          className={`submitted-clean-paragraph${isSelected ? ' is-selected' : ''}`}
+                          onMouseEnter={() => previewParagraph(paragraph.id)}
+                          onFocus={() => previewParagraph(paragraph.id)}
+                          onClick={() => lockAndScrollParagraph(paragraph.id)}
+                        >
+                          {paragraph.text}
+                        </button>
+                      </p>
+                    );
                   }
                   return (
                     <p key={paragraph.id}>
@@ -2189,10 +2260,10 @@ export default function Report() {
                         className={`submitted-highlight submitted-paragraph-highlight signal-style-${signalClassName(signal.key)}${isSelected ? ' is-selected' : ''}`}
                         style={{ '--signal-color': signal.color }}
                         title={signalDescription(signal.key, signal.description, t)}
-                        onMouseEnter={() => setSelectedParagraphId(paragraph.id)}
-                        onFocus={() => setSelectedParagraphId(paragraph.id)}
+                        onMouseEnter={() => previewParagraph(paragraph.id)}
+                        onFocus={() => previewParagraph(paragraph.id)}
                         onClick={() => {
-                          selectAndScrollParagraph(paragraph.id);
+                          lockAndScrollParagraph(paragraph.id);
                         }}
                       >
                         {paragraph.text}
@@ -2209,15 +2280,28 @@ export default function Report() {
               >
                 {selectedParagraph?.primarySignal ? (
                   <>
-                    <span className="submitted-panel-kicker">{selectedParagraph.sentence_id}</span>
-                    <h3>{signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t)}</h3>
+                    <div className="submitted-panel-title-row">
+                      <div>
+                        <span className="submitted-panel-kicker">{selectedParagraph.sentence_id}</span>
+                        <h3>{t('report.submitted.paragraphRepairTitle')}</h3>
+                      </div>
+                      {selectedHighlightPosition && (
+                        <span className="submitted-panel-position">
+                          {t('report.submitted.position', {
+                            current: selectedHighlightPosition,
+                            total: highlightedParagraphs.length,
+                          })}
+                        </span>
+                      )}
+                    </div>
                     <p>{selectedReaderSummary}</p>
                     {renderSubmittedSignalGauge()}
                     <div className="submitted-panel-meta">
-                      <span>{t('report.submitted.paragraphSignals', { count: selectedParagraph.signalCount || selectedParagraph.signals.length })}</span>
+                      <span>{t('report.submitted.signalBadge', { value: signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t) })}</span>
                       {selectedParagraph.primarySignal.tier && (
                         <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedParagraph.primarySignal.tier}`, { defaultValue: selectedParagraph.primarySignal.tier }) })}</span>
                       )}
+                      <span>{t('report.submitted.paragraphSignals', { count: selectedParagraph.signalCount || selectedParagraph.signals.length })}</span>
                       {selectedParagraph.primarySignal.actionability && (
                         <span>{selectedParagraph.primarySignal.actionability.replaceAll('_', ' ')}</span>
                       )}
@@ -2258,12 +2342,38 @@ export default function Report() {
                         <p>{selectedRewriteHint}</p>
                       </div>
                     )}
+                    <div className="submitted-panel-actions">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => {
+                          openSubmittedEditor();
+                          setSubmittedRescanError(null);
+                          setSubmittedHighlightRanges((current) => buildSubmittedHighlightRanges(current));
+                          requestAnimationFrame(() => focusParagraphInSubmittedEditor(selectedParagraph));
+                        }}
+                        disabled={!canEditSubmittedDraft}
+                      >
+                        {t('report.submitted.editParagraph')}
+                      </button>
+                      <button type="button" className="btn btn-ghost" onClick={copySelectedParagraphGuidance}>
+                        {t('report.submitted.copyGuidance')}
+                      </button>
+                      <div className="submitted-panel-nav">
+                        <button type="button" onClick={() => selectAdjacentHighlightedParagraph(-1)} disabled={highlightedParagraphs.length < 2}>
+                          {t('report.submitted.previousIssue')}
+                        </button>
+                        <button type="button" onClick={() => selectAdjacentHighlightedParagraph(1)} disabled={highlightedParagraphs.length < 2}>
+                          {t('report.submitted.nextIssue')}
+                        </button>
+                      </div>
+                    </div>
                   </>
                 ) : (
                   <>
                     <span className="submitted-panel-kicker">{t('report.submitted.noSignal')}</span>
-                    <h3>{t('report.submitted.mapReady')}</h3>
-                    <p>{t('report.submitted.mapReadyBody')}</p>
+                    <h3>{t('report.submitted.cleanParagraphTitle')}</h3>
+                    <p>{t('report.submitted.cleanParagraphBody')}</p>
                   </>
                 )}
               </aside>
@@ -2467,6 +2577,24 @@ export default function Report() {
               </div>
             )}
           </section>
+        )}
+
+        {transformationScorecard ? (
+          <section className={`report-overview-card${hasRewriteSignalComparison ? ' is-rewrite-comparison' : ''}`} aria-label={t('report.overview')}>
+            {hasRewriteSignalComparison ? (
+              <>
+                {transformationScorecard}
+                <div className="report-baseline-summary" aria-label={t('report.originalScanSummary')}>
+                  <span className="report-baseline-label">{t('report.originalScanBaseline')}</span>
+                  {reportSummaryBar}
+                </div>
+              </>
+            ) : (
+              transformationScorecard
+            )}
+          </section>
+        ) : (
+          reportSummaryBar
         )}
 
         {scoreProfileSection}
