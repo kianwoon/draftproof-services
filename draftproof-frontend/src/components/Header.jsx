@@ -15,6 +15,17 @@ export default function Header() {
   const dropdownRef = useRef(null);
   const locale = getLocaleFromPathname(location.pathname);
   const publicPath = (path) => localizePath(path, locale);
+  const marketingLinks = [
+    { to: publicPath('/why'), label: t('nav.why') },
+    { to: publicPath('/essay-checker'), label: t('nav.essayChecker') },
+    { to: publicPath('/pricing'), label: t('nav.pricing') },
+    { to: publicPath('/faq'), label: t('nav.faq') },
+    { to: publicPath('/#report'), label: t('nav.sampleReport') },
+  ];
+  const signedInPublicLinks = [
+    { to: publicPath('/pricing'), label: t('nav.pricing') },
+  ];
+  const visiblePublicLinks = user ? signedInPublicLinks : marketingLinks;
 
   useEffect(() => { setScanOpen(false); setMenuOpen(false); }, [location.pathname]);
 
@@ -85,11 +96,9 @@ export default function Header() {
         )}
         {user && <Link to="/buy">{t('nav.buyTokens')}</Link>}
         {user && <Link to="/history">{t('nav.history')}</Link>}
-        <Link to={publicPath('/why')}>{t('nav.why')}</Link>
-        <Link to={publicPath('/essay-checker')}>{t('nav.essayChecker')}</Link>
-        <Link to={publicPath('/pricing')}>{t('nav.pricing')}</Link>
-        <Link to={publicPath('/faq')}>{t('nav.faq')}</Link>
-        <Link to={publicPath('/#report')}>{t('nav.sampleReport')}</Link>
+        {visiblePublicLinks.map((link) => (
+          <Link key={link.to} to={link.to}>{link.label}</Link>
+        ))}
       </nav>
 
       {user ? (
@@ -134,11 +143,9 @@ export default function Header() {
             {user && <Link to="/reports" className="mobile-link">{t('nav.reports')}</Link>}
             {user && <Link to="/buy" className="mobile-link">{t('nav.buyTokens')}</Link>}
             {user && <Link to="/history" className="mobile-link">{t('nav.history')}</Link>}
-            <Link to={publicPath('/why')} className="mobile-link">{t('nav.why')}</Link>
-            <Link to={publicPath('/essay-checker')} className="mobile-link">{t('nav.essayChecker')}</Link>
-            <Link to={publicPath('/pricing')} className="mobile-link">{t('nav.pricing')}</Link>
-            <Link to={publicPath('/faq')} className="mobile-link">{t('nav.faq')}</Link>
-            <Link to={publicPath('/#report')} className="mobile-link">{t('nav.sampleReport')}</Link>
+            {visiblePublicLinks.map((link) => (
+              <Link key={link.to} to={link.to} className="mobile-link">{link.label}</Link>
+            ))}
             <div className="mobile-menu-actions">
               {user ? (
                 <button onClick={() => { handleLogout(); setMenuOpen(false); }} className="btn btn-secondary">{t('nav.signOut')}</button>
