@@ -1,10 +1,11 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError, InterfaceError
 from authlib.integrations.starlette_client import OAuth
 from jose import jwt
 
@@ -17,6 +18,14 @@ from app.config import (
 from app.models.db import get_db, User, UserIdentity, CreditAccount
 
 router = APIRouter()
+
+log = logging.getLogger("auth")
+
+# Errors raised while *establishing* a DB connection — e.g. asyncpg's bare
+# TimeoutError when the Koyeb/Neon endpoint is cold and the connect exceeds the
+# 10s timeout. These are transient; retrying a fresh connect usually succeeds.
+# Application/data errors are deliberately excluded so they fail fast.
+_RETRYABLE_DB_CONNECT_ERRORS = (TimeoutError, ConnectionError, OperationalError, InterfaceError)
 
 oauth = OAuth()
 
@@ -173,6 +182,41 @@ async def _upsert_user(db: AsyncSession, provider: str, user_info: dict) -> User
     return user
 
 
+async def _upsert_user_with_retry(
+    db: AsyncSession,
+    provider: str,
+    user_info: dict,
+    *,
+    attempts: int = 3,
+    base_delay: float = 0.5,
+) -> User:
+    """Run _upsert_user, retrying transient DB-connect failures.
+
+    OAuth callbacks are single-shot redirects with no client retry, so one slow
+    cold-start connect (Neon autosuspend wake-up) would otherwise hard-fail the
+    whole sign-in. We roll back before each retry to clear any partial state, and
+    only retry connection-level errors — application errors propagate immediately.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return await _upsert_user(db, provider, user_info)
+        except _RETRYABLE_DB_CONNECT_ERRORS as exc:
+            last_exc = exc
+            log.warning(
+                "DB connect failed during %s upsert (attempt %d/%d): %r",
+                provider, attempt, attempts, exc,
+            )
+            try:
+                await db.rollback()
+            except Exception:
+                pass  # session may have no live connection to roll back
+            if attempt < attempts:
+                await asyncio.sleep(base_delay * attempt)
+    assert last_exc is not None
+    raise last_exc
+
+
 @router.get("/google")
 async def auth_google(request: Request):
     redirect_uri = _build_callback_url(request, "auth_google_callback")
@@ -193,7 +237,7 @@ async def auth_google_callback(request: Request, db: AsyncSession = Depends(get_
         log.info("Google callback success — email=%s sub=%s", email, user_info.get("sub"))
 
         _validate_email_domain(user_info["email"])
-        user = await _upsert_user(db, "google", user_info)
+        user = await _upsert_user_with_retry(db, "google", user_info)
         jwt_token = _create_jwt(user.id, user.email)
 
         log.info("User upserted — user_id=%s, redirecting to %s/auth/callback", user.id, FRONTEND_URL)
@@ -260,7 +304,7 @@ async def auth_microsoft_callback(request: Request, db: AsyncSession = Depends(g
             if avatar_url:
                 user_info["picture"] = avatar_url
 
-        user = await _upsert_user(db, "microsoft", user_info)
+        user = await _upsert_user_with_retry(db, "microsoft", user_info)
         jwt_token = _create_jwt(user.id, user.email)
 
         response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")

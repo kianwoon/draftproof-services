@@ -5,7 +5,15 @@ UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
-DATABASE_CONNECT_TIMEOUT_SECONDS = max(1, int(os.getenv("DATABASE_CONNECT_TIMEOUT_SECONDS", "10")))
+# Default raised 10 → 20: the Koyeb/Neon endpoint autosuspends, so the first
+# connect after idle must wake compute + negotiate SSL, which can exceed 10s and
+# raise a bare TimeoutError. 20s absorbs the cold-start; retry logic is the net.
+DATABASE_CONNECT_TIMEOUT_SECONDS = max(1, int(os.getenv("DATABASE_CONNECT_TIMEOUT_SECONDS", "20")))
+
+# pool_recycle 300 dropped connections every 5 min — right as Neon suspends — so
+# requests routinely paid the cold-connect cost. 1800s + pool_pre_ping (which
+# transparently reconnects stale connections) cuts fresh connects without risk.
+DATABASE_POOL_RECYCLE_SECONDS = max(60, int(os.getenv("DATABASE_POOL_RECYCLE_SECONDS", "1800")))
 
 
 def _normalize_database_url(raw_db_url: str) -> str:
