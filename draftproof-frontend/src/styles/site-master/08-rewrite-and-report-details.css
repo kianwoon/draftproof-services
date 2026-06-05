@@ -354,6 +354,39 @@
   gap: .35rem;
 }
 
+.authorship-worked-example {
+  margin-top: .75rem;
+  padding: .75rem .85rem;
+  border-radius: 8px;
+  border: 1px dashed #cbd5e1;
+  background: #ffffff;
+}
+
+.authorship-worked-example strong {
+  display: block;
+  margin-bottom: .35rem;
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.authorship-worked-example .worked-example-before {
+  color: #94a3b8;
+  border-left: 3px solid #e2e8f0;
+  padding-left: .6rem;
+  margin: .35rem 0;
+}
+
+.authorship-worked-example .worked-example-after {
+  color: #166534;
+  font-weight: 600;
+  border-left: 3px solid #bbf7d0;
+  padding-left: .6rem;
+  margin: .35rem 0;
+}
+
 .rewrite-review-note p {
   color: #475569;
   font-size: .92rem;

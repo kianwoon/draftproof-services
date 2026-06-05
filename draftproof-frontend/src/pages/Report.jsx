@@ -2084,9 +2084,17 @@ export default function Report() {
             {authorshipEvidence.strengthen_examples?.length > 0 && (
               <div className="rewrite-target-block">
                 <span>{t('authorshipEvidence.strengthenExamplesTitle')}</span>
+                <p className="rewrite-review-copy">{t('authorshipEvidence.strengthenExamplesCopy')}</p>
                 {authorshipEvidence.strengthen_examples.slice(0, 5).map((s, i) => (
                   <p key={i}>{s}</p>
                 ))}
+                <div className="authorship-worked-example">
+                  <strong>{t('authorshipEvidence.workedExampleTitle')}</strong>
+                  <p className="rewrite-review-copy">{t('authorshipEvidence.workedExampleIntro')}</p>
+                  <p className="worked-example-before">{t('authorshipEvidence.workedExampleBefore')}</p>
+                  <p className="worked-example-after">{t('authorshipEvidence.workedExampleAfter')}</p>
+                  <p className="rewrite-review-copy">{t('authorshipEvidence.workedExampleNote')}</p>
+                </div>
               </div>
             )}
             {authorshipEvidence.human_recognized_spans?.length > 0 && (
@@ -2097,6 +2105,20 @@ export default function Report() {
                 ))}
               </div>
             )}
+            <div className="rewrite-addition-block authorship-bottom-line">
+              <span>{t('authorshipEvidence.bottomLineTitle')}</span>
+              <p className="rewrite-review-copy">
+                {authorshipEvidence.present_markers?.length > 0
+                  ? t('authorshipEvidence.bottomLinePresent', { count: authorshipEvidence.present_markers.length })
+                  : t('authorshipEvidence.bottomLineNoMarkers')}
+                {authorshipEvidence.thin_signals?.length > 0
+                  ? t('authorshipEvidence.bottomLineAction', { action: authorshipEvidence.thin_signals[0].action })
+                  : ''}
+              </p>
+              {authorshipEvidence.strengthen_examples?.length > 0 && (
+                <p className="rewrite-review-copy">{t('authorshipEvidence.bottomLineClose')}</p>
+              )}
+            </div>
           </section>
         )}
 
