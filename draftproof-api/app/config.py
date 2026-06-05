@@ -58,8 +58,10 @@ MICROSOFT_TENANT = os.getenv("MICROSOFT_TENANT", "common")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
-# Token pricing (USD)
-TOKEN_PRICE_USD = float(os.getenv("TOKEN_PRICE_USD", "0.90"))
+# Token pricing (SGD)
+TOKEN_CURRENCY_CODE = os.getenv("TOKEN_CURRENCY_CODE", "SGD").strip().upper() or "SGD"
+TOKEN_STRIPE_CURRENCY = TOKEN_CURRENCY_CODE.lower()
+TOKEN_PRICE_SGD = float(os.getenv("TOKEN_PRICE_SGD", "0.90"))
 TOKEN_PACKS = {
     "single": {"tokens": 1, "name": "Single Token"},
     "starter": {"tokens": 5, "name": "Starter Pack"},

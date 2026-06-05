@@ -9,7 +9,7 @@ export const buy = {
   "tokenRate": "每 1,000 词 1 个令牌",
   "tokenCount_one": "{{count}} 个令牌",
   "tokenCount_other": "{{count}} 个令牌",
-  "perToken": "$ {{amount}} / 令牌",
+  "perToken": "SGD ${{amount}} / 令牌",
   "redirecting": "正在跳转...",
   "buyNow": "立即购买",
   "backDashboard": "返回仪表盘"

@@ -6,7 +6,7 @@ import {
   localizePath,
   stripLocaleFromPathname,
 } from './localeRouting.js';
-import { TOKEN_PRICE_USD, formatUsdAmount } from './pricingConfig.js';
+import { TOKEN_CURRENCY_CODE, TOKEN_PRICE_SGD, formatSgdAmount } from './pricingConfig.js';
 
 const configuredSiteUrl =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SITE_URL)
@@ -133,8 +133,8 @@ export function buildSchema(meta, url, translate = defaultTranslate) {
         isPartOf: { '@id': websiteId },
         offers: {
           '@type': 'Offer',
-          price: formatUsdAmount(TOKEN_PRICE_USD),
-          priceCurrency: 'USD',
+          price: formatSgdAmount(TOKEN_PRICE_SGD),
+          priceCurrency: TOKEN_CURRENCY_CODE,
           description: translate('seo.offerDescription'),
           url: `${SITE_URL}/pricing`,
         },

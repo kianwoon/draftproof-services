@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { getPurchaseHistory } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import CodeTexture from '../components/CodeTexture';
+import { TOKEN_CURRENCY_CODE } from '../pricingConfig';
 
 const PAGE_SIZE = 5;
 
@@ -21,7 +22,7 @@ function formatDate(iso, locale) {
 }
 
 function formatAmount(cents, currency) {
-  return `${(cents / 100).toFixed(2)} ${currency || 'USD'}`;
+  return `${(cents / 100).toFixed(2)} ${currency || TOKEN_CURRENCY_CODE}`;
 }
 
 export default function PurchaseHistory() {

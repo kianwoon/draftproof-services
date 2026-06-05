@@ -5,6 +5,7 @@ import api from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 import ErrorReload from '../components/ErrorReload';
 import CodeTexture from '../components/CodeTexture';
+import { TOKEN_CURRENCY_CODE } from '../pricingConfig';
 
 export default function BuyTokens() {
   const { t } = useTranslation();
@@ -76,8 +77,8 @@ export default function BuyTokens() {
             <div key={pack.id} className="pack-card">
               <p className="eyebrow">{pack.name}</p>
               <div className="pack-tokens">{t('buy.tokenCount', { count: pack.tokens })}</div>
-              <div className="pack-price">USD ${pack.price_usd.toFixed(2)}</div>
-              <div className="pack-unit">{t('buy.perToken', { amount: (pack.price_usd / pack.tokens).toFixed(2) })}</div>
+              <div className="pack-price">{TOKEN_CURRENCY_CODE} ${pack.price_sgd.toFixed(2)}</div>
+              <div className="pack-unit">{t('buy.perToken', { amount: (pack.price_sgd / pack.tokens).toFixed(2) })}</div>
               <button
                 className="btn btn-primary"
                 onClick={() => handleBuy(pack.id)}

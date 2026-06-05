@@ -59,7 +59,7 @@ class CreditAccount(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
     balance_tokens = Column(Integer, nullable=False, default=0)
     reserved_tokens = Column(Integer, nullable=False, default=0)
-    currency = Column(Text, nullable=False, default="USD")
+    currency = Column(Text, nullable=False, default="SGD")
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -125,7 +125,7 @@ class Payment(Base):
     provider_payment_id = Column(Text)
     provider_customer_id = Column(Text)
     amount_cents = Column(Integer, nullable=False, default=0)
-    currency = Column(Text, nullable=False, default="USD")
+    currency = Column(Text, nullable=False, default="SGD")
     tokens_purchased = Column(Integer, nullable=False, default=0)
     status = Column(Text, nullable=False, index=True)
     idempotency_key = Column(Text, unique=True)

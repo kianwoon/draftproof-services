@@ -60,7 +60,7 @@ CREATE TABLE credit_accounts (
   balance_tokens INTEGER NOT NULL DEFAULT 0,
   reserved_tokens INTEGER NOT NULL DEFAULT 0,
 
-  currency TEXT NOT NULL DEFAULT 'USD',
+  currency TEXT NOT NULL DEFAULT 'SGD',
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -163,7 +163,7 @@ CREATE TABLE payments (
   provider_customer_id TEXT,
 
   amount_cents INTEGER NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL DEFAULT 'USD',
+  currency TEXT NOT NULL DEFAULT 'SGD',
 
   tokens_purchased INTEGER NOT NULL DEFAULT 0,
 

@@ -9,7 +9,7 @@ export const buy = {
   "tokenRate": "1 token per 1,000 words",
   "tokenCount_one": "{{count}} token",
   "tokenCount_other": "{{count}} tokens",
-  "perToken": "$ {{amount}} / token",
+  "perToken": "SGD ${{amount}} / token",
   "redirecting": "Redirecting...",
   "buyNow": "Buy now",
   "backDashboard": "Back to dashboard"

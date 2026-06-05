@@ -5,8 +5,10 @@ import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
 import {
   REWRITE_TOKENS_PER_1000_WORDS,
-  TOKEN_PRICE_USD,
-  formatUsdAmount,
+  TOKEN_CURRENCY_CODE,
+  TOKEN_CURRENCY_LABEL,
+  TOKEN_PRICE_SGD,
+  formatSgdAmount,
 } from '../pricingConfig';
 
 export default function Pricing() {
@@ -15,8 +17,8 @@ export default function Pricing() {
   const scanFeatures = t('pricing.scanFeatures', { returnObjects: true });
   const rewriteFeatures = t('pricing.rewriteFeatures', { returnObjects: true });
   const faqs = t('pricing.faqs', { returnObjects: true });
-  const scanPrice = formatUsdAmount(TOKEN_PRICE_USD);
-  const rewritePrice = formatUsdAmount(TOKEN_PRICE_USD * REWRITE_TOKENS_PER_1000_WORDS);
+  const scanPrice = formatSgdAmount(TOKEN_PRICE_SGD);
+  const rewritePrice = formatSgdAmount(TOKEN_PRICE_SGD * REWRITE_TOKENS_PER_1000_WORDS);
 
   return (
     <main className="pricing-shell">
@@ -30,7 +32,7 @@ export default function Pricing() {
           </div>
           <div className="app-hero-stat">
             <span>{t('pricing.baseRate')}</span>
-            <strong>${scanPrice}</strong>
+            <strong>{TOKEN_CURRENCY_CODE} ${scanPrice}</strong>
             <small>{t('pricing.perWords')}</small>
           </div>
         </section>
@@ -40,7 +42,7 @@ export default function Pricing() {
           <div className="pricing-card-header">
             <h2>{t('pricing.scanTitle')}</h2>
             <div className="pricing-amount">
-              <span className="pricing-currency">$</span>
+              <span className="pricing-currency">{TOKEN_CURRENCY_LABEL}</span>
               <span className="pricing-value">{scanPrice}</span>
               <span className="pricing-unit">{t('pricing.scanUnit')}</span>
             </div>
@@ -67,7 +69,7 @@ export default function Pricing() {
           <div className="pricing-card-header">
             <h2>{t('pricing.rewriteTitle')}</h2>
             <div className="pricing-amount">
-              <span className="pricing-currency">$</span>
+              <span className="pricing-currency">{TOKEN_CURRENCY_LABEL}</span>
               <span className="pricing-value">{rewritePrice}</span>
               <span className="pricing-unit">{t('pricing.rewriteUnit')}</span>
             </div>

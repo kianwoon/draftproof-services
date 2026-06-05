@@ -60,27 +60,27 @@ class TestGetPacks:
         names = {p["id"] for p in data}
         assert names == {"single", "starter", "standard", "pro"}
 
-    def test_pack_has_usd_price(self, client):
+    def test_pack_has_sgd_price(self, client):
         resp = client.get("/api/payments/packs")
         data = resp.json()
 
         for pack in data:
-            assert "price_usd" in pack
+            assert "price_sgd" in pack
             assert "tokens" in pack
             assert "name" in pack
-            assert pack["price_usd"] == round(pack["tokens"] * 0.90, 2)
+            assert pack["price_sgd"] == round(pack["tokens"] * 0.90, 2)
 
     def test_single_pack_price(self, client):
         resp = client.get("/api/payments/packs")
         data = resp.json()
         single = next(p for p in data if p["id"] == "single")
-        assert single["price_usd"] == 0.90
+        assert single["price_sgd"] == 0.90
 
     def test_pro_pack_price(self, client):
         resp = client.get("/api/payments/packs")
         data = resp.json()
         pro = next(p for p in data if p["id"] == "pro")
-        assert pro["price_usd"] == 22.50
+        assert pro["price_sgd"] == 22.50
 
 
 # ── POST /checkout ───────────────────────────────────────────────
@@ -119,8 +119,8 @@ class TestCheckout:
         assert call_kwargs["payment_method_types"] == ["card"]
 
         line_item = call_kwargs["line_items"][0]
-        assert line_item["price_data"]["currency"] == "usd"
-        assert line_item["price_data"]["unit_amount"] == 90  # $0.90 = 90 cents
+        assert line_item["price_data"]["currency"] == "sgd"
+        assert line_item["price_data"]["unit_amount"] == 90  # SGD $0.90 = 90 cents
         assert "Single Token" in line_item["price_data"]["product_data"]["name"]
         assert line_item["quantity"] == 1
 
@@ -256,17 +256,17 @@ class TestPriceCalculation:
 
     def test_no_floating_point_rounding_errors(self):
         """Ensure price_cents is always an exact integer."""
-        from app.config import TOKEN_PRICE_USD, TOKEN_PACKS
+        from app.config import TOKEN_PRICE_SGD, TOKEN_PACKS
 
         for pack_id, pack in TOKEN_PACKS.items():
-            price_usd = round(pack["tokens"] * TOKEN_PRICE_USD, 2)
-            price_cents = int(price_usd * 100)
-            assert price_cents == price_usd * 100, (
-                f"{pack_id}: floating point mismatch — {price_usd} * 100 != {price_cents}"
+            price_sgd = round(pack["tokens"] * TOKEN_PRICE_SGD, 2)
+            price_cents = int(price_sgd * 100)
+            assert price_cents == price_sgd * 100, (
+                f"{pack_id}: floating point mismatch — {price_sgd} * 100 != {price_cents}"
             )
 
-    def test_minimum_amount_stripe_usd(self):
-        """Stripe minimum for USD is $0.50 (50 cents)."""
-        from app.config import TOKEN_PRICE_USD
+    def test_minimum_amount_stripe_sgd(self):
+        """Stripe minimum for SGD is S$0.50 (50 cents)."""
+        from app.config import TOKEN_PRICE_SGD
 
-        assert TOKEN_PRICE_USD >= 0.50, f"Price ${TOKEN_PRICE_USD} below Stripe minimum"
+        assert TOKEN_PRICE_SGD >= 0.50, f"Price SGD ${TOKEN_PRICE_SGD} below Stripe minimum"

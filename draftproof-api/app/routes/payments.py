@@ -11,7 +11,8 @@ from sqlalchemy import select
 
 from app.config import (
     STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
-    TOKEN_PRICE_USD, TOKEN_PACKS, FRONTEND_URL, SECRET_KEY, JWT_ALGORITHM,
+    TOKEN_CURRENCY_CODE, TOKEN_STRIPE_CURRENCY, TOKEN_PRICE_SGD, TOKEN_PACKS,
+    FRONTEND_URL, SECRET_KEY, JWT_ALGORITHM,
 )
 from app.models.db import get_db, User, CreditAccount, CreditLedger, Payment
 from jose import jwt, JWTError
@@ -44,7 +45,7 @@ async def get_packs():
             "id": key,
             "name": pack["name"],
             "tokens": pack["tokens"],
-            "price_usd": round(pack["tokens"] * TOKEN_PRICE_USD, 2),
+            "price_sgd": round(pack["tokens"] * TOKEN_PRICE_SGD, 2),
         }
         for key, pack in TOKEN_PACKS.items()
     ]
@@ -59,9 +60,9 @@ async def create_checkout(body: CheckoutRequest, request: Request, db: AsyncSess
         raise HTTPException(status_code=400, detail="Invalid pack")
 
     pack = TOKEN_PACKS[pack_id]
-    price_usd = round(pack["tokens"] * TOKEN_PRICE_USD, 2)
-    price_cents = int(price_usd * 100)
-    log.info("Checkout: pack=%s, price=%d cents, currency=usd", pack_id, price_cents)
+    price_sgd = round(pack["tokens"] * TOKEN_PRICE_SGD, 2)
+    price_cents = int(price_sgd * 100)
+    log.info("Checkout: pack=%s, price=%d cents, currency=%s", pack_id, price_cents, TOKEN_STRIPE_CURRENCY)
 
     try:
         session = await asyncio.to_thread(
@@ -70,7 +71,7 @@ async def create_checkout(body: CheckoutRequest, request: Request, db: AsyncSess
             payment_method_types=["card"],
             line_items=[{
                 "price_data": {
-                    "currency": "usd",
+                    "currency": TOKEN_STRIPE_CURRENCY,
                     "product_data": {"name": f"DraftProof — {pack['name']} ({pack['tokens']} tokens)"},
                     "unit_amount": price_cents,
                 },
@@ -163,6 +164,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         tokens = int(session_data["metadata"]["tokens"])
         stripe_session_id = session_data["id"]
         amount_cents = session_data["amount_total"]
+        currency = str(session_data.get("currency") or TOKEN_CURRENCY_CODE).upper()
 
         # Check idempotency — skip if already processed
         result = await db.execute(
@@ -188,7 +190,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             provider="stripe",
             provider_payment_id=stripe_session_id,
             amount_cents=amount_cents,
-            currency="USD",
+            currency=currency,
             tokens_purchased=tokens,
             status="paid",
             idempotency_key=stripe_session_id,
