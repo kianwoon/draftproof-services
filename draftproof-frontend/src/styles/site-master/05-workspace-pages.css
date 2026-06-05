@@ -759,6 +759,70 @@
   margin: 0 auto;
 }
 
+.history-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  max-width: 960px;
+  margin: 18px auto 18px;
+  border: .5px solid rgba(13, 27, 42, .08);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.history-summary-item {
+  min-width: 0;
+  padding: 18px;
+  border-right: .5px solid rgba(13, 27, 42, .08);
+}
+
+.history-summary-item:last-child {
+  border-right: 0;
+}
+
+.history-summary-item span,
+.history-summary-item small {
+  display: block;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.history-summary-item span {
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.history-summary-item strong {
+  display: block;
+  margin: .45rem 0 .2rem;
+  color: var(--ink);
+  font-size: clamp(1rem, 1.8vw, 1.35rem);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.history-ledger {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.history-ledger-note {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  margin-bottom: 10px;
+  padding: 10px 14px;
+  border: .5px solid rgba(58, 168, 118, .20);
+  border-radius: 12px;
+  background: rgba(58, 168, 118, .08);
+  color: var(--green-dark);
+  font-size: .84rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .reports-table {
   width: 100%;
   border-collapse: collapse;
@@ -792,6 +856,21 @@
   font-size: .88rem;
   font-weight: 500;
   white-space: nowrap;
+}
+
+.td-date span,
+.td-date small,
+.history-amount span,
+.history-amount small {
+  display: block;
+}
+
+.td-date small,
+.history-amount small {
+  margin-top: .25rem;
+  color: var(--muted);
+  font-size: .74rem;
+  font-weight: 700;
 }
 
 .status-badge {
@@ -898,12 +977,33 @@
 
 .history-token-count {
   color: var(--green-dark);
-  font-weight: 500;
+  font-weight: 700;
 }
 
 .history-amount {
   color: var(--ink);
   font-weight: 500;
+}
+
+.history-status-cell {
+  text-align: right;
+}
+
+.history-card-list {
+  display: none;
+}
+
+.history-empty {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.history-empty-kicker {
+  color: var(--green-dark);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
 }
 
 .btn-delete {
@@ -920,6 +1020,101 @@
   }
   .reports-hero-actions .btn {
     align-self: stretch;
+  }
+
+  .history-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .history-summary-item:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .history-summary-item:nth-child(n + 3) {
+    border-top: .5px solid rgba(13, 27, 42, .08);
+  }
+}
+
+@media (max-width: 640px) {
+  .history-table-wrap {
+    display: none;
+  }
+
+  .history-card-list {
+    display: grid;
+    gap: 10px;
+  }
+
+  .history-card-row {
+    border: .5px solid rgba(13, 27, 42, .08);
+    border-radius: 12px;
+    background: var(--surface);
+    padding: 14px;
+  }
+
+  .history-card-main {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    padding-bottom: 12px;
+    border-bottom: .5px solid rgba(13, 27, 42, .07);
+  }
+
+  .history-card-date {
+    display: block;
+    color: var(--ink);
+    font-weight: 800;
+    line-height: 1.3;
+  }
+
+  .history-card-main small,
+  .history-card-meta span,
+  .history-card-meta small {
+    display: block;
+    color: var(--muted);
+    font-size: .74rem;
+    font-weight: 700;
+    line-height: 1.45;
+  }
+
+  .history-card-main small {
+    margin-top: .2rem;
+  }
+
+  .history-card-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding-top: 12px;
+  }
+
+  .history-card-meta strong {
+    display: block;
+    margin-top: .25rem;
+    color: var(--ink);
+    font-size: 1rem;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 480px) {
+  .history-summary-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .history-summary-item,
+  .history-summary-item:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .history-summary-item:nth-child(n + 2) {
+    border-top: .5px solid rgba(13, 27, 42, .08);
+  }
+
+  .history-card-meta {
+    grid-template-columns: 1fr;
   }
 }
 

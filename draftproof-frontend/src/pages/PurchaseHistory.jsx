@@ -21,8 +21,34 @@ function formatDate(iso, locale) {
   return d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+function formatDateParts(iso, locale) {
+  if (!iso) return { date: '—', time: '' };
+  const d = new Date(iso);
+  return {
+    date: d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' }),
+    time: d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }),
+  };
+}
+
 function formatAmount(cents, currency) {
-  return `${(cents / 100).toFixed(2)} ${currency || TOKEN_CURRENCY_CODE}`;
+  const parsedCents = Number(cents);
+  if (!Number.isFinite(parsedCents)) return '—';
+  const currencyCode = String(currency || TOKEN_CURRENCY_CODE).toUpperCase();
+  return `${currencyCode} $${(parsedCents / 100).toFixed(2)}`;
+}
+
+function summarizeAmounts(payments) {
+  const totalsByCurrency = new Map();
+  payments.forEach((payment) => {
+    const cents = Number(payment.amount_cents);
+    if (!Number.isFinite(cents)) return;
+    const currencyCode = String(payment.currency || TOKEN_CURRENCY_CODE).toUpperCase();
+    totalsByCurrency.set(currencyCode, (totalsByCurrency.get(currencyCode) || 0) + cents);
+  });
+  if (totalsByCurrency.size === 0) return '—';
+  return Array.from(totalsByCurrency.entries())
+    .map(([currencyCode, cents]) => formatAmount(cents, currencyCode))
+    .join(' · ');
 }
 
 export default function PurchaseHistory() {
@@ -35,6 +61,14 @@ export default function PurchaseHistory() {
   const [total, setTotal] = useState(0);
   const navigate = useNavigate();
   const locale = i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en-SG';
+  const visibleTokenTotal = payments.reduce((sum, payment) => sum + (Number(payment.tokens) || 0), 0);
+  const latestPurchase = payments[0] ? formatDate(payments[0].created_at, locale) : '—';
+  const summaryStats = [
+    { label: t('history.summary.totalPurchases'), value: total, note: t('history.summary.allTime') },
+    { label: t('history.summary.visibleTokens'), value: t('common.token', { count: visibleTokenTotal }), note: t('history.summary.currentPage') },
+    { label: t('history.summary.visibleSpend'), value: summarizeAmounts(payments), note: t('history.summary.currentPage') },
+    { label: t('history.summary.latestPurchase'), value: latestPurchase, note: t('history.summary.recentActivity') },
+  ];
 
   useEffect(() => {
     const ac = new AbortController();
@@ -98,43 +132,103 @@ export default function PurchaseHistory() {
           </div>
         </section>
 
+        {payments.length > 0 && (
+          <section className="history-summary-strip" aria-label={t('history.summary.label')}>
+            {summaryStats.map((stat) => (
+              <div className="history-summary-item" key={stat.label}>
+                <span>{stat.label}</span>
+                <strong>{stat.value}</strong>
+                <small>{stat.note}</small>
+              </div>
+            ))}
+          </section>
+        )}
+
         {payments.length === 0 ? (
-          <div className="reports-empty">
-            <p>{t('history.empty')}</p>
+          <div className="reports-empty history-empty">
+            <span className="history-empty-kicker">{t('history.emptyKicker')}</span>
+            <h3>{t('history.empty')}</h3>
+            <p>{t('history.emptyBody')}</p>
             <button className="btn btn-primary" onClick={() => navigate('/buy')}>
               {t('history.firstTokens')}
             </button>
           </div>
         ) : (
-          <div className="reports-table-wrap history-table-wrap">
-            <table className="reports-table">
-              <thead>
-                <tr>
-                  <th>{t('history.date')}</th>
-                  <th>{t('history.tokens')}</th>
-                  <th>{t('history.amount')}</th>
-                  <th>{t('history.status')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payments.map((p) => {
-                  const tone = STATUS_TONES[p.status] || 'neutral';
-                  return (
-                    <tr key={p.id}>
-                      <td className="td-date">{formatDate(p.created_at, locale)}</td>
-                      <td><strong className="history-token-count">{p.tokens}</strong></td>
-                      <td className="history-amount">{formatAmount(p.amount_cents, p.currency)}</td>
-                      <td>
-                        <span className={`status-badge status-badge-${tone}`}>
-                          {t(`history.statuses.${p.status}`, { defaultValue: p.status })}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <section className="history-ledger" aria-label={t('history.transactions')}>
+            <div className="history-ledger-note">
+              <span>{t('history.ledgerNote')}</span>
+            </div>
+            <div className="reports-table-wrap history-table-wrap">
+              <table className="reports-table history-table">
+                <thead>
+                  <tr>
+                    <th>{t('history.date')}</th>
+                    <th>{t('history.tokens')}</th>
+                    <th>{t('history.amount')}</th>
+                    <th>{t('history.status')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.map((p) => {
+                    const tone = STATUS_TONES[p.status] || 'neutral';
+                    const dateParts = formatDateParts(p.created_at, locale);
+                    const currencyCode = String(p.currency || TOKEN_CURRENCY_CODE).toUpperCase();
+                    const isLegacyCurrency = currencyCode !== TOKEN_CURRENCY_CODE;
+                    return (
+                      <tr key={p.id}>
+                        <td className="td-date">
+                          <span>{dateParts.date}</span>
+                          {dateParts.time && <small>{dateParts.time}</small>}
+                        </td>
+                        <td><strong className="history-token-count">+{t('common.token', { count: p.tokens })}</strong></td>
+                        <td className="history-amount">
+                          <span>{formatAmount(p.amount_cents, p.currency)}</span>
+                          {isLegacyCurrency && <small>{t('history.legacyCurrency')}</small>}
+                        </td>
+                        <td className="history-status-cell">
+                          <span className={`status-badge status-badge-${tone}`}>
+                            {t(`history.statuses.${p.status}`, { defaultValue: p.status })}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="history-card-list">
+              {payments.map((p) => {
+                const tone = STATUS_TONES[p.status] || 'neutral';
+                const dateParts = formatDateParts(p.created_at, locale);
+                const currencyCode = String(p.currency || TOKEN_CURRENCY_CODE).toUpperCase();
+                const isLegacyCurrency = currencyCode !== TOKEN_CURRENCY_CODE;
+                return (
+                  <article className="history-card-row" key={p.id}>
+                    <div className="history-card-main">
+                      <div>
+                        <span className="history-card-date">{dateParts.date}</span>
+                        {dateParts.time && <small>{dateParts.time}</small>}
+                      </div>
+                      <span className={`status-badge status-badge-${tone}`}>
+                        {t(`history.statuses.${p.status}`, { defaultValue: p.status })}
+                      </span>
+                    </div>
+                    <div className="history-card-meta">
+                      <div>
+                        <span>{t('history.tokens')}</span>
+                        <strong className="history-token-count">+{t('common.token', { count: p.tokens })}</strong>
+                      </div>
+                      <div>
+                        <span>{t('history.amount')}</span>
+                        <strong>{formatAmount(p.amount_cents, p.currency)}</strong>
+                        {isLegacyCurrency && <small>{t('history.legacyCurrency')}</small>}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
         )}
 
         {totalPages > 1 && (
