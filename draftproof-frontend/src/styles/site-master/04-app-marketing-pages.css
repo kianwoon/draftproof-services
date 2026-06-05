@@ -448,16 +448,18 @@
 
 .dash-flow-map {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(220px, .62fr) minmax(0, 1fr);
   gap: 18px;
   position: relative;
+  align-items: stretch;
 }
 
 .dash-flow-panel {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 20px;
+  min-height: 100%;
+  padding: 22px;
   border: .5px solid rgba(13, 27, 42, .07);
   border-radius: 12px;
   background: var(--surface-soft);
@@ -471,6 +473,24 @@
 .dash-flow-panel-rewrite {
   border-color: rgba(58, 168, 118, .20);
   background: linear-gradient(180deg, rgba(255, 255, 255, .84), rgba(237, 247, 240, .48));
+}
+
+.dash-flow-panel-scan::after,
+.dash-flow-panel-rewrite::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 1px;
+  background: rgba(58, 168, 118, .38);
+}
+
+.dash-flow-panel-scan::after {
+  right: -18px;
+}
+
+.dash-flow-panel-rewrite::before {
+  left: -18px;
 }
 
 .dash-workflow-panel-heading {
@@ -510,6 +530,7 @@
   align-items: center;
   justify-content: center;
   min-width: 0;
+  min-height: 100%;
   padding: 20px 0;
 }
 
@@ -517,24 +538,25 @@
 .dash-report-gate::after {
   content: "";
   position: absolute;
-  left: 50%;
-  width: 1px;
-  height: 20px;
+  top: 50%;
+  width: 50%;
+  height: 1px;
   background: rgba(58, 168, 118, .38);
 }
 
 .dash-report-gate::before {
-  top: 0;
+  left: 0;
 }
 
 .dash-report-gate::after {
-  bottom: 0;
+  right: 0;
 }
 
 .dash-report-flow-label {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
+  z-index: 2;
   color: var(--green-dark);
   font-size: .72rem;
   font-weight: 800;
@@ -543,31 +565,32 @@
 }
 
 .dash-report-flow-label-top {
-  top: -18px;
+  top: 20px;
 }
 
 .dash-report-flow-label-bottom {
-  bottom: -18px;
+  bottom: 20px;
 }
 
 .dash-report-node {
   position: relative;
-  width: min(560px, 100%);
-  padding: 16px 18px;
+  z-index: 1;
+  width: 100%;
+  padding: 18px;
   border: .5px solid rgba(58, 168, 118, .28);
   border-radius: 12px;
-  background: linear-gradient(90deg, rgba(237, 247, 240, .82), #fff);
+  background:
+    linear-gradient(180deg, rgba(237, 247, 240, .92), #fff);
   box-shadow: 0 14px 30px rgba(13, 27, 42, .08);
-  text-align: left;
+  text-align: center;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  column-gap: 14px;
-  align-items: center;
+  justify-items: center;
+  align-content: center;
+  gap: 8px;
 }
 
 .dash-report-node span {
   display: block;
-  grid-row: span 2;
   margin: 0;
   padding: 8px 10px;
   border-radius: 999px;
@@ -582,7 +605,7 @@
 .dash-report-node strong {
   display: block;
   color: var(--ink);
-  font-size: .98rem;
+  font-size: 1rem;
   line-height: 1.25;
 }
 
@@ -609,7 +632,7 @@
 .dash-steps {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 16px;
+  gap: 14px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -672,9 +695,16 @@
   .dash-grid {
     grid-template-columns: 1fr;
   }
+  .dash-flow-map {
+    grid-template-columns: 1fr;
+  }
   .dash-hero {
     align-items: stretch;
     flex-direction: column;
+  }
+  .dash-flow-panel-scan::after,
+  .dash-flow-panel-rewrite::before {
+    display: none;
   }
   .dash-steps {
     gap: 16px;
@@ -682,8 +712,32 @@
   .dash-report-gate {
     padding-block: 22px;
   }
+  .dash-report-gate::before,
+  .dash-report-gate::after {
+    left: 50%;
+    width: 1px;
+    height: 22px;
+  }
+  .dash-report-gate::before {
+    top: 0;
+  }
+  .dash-report-gate::after {
+    top: auto;
+    right: auto;
+    bottom: 0;
+  }
+  .dash-report-flow-label-top {
+    top: -18px;
+  }
+  .dash-report-flow-label-bottom {
+    bottom: -18px;
+  }
   .dash-report-node {
     width: 100%;
+    grid-template-columns: auto minmax(0, 1fr);
+    justify-items: start;
+    text-align: left;
+    column-gap: 14px;
   }
 }
 
