@@ -561,6 +561,12 @@
   padding: 72px clamp(24px, 4vw, 48px);
 }
 
+.landing-section[id],
+.landing-hero[id],
+.landing-cta[id] {
+  scroll-margin-top: calc(var(--header-h) + 1rem);
+}
+
 .landing-section h2 {
   max-width: 620px;
   margin-bottom: 38px;
@@ -1293,16 +1299,6 @@
   .check-line {
     grid-template-columns: 1fr 1fr;
   }
-  .essay-checker-intro {
-    grid-template-columns: 1fr;
-  }
-  .essay-checker-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .essay-checker-cta {
-    align-items: flex-start;
-    flex-direction: column;
-  }
   .landing-footer-inner {
     flex-direction: column;
   }
@@ -1355,7 +1351,6 @@
   .anchor-card-grid,
   .help-grid,
   .strategy-grid,
-  .essay-checker-grid,
   .check-line {
     grid-template-columns: 1fr;
   }

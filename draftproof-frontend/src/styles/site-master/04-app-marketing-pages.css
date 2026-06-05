@@ -1015,6 +1015,39 @@
   max-width: 680px;
 }
 
+@media (max-width: 900px) {
+  .essay-checker-intro,
+  .essay-checker-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .essay-checker-grid article {
+    min-height: 0;
+  }
+
+  .essay-checker-cta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .essay-checker-intro > div,
+  .essay-checker-section,
+  .essay-checker-cta {
+    padding: 20px;
+  }
+
+  .essay-checker-section h2 {
+    font-size: 1.75rem;
+    line-height: 1.08;
+  }
+
+  .essay-checker-grid article {
+    padding: 18px;
+  }
+}
+
 /* ── FAQ Page ─────────────────────────────── */
 .faq-shell {
   padding: 2rem 0 4.5rem;
