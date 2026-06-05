@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   DEFAULT_IMAGE,
+  SITE_NAME,
   buildSchema,
   getAlternateUrls,
   getCanonicalUrl,
@@ -26,7 +27,7 @@ export default function Seo() {
     setCanonical(canonicalUrl);
     setAlternates(getAlternateUrls(meta));
 
-    setProperty('og:site_name', 'DraftProof');
+    setProperty('og:site_name', SITE_NAME);
     setProperty('og:type', 'website');
     setProperty('og:title', meta.title);
     setProperty('og:description', meta.description);
@@ -40,6 +41,7 @@ export default function Seo() {
     setMeta('twitter:title', meta.title);
     setMeta('twitter:description', meta.description);
     setMeta('twitter:image', DEFAULT_IMAGE);
+    setMeta('twitter:image:alt', t('seo.imageAlt'));
 
     setJsonLd(buildSchema(meta, canonicalUrl, t));
   }, [pathname, i18n.resolvedLanguage, t]);

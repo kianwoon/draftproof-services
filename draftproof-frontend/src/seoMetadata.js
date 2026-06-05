@@ -6,6 +6,7 @@ import {
   localizePath,
   stripLocaleFromPathname,
 } from './localeRouting.js';
+import { TOKEN_PRICE_USD, formatUsdAmount } from './pricingConfig.js';
 
 const configuredSiteUrl =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SITE_URL)
@@ -14,6 +15,8 @@ const configuredSiteUrl =
 
 export const SITE_URL = normalizeSiteUrl(configuredSiteUrl);
 export const DEFAULT_IMAGE = `${SITE_URL}/og-image.png`;
+export const SITE_NAME = 'DraftProof';
+export const SEO_REVIEW_DATE = '2026-06-05';
 
 export const PAGE_META = {
   '/': {
@@ -21,49 +24,49 @@ export const PAGE_META = {
     descriptionKey: 'seo.defaultDescription',
     canonical: '/',
     schemaType: 'SoftwareApplication',
-    freshness: { type: 'reviewed', date: '2026-05-21' },
+    freshness: { type: 'reviewed', date: SEO_REVIEW_DATE },
   },
   '/why': {
     titleKey: 'seo.whyTitle',
     descriptionKey: 'seo.whyDescription',
     canonical: '/why',
     schemaType: 'AboutPage',
-    freshness: { type: 'reviewed', date: '2026-05-21' },
+    freshness: { type: 'reviewed', date: SEO_REVIEW_DATE },
   },
   '/essay-checker': {
     titleKey: 'seo.essayCheckerTitle',
     descriptionKey: 'seo.essayCheckerDescription',
     canonical: '/essay-checker',
     schemaType: 'WebPage',
-    freshness: { type: 'reviewed', date: '2026-05-21' },
+    freshness: { type: 'reviewed', date: SEO_REVIEW_DATE },
   },
   '/pricing': {
     titleKey: 'seo.pricingTitle',
     descriptionKey: 'seo.pricingDescription',
     canonical: '/pricing',
     schemaType: 'WebPage',
-    freshness: { type: 'updated', date: '2026-05-21' },
+    freshness: { type: 'updated', date: SEO_REVIEW_DATE },
   },
   '/faq': {
     titleKey: 'seo.faqTitle',
     descriptionKey: 'seo.faqDescription',
     canonical: '/faq',
-    schemaType: 'FAQPage',
-    freshness: { type: 'reviewed', date: '2026-05-21' },
+    schemaType: 'WebPage',
+    freshness: { type: 'reviewed', date: SEO_REVIEW_DATE },
   },
   '/privacy': {
     titleKey: 'seo.privacyTitle',
     descriptionKey: 'seo.privacyDescription',
     canonical: '/privacy',
     schemaType: 'PrivacyPolicy',
-    freshness: { type: 'updated', date: '2026-05-21' },
+    freshness: { type: 'updated', date: SEO_REVIEW_DATE },
   },
   '/security': {
     titleKey: 'seo.securityTitle',
     descriptionKey: 'seo.securityDescription',
     canonical: '/security',
     schemaType: 'WebPage',
-    freshness: { type: 'updated', date: '2026-05-21' },
+    freshness: { type: 'updated', date: SEO_REVIEW_DATE },
   },
   '/signin': {
     titleKey: 'seo.signInTitle',
@@ -108,52 +111,82 @@ export function getRobots(meta) {
 }
 
 export function buildSchema(meta, url, translate = defaultTranslate) {
+  const language = getHtmlLang(meta.locale);
+  const entityId = `${SITE_URL}/#organization`;
+  const websiteId = `${SITE_URL}/#website`;
+
   if (meta.schemaType === 'SoftwareApplication') {
-    return withFreshness(meta, {
-      '@context': 'https://schema.org',
-      '@type': 'SoftwareApplication',
-      name: 'DraftProof',
-      applicationCategory: 'EducationalApplication',
-      operatingSystem: 'Web',
-      url,
-      description: meta.description,
-      offers: {
-        '@type': 'Offer',
-        price: '0.90',
-        priceCurrency: 'USD',
-        description: translate('seo.offerDescription'),
-      },
-    });
+    return graphSchema([
+      organizationSchema(entityId),
+      websiteSchema(websiteId, entityId, language),
+      withFreshness(meta, {
+        '@type': 'SoftwareApplication',
+        '@id': `${url}#software`,
+        name: SITE_NAME,
+        applicationCategory: 'EducationalApplication',
+        operatingSystem: 'Web',
+        url,
+        image: DEFAULT_IMAGE,
+        inLanguage: language,
+        description: meta.description,
+        publisher: { '@id': entityId },
+        isPartOf: { '@id': websiteId },
+        offers: {
+          '@type': 'Offer',
+          price: formatUsdAmount(TOKEN_PRICE_USD),
+          priceCurrency: 'USD',
+          description: translate('seo.offerDescription'),
+          url: `${SITE_URL}/pricing`,
+        },
+      }),
+    ]);
   }
 
-  if (meta.schemaType === 'FAQPage') {
-    return withFreshness(meta, {
-      '@context': 'https://schema.org',
-      '@type': 'FAQPage',
-      name: meta.title,
-      url,
-      description: meta.description,
-      mainEntity: getFaqEntities(meta.locale),
-      isPartOf: {
-        '@type': 'WebSite',
-        name: 'DraftProof',
-        url: SITE_URL,
-      },
-    });
-  }
-
-  return withFreshness(meta, {
-    '@context': 'https://schema.org',
+  const basePageSchema = withFreshness(meta, {
     '@type': meta.schemaType,
+    '@id': `${url}#webpage`,
     name: meta.title,
     url,
+    image: DEFAULT_IMAGE,
+    inLanguage: language,
     description: meta.description,
-    isPartOf: {
-      '@type': 'WebSite',
-      name: 'DraftProof',
-      url: SITE_URL,
-    },
+    publisher: { '@id': entityId },
+    isPartOf: { '@id': websiteId },
   });
+
+  return graphSchema([
+    organizationSchema(entityId),
+    websiteSchema(websiteId, entityId, language),
+    basePageSchema,
+  ]);
+}
+
+function graphSchema(items) {
+  return {
+    '@context': 'https://schema.org',
+    '@graph': items,
+  };
+}
+
+function organizationSchema(id) {
+  return {
+    '@type': 'Organization',
+    '@id': id,
+    name: SITE_NAME,
+    url: SITE_URL,
+    logo: `${SITE_URL}/favicon.png`,
+  };
+}
+
+function websiteSchema(id, publisherId, language) {
+  return {
+    '@type': 'WebSite',
+    '@id': id,
+    name: SITE_NAME,
+    url: SITE_URL,
+    inLanguage: language,
+    publisher: { '@id': publisherId },
+  };
 }
 
 export function getAlternateUrls(meta) {
@@ -211,21 +244,6 @@ function getAlternates(canonical) {
     en: localizePath(canonical, 'en'),
     zh: localizePath(canonical, 'zh'),
   };
-}
-
-function getFaqEntities(locale = DEFAULT_LOCALE) {
-  const groups = getResourceValue('faqPage.groups', locale);
-  if (!Array.isArray(groups)) return [];
-  return groups.flatMap((group) => (
-    (group.items || []).map((item) => ({
-      '@type': 'Question',
-      name: item.q,
-      acceptedAnswer: {
-        '@type': 'Answer',
-        text: item.a,
-      },
-    }))
-  ));
 }
 
 function getResourceValue(key, language = DEFAULT_LOCALE) {

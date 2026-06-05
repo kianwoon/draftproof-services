@@ -1,59 +1,101 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
     <loc>https://draftproof.app/</loc>
-    <lastmod>2026-05-21</lastmod>
-  </url>
-  <url>
-    <loc>https://draftproof.app/why</loc>
-    <lastmod>2026-05-21</lastmod>
-  </url>
-  <url>
-    <loc>https://draftproof.app/essay-checker</loc>
-    <lastmod>2026-05-21</lastmod>
-  </url>
-  <url>
-    <loc>https://draftproof.app/pricing</loc>
-    <lastmod>2026-05-21</lastmod>
-  </url>
-  <url>
-    <loc>https://draftproof.app/faq</loc>
-    <lastmod>2026-05-21</lastmod>
-  </url>
-  <url>
-    <loc>https://draftproof.app/privacy</loc>
-    <lastmod>2026-05-21</lastmod>
-  </url>
-  <url>
-    <loc>https://draftproof.app/security</loc>
-    <lastmod>2026-05-21</lastmod>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/" />
   </url>
   <url>
     <loc>https://draftproof.app/zh</loc>
-    <lastmod>2026-05-21</lastmod>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/" />
+  </url>
+  <url>
+    <loc>https://draftproof.app/why</loc>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/why" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/why" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/why" />
   </url>
   <url>
     <loc>https://draftproof.app/zh/why</loc>
-    <lastmod>2026-05-21</lastmod>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/why" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/why" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/why" />
+  </url>
+  <url>
+    <loc>https://draftproof.app/essay-checker</loc>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/essay-checker" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/essay-checker" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/essay-checker" />
   </url>
   <url>
     <loc>https://draftproof.app/zh/essay-checker</loc>
-    <lastmod>2026-05-21</lastmod>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/essay-checker" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/essay-checker" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/essay-checker" />
+  </url>
+  <url>
+    <loc>https://draftproof.app/pricing</loc>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/pricing" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/pricing" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/pricing" />
   </url>
   <url>
     <loc>https://draftproof.app/zh/pricing</loc>
-    <lastmod>2026-05-21</lastmod>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/pricing" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/pricing" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/pricing" />
+  </url>
+  <url>
+    <loc>https://draftproof.app/faq</loc>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/faq" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/faq" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/faq" />
   </url>
   <url>
     <loc>https://draftproof.app/zh/faq</loc>
-    <lastmod>2026-05-21</lastmod>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/faq" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/faq" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/faq" />
+  </url>
+  <url>
+    <loc>https://draftproof.app/privacy</loc>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/privacy" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/privacy" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/privacy" />
   </url>
   <url>
     <loc>https://draftproof.app/zh/privacy</loc>
-    <lastmod>2026-05-21</lastmod>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/privacy" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/privacy" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/privacy" />
+  </url>
+  <url>
+    <loc>https://draftproof.app/security</loc>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/security" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/security" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/security" />
   </url>
   <url>
     <loc>https://draftproof.app/zh/security</loc>
-    <lastmod>2026-05-21</lastmod>
+    <lastmod>2026-06-05</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://draftproof.app/security" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://draftproof.app/zh/security" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://draftproof.app/security" />
   </url>
 </urlset>

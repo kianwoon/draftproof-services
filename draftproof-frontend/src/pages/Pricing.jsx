@@ -3,6 +3,11 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
+import {
+  REWRITE_TOKENS_PER_1000_WORDS,
+  TOKEN_PRICE_USD,
+  formatUsdAmount,
+} from '../pricingConfig';
 
 export default function Pricing() {
   const { user } = useAuth();
@@ -10,6 +15,8 @@ export default function Pricing() {
   const scanFeatures = t('pricing.scanFeatures', { returnObjects: true });
   const rewriteFeatures = t('pricing.rewriteFeatures', { returnObjects: true });
   const faqs = t('pricing.faqs', { returnObjects: true });
+  const scanPrice = formatUsdAmount(TOKEN_PRICE_USD);
+  const rewritePrice = formatUsdAmount(TOKEN_PRICE_USD * REWRITE_TOKENS_PER_1000_WORDS);
 
   return (
     <main className="pricing-shell">
@@ -23,7 +30,7 @@ export default function Pricing() {
           </div>
           <div className="app-hero-stat">
             <span>{t('pricing.baseRate')}</span>
-            <strong>$0.90</strong>
+            <strong>${scanPrice}</strong>
             <small>{t('pricing.perWords')}</small>
           </div>
         </section>
@@ -34,7 +41,7 @@ export default function Pricing() {
             <h2>{t('pricing.scanTitle')}</h2>
             <div className="pricing-amount">
               <span className="pricing-currency">$</span>
-              <span className="pricing-value">0.90</span>
+              <span className="pricing-value">{scanPrice}</span>
               <span className="pricing-unit">{t('pricing.scanUnit')}</span>
             </div>
           </div>
@@ -61,7 +68,7 @@ export default function Pricing() {
             <h2>{t('pricing.rewriteTitle')}</h2>
             <div className="pricing-amount">
               <span className="pricing-currency">$</span>
-              <span className="pricing-value">4.50</span>
+              <span className="pricing-value">{rewritePrice}</span>
               <span className="pricing-unit">{t('pricing.rewriteUnit')}</span>
             </div>
           </div>

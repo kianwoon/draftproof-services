@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_IMAGE,
   PRERENDER_PATHS,
+  SITE_NAME,
   buildSchema,
   defaultTranslate,
   getAlternateUrls,
@@ -51,10 +52,12 @@ function renderRoute(html, pathname) {
     [/<meta property="og:description"[^>]*>/, propertyTag('og:description', meta.description)],
     [/<meta property="og:url"[^>]*>/, propertyTag('og:url', canonicalUrl)],
     [/<meta property="og:image"[^>]*>/, propertyTag('og:image', DEFAULT_IMAGE)],
-    [/<meta property="og:image:alt"[^>]*>/, propertyTag('og:image:alt', defaultTranslate('seo.imageAlt', 'en'))],
+    [/<meta property="og:site_name"[^>]*>/, propertyTag('og:site_name', SITE_NAME)],
+    [/<meta property="og:image:alt"[^>]*>/, propertyTag('og:image:alt', defaultTranslate('seo.imageAlt', locale))],
     [/<meta name="twitter:title"[^>]*>/, metaTag('twitter:title', meta.title)],
     [/<meta name="twitter:description"[^>]*>/, metaTag('twitter:description', meta.description)],
     [/<meta name="twitter:image"[^>]*>/, metaTag('twitter:image', DEFAULT_IMAGE)],
+    [/<meta name="twitter:image:alt"[^>]*>/, metaTag('twitter:image:alt', defaultTranslate('seo.imageAlt', locale))],
     [
       /<script type="application\/ld\+json" data-seo-jsonld="true">.*?<\/script>/s,
       jsonLdTag(schema),
@@ -68,11 +71,11 @@ function renderSitemap() {
     .filter((meta) => !/\bnoindex\b/i.test(getRobots(meta)))
     .map((meta) => {
       const lastmod = meta.freshness?.date ? `\n    <lastmod>${escapeHtml(meta.freshness.date)}</lastmod>` : '';
-      return `  <url>\n    <loc>${escapeHtml(getCanonicalUrl(meta))}</loc>${lastmod}\n  </url>`;
+      return `  <url>\n    <loc>${escapeHtml(getCanonicalUrl(meta))}</loc>${lastmod}${sitemapAlternates(meta)}\n  </url>`;
     })
     .join('\n');
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${urls}\n</urlset>\n`;
 }
 
 function replaceRequired(html, pattern, replacement) {
@@ -96,6 +99,14 @@ function alternateTags(meta, canonicalUrl) {
   return Object.entries(alternates)
     .map(([hreflang, href]) => `<link rel="alternate" hreflang="${escapeAttribute(hreflang)}" href="${escapeAttribute(href)}" />`)
     .join('\n    ');
+}
+
+function sitemapAlternates(meta) {
+  const pageAlternates = getAlternateUrls(meta);
+  const alternates = { ...pageAlternates, 'x-default': pageAlternates.en };
+  return Object.entries(alternates)
+    .map(([hreflang, href]) => `\n    <xhtml:link rel="alternate" hreflang="${escapeAttribute(hreflang)}" href="${escapeAttribute(href)}" />`)
+    .join('');
 }
 
 function jsonLdTag(schema) {
