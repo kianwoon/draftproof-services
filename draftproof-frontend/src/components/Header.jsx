@@ -16,7 +16,7 @@ export default function Header() {
   const locale = getLocaleFromPathname(location.pathname);
   const publicPath = (path) => localizePath(path, locale);
   const marketingLinks = [
-    { to: publicPath('/why'), label: t('nav.why') },
+    { to: publicPath('/#product'), label: t('nav.why') },
     { to: publicPath('/essay-checker'), label: t('nav.essayChecker') },
     { to: publicPath('/pricing'), label: t('nav.pricing') },
     { to: publicPath('/faq'), label: t('nav.faq') },
@@ -27,7 +27,7 @@ export default function Header() {
   ];
   const visiblePublicLinks = user ? signedInPublicLinks : marketingLinks;
 
-  useEffect(() => { setScanOpen(false); setMenuOpen(false); }, [location.pathname]);
+  useEffect(() => { setScanOpen(false); setMenuOpen(false); }, [location.hash, location.pathname]);
 
   useEffect(() => {
     if (!scanOpen) return;
@@ -144,7 +144,7 @@ export default function Header() {
             {user && <Link to="/buy" className="mobile-link">{t('nav.buyTokens')}</Link>}
             {user && <Link to="/history" className="mobile-link">{t('nav.history')}</Link>}
             {visiblePublicLinks.map((link) => (
-              <Link key={link.to} to={link.to} className="mobile-link">{link.label}</Link>
+              <Link key={link.to} to={link.to} className="mobile-link" onClick={() => setMenuOpen(false)}>{link.label}</Link>
             ))}
             <div className="mobile-menu-actions">
               {user ? (
