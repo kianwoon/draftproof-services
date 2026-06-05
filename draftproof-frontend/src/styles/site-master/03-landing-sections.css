@@ -1367,15 +1367,26 @@
     border-top: .5px solid rgba(13, 27, 42, .08);
   }
   .content-carousel-section {
-    --content-slide-w: 100vw;
+    --content-slide-w: 100%;
     --content-slide-gap: 0px;
     padding-block: 54px;
   }
   .content-carousel-track {
+    display: block;
+    width: 100%;
     padding-left: 0;
+    transform: none;
   }
   .content-carousel-slide {
+    display: none;
+    width: 100%;
+    max-width: 100%;
+    margin-inline: 0;
     padding-inline: 16px;
+    opacity: 1;
+  }
+  .content-carousel-slide.is-active {
+    display: grid;
   }
   .content-carousel-copy h2 {
     max-width: 100%;
