@@ -2,12 +2,14 @@
 
 import hashlib
 import json
+import os
 from contextlib import contextmanager
 from typing import Optional
 from urllib.parse import parse_qs, unquote_plus, urlsplit
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 
 from .config import settings
 
@@ -48,13 +50,37 @@ def _neon_connect_kwargs(url: str) -> dict:
     return kwargs
 
 
+_pool: psycopg2.pool.ThreadedConnectionPool | None = None
+_pool_pid: int | None = None
+
+
+def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    """Return a per-process connection pool, recreating after fork."""
+    global _pool, _pool_pid
+    pid = os.getpid()
+    if _pool is None or _pool_pid != pid:
+        # Close the parent's pool sockets before the child creates its own.
+        # Sharing a socket across a fork corrupts the Postgres wire protocol.
+        if _pool is not None:
+            try:
+                _pool.closeall()
+            except Exception:
+                pass
+        _pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn=1,
+            maxconn=4,
+            dsn=settings.DATABASE_URL,
+            cursor_factory=psycopg2.extras.RealDictCursor,
+            **_neon_connect_kwargs(settings.DATABASE_URL),
+        )
+        _pool_pid = pid
+    return _pool
+
+
 @contextmanager
 def get_conn():
-    conn = psycopg2.connect(
-        settings.DATABASE_URL,
-        cursor_factory=psycopg2.extras.RealDictCursor,
-        **_neon_connect_kwargs(settings.DATABASE_URL),
-    )
+    pool = _get_pool()
+    conn = pool.getconn()
     try:
         yield conn
         conn.commit()
@@ -62,7 +88,15 @@ def get_conn():
         conn.rollback()
         raise
     finally:
-        conn.close()
+        if conn.closed:
+            pool.putconn(conn, close=True)
+        else:
+            try:
+                conn.reset()
+            except Exception:
+                pool.putconn(conn, close=True)
+                return
+            pool.putconn(conn)
 
 
 def create_scan_job(user_id: str, input_text: str, verbose: bool = False, do_rewrite: bool = False) -> str:

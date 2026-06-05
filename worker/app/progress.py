@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 _client = None
 _STREAM_TTL_SECONDS = 60 * 60
-_STREAM_MAXLEN = 100
+_STREAM_MAXLEN = 500
 
 
 def _redis_client():
