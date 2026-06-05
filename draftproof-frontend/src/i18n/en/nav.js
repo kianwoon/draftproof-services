@@ -2,6 +2,7 @@ export const nav = {
   "main": "Main navigation",
   "primary": "Primary",
   "home": "DraftProof home",
+  "homeLink": "Home",
   "dashboard": "Dashboard",
   "scan": "Scan",
   "scanning": "Scanning",
