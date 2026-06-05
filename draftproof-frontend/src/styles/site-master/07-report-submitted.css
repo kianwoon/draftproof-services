@@ -1335,6 +1335,7 @@
   flex-direction: column;
   gap: .4rem;
   margin: .25rem 0 1rem;
+  padding: 0 1.15rem;
 }
 
 .paragraph-severity-caption {
