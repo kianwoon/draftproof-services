@@ -2,6 +2,7 @@ export const nav = {
   "main": "主导航",
   "primary": "主要导航",
   "home": "DraftProof 首页",
+  "homeLink": "首页",
   "dashboard": "仪表盘",
   "scan": "扫描",
   "scanning": "开始扫描",

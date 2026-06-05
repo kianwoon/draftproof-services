@@ -138,6 +138,7 @@ export default function Header() {
         <div className="mobile-menu" onClick={() => setMenuOpen(false)}>
           <div className="mobile-menu-inner" onClick={(e) => e.stopPropagation()}>
             <LanguageSwitcher />
+            <Link to={publicPath('/')} className="mobile-link" onClick={() => setMenuOpen(false)}>{t('nav.homeLink')}</Link>
             {user && <Link to="/dashboard" className="mobile-link">{t('nav.dashboard')}</Link>}
             {user && <Link to="/scan" className="mobile-link">{t('nav.scan')}</Link>}
             {user && <Link to="/reports" className="mobile-link">{t('nav.reports')}</Link>}
