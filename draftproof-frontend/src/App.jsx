@@ -64,6 +64,21 @@ function ScrollToHash() {
   return null;
 }
 
+function ScrollToRouteTop() {
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location.hash) return undefined;
+
+    const frame = requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [location.hash, location.pathname, location.search]);
+
+  return null;
+}
+
 export default function App() {
   const { pathname } = useLocation();
   const { i18n } = useTranslation();
@@ -83,6 +98,7 @@ export default function App() {
       <div className="app-shell">
         <Seo />
         <Header />
+        <ScrollToRouteTop />
         <main className="app-main">
           <Routes>
             <Route path="/" element={<HomeRedirect />} />
