@@ -15,6 +15,8 @@ export const seo = {
   "securityDescription": "How DraftProof protects academic documents with encrypted storage, OAuth sign-in, secure payments, access controls, and user-controlled deletion.",
   "signInTitle": "Sign In | DraftProof",
   "signInDescription": "Sign in to DraftProof to review essay citations, source grounding, similarity risk, and fixable writing signals before submission.",
+  "notFoundTitle": "Page Not Found | DraftProof",
+  "notFoundDescription": "This DraftProof page does not exist or has moved.",
   "privateTitle": "DraftProof Workspace",
   "privateDescription": "Private DraftProof workspace for essay scans, reports, rewrite guidance, tokens, and purchase history.",
   "imageAlt": "DraftProof essay grounding and integrity review dashboard preview",

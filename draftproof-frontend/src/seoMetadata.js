@@ -75,6 +75,13 @@ export const PAGE_META = {
     robots: 'noindex, nofollow',
     schemaType: 'WebPage',
   },
+  '/404': {
+    titleKey: 'seo.notFoundTitle',
+    descriptionKey: 'seo.notFoundDescription',
+    canonical: '/404',
+    robots: 'noindex, nofollow',
+    schemaType: 'WebPage',
+  },
 };
 
 export const PRIVATE_PREFIXES = ['/dashboard', '/scan', '/reports', '/report/', '/rewrite/', '/buy', '/history', '/auth/callback'];
@@ -236,7 +243,10 @@ function privateMeta(pathname) {
       schemaType: 'WebPage',
     };
   }
-  return PAGE_META['/'];
+  return {
+    ...PAGE_META['/404'],
+    canonical: pathname,
+  };
 }
 
 function getAlternates(canonical) {

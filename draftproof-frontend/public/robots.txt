@@ -1,12 +1,4 @@
 User-agent: *
 Allow: /
-Disallow: /dashboard
-Disallow: /scan
-Disallow: /reports
-Disallow: /report/
-Disallow: /rewrite/
-Disallow: /buy
-Disallow: /history
-Disallow: /auth/
 
 Sitemap: https://draftproof.app/sitemap.xml
