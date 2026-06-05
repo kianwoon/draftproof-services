@@ -1,6 +1,15 @@
 """Celery application — broker via Redis."""
 
 import logging
+import os
+
+# Patch psycopg2 for gevent compatibility before any DB imports.
+# Applied only in the rewrite worker (CELERY_WORKER_POOL=gevent); the scan
+# worker uses prefork and must NOT apply this patch (CPU-bound torch models
+# are incompatible with gevent's cooperative scheduling).
+if os.environ.get("CELERY_WORKER_POOL") == "gevent":
+    from psycogreen.gevent import patch_psycopg
+    patch_psycopg()
 
 from celery import Celery
 from celery.signals import worker_ready
@@ -55,8 +64,9 @@ app.conf.update(
     task_ignore_result=True,
     task_routes={
         "app.tasks.scan_document": {"queue": "scan"},
-        "app.tasks.run_rewrite": {"queue": "scan"},
-        "app.tasks.regenerate_rewrite_report_assets": {"queue": "scan"},
+        # rewrite tasks are I/O-bound (LLM HTTP); routed to the gevent worker
+        "app.tasks.run_rewrite": {"queue": "rewrite"},
+        "app.tasks.regenerate_rewrite_report_assets": {"queue": "rewrite"},
     },
     task_default_queue="default",
     # Keep the visibility timeout longer than the longest task. Re-delivering

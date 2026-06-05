@@ -4,6 +4,7 @@ set -e
 MODEL="${PREDICTABILITY_MODEL:-gpt2}"
 SEMANTIC_MODEL="${SEMANTIC_EMBEDDING_MODEL:-all-MiniLM-L6-v2}"
 CELERY_WORKER_CONCURRENCY="${CELERY_WORKER_CONCURRENCY:-1}"
+CELERY_REWRITE_CONCURRENCY="${CELERY_REWRITE_CONCURRENCY:-4}"
 CACHE_DIR="${HF_HOME}/hub"
 SAFE_MODEL="${MODEL//\//_}"
 SAFE_SEMANTIC_MODEL="${SEMANTIC_MODEL//\//_}"
@@ -126,13 +127,38 @@ fi
 
 echo "[entrypoint] Model cache ready. Celery worker child will lazy-load cached scan models unless preload env flags are enabled."
 
-echo "[entrypoint] Starting Celery worker..."
+echo "[entrypoint] Starting Celery workers (scan=prefork c=${CELERY_WORKER_CONCURRENCY}, rewrite=gevent c=${CELERY_REWRITE_CONCURRENCY})..."
 cd /app/worker
-exec celery -A app.celery_app worker \
+
+# Scan worker — prefork pool for CPU-bound torch/transformers scoring
+celery -A app.celery_app worker \
     --loglevel=info \
     --concurrency="${CELERY_WORKER_CONCURRENCY}" \
     --pool=prefork \
+    --hostname=scan@%h \
     -Q default,scan \
     --without-heartbeat \
     --without-gossip \
-    --without-mingle
+    --without-mingle &
+SCAN_PID=$!
+
+# Rewrite worker — gevent pool for I/O-bound LLM HTTP calls
+CELERY_WORKER_POOL=gevent celery -A app.celery_app worker \
+    --loglevel=info \
+    --concurrency="${CELERY_REWRITE_CONCURRENCY}" \
+    --pool=gevent \
+    --hostname=rewrite@%h \
+    -Q rewrite \
+    --without-heartbeat \
+    --without-gossip \
+    --without-mingle &
+REWRITE_PID=$!
+
+# Exit the container cleanly when either worker dies.
+# wait -n returns as soon as any child exits (bash 4.3+).
+wait -n
+EXIT_CODE=$?
+echo "[entrypoint] A worker exited (code=${EXIT_CODE}), terminating remaining workers"
+kill "${SCAN_PID}" "${REWRITE_PID}" 2>/dev/null
+wait
+exit "${EXIT_CODE}"

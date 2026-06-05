@@ -1,6 +1,9 @@
 import asyncio
+import json
 import logging
+import os
 
+import redis.asyncio as aioredis
 import stripe
 from fastapi import APIRouter, Request, HTTPException, Depends
 
@@ -19,6 +22,21 @@ from jose import jwt, JWTError
 
 router = APIRouter()
 stripe.api_key = STRIPE_SECRET_KEY
+
+_BALANCE_CACHE_TTL = 60  # seconds — display-only; TTL expiry is the invalidation strategy
+
+_redis: aioredis.Redis | None = None
+
+
+def _redis_client() -> aioredis.Redis:
+    global _redis
+    if _redis is None:
+        _redis = aioredis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            encoding="utf-8",
+            decode_responses=True,
+        )
+    return _redis
 stripe.api_version = "2024-12-18.acacia"
 stripe.max_network_retries = 2
 
@@ -91,13 +109,26 @@ async def create_checkout(body: CheckoutRequest, request: Request, db: AsyncSess
 @router.get("/balance")
 async def get_balance(request: Request, db: AsyncSession = Depends(get_db)):
     user_id = _get_user_id(request)
+    cache_key = f"credit_balance:{user_id}"
+    try:
+        cached = await _redis_client().get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass  # Redis unavailable — fall through to DB
+
     result = await db.execute(
         select(CreditAccount).where(CreditAccount.user_id == user_id)
     )
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="No credit account")
-    return {"balance": account.balance_tokens, "reserved": account.reserved_tokens}
+    payload = {"balance": account.balance_tokens, "reserved": account.reserved_tokens}
+    try:
+        await _redis_client().setex(cache_key, _BALANCE_CACHE_TTL, json.dumps(payload))
+    except Exception:
+        pass  # best-effort cache write
+    return payload
 
 
 @router.get("/history")

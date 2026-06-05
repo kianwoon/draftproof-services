@@ -772,15 +772,27 @@ class LLMGateway:
             sorted(self.extra_body.keys()) if self.extra_body is not None else [],
         )
 
+        _provider = (self.base_url or "").split("://")[-1].split("/")[0].split(".")[0]
+
         self._raise_if_canceled()
         for attempt in range(1, self.max_retries + 1):
             self._raise_if_canceled()
+            t0 = time.monotonic()
             try:
-                t0 = time.monotonic()
                 resp = self._post_json(url, headers=headers, payload=payload)
                 wall_s = time.monotonic() - t0
                 self._raise_if_canceled()
-                logger.info(f"LLM response: status={resp.status_code}, latency={wall_s:.1f}s, attempt={attempt}")
+                logger.info(
+                    "llm_call_success",
+                    extra={
+                        "event": "llm_call_success",
+                        "provider": _provider,
+                        "model": self.model,
+                        "attempt": attempt,
+                        "latency_ms": round(wall_s * 1000),
+                        "status_code": resp.status_code,
+                    },
+                )
                 resp.raise_for_status()
                 data = resp.json()
                 self._raise_if_canceled()
@@ -795,14 +807,39 @@ class LLMGateway:
                 return LLMResponse(content=content, model=model_used, usage=usage, raw=data)
 
             except Exception as exc:
+                wall_s = time.monotonic() - t0
                 action = _classify_error(exc, attempt, self.max_retries)
 
                 if action == _RetryAction.FAIL:
-                    logger.error("LLM call failed permanently on attempt %d: %s", attempt, exc)
+                    logger.error(
+                        "llm_call_failed",
+                        extra={
+                            "event": "llm_call_failed",
+                            "provider": _provider,
+                            "model": self.model,
+                            "attempt": attempt,
+                            "latency_ms": round(wall_s * 1000),
+                            "error_type": type(exc).__name__,
+                            "error": str(exc)[:200],
+                        },
+                    )
                     raise
 
                 backoff = min(2 ** attempt, 30)  # cap at 30s
-                logger.warning("LLM call failed (attempt %d/%d), retrying in %ds: %s", attempt, self.max_retries, backoff, exc)
+                logger.warning(
+                    "llm_call_retry",
+                    extra={
+                        "event": "llm_call_retry",
+                        "provider": _provider,
+                        "model": self.model,
+                        "attempt": attempt,
+                        "of": self.max_retries,
+                        "latency_ms": round(wall_s * 1000),
+                        "backoff_s": backoff,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:200],
+                    },
+                )
                 self._sleep_with_cancellation(backoff)
 
         # Should not reach here, but safety net
