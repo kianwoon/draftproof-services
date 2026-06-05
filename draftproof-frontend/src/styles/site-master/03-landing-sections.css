@@ -558,7 +558,7 @@
 }
 
 .landing-section {
-  padding: 72px clamp(24px, 4vw, 48px);
+  padding: 36px clamp(24px, 4vw, 48px);
 }
 
 .landing-section[id],
@@ -1136,7 +1136,7 @@
 
 .landing-cta {
   position: relative;
-  padding: 92px clamp(24px, 4vw, 48px);
+  padding: 46px clamp(24px, 4vw, 48px);
   background: var(--navy-950);
   color: #fff;
   text-align: center;

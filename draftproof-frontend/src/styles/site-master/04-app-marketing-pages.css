@@ -15,7 +15,7 @@
 .essay-checker-shell .container {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 48px clamp(24px, 4vw, 48px) 72px;
+  padding: 24px clamp(24px, 4vw, 48px) 36px;
 }
 
 .app-hero {
@@ -23,7 +23,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 32px;
+  margin-bottom: 16px;
   padding: 28px;
   border: .5px solid rgba(13, 27, 42, .07);
   border-radius: 16px;
@@ -770,14 +770,14 @@
 .pricing-shell .container {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 48px clamp(24px, 4vw, 48px) 72px;
+  padding: 24px clamp(24px, 4vw, 48px) 36px;
 }
 
 .pricing-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
-  margin-bottom: 32px;
+  margin-bottom: 16px;
 }
 
 @media (max-width: 700px) {
@@ -945,7 +945,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
-  margin-bottom: 32px;
+  margin-bottom: 16px;
 }
 
 .essay-checker-intro > div,
@@ -971,7 +971,7 @@
 }
 
 .essay-checker-section {
-  margin-bottom: 24px;
+  margin-bottom: 12px;
 }
 
 .essay-checker-grid {
