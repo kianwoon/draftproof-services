@@ -14,6 +14,7 @@ from app.services import progress_stream
 
 
 FREE_SCAN_WORD_LIMIT = 500
+FREE_SCAN_LIMIT = 5
 _STALE_THRESHOLD = timedelta(minutes=10)
 _PROCESSING_HEARTBEAT_STALE_THRESHOLD = timedelta(minutes=5)
 _ACTIVE_SCAN_STATUSES = ("pending", "processing", "retrying")
@@ -25,6 +26,18 @@ def _scan_cost(word_count: int) -> int:
     if word_count <= FREE_SCAN_WORD_LIMIT:
         return 0
     return max(1, -(-word_count // 1000))
+
+
+async def _count_free_scans_used(session, user_id: uuid.UUID) -> int:
+    from sqlalchemy import func
+    result = await session.execute(
+        select(func.count()).select_from(ScanJob).where(
+            ScanJob.user_id == user_id,
+            ScanJob.word_count <= FREE_SCAN_WORD_LIMIT,
+            ScanJob.status.notin_(["failed", "canceled"]),
+        )
+    )
+    return result.scalar() or 0
 
 
 def _rewrite_cost(word_count: int) -> int:
@@ -130,6 +143,13 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
         # Reserve tokens based on word count. Short scans are free and should
         # not require an existing credit account.
         cost = _scan_cost(word_count)
+        if user_id and cost == 0:
+            used = await _count_free_scans_used(session, uuid.UUID(user_id))
+            if used >= FREE_SCAN_LIMIT:
+                raise ValueError(
+                    f"Free scan limit reached ({FREE_SCAN_LIMIT} scans). "
+                    "Please purchase credits to continue scanning."
+                )
         if user_id and cost > 0:
             uid = uuid.UUID(user_id)
             result = await session.execute(
