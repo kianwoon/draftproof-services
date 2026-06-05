@@ -1366,9 +1366,6 @@
   .help-card + .help-card {
     border-top: .5px solid rgba(13, 27, 42, .08);
   }
-  .sample-report-section {
-    padding-inline: 16px;
-  }
   .content-carousel-section {
     --content-slide-w: 100vw;
     --content-slide-gap: 0px;

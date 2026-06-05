@@ -94,31 +94,11 @@ export default function Landing() {
         humanWrittenSignals={humanWrittenSignals}
       />
 
-      <section id="report" className="landing-section sample-report-section">
-        <div className="section-inner sample-report-layout">
-          <div className="sample-report-copy">
-            <p className="eyebrow">{t('landing.sampleEyebrow')}</p>
-            <h2>{t('landing.sampleTitle')}</h2>
-            <p>{t('landing.sampleBody')}</p>
-            <div className="sample-report-points">
-              <span>{t('landing.samplePoint1')}</span>
-              <span>{t('landing.samplePoint2')}</span>
-              <span>{t('landing.samplePoint3')}</span>
-            </div>
-            <div className="sample-report-value-grid" aria-label={t('landing.reportValueLabel')}>
-              {reportValueCards.map((card) => (
-                <article key={card.title}>
-                  <strong>{card.title}</strong>
-                  <p>{card.body}</p>
-                </article>
-              ))}
-            </div>
-            <Link to={publicPath('/essay-checker')} className="btn btn-primary">{t('landing.runOwnScan')}</Link>
-          </div>
-
-          <SampleReportPreview />
-        </div>
-      </section>
+      <ReportStrategyCarousel
+        contentStrategies={contentStrategies}
+        publicPath={publicPath}
+        reportValueCards={reportValueCards}
+      />
 
       <section id="help" className="landing-section help-section">
         <div className="section-inner">
@@ -155,33 +135,6 @@ export default function Landing() {
                 <small>{card.note}</small>
               </article>
             ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="strategies" className="landing-section strategy-section">
-        <div className="section-inner">
-          <div className="strategy-heading">
-            <div>
-              <p className="eyebrow">{t('landing.strategyEyebrow')}</p>
-              <h2>{t('landing.strategyTitle')}</h2>
-            </div>
-            <p>{t('landing.strategyBody')}</p>
-          </div>
-
-          <div className="strategy-grid" aria-label={t('landing.contentAwareRewrite')}>
-            {contentStrategies.map((item) => (
-              <article className="strategy-card" key={item.type}>
-                <span>{item.type}</span>
-                <h3>{item.strategy}</h3>
-                <p>{item.detail}</p>
-              </article>
-            ))}
-          </div>
-
-          <div className="strategy-proof">
-            <strong>{t('landing.strategyProofStrong')}</strong>
-            <span>{t('landing.strategyProofBody')}</span>
           </div>
         </div>
       </section>
@@ -260,8 +213,6 @@ export default function Landing() {
 
 function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals }) {
   const { t } = useTranslation();
-  const [activeSlide, setActiveSlide] = useState(0);
-  const [isPaused, setIsPaused] = useState(false);
   const slides = useMemo(() => ([
     {
       id: 'content-anchors',
@@ -324,44 +275,23 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
       ),
     },
   ]), [anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals, t]);
-  const activeContentSlide = slides[activeSlide] || slides[0];
-
-  useEffect(() => {
-    if (isPaused || slides.length < 2) return undefined;
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
-
-    const timer = window.setTimeout(() => {
-      setActiveSlide((current) => (current + 1) % slides.length);
-    }, 6500);
-
-    return () => window.clearTimeout(timer);
-  }, [activeSlide, isPaused, slides.length]);
-
-  const goToSlide = (index) => {
-    setActiveSlide(index);
-    setIsPaused(true);
-  };
-
-  const goToNextSlide = () => {
-    setActiveSlide((current) => (current + 1) % slides.length);
-    setIsPaused(true);
-  };
+  const carousel = useLandingCarousel(slides.length);
 
   return (
     <section
       className="landing-section content-carousel-section"
       aria-label={t('landing.contentCarouselLabel')}
-      onMouseEnter={() => setIsPaused(true)}
-      onMouseLeave={() => setIsPaused(false)}
-      onFocusCapture={() => setIsPaused(true)}
+      onMouseEnter={carousel.pause}
+      onMouseLeave={carousel.resume}
+      onFocusCapture={carousel.pause}
     >
-      <div className="content-carousel-track" style={{ '--active-slide': activeSlide }}>
+      <div className="content-carousel-track" style={{ '--active-slide': carousel.activeSlide }}>
         {slides.map((slide, index) => (
           <article
-            className={`section-inner content-carousel-slide${activeSlide === index ? ' is-active' : ''}`}
+            className={`section-inner content-carousel-slide${carousel.activeSlide === index ? ' is-active' : ''}`}
             key={slide.id}
-            aria-hidden={activeSlide !== index}
-            inert={activeSlide !== index ? '' : undefined}
+            aria-hidden={carousel.activeSlide !== index}
+            inert={carousel.activeSlide !== index ? '' : undefined}
           >
             <div className="content-carousel-copy">
               <p className="eyebrow">{slide.eyebrow}</p>
@@ -382,31 +312,178 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
         ))}
       </div>
 
-      <div className="content-carousel-controls section-inner">
-        <div className="content-carousel-dots" role="tablist" aria-label={t('landing.contentCarouselTabsLabel')}>
+      <LandingCarouselControls
+        activeSlide={carousel.activeSlide}
+        dotsLabel={t('landing.contentCarouselTabsLabel')}
+        nextLabel={t('landing.contentCarouselNext')}
+        onNext={carousel.goToNextSlide}
+        onSelect={carousel.goToSlide}
+        slides={slides}
+      />
+    </section>
+  );
+}
+
+function ReportStrategyCarousel({ contentStrategies, publicPath, reportValueCards }) {
+  const { t } = useTranslation();
+  const slides = useMemo(() => ([
+    {
+      id: 'sample-report',
+      eyebrow: t('landing.sampleEyebrow'),
+      renderSlide: () => (
+        <article className="report-carousel-panel sample-report-layout">
+          <div className="sample-report-copy">
+            <p className="eyebrow">{t('landing.sampleEyebrow')}</p>
+            <h2>{t('landing.sampleTitle')}</h2>
+            <p>{t('landing.sampleBody')}</p>
+            <div className="sample-report-points">
+              <span>{t('landing.samplePoint1')}</span>
+              <span>{t('landing.samplePoint2')}</span>
+              <span>{t('landing.samplePoint3')}</span>
+            </div>
+            <div className="sample-report-value-grid" aria-label={t('landing.reportValueLabel')}>
+              {reportValueCards.map((card) => (
+                <article key={card.title}>
+                  <strong>{card.title}</strong>
+                  <p>{card.body}</p>
+                </article>
+              ))}
+            </div>
+            <Link to={publicPath('/essay-checker')} className="btn btn-primary">{t('landing.runOwnScan')}</Link>
+          </div>
+
+          <SampleReportPreview />
+        </article>
+      ),
+    },
+    {
+      id: 'essay-aware-help',
+      eyebrow: t('landing.strategyEyebrow'),
+      renderSlide: () => (
+        <article className="report-carousel-panel strategy-carousel-panel">
+          <div className="strategy-heading">
+            <div>
+              <p className="eyebrow">{t('landing.strategyEyebrow')}</p>
+              <h2>{t('landing.strategyTitle')}</h2>
+            </div>
+            <p>{t('landing.strategyBody')}</p>
+          </div>
+
+          <div className="strategy-grid" aria-label={t('landing.contentAwareRewrite')}>
+            {contentStrategies.map((item) => (
+              <article className="strategy-card" key={item.type}>
+                <span>{item.type}</span>
+                <h3>{item.strategy}</h3>
+                <p>{item.detail}</p>
+              </article>
+            ))}
+          </div>
+
+          <div className="strategy-proof">
+            <strong>{t('landing.strategyProofStrong')}</strong>
+            <span>{t('landing.strategyProofBody')}</span>
+          </div>
+        </article>
+      ),
+    },
+  ]), [contentStrategies, publicPath, reportValueCards, t]);
+  const carousel = useLandingCarousel(slides.length, 7200);
+
+  return (
+    <section
+      id="report"
+      className="landing-section report-strategy-carousel-section"
+      aria-label={t('landing.reportStrategyCarouselLabel')}
+      onMouseEnter={carousel.pause}
+      onMouseLeave={carousel.resume}
+      onFocusCapture={carousel.pause}
+    >
+      <div className="section-inner report-strategy-carousel-shell">
+        <div className="report-strategy-track" style={{ '--active-slide': carousel.activeSlide }}>
           {slides.map((slide, index) => (
-            <button
-              type="button"
+            <div
+              className={`report-strategy-slide${carousel.activeSlide === index ? ' is-active' : ''}`}
               key={slide.id}
-              role="tab"
-              aria-selected={activeSlide === index}
-              aria-label={slide.eyebrow}
-              className={activeSlide === index ? 'is-active' : ''}
-              onClick={() => goToSlide(index)}
-            />
+              aria-hidden={carousel.activeSlide !== index}
+              inert={carousel.activeSlide !== index ? '' : undefined}
+            >
+              {slide.renderSlide()}
+            </div>
           ))}
         </div>
-        <button
-          type="button"
-          className="content-carousel-next"
-          aria-label={t('landing.contentCarouselNext')}
-          onClick={goToNextSlide}
-        >
-          <span aria-hidden="true">&gt;</span>
-        </button>
-        <span className="content-carousel-status">{activeContentSlide.eyebrow}</span>
       </div>
+
+      <LandingCarouselControls
+        activeSlide={carousel.activeSlide}
+        className="report-carousel-controls"
+        dotsLabel={t('landing.reportStrategyCarouselTabsLabel')}
+        nextLabel={t('landing.reportStrategyCarouselNext')}
+        onNext={carousel.goToNextSlide}
+        onSelect={carousel.goToSlide}
+        slides={slides}
+      />
     </section>
+  );
+}
+
+function useLandingCarousel(slideCount, intervalMs = 6500) {
+  const [activeSlide, setActiveSlide] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+
+  useEffect(() => {
+    if (isPaused || slideCount < 2) return undefined;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
+
+    const timer = window.setTimeout(() => {
+      setActiveSlide((current) => (current + 1) % slideCount);
+    }, intervalMs);
+
+    return () => window.clearTimeout(timer);
+  }, [activeSlide, intervalMs, isPaused, slideCount]);
+
+  return {
+    activeSlide,
+    goToSlide: (index) => {
+      setActiveSlide(index);
+      setIsPaused(true);
+    },
+    goToNextSlide: () => {
+      setActiveSlide((current) => (current + 1) % slideCount);
+      setIsPaused(true);
+    },
+    pause: () => setIsPaused(true),
+    resume: () => setIsPaused(false),
+  };
+}
+
+function LandingCarouselControls({ activeSlide, className = '', dotsLabel, nextLabel, onNext, onSelect, slides }) {
+  const activeContentSlide = slides[activeSlide] || slides[0];
+
+  return (
+    <div className={`content-carousel-controls section-inner ${className}`.trim()}>
+      <div className="content-carousel-dots" role="tablist" aria-label={dotsLabel}>
+        {slides.map((slide, index) => (
+          <button
+            type="button"
+            key={slide.id}
+            role="tab"
+            aria-selected={activeSlide === index}
+            aria-label={slide.eyebrow}
+            className={activeSlide === index ? 'is-active' : ''}
+            onClick={() => onSelect(index)}
+          />
+        ))}
+      </div>
+      <button
+        type="button"
+        className="content-carousel-next"
+        aria-label={nextLabel}
+        onClick={onNext}
+      >
+        <span aria-hidden="true">&gt;</span>
+      </button>
+      <span className="content-carousel-status">{activeContentSlide.eyebrow}</span>
+    </div>
   );
 }
 

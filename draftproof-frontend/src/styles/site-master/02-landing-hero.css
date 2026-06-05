@@ -424,12 +424,6 @@
   }
 }
 
-.sample-report-section {
-  background:
-    linear-gradient(180deg, #f8fafc 0%, #eef7f4 100%);
-  border-bottom: .5px solid rgba(13, 27, 42, .08);
-}
-
 .sample-report-layout {
   display: grid;
   grid-template-columns: minmax(280px, .72fr) minmax(420px, 1.28fr);

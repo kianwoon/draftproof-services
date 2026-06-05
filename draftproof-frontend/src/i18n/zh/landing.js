@@ -102,6 +102,9 @@ export const landing = {
     "最后才修改句子，让更强的内容仍然清楚可见。"
   ],
   "sampleEyebrow": "示例报告",
+  "reportStrategyCarouselLabel": "示例报告和论文感知修改建议",
+  "reportStrategyCarouselTabsLabel": "示例报告和修改建议分区",
+  "reportStrategyCarouselNext": "显示下一个报告或建议分区",
   "sampleTitle": "提交前，清楚看到应该修复什么。",
   "sampleBody": "DraftProof 会把扫描结果转化为清晰的审阅计划：哪些地方可能被质疑、哪些论断需要依据、分数为什么变化，以及如何负责任地修改而不丢失自己的原意。",
   "samplePoint1": "解释分数，而不是只看一个百分比猜测",

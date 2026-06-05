@@ -102,6 +102,9 @@ export const landing = {
     "Only then revise the sentence so the stronger content remains visible."
   ],
   "sampleEyebrow": "Sample Report",
+  "reportStrategyCarouselLabel": "Sample report and essay-aware revision guidance",
+  "reportStrategyCarouselTabsLabel": "Sample report and revision guidance sections",
+  "reportStrategyCarouselNext": "Show next report or guidance section",
   "sampleTitle": "See exactly what to fix before you submit.",
   "sampleBody": "DraftProof turns a scan into a clear review plan: what may be questioned, which claims need grounding, why the score moved, and how to revise responsibly without losing your own meaning.",
   "samplePoint1": "Explain the score instead of guessing from one percentage",

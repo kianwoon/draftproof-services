@@ -1,0 +1,92 @@
+.report-strategy-carousel-section {
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, #f8fafc 0%, #eef7f4 100%);
+  border-bottom: .5px solid rgba(13, 27, 42, .08);
+}
+
+.report-strategy-carousel-shell {
+  overflow: hidden;
+}
+
+.report-strategy-track {
+  display: flex;
+  transform: translateX(calc(var(--active-slide) * -100%));
+  transition: transform 680ms cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
+}
+
+.report-strategy-slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  opacity: .26;
+  transition: opacity 280ms ease;
+}
+
+.report-strategy-slide.is-active {
+  opacity: 1;
+}
+
+.report-carousel-panel {
+  min-width: 0;
+}
+
+.strategy-carousel-panel {
+  display: grid;
+  gap: 0;
+}
+
+.report-carousel-controls {
+  margin-top: 26px;
+}
+
+@media (max-width: 900px) {
+  .report-strategy-carousel-section .sample-report-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .report-strategy-carousel-section .sample-report-copy {
+    max-width: 680px;
+  }
+
+  .report-strategy-carousel-section .sample-report-value-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .report-strategy-carousel-section {
+    padding-inline: 16px;
+  }
+
+  .report-strategy-carousel-section .sample-report-layout {
+    gap: 26px;
+  }
+
+  .report-strategy-carousel-section .sample-report-value-grid,
+  .report-strategy-carousel-section .strategy-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .report-strategy-carousel-section .sample-report-value-grid article {
+    min-height: 0;
+  }
+
+  .report-strategy-carousel-section .sample-report-preview {
+    border-radius: 12px;
+  }
+
+  .report-strategy-carousel-section .strategy-card,
+  .report-strategy-carousel-section .strategy-card:nth-child(2n),
+  .report-strategy-carousel-section .strategy-card:nth-child(4n) {
+    border-right: 0;
+  }
+
+  .report-strategy-carousel-section .strategy-card:nth-last-child(-n + 2) {
+    border-bottom: .5px solid rgba(13, 27, 42, .08);
+  }
+
+  .report-strategy-carousel-section .strategy-card:last-child {
+    border-bottom: 0;
+  }
+}
