@@ -10,6 +10,8 @@ export default function FAQ() {
   const locale = getLocaleFromPathname(location.pathname);
   const publicPath = (path) => localizePath(path, locale);
   const groups = t('faqPage.groups', { returnObjects: true });
+  const totalQuestions = groups.reduce((count, group) => count + group.items.length, 0);
+  const featuredGroups = groups.slice(0, 3);
 
   return (
     <main className="faq-shell">
@@ -28,6 +30,20 @@ export default function FAQ() {
           </div>
         </section>
 
+        <section className="faq-overview" aria-label={t('faqPage.overviewLabel')}>
+          <article>
+            <span>{t('faqPage.questionCountLabel')}</span>
+            <strong>{totalQuestions}</strong>
+            <p>{t('faqPage.questionCountDetail')}</p>
+          </article>
+          {featuredGroups.map((group) => (
+            <a href={`#${group.id}`} key={group.id}>
+              <span>{group.kicker}</span>
+              <strong>{group.title}</strong>
+            </a>
+          ))}
+        </section>
+
         <section className="faq-intro">
           <div>
             <h2>{t('faqPage.helpTitle')}</h2>
@@ -42,15 +58,23 @@ export default function FAQ() {
         <div className="faq-layout">
           <aside className="faq-nav" aria-label={t('faqPage.navLabel')}>
             {groups.map((group) => (
-              <a key={group.id} href={`#${group.id}`}>{group.title}</a>
+              <a key={group.id} href={`#${group.id}`}>
+                <span>{group.kicker}</span>
+                {group.title}
+              </a>
             ))}
           </aside>
 
           <div className="faq-groups">
-            {groups.map((group) => (
+            {groups.map((group, groupIndex) => (
               <section className="faq-group" id={group.id} key={group.id}>
-                <span>{group.kicker}</span>
-                <h2>{group.title}</h2>
+                <div className="faq-group-head">
+                  <div>
+                    <span>{group.kicker}</span>
+                    <h2>{group.title}</h2>
+                  </div>
+                  <strong>{String(groupIndex + 1).padStart(2, '0')}</strong>
+                </div>
                 <div className="faq-question-list">
                   {group.items.map((item) => (
                     <details className="faq-question" key={item.q}>
