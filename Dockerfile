@@ -22,13 +22,15 @@ COPY --from=frontend /app/dist ./static
 RUN useradd --create-home appuser
 USER appuser
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 
 EXPOSE 8000
 
+# 2 workers: eco-medium has ~512MB RAM; 4 uvicorn processes exhaust it.
+# Async uvicorn handles concurrent connections within each worker, so 2 is sufficient.
 CMD ["gunicorn", "app.main:app", \
-     "-w", "4", \
+     "-w", "2", \
      "-k", "uvicorn.workers.UvicornWorker", \
      "--bind", "0.0.0.0:8000", \
      "--timeout", "650", \
