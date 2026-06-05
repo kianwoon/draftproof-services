@@ -294,10 +294,11 @@
 }
 
 .submitted-signal-panel h3 {
-  margin: -.35rem 0 0;
+  margin: 0;
   color: var(--navy-950);
   font-size: 1.05rem;
   font-weight: 850;
+  line-height: 1.18;
   text-transform: capitalize;
 }
 
@@ -306,6 +307,12 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: .8rem;
+}
+
+.submitted-panel-title-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: .22rem;
 }
 
 .submitted-panel-position {
