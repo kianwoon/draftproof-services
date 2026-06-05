@@ -1,6 +1,6 @@
 export const seo = {
-  "defaultTitle": "Essay Checker for Citations and AI-Like Writing | DraftProof",
-  "defaultDescription": "Check essays before submission for citation gaps, weak source grounding, similarity risk, and AI-like writing patterns with DraftProof.",
+  "defaultTitle": "Essay Integrity Review Before Submission | DraftProof",
+  "defaultDescription": "Find citation gaps, weak claims, source issues, and AI-like writing patterns before your draft is reviewed.",
   "whyTitle": "Why Human-Written Essays Can Look AI-Generated | DraftProof",
   "whyDescription": "See why human-written essays can trigger AI-like signals and how DraftProof helps students review evidence, sources, and phrasing before submission.",
   "essayCheckerTitle": "Essay Checker for Citations and AI-Like Writing | DraftProof",
