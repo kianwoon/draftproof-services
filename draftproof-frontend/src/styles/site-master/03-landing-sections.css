@@ -643,23 +643,47 @@
   line-height: 1.62;
 }
 
-.human-written-section {
-  background: var(--surface);
+.content-carousel-section {
+  --content-slide-w: min(var(--max-w), 82vw);
+  --content-slide-gap: 24px;
+  position: relative;
+  overflow: hidden;
+  padding-inline: 0;
+  background: #f8fafc;
   border-bottom: .5px solid rgba(13, 27, 42, .06);
 }
 
-.human-written-layout {
-  display: grid;
-  grid-template-columns: minmax(0, .95fr) minmax(340px, .72fr);
-  gap: clamp(28px, 5vw, 72px);
-  align-items: center;
+.content-carousel-track {
+  display: flex;
+  gap: var(--content-slide-gap);
+  width: max-content;
+  padding-left: calc((100vw - var(--content-slide-w)) / 2);
+  transform: translateX(calc(var(--active-slide) * (var(--content-slide-w) + var(--content-slide-gap)) * -1));
+  transition: transform 640ms cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
 }
 
-.human-written-layout h2 {
+.content-carousel-slide {
+  display: grid;
+  flex: 0 0 var(--content-slide-w);
+  grid-template-columns: minmax(0, .82fr) minmax(420px, 1fr);
+  gap: clamp(30px, 5vw, 76px);
+  align-items: center;
+  min-height: 468px;
+  padding: 0 clamp(18px, 3vw, 32px);
+  opacity: .32;
+  transition: opacity 320ms ease;
+}
+
+.content-carousel-slide.is-active {
+  opacity: 1;
+}
+
+.content-carousel-copy h2 {
   margin-bottom: 20px;
 }
 
-.human-written-layout p {
+.content-carousel-copy p {
   max-width: 700px;
   margin-bottom: 14px;
 }
@@ -713,27 +737,6 @@
   color: var(--green-dark);
   font-size: .96rem;
   line-height: 1.45;
-}
-
-.anchor-section {
-  background: #f8fafc;
-  border-bottom: .5px solid rgba(13, 27, 42, .06);
-}
-
-.anchor-layout {
-  display: grid;
-  grid-template-columns: minmax(0, .82fr) minmax(420px, 1fr);
-  gap: clamp(30px, 5vw, 76px);
-  align-items: center;
-}
-
-.anchor-copy h2 {
-  margin-bottom: 20px;
-}
-
-.anchor-copy p {
-  max-width: 690px;
-  margin-bottom: 14px;
 }
 
 .anchor-panel {
@@ -823,6 +826,62 @@
   color: #fff;
   font-size: 12px;
   font-weight: 850;
+}
+
+.content-carousel-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.content-carousel-dots {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.content-carousel-dots button {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(13, 27, 42, .34);
+  cursor: pointer;
+}
+
+.content-carousel-dots button.is-active {
+  background: var(--ink);
+}
+
+.content-carousel-next {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--ink);
+  cursor: pointer;
+}
+
+.content-carousel-next span {
+  transform: translateY(-1px);
+  font-size: 23px;
+  line-height: 1;
+}
+
+.content-carousel-status {
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 850;
+  letter-spacing: .7px;
+  text-transform: uppercase;
 }
 
 .why-card-grid {
@@ -1177,12 +1236,18 @@
   .landing-hero-grid,
   .why-card-grid,
   .help-heading,
-  .human-written-layout,
-  .anchor-layout,
   .strategy-heading,
   .sample-report-layout,
   .belief-row-grid {
     grid-template-columns: 1fr;
+  }
+  .content-carousel-section {
+    --content-slide-w: min(var(--max-w), 88vw);
+  }
+  .content-carousel-slide {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+    min-height: 0;
   }
   .sample-report-copy {
     max-width: 680px;
@@ -1303,6 +1368,37 @@
   }
   .sample-report-section {
     padding-inline: 16px;
+  }
+  .content-carousel-section {
+    --content-slide-w: 100vw;
+    --content-slide-gap: 0px;
+    padding-block: 54px;
+  }
+  .content-carousel-track {
+    padding-left: 0;
+  }
+  .content-carousel-slide {
+    padding-inline: 16px;
+  }
+  .content-carousel-copy h2 {
+    max-width: 100%;
+    font-size: clamp(1.85rem, 8vw, 2.25rem);
+  }
+  .content-carousel-copy p,
+  .anchor-card p,
+  .anchor-workflow li {
+    overflow-wrap: anywhere;
+  }
+  .anchor-panel,
+  .human-written-panel {
+    min-width: 0;
+  }
+  .content-carousel-controls {
+    justify-content: flex-start;
+    padding-inline: 16px;
+  }
+  .content-carousel-status {
+    display: none;
   }
   .sample-report-layout {
     gap: 26px;

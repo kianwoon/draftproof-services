@@ -80,6 +80,7 @@
 
 .landing-page {
   background: var(--surface-soft);
+  overflow-x: hidden;
 }
 
 .landing-hero {
@@ -408,6 +409,19 @@
   color: var(--green-dark);
   font-size: 12px;
   font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  .landing-hero h1 {
+    max-width: 100%;
+    font-size: clamp(2.3rem, 11vw, 2.85rem);
+    line-height: 1.08;
+    overflow-wrap: anywhere;
+  }
+  .landing-hero .lead,
+  .landing-hero .trust-note {
+    overflow-wrap: anywhere;
+  }
 }
 
 .sample-report-section {

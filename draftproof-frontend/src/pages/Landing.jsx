@@ -87,86 +87,12 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="landing-section anchor-section">
-        <div className="section-inner anchor-layout">
-          <div className="anchor-copy">
-            <p className="eyebrow">{t('landing.anchorEyebrow')}</p>
-            <h2>{t('landing.anchorTitle')}</h2>
-            <p>{t('landing.anchorBody1')}</p>
-            <p>{t('landing.anchorBody2')}</p>
-          </div>
-
-          <div className="anchor-panel" aria-label={t('landing.anchorCardsLabel')}>
-            <div className="anchor-card-grid">
-              {anchorCards.map((card) => (
-                <article className="anchor-card" key={card.title}>
-                  <span>{card.label}</span>
-                  <h3>{card.title}</h3>
-                  <p>{card.body}</p>
-                </article>
-              ))}
-            </div>
-            <ol className="anchor-workflow" aria-label={t('landing.anchorWorkflowLabel')}>
-              {anchorWorkflow.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ol>
-          </div>
-        </div>
-      </section>
-
-      <section className="landing-section human-written-section">
-        <div className="section-inner human-written-layout">
-          <div>
-            <p className="eyebrow">{t('landing.humanizerEyebrow')}</p>
-            <h2>{t('landing.humanizerTitle')}</h2>
-            <p>{t('landing.humanizerBody1')}</p>
-            <p>{t('landing.humanizerBody2')}</p>
-            <p className="sample-reference-note">
-              <a href={t('landing.humanizerSourceUrl')} target="_blank" rel="noopener noreferrer">
-                {t('landing.humanizerSourceLabel')}
-              </a>
-            </p>
-          </div>
-
-          <div className="human-written-panel">
-            <ul className="signal-list" aria-label={t('landing.humanizerSignalsLabel')}>
-              {humanizerSignals.map((signal) => (
-                <li key={signal}>{signal}</li>
-              ))}
-            </ul>
-            <div className="human-written-guardrails">
-              <span>{t('landing.humanizerGuardrail1')}</span>
-              <span>{t('landing.humanizerGuardrail2')}</span>
-              <strong>{t('landing.humanizerPunch')}</strong>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="landing-section human-written-section">
-        <div className="section-inner human-written-layout">
-          <div>
-            <p className="eyebrow">{t('landing.humanWrittenEyebrow')}</p>
-            <h2>{t('landing.humanWrittenTitle')}</h2>
-            <p>{t('landing.humanWrittenBody1')}</p>
-            <p>{t('landing.humanWrittenBody2')}</p>
-          </div>
-
-          <div className="human-written-panel">
-            <ul className="signal-list" aria-label={t('landing.humanWrittenSignalsLabel')}>
-              {humanWrittenSignals.map((signal) => (
-                <li key={signal}>{signal}</li>
-              ))}
-            </ul>
-            <div className="human-written-guardrails">
-              <span>{t('landing.humanWrittenGuardrail1')}</span>
-              <span>{t('landing.humanWrittenGuardrail2')}</span>
-              <strong>{t('landing.humanWrittenPunch')}</strong>
-            </div>
-          </div>
-        </div>
-      </section>
+      <ContentRiskCarousel
+        anchorCards={anchorCards}
+        anchorWorkflow={anchorWorkflow}
+        humanizerSignals={humanizerSignals}
+        humanWrittenSignals={humanWrittenSignals}
+      />
 
       <section id="report" className="landing-section sample-report-section">
         <div className="section-inner sample-report-layout">
@@ -329,6 +255,176 @@ export default function Landing() {
         </div>
       </footer>
     </main>
+  );
+}
+
+function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals }) {
+  const { t } = useTranslation();
+  const [activeSlide, setActiveSlide] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const slides = useMemo(() => ([
+    {
+      id: 'content-anchors',
+      eyebrow: t('landing.anchorEyebrow'),
+      title: t('landing.anchorTitle'),
+      body: [t('landing.anchorBody1'), t('landing.anchorBody2')],
+      renderPanel: () => (
+        <div className="anchor-panel" aria-label={t('landing.anchorCardsLabel')}>
+          <div className="anchor-card-grid">
+            {anchorCards.map((card) => (
+              <article className="anchor-card" key={card.title}>
+                <span>{card.label}</span>
+                <h3>{card.title}</h3>
+                <p>{card.body}</p>
+              </article>
+            ))}
+          </div>
+          <ol className="anchor-workflow" aria-label={t('landing.anchorWorkflowLabel')}>
+            {anchorWorkflow.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ol>
+        </div>
+      ),
+    },
+    {
+      id: 'humanizer-trap',
+      eyebrow: t('landing.humanizerEyebrow'),
+      title: t('landing.humanizerTitle'),
+      body: [t('landing.humanizerBody1'), t('landing.humanizerBody2')],
+      sourceLabel: t('landing.humanizerSourceLabel'),
+      sourceUrl: t('landing.humanizerSourceUrl'),
+      renderPanel: () => (
+        <SignalPanel
+          label={t('landing.humanizerSignalsLabel')}
+          signals={humanizerSignals}
+          guardrails={[
+            t('landing.humanizerGuardrail1'),
+            t('landing.humanizerGuardrail2'),
+          ]}
+          punch={t('landing.humanizerPunch')}
+        />
+      ),
+    },
+    {
+      id: 'ai-like-signals',
+      eyebrow: t('landing.humanWrittenEyebrow'),
+      title: t('landing.humanWrittenTitle'),
+      body: [t('landing.humanWrittenBody1'), t('landing.humanWrittenBody2')],
+      renderPanel: () => (
+        <SignalPanel
+          label={t('landing.humanWrittenSignalsLabel')}
+          signals={humanWrittenSignals}
+          guardrails={[
+            t('landing.humanWrittenGuardrail1'),
+            t('landing.humanWrittenGuardrail2'),
+          ]}
+          punch={t('landing.humanWrittenPunch')}
+        />
+      ),
+    },
+  ]), [anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals, t]);
+  const activeContentSlide = slides[activeSlide] || slides[0];
+
+  useEffect(() => {
+    if (isPaused || slides.length < 2) return undefined;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
+
+    const timer = window.setTimeout(() => {
+      setActiveSlide((current) => (current + 1) % slides.length);
+    }, 6500);
+
+    return () => window.clearTimeout(timer);
+  }, [activeSlide, isPaused, slides.length]);
+
+  const goToSlide = (index) => {
+    setActiveSlide(index);
+    setIsPaused(true);
+  };
+
+  const goToNextSlide = () => {
+    setActiveSlide((current) => (current + 1) % slides.length);
+    setIsPaused(true);
+  };
+
+  return (
+    <section
+      className="landing-section content-carousel-section"
+      aria-label={t('landing.contentCarouselLabel')}
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+      onFocusCapture={() => setIsPaused(true)}
+    >
+      <div className="content-carousel-track" style={{ '--active-slide': activeSlide }}>
+        {slides.map((slide, index) => (
+          <article
+            className={`section-inner content-carousel-slide${activeSlide === index ? ' is-active' : ''}`}
+            key={slide.id}
+            aria-hidden={activeSlide !== index}
+            inert={activeSlide !== index ? '' : undefined}
+          >
+            <div className="content-carousel-copy">
+              <p className="eyebrow">{slide.eyebrow}</p>
+              <h2>{slide.title}</h2>
+              {slide.body.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
+              {slide.sourceUrl && (
+                <p className="sample-reference-note">
+                  <a href={slide.sourceUrl} target="_blank" rel="noopener noreferrer">
+                    {slide.sourceLabel}
+                  </a>
+                </p>
+              )}
+            </div>
+            {slide.renderPanel()}
+          </article>
+        ))}
+      </div>
+
+      <div className="content-carousel-controls section-inner">
+        <div className="content-carousel-dots" role="tablist" aria-label={t('landing.contentCarouselTabsLabel')}>
+          {slides.map((slide, index) => (
+            <button
+              type="button"
+              key={slide.id}
+              role="tab"
+              aria-selected={activeSlide === index}
+              aria-label={slide.eyebrow}
+              className={activeSlide === index ? 'is-active' : ''}
+              onClick={() => goToSlide(index)}
+            />
+          ))}
+        </div>
+        <button
+          type="button"
+          className="content-carousel-next"
+          aria-label={t('landing.contentCarouselNext')}
+          onClick={goToNextSlide}
+        >
+          <span aria-hidden="true">&gt;</span>
+        </button>
+        <span className="content-carousel-status">{activeContentSlide.eyebrow}</span>
+      </div>
+    </section>
+  );
+}
+
+function SignalPanel({ label, signals, guardrails, punch }) {
+  return (
+    <div className="human-written-panel">
+      <ul className="signal-list" aria-label={label}>
+        {signals.map((signal) => (
+          <li key={signal}>{signal}</li>
+        ))}
+      </ul>
+      <div className="human-written-guardrails">
+        {guardrails.map((guardrail) => (
+          <span key={guardrail}>{guardrail}</span>
+        ))}
+        <strong>{punch}</strong>
+      </div>
+    </div>
   );
 }
 
