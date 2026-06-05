@@ -2083,6 +2083,24 @@ export default function Report() {
           mainRiskLabel={t('report.repairSummary.mainRisk')}
         />
 
+        {transformationScorecard ? (
+          <section className={`report-overview-card${hasRewriteSignalComparison ? ' is-rewrite-comparison' : ''}`} aria-label={t('report.overview')}>
+            {hasRewriteSignalComparison ? (
+              <>
+                {transformationScorecard}
+                <div className="report-baseline-summary" aria-label={t('report.originalScanSummary')}>
+                  <span className="report-baseline-label">{t('report.originalScanBaseline')}</span>
+                  {reportSummaryBar}
+                </div>
+              </>
+            ) : (
+              transformationScorecard
+            )}
+          </section>
+        ) : (
+          reportSummaryBar
+        )}
+
         <FixFirstChecklist
           items={fixFirstItems}
           onSelectParagraph={lockAndScrollParagraph}
@@ -2093,79 +2111,90 @@ export default function Report() {
         {rewriteCompletionBand}
 
         {authorshipEvidence && (
-          <section className="rewrite-review-section">
-            <div className="rewrite-review-heading">
+          <details className="rewrite-review-section authorship-evidence-disclosure">
+            <summary className="rewrite-review-heading">
               <div>
                 <span className="rewrite-review-kicker">{t('authorshipEvidence.scanKicker')}</span>
                 <h3>{t('authorshipEvidence.scanTitle')}</h3>
+                <p className="rewrite-review-copy">
+                  {authorshipEvidence.present_markers?.length > 0
+                    ? t('authorshipEvidence.bottomLinePresent', { count: authorshipEvidence.present_markers.length })
+                    : t('authorshipEvidence.bottomLineNoMarkers')}
+                  {authorshipEvidence.thin_signals?.length > 0
+                    ? t('authorshipEvidence.bottomLineAction', { action: authorshipEvidence.thin_signals[0].action })
+                    : ''}
+                </p>
               </div>
-            </div>
-            <p className="rewrite-review-copy">{t('authorshipEvidence.scanCopy')}</p>
-            {authorshipEvidence.confidence === 'low' && (
-              <p className="sample-reference-note">{t('authorshipEvidence.lowConfidenceNote')}</p>
-            )}
-            {authorshipEvidence.present_markers?.length > 0 && (
-              <div className="rewrite-target-block">
-                <span>{t('authorshipEvidence.presentTitle')}</span>
-                <ul className="signal-list">
-                  {authorshipEvidence.present_markers.map((m, i) => <li key={`${m.signal}-${i}`}>{m.label}</li>)}
-                </ul>
-              </div>
-            )}
-            {authorshipEvidence.thin_signals?.length > 0 && (
-              <div className="rewrite-addition-block">
-                <span>{t('authorshipEvidence.thinTitle')}</span>
-                <p className="rewrite-review-copy">{t('authorshipEvidence.thinCopy')}</p>
-                <ul className="signal-list">
-                  {authorshipEvidence.thin_signals.map((tn, i) => <li key={`${tn.signal}-${i}`}>{tn.action}</li>)}
-                </ul>
-              </div>
-            )}
-            {authorshipEvidence.strengthen_examples?.length > 0 && (
-              <div className="rewrite-target-block">
-                <span>{t('authorshipEvidence.strengthenExamplesTitle')}</span>
-                <p className="rewrite-review-copy">{t('authorshipEvidence.strengthenExamplesCopy')}</p>
-                {authorshipEvidence.strengthen_examples.slice(0, 5).map((s, i) => (
-                  <p key={i}>{s}</p>
-                ))}
-                <div className="authorship-worked-example">
-                  <strong>{t('authorshipEvidence.workedExampleTitle')}</strong>
-                  <p className="rewrite-review-copy">{t('authorshipEvidence.workedExampleIntro')}</p>
-                  <p className="worked-example-before">{t('authorshipEvidence.workedExampleBefore')}</p>
-                  <p className="worked-example-after">{t('authorshipEvidence.workedExampleAfter')}</p>
-                  <p className="rewrite-review-copy">{t('authorshipEvidence.workedExampleNote')}</p>
-                </div>
-              </div>
-            )}
-            {authorshipEvidence.human_recognized_spans?.length > 0 && (
-              <div className="rewrite-target-block">
-                <span>{t('authorshipEvidence.recognizedTitle')}</span>
-                {authorshipEvidence.human_recognized_spans.slice(0, 6).map((s, i) => (
-                  <p key={s.sentence_id || i}>{s.text}</p>
-                ))}
-              </div>
-            )}
-            <div className="rewrite-addition-block authorship-bottom-line">
-              <span>{t('authorshipEvidence.bottomLineTitle')}</span>
-              {authorshipEvidence.confidence === 'low' ? (
-                <p className="rewrite-review-copy">{t('authorshipEvidence.bottomLineLowConfidence')}</p>
-              ) : (
-                <>
-                  <p className="rewrite-review-copy">
-                    {authorshipEvidence.present_markers?.length > 0
-                      ? t('authorshipEvidence.bottomLinePresent', { count: authorshipEvidence.present_markers.length })
-                      : t('authorshipEvidence.bottomLineNoMarkers')}
-                    {authorshipEvidence.thin_signals?.length > 0
-                      ? t('authorshipEvidence.bottomLineAction', { action: authorshipEvidence.thin_signals[0].action })
-                      : ''}
-                  </p>
-                  {authorshipEvidence.strengthen_examples?.length > 0 && (
-                    <p className="rewrite-review-copy">{t('authorshipEvidence.bottomLineClose')}</p>
-                  )}
-                </>
+              <span className="authorship-evidence-toggle" aria-hidden="true" />
+            </summary>
+            <div className="authorship-evidence-body">
+              <p className="rewrite-review-copy">{t('authorshipEvidence.scanCopy')}</p>
+              {authorshipEvidence.confidence === 'low' && (
+                <p className="sample-reference-note">{t('authorshipEvidence.lowConfidenceNote')}</p>
               )}
+              {authorshipEvidence.present_markers?.length > 0 && (
+                <div className="rewrite-target-block">
+                  <span>{t('authorshipEvidence.presentTitle')}</span>
+                  <ul className="signal-list">
+                    {authorshipEvidence.present_markers.map((m, i) => <li key={`${m.signal}-${i}`}>{m.label}</li>)}
+                  </ul>
+                </div>
+              )}
+              {authorshipEvidence.thin_signals?.length > 0 && (
+                <div className="rewrite-addition-block">
+                  <span>{t('authorshipEvidence.thinTitle')}</span>
+                  <p className="rewrite-review-copy">{t('authorshipEvidence.thinCopy')}</p>
+                  <ul className="signal-list">
+                    {authorshipEvidence.thin_signals.map((tn, i) => <li key={`${tn.signal}-${i}`}>{tn.action}</li>)}
+                  </ul>
+                </div>
+              )}
+              {authorshipEvidence.strengthen_examples?.length > 0 && (
+                <div className="rewrite-target-block">
+                  <span>{t('authorshipEvidence.strengthenExamplesTitle')}</span>
+                  <p className="rewrite-review-copy">{t('authorshipEvidence.strengthenExamplesCopy')}</p>
+                  {authorshipEvidence.strengthen_examples.slice(0, 5).map((s, i) => (
+                    <p key={i}>{s}</p>
+                  ))}
+                  <div className="authorship-worked-example">
+                    <strong>{t('authorshipEvidence.workedExampleTitle')}</strong>
+                    <p className="rewrite-review-copy">{t('authorshipEvidence.workedExampleIntro')}</p>
+                    <p className="worked-example-before">{t('authorshipEvidence.workedExampleBefore')}</p>
+                    <p className="worked-example-after">{t('authorshipEvidence.workedExampleAfter')}</p>
+                    <p className="rewrite-review-copy">{t('authorshipEvidence.workedExampleNote')}</p>
+                  </div>
+                </div>
+              )}
+              {authorshipEvidence.human_recognized_spans?.length > 0 && (
+                <div className="rewrite-target-block">
+                  <span>{t('authorshipEvidence.recognizedTitle')}</span>
+                  {authorshipEvidence.human_recognized_spans.slice(0, 6).map((s, i) => (
+                    <p key={s.sentence_id || i}>{s.text}</p>
+                  ))}
+                </div>
+              )}
+              <div className="rewrite-addition-block authorship-bottom-line">
+                <span>{t('authorshipEvidence.bottomLineTitle')}</span>
+                {authorshipEvidence.confidence === 'low' ? (
+                  <p className="rewrite-review-copy">{t('authorshipEvidence.bottomLineLowConfidence')}</p>
+                ) : (
+                  <>
+                    <p className="rewrite-review-copy">
+                      {authorshipEvidence.present_markers?.length > 0
+                        ? t('authorshipEvidence.bottomLinePresent', { count: authorshipEvidence.present_markers.length })
+                        : t('authorshipEvidence.bottomLineNoMarkers')}
+                      {authorshipEvidence.thin_signals?.length > 0
+                        ? t('authorshipEvidence.bottomLineAction', { action: authorshipEvidence.thin_signals[0].action })
+                        : ''}
+                    </p>
+                    {authorshipEvidence.strengthen_examples?.length > 0 && (
+                      <p className="rewrite-review-copy">{t('authorshipEvidence.bottomLineClose')}</p>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
-          </section>
+          </details>
         )}
 
         {submittedContent.paragraphs.length > 0 && (
@@ -2563,24 +2592,6 @@ export default function Report() {
               </div>
             )}
           </section>
-        )}
-
-        {transformationScorecard ? (
-          <section className={`report-overview-card${hasRewriteSignalComparison ? ' is-rewrite-comparison' : ''}`} aria-label={t('report.overview')}>
-            {hasRewriteSignalComparison ? (
-              <>
-                {transformationScorecard}
-                <div className="report-baseline-summary" aria-label={t('report.originalScanSummary')}>
-                  <span className="report-baseline-label">{t('report.originalScanBaseline')}</span>
-                  {reportSummaryBar}
-                </div>
-              </>
-            ) : (
-              transformationScorecard
-            )}
-          </section>
-        ) : (
-          reportSummaryBar
         )}
 
         {scoreProfileSection}

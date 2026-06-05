@@ -235,12 +235,38 @@
   margin: 2rem 0;
 }
 
+.authorship-evidence-disclosure {
+  border: 1px solid #d8e1ea;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, .055);
+  overflow: hidden;
+}
+
 .rewrite-review-heading {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: .85rem;
+}
+
+.authorship-evidence-disclosure .rewrite-review-heading {
+  align-items: center;
+  margin: 0;
+  padding: 1rem 1.1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.authorship-evidence-disclosure .rewrite-review-heading::-webkit-details-marker {
+  display: none;
+}
+
+.authorship-evidence-disclosure .rewrite-review-heading:hover,
+.authorship-evidence-disclosure .rewrite-review-heading:focus-visible {
+  background: #f8fafc;
+  outline: none;
 }
 
 .rewrite-review-heading h3 {
@@ -275,6 +301,52 @@
   margin: 0 0 1rem;
   color: #475569;
   line-height: 1.6;
+}
+
+.authorship-evidence-disclosure .rewrite-review-heading .rewrite-review-copy {
+  margin: .35rem 0 0;
+  max-width: 880px;
+  font-size: .9rem;
+}
+
+.authorship-evidence-toggle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #dbe4ea;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.authorship-evidence-toggle::before,
+.authorship-evidence-toggle::after {
+  content: "";
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: #334155;
+  transform: translate(-50%, -50%);
+}
+
+.authorship-evidence-toggle::after {
+  transform: translate(-50%, -50%) rotate(90deg);
+  transition: transform .16s ease, opacity .16s ease;
+}
+
+.authorship-evidence-disclosure[open] .authorship-evidence-toggle::after {
+  opacity: 0;
+  transform: translate(-50%, -50%) rotate(0deg);
+}
+
+.authorship-evidence-body {
+  padding: 0 1.1rem 1.1rem;
+}
+
+.authorship-evidence-body > .rewrite-review-copy:first-child {
+  padding-top: .2rem;
 }
 
 .rewrite-suggestion-grid {
