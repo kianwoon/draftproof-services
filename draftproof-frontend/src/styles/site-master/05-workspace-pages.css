@@ -10,50 +10,181 @@
   margin-top: 0.75rem;
 }
 
+.buy-page .container {
+  max-width: var(--max-w);
+}
+
+.buy-page {
+  overflow-x: clip;
+}
+
+.buy-hero {
+  margin-bottom: 22px;
+  padding: 26px 28px;
+}
+
+.buy-hero > div:not(.app-hero-stat) {
+  min-width: 0;
+}
+
+.buy-hero h1 {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.buy-hero p {
+  max-width: 100%;
+}
+
+.buy-hero .app-hero-stat {
+  min-width: min(100%, 300px);
+}
+
+.buy-hero .app-hero-stat small + small {
+  margin-top: 4px;
+}
+
+.buy-usage-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  max-width: 1040px;
+  margin: 0 auto 22px;
+  overflow: hidden;
+  border: .5px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--line);
+}
+
+.buy-usage-item {
+  min-width: 0;
+  padding: 18px 20px;
+  background: rgba(255, 255, 255, .72);
+}
+
+.buy-usage-item span,
+.buy-usage-item small {
+  display: block;
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+.buy-usage-item span {
+  margin-bottom: 8px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.buy-usage-item strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--navy-950);
+  font-size: 1.05rem;
+}
+
 .pack-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 1.5rem;
-  max-width: 920px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  max-width: 1040px;
   margin: 0 auto;
 }
 
 .pack-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 246px;
+  flex-direction: column;
   background: var(--surface);
   border: .5px solid rgba(13, 27, 42, .07);
-  border-radius: 14px;
-  padding: 28px;
-  text-align: center;
-  transition: box-shadow .2s var(--ease), border-color .2s;
+  border-radius: var(--radius-sm);
+  padding: 22px;
+  transition: transform .2s var(--ease), box-shadow .2s var(--ease), border-color .2s;
 }
 
 .pack-card:hover {
+  transform: translateY(-2px);
   box-shadow: var(--shadow-sm);
-  border-color: var(--blue-700);
+  border-color: rgba(15, 110, 86, .32);
 }
 
-.pack-card h3 {
-  font-size: 1.1rem;
-  margin: 0 0 1rem;
-  color: var(--ink);
+.pack-card-recommended {
+  border-color: rgba(15, 110, 86, .38);
+  box-shadow: 0 14px 34px rgba(13, 27, 42, .10);
+}
+
+.pack-card-topline {
+  display: flex;
+  min-height: 24px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.pack-card-topline .eyebrow {
+  margin: 0;
+}
+
+.pack-card-topline span {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: .5px solid rgba(15, 110, 86, .18);
+  border-radius: 999px;
+  background: var(--surface-mint);
+  color: var(--green-dark);
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .02em;
 }
 
 .pack-tokens {
-  font-size: 2.15rem;
+  font-size: clamp(1.85rem, 3vw, 2.35rem);
   font-weight: 600;
+  line-height: 1;
   color: var(--navy-900);
 }
 
 .pack-price {
-  font-size: 1.35rem;
+  font-size: 1.18rem;
   font-weight: 600;
   color: var(--ink);
-  margin: 0.5rem 0 0.25rem;
+  margin: 0.65rem 0 0;
+}
+
+.pack-note {
+  min-height: 48px;
+  margin: 14px 0 22px;
+  color: var(--muted);
+  font-size: .9rem;
+  line-height: 1.45;
 }
 
 .pack-card .btn {
+  margin-top: auto;
   width: 100%;
   justify-content: center;
+}
+
+.pack-card:not(.pack-card-recommended) .btn-secondary {
+  background: transparent;
+}
+
+.buy-back-link {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: .92rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.buy-back-link:hover {
+  color: var(--navy-950);
 }
 
 .alert {
@@ -81,6 +212,52 @@
   background: #fef2f2;
   color: var(--red);
   border: 1px solid #f5c6c6;
+}
+
+@media (max-width: 980px) {
+  .pack-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .buy-hero {
+    padding: 24px 28px 28px;
+  }
+
+  .buy-hero h1 {
+    max-width: 8.8em;
+    font-size: clamp(2rem, 9.8vw, 2.4rem);
+    line-height: 1.02;
+    text-wrap: balance;
+  }
+
+  .buy-hero p {
+    overflow-wrap: anywhere;
+  }
+
+  .buy-hero .app-hero-stat {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .buy-usage-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .buy-usage-item {
+    padding: 16px 18px;
+  }
+}
+
+@media (max-width: 560px) {
+  .pack-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pack-note {
+    min-height: 0;
+  }
 }
 
 /* ── Token Badge ──────────────────────────── */

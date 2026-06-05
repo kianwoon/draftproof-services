@@ -7,8 +7,14 @@ import ErrorReload from '../components/ErrorReload';
 import CodeTexture from '../components/CodeTexture';
 import { TOKEN_CURRENCY_CODE } from '../pricingConfig';
 
+const RECOMMENDED_PACK_ID = 'standard';
+
+function formatNumber(value, locale) {
+  return new Intl.NumberFormat(locale).format(value);
+}
+
 export default function BuyTokens() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [packs, setPacks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -16,6 +22,12 @@ export default function BuyTokens() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { balance, refreshBalance } = useAuth();
+  const locale = i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en-SG';
+  const balanceTokens = Number(balance || 0);
+  const scanWordEstimate = balanceTokens * 1000;
+  const revisionBlockEstimate = Math.floor(balanceTokens / 5);
+  const usageItems = t('buy.usageItems', { returnObjects: true });
+  const packNotes = t('buy.packNotes', { returnObjects: true });
 
   useEffect(() => {
     const ac = new AbortController();
@@ -46,7 +58,7 @@ export default function BuyTokens() {
   };
 
   return (
-    <main className="app-page">
+    <main className="app-page buy-page">
       <div className="container">
         <section className="app-hero app-hero-dark buy-hero">
           <CodeTexture id="buyHero" />
@@ -59,7 +71,8 @@ export default function BuyTokens() {
             <div className="app-hero-stat">
               <span>{t('buy.currentBalance')}</span>
               <strong>{t('common.token', { count: balance })}</strong>
-              <small>{t('buy.tokenRate')}</small>
+              <small>{t('buy.balanceScanEstimate', { count: formatNumber(scanWordEstimate, locale) })}</small>
+              <small>{t('buy.balanceRewriteEstimate', { count: formatNumber(revisionBlockEstimate, locale) })}</small>
             </div>
           )}
         </section>
@@ -72,25 +85,46 @@ export default function BuyTokens() {
 
         {serverError && <ErrorReload message={serverError} />}
 
-        <div className="pack-grid">
-          {packs.map(pack => (
-            <div key={pack.id} className="pack-card">
-              <p className="eyebrow">{pack.name}</p>
-              <div className="pack-tokens">{t('buy.tokenCount', { count: pack.tokens })}</div>
-              <div className="pack-price">{TOKEN_CURRENCY_CODE} ${pack.price_sgd.toFixed(2)}</div>
-              <button
-                className="btn btn-primary"
-                onClick={() => handleBuy(pack.id)}
-                disabled={loading}
-              >
-                {loading ? t('buy.redirecting') : t('buy.buyNow')}
-              </button>
+        <section className="buy-usage-strip" aria-label={t('buy.usageAria')}>
+          {usageItems.map((item) => (
+            <div className="buy-usage-item" key={item.label}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+              <small>{item.detail}</small>
             </div>
           ))}
+        </section>
+
+        <div className="pack-grid">
+          {packs.map(pack => {
+            const isRecommended = pack.id === RECOMMENDED_PACK_ID;
+            const price = Number(pack.price_sgd || 0);
+            return (
+              <div
+                key={pack.id}
+                className={`pack-card${isRecommended ? ' pack-card-recommended' : ''}`}
+              >
+                <div className="pack-card-topline">
+                  <p className="eyebrow">{pack.name}</p>
+                  {isRecommended && <span>{t('buy.recommended')}</span>}
+                </div>
+                <div className="pack-tokens">{t('buy.tokenCount', { count: pack.tokens })}</div>
+                <div className="pack-price">{TOKEN_CURRENCY_CODE} ${price.toFixed(2)}</div>
+                <p className="pack-note">{packNotes[pack.id] || t('buy.defaultPackNote')}</p>
+                <button
+                  className={`btn ${isRecommended ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => handleBuy(pack.id)}
+                  disabled={loading}
+                >
+                  {loading ? t('buy.redirecting') : t('buy.buyNow')}
+                </button>
+              </div>
+            );
+          })}
         </div>
 
         <div className="page-actions-center">
-          <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>
+          <button className="buy-back-link" onClick={() => navigate('/dashboard')}>
             {t('buy.backDashboard')}
           </button>
         </div>
