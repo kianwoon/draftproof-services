@@ -51,12 +51,6 @@
   margin: 0.5rem 0 0.25rem;
 }
 
-.pack-unit {
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-bottom: 20px;
-}
-
 .pack-card .btn {
   width: 100%;
   justify-content: center;

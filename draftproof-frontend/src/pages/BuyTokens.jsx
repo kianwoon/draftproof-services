@@ -78,7 +78,6 @@ export default function BuyTokens() {
               <p className="eyebrow">{pack.name}</p>
               <div className="pack-tokens">{t('buy.tokenCount', { count: pack.tokens })}</div>
               <div className="pack-price">{TOKEN_CURRENCY_CODE} ${pack.price_sgd.toFixed(2)}</div>
-              <div className="pack-unit">{t('buy.perToken', { amount: (pack.price_sgd / pack.tokens).toFixed(2) })}</div>
               <button
                 className="btn btn-primary"
                 onClick={() => handleBuy(pack.id)}
