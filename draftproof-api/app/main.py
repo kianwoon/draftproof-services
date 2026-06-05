@@ -134,24 +134,52 @@ if os.path.isdir(static_path):
 
     @app.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def serve_spa(path: str):
-        file_path, cache_control = resolve_frontend_file(static_path, path)
-        headers = {"Cache-Control": cache_control} if cache_control else None
-        return FileResponse(file_path, headers=headers)
+        file_path, cache_control, status_code, extra_headers = resolve_frontend_file(static_path, path)
+        headers = dict(extra_headers)
+        if cache_control:
+            headers["Cache-Control"] = cache_control
+        return FileResponse(file_path, status_code=status_code, headers=headers or None)
 
 
-def resolve_frontend_file(root_path: str, path: str) -> tuple[str, str | None]:
+PRIVATE_FRONTEND_PREFIXES = (
+    "dashboard",
+    "scan",
+    "reports",
+    "report/",
+    "rewrite/",
+    "buy",
+    "history",
+    "auth/callback",
+)
+
+
+def resolve_frontend_file(root_path: str, path: str) -> tuple[str, str | None, int, dict[str, str]]:
     normalized = os.path.normpath(path.strip("/"))
     if normalized in {"", "."}:
         normalized = ""
     elif normalized.startswith("..") or os.path.isabs(normalized):
-        normalized = ""
+        return frontend_not_found_file(root_path), "no-cache", 404, {"X-Robots-Tag": "noindex, nofollow"}
 
     file_path = os.path.join(root_path, normalized)
     if normalized and os.path.isfile(file_path):
-        return file_path, None
+        return file_path, None, 200, {}
 
     route_index_path = os.path.join(file_path, "index.html")
     if normalized and os.path.isfile(route_index_path):
-        return route_index_path, "no-cache"
+        return route_index_path, "no-cache", 200, {}
 
-    return os.path.join(root_path, "index.html"), "no-cache"
+    if is_private_frontend_path(normalized):
+        return os.path.join(root_path, "index.html"), "no-cache", 200, {"X-Robots-Tag": "noindex, nofollow"}
+
+    return frontend_not_found_file(root_path), "no-cache", 404, {"X-Robots-Tag": "noindex, nofollow"}
+
+
+def is_private_frontend_path(path: str) -> bool:
+    return any(path == prefix or path.startswith(prefix) for prefix in PRIVATE_FRONTEND_PREFIXES)
+
+
+def frontend_not_found_file(root_path: str) -> str:
+    not_found_path = os.path.join(root_path, "404", "index.html")
+    if os.path.isfile(not_found_path):
+        return not_found_path
+    return os.path.join(root_path, "index.html")

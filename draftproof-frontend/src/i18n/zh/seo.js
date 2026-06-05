@@ -15,6 +15,8 @@ export const seo = {
   "securityDescription": "DraftProof 如何通过加密存储、OAuth 登录、安全付款、访问控制和用户可控删除来保护学术文档。",
   "signInTitle": "登录 | DraftProof",
   "signInDescription": "登录 DraftProof，在提交前审阅论文引用、来源支撑、相似度风险和可修复写作信号。",
+  "notFoundTitle": "页面未找到 | DraftProof",
+  "notFoundDescription": "这个 DraftProof 页面不存在或已移动。",
   "privateTitle": "DraftProof 工作区",
   "privateDescription": "DraftProof 私人工作区，用于论文扫描、报告、改写指导、令牌和购买记录。",
   "imageAlt": "DraftProof 论文依据支撑与完整性审阅仪表盘预览",

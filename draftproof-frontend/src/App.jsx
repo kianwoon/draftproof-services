@@ -20,6 +20,7 @@ import Why from './pages/Why';
 import Privacy from './pages/Privacy';
 import Security from './pages/Security';
 import EssayChecker from './pages/EssayChecker';
+import NotFound from './pages/NotFound';
 import BuyTokens from './pages/BuyTokens';
 import PurchaseHistory from './pages/PurchaseHistory';
 import { getLocaleFromPathname, isLocalizablePublicPath } from './localeRouting';
@@ -125,7 +126,7 @@ export default function App() {
             <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
             <Route path="/report/:id" element={<ProtectedRoute><Report /></ProtectedRoute>} />
             <Route path="/rewrite/:rewriteId" element={<ProtectedRoute><Rewrite /></ProtectedRoute>} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </main>
         {!hideFooter && <Footer />}
