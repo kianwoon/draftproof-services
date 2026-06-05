@@ -1,15 +1,5 @@
 export default function RepairSummary({
   summary,
-  canEdit,
-  canRewrite,
-  rewriteInProgress,
-  rewriteLoading,
-  onEditDraft,
-  onRewrite,
-  pdfUrl,
-  downloadLabel,
-  rewriteLabel,
-  editLabel,
   ariaLabel,
   kicker,
   mainRiskLabel,
@@ -28,28 +18,6 @@ export default function RepairSummary({
         <div className="repair-summary-risk">
           <span>{mainRiskLabel}</span>
           <strong>{summary.mainRisk}</strong>
-        </div>
-        <div className="repair-summary-actions">
-          {canEdit && (
-            <button type="button" className="btn btn-secondary" onClick={onEditDraft}>
-              {editLabel}
-            </button>
-          )}
-          {canRewrite && (
-            <button type="button" className="rewrite-btn" onClick={onRewrite} disabled={rewriteLoading}>
-              {rewriteLabel}
-            </button>
-          )}
-          {pdfUrl && (
-            <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="download-pdf-btn">
-              {downloadLabel}
-            </a>
-          )}
-          {rewriteInProgress && !canRewrite && (
-            <button type="button" className="rewrite-btn" onClick={onRewrite} disabled={rewriteLoading}>
-              {rewriteLabel}
-            </button>
-          )}
         </div>
       </div>
     </section>
