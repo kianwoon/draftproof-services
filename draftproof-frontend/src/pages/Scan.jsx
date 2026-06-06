@@ -333,6 +333,14 @@ export default function Scan() {
               <li><span>3</span>{t('scan.check3')}</li>
               <li><span>4</span>{t('scan.check4')}</li>
             </ul>
+            <div className="scan-side-divider" />
+            <h3>{t('scan.afterTitle')}</h3>
+            <ul>
+              <li><span>1</span>{t('scan.after1')}</li>
+              <li><span>2</span>{t('scan.after2')}</li>
+              <li><span>3</span>{t('scan.after3')}</li>
+              <li><span>4</span>{t('scan.after4')}</li>
+            </ul>
           </aside>
         </section>
 
