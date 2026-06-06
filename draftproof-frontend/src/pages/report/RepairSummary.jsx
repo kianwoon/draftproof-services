@@ -3,6 +3,8 @@ export default function RepairSummary({
   ariaLabel,
   kicker,
   mainRiskLabel,
+  actionLabel,
+  onAction,
 }) {
   if (!summary) return null;
 
@@ -18,6 +20,11 @@ export default function RepairSummary({
         <div className="repair-summary-risk">
           <span>{mainRiskLabel}</span>
           <strong>{summary.mainRisk}</strong>
+          {actionLabel && onAction && (
+            <button type="button" className="repair-summary-action" onClick={onAction}>
+              {actionLabel}
+            </button>
+          )}
         </div>
       </div>
     </section>

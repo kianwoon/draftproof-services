@@ -358,6 +358,32 @@
   line-height: 1.35;
 }
 
+.repair-summary-action {
+  justify-self: start;
+  margin-top: .7rem;
+  min-height: 36px;
+  padding: .55rem .85rem;
+  border: 1px solid var(--green-dark);
+  border-radius: 8px;
+  background: var(--green);
+  color: var(--surface);
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 850;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(58, 168, 118, .22);
+  transition: background .15s var(--ease), border-color .15s var(--ease), box-shadow .15s var(--ease), transform .15s var(--ease);
+}
+
+.repair-summary-action:hover,
+.repair-summary-action:focus-visible {
+  background: var(--green-dark);
+  box-shadow: 0 10px 22px rgba(15, 110, 86, .24);
+  outline: 0;
+  transform: translateY(-1px);
+}
+
 .fix-first-card {
   padding: 1rem;
 }

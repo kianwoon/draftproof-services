@@ -2154,6 +2154,8 @@ export default function Report() {
           ariaLabel={t('report.repairSummary.ariaLabel')}
           kicker={t('report.repairSummary.kicker')}
           mainRiskLabel={t('report.repairSummary.mainRisk')}
+          actionLabel={t('report.submitted.editor.editDraft')}
+          onAction={openSubmittedEditor}
         />
 
         {transformationScorecard ? (
