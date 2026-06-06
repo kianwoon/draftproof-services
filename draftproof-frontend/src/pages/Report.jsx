@@ -202,6 +202,33 @@ function buildTrackedDiff(originalText, currentText) {
   return refineReplacementParts(lcsTokenDiff(originalTokens, currentTokens));
 }
 
+function escapeTrackedHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function trackedDiffToPlainText(parts) {
+  return parts.map((part) => {
+    if (part.type === 'insert') return `{+${part.text}+}`;
+    if (part.type === 'delete') return `[-${part.text}-]`;
+    return part.text;
+  }).join('');
+}
+
+function trackedDiffToHtml(parts) {
+  const body = parts.map((part) => {
+    const text = escapeTrackedHtml(part.text);
+    if (part.type === 'insert') return `<ins>${text}</ins>`;
+    if (part.type === 'delete') return `<del>${text}</del>`;
+    return text;
+  }).join('');
+  return `<div>${body}</div>`;
+}
+
 function findTextRange(haystack, needle) {
   if (!haystack || !needle) return null;
   const start = haystack.indexOf(needle);
@@ -390,6 +417,7 @@ export default function Report() {
   const [submittedRescanError, setSubmittedRescanError] = useState(null);
   const [submittedRescanNeedsTokens, setSubmittedRescanNeedsTokens] = useState(false);
   const [submittedHighlightRanges, setSubmittedHighlightRanges] = useState({});
+  const [submittedTrackedCopyStatus, setSubmittedTrackedCopyStatus] = useState('idle');
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
   const rewriteTimerStartRef = useRef(null);
@@ -401,11 +429,19 @@ export default function Report() {
   const submittedPanelRef = useRef(null);
   const [panelOffset, setPanelOffset] = useState(0);
   const submittedEditorCloseTimerRef = useRef(null);
+  const submittedTrackedCopyTimerRef = useRef(null);
 
   const clearSubmittedEditorCloseTimer = useCallback(() => {
     if (submittedEditorCloseTimerRef.current) {
       window.clearTimeout(submittedEditorCloseTimerRef.current);
       submittedEditorCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const clearSubmittedTrackedCopyTimer = useCallback(() => {
+    if (submittedTrackedCopyTimerRef.current) {
+      window.clearTimeout(submittedTrackedCopyTimerRef.current);
+      submittedTrackedCopyTimerRef.current = null;
     }
   }, []);
 
@@ -595,7 +631,10 @@ export default function Report() {
     setLockedParagraphId(null);
   }, [id, closeSubmittedEditor]);
 
-  useEffect(() => () => clearSubmittedEditorCloseTimer(), [clearSubmittedEditorCloseTimer]);
+  useEffect(() => () => {
+    clearSubmittedEditorCloseTimer();
+    clearSubmittedTrackedCopyTimer();
+  }, [clearSubmittedEditorCloseTimer, clearSubmittedTrackedCopyTimer]);
 
   useEffect(() => {
     if (!report) return undefined;
@@ -1151,6 +1190,40 @@ export default function Report() {
       selectedRewriteHint ? `${t('report.submitted.rewriteHint')}: ${selectedRewriteHint}` : '',
     ].filter(Boolean);
     await navigator.clipboard?.writeText(parts.join('\n'));
+  };
+
+  const copySubmittedTrackedChanges = async () => {
+    if (!submittedTrackedDiff.length) return;
+    const plainText = trackedDiffToPlainText(submittedTrackedDiff);
+    const html = trackedDiffToHtml(submittedTrackedDiff);
+    clearSubmittedTrackedCopyTimer();
+
+    try {
+      if (navigator.clipboard?.write && window.ClipboardItem) {
+        await navigator.clipboard.write([
+          new window.ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([plainText], { type: 'text/plain' }),
+          }),
+        ]);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(plainText);
+      } else {
+        throw new Error('Clipboard API unavailable');
+      }
+
+      setSubmittedTrackedCopyStatus('copied');
+      submittedTrackedCopyTimerRef.current = window.setTimeout(() => {
+        setSubmittedTrackedCopyStatus('idle');
+        submittedTrackedCopyTimerRef.current = null;
+      }, 1800);
+    } catch {
+      setSubmittedTrackedCopyStatus('error');
+      submittedTrackedCopyTimerRef.current = window.setTimeout(() => {
+        setSubmittedTrackedCopyStatus('idle');
+        submittedTrackedCopyTimerRef.current = null;
+      }, 2200);
+    }
   };
 
   const resetSubmittedDraft = async () => {
@@ -2490,6 +2563,8 @@ export default function Report() {
                             setSubmittedHighlightRanges((ranges) => adjustHighlightedRanges(ranges, submittedDraftText, nextText));
                             setSubmittedDraftText(nextText);
                             setSubmittedRescanError(null);
+                            clearSubmittedTrackedCopyTimer();
+                            setSubmittedTrackedCopyStatus('idle');
                           }}
                           onScroll={syncSubmittedHighlightScroll}
                           spellCheck="true"
@@ -2502,8 +2577,22 @@ export default function Report() {
                       )}
                       <div className="submitted-tracked-preview" aria-label={t('report.submitted.editor.trackedPreview')}>
                         <div className="submitted-tracked-head">
-                          <strong>{t('report.submitted.editor.trackedPreview')}</strong>
-                          <span>{t('report.submitted.editor.trackedPreviewBody')}</span>
+                          <div className="submitted-tracked-title">
+                            <strong>{t('report.submitted.editor.trackedPreview')}</strong>
+                            <span>{t('report.submitted.editor.trackedPreviewBody')}</span>
+                          </div>
+                          <button
+                            type="button"
+                            className={`submitted-tracked-copy-button${submittedTrackedCopyStatus === 'copied' ? ' is-copied' : ''}${submittedTrackedCopyStatus === 'error' ? ' has-error' : ''}`}
+                            onClick={copySubmittedTrackedChanges}
+                            disabled={!submittedTrackedDiff.length}
+                          >
+                            {submittedTrackedCopyStatus === 'copied'
+                              ? t('report.submitted.editor.copiedTrackedChanges')
+                              : submittedTrackedCopyStatus === 'error'
+                                ? t('report.submitted.editor.copyTrackedChangesFailed')
+                                : t('report.submitted.editor.copyTrackedChanges')}
+                          </button>
                         </div>
                         <div className="submitted-tracked-body">
                           {submittedTrackedDiff.map((part, index) => (

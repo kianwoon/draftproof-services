@@ -799,16 +799,62 @@
   background: #f8fafc;
 }
 
+.submitted-tracked-title {
+  min-width: 0;
+  display: grid;
+  gap: .12rem;
+}
+
 .submitted-tracked-head strong {
   color: #172033;
   font-size: .85rem;
   font-weight: 850;
 }
 
-.submitted-tracked-head span {
+.submitted-tracked-title span {
   color: #64748b;
   font-size: .76rem;
   font-weight: 760;
+}
+
+.submitted-tracked-copy-button {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: .42rem .72rem;
+  border: 1px solid var(--green-dark);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--green-dark);
+  font: inherit;
+  font-size: .76rem;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .15s var(--ease), border-color .15s var(--ease), box-shadow .15s var(--ease), color .15s var(--ease), transform .15s var(--ease);
+}
+
+.submitted-tracked-copy-button:hover:not(:disabled),
+.submitted-tracked-copy-button:focus-visible {
+  background: var(--surface-mint);
+  box-shadow: 0 0 0 3px var(--blue-50);
+  outline: 0;
+  transform: translateY(-1px);
+}
+
+.submitted-tracked-copy-button.is-copied {
+  background: var(--green);
+  color: var(--surface);
+}
+
+.submitted-tracked-copy-button.has-error {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.submitted-tracked-copy-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
 }
 
 .submitted-tracked-body {
