@@ -395,6 +395,7 @@ export const report = {
       "rescanFailed": "Edited scan failed. Please try again.",
       "rescanTimedOut": "The edited scan is taking longer than expected. Please check Reports in a moment.",
       "translateCnEn": "中文 → English",
+      "translateHint": "Writing in Chinese? Highlight it, then click 中文 → English to draft in English.",
       "translating": "Translating…",
       "undoTranslate": "Undo translate",
       "translateSelectFirst": "Select the text you want to translate first.",

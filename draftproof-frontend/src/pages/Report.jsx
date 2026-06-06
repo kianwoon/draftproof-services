@@ -2613,7 +2613,11 @@ export default function Report() {
                             )}
                           </div>
                           <span className={`submitted-translate-note${submittedTranslateError ? ' is-error' : ''}`}>
-                            {submittedTranslateError || t('report.submitted.editor.translateNote')}
+                            {submittedTranslateError
+                              ? submittedTranslateError
+                              : submittedPreTranslateText != null
+                                ? t('report.submitted.editor.translateNote')
+                                : t('report.submitted.editor.translateHint')}
                           </span>
                           <button
                             type="button"

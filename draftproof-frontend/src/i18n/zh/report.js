@@ -395,6 +395,7 @@ export const report = {
       "rescanFailed": "编辑版扫描失败。请重试。",
       "rescanTimedOut": "编辑版扫描用时较长。请稍后在报告列表中查看。",
       "translateCnEn": "中文 → English",
+      "translateHint": "用中文写作？选中文字后点击「中文 → English」即可生成英文初稿。",
       "translating": "翻译中…",
       "undoTranslate": "撤销翻译",
       "translateSelectFirst": "请先选中要翻译的文字。",
