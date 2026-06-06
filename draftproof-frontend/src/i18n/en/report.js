@@ -299,7 +299,7 @@ export const report = {
     "cancelRewrite": "Cancel rewrite",
     "starting": "Starting rewrite...",
     "resume": "Resume Rewrite",
-    "rewriteAiSections": "Show me a grounded revision draft",
+    "rewriteAiSections": "Auto Rewrite / Correction",
     "tokenEstimate": "{{tokens}} required for this rewrite, based on {{words}} submitted words.",
     "emailPdfNotice": "We will email a PDF copy of the rewritten result to your account email when it is ready.",
     "keepOpenInline": "Keep this report open; results will appear when ready.",
