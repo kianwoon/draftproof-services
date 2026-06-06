@@ -101,6 +101,22 @@ export const landing = {
     "把论断连接到来源、例子、方法或作者自己的解释。",
     "最后才修改句子，让更强的内容仍然清楚可见。"
   ],
+  "studentMisuseEyebrow": "学生常见误解",
+  "studentMisuseTitle": "“写烂英文、用坏语法……就能混过去吗？”",
+  "studentMisuseBody1": "这是错误方向。学校引入 AI 检查，并不是因为流畅英文可疑，而是老师需要知道学生是否真正理解材料、质疑输出、核查证据，并能解释自己的推理。",
+  "studentMisuseBody2": "错别字、坏语法和廉价改词不会制造真实作者身份，只会让作品更弱。更强的提交稿会显示所有权：你的论断、你的来源、你的课程语境、你的例子和你的解释。",
+  "studentMisuseSignalsLabel": "学生真正应该修复什么",
+  "studentMisuseSignals": [
+    "没有真实支撑的薄弱论断",
+    "来源与句子不匹配",
+    "学生自己解释不清的泛化观点",
+    "缺少课程或作业语境",
+    "复制例子但没有消化",
+    "隐藏作者痕迹的措辞"
+  ],
+  "studentMisuseGuardrail1": "不要为了显得像人写的而把草稿变差。",
+  "studentMisuseGuardrail2": "重新扫描前，先让思考过程清楚可见。",
+  "studentMisusePunch": "真正的修复是更清楚的所有权，不是更乱的英文。",
   "sampleEyebrow": "示例报告",
   "reportStrategyCarouselLabel": "示例报告和论文感知修改建议",
   "reportStrategyCarouselTabsLabel": "示例报告和修改建议分区",

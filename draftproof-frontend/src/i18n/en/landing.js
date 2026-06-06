@@ -101,6 +101,22 @@ export const landing = {
     "Tie the claim to a source, example, method, or author-owned explanation.",
     "Only then revise the sentence so the stronger content remains visible."
   ],
+  "studentMisuseEyebrow": "Student misconception",
+  "studentMisuseTitle": "\"Write broken English, bad grammar... can get me away?\"",
+  "studentMisuseBody1": "Wrong move. Schools did not introduce AI checks because good English is suspicious. They introduced them because teachers need to know whether the student actually understood the material, questioned the output, checked the evidence, and can explain the reasoning.",
+  "studentMisuseBody2": "Bad spelling, broken grammar, and cheap word reshuffling do not create real authorship. They make the work weaker. A stronger submission shows ownership: your claim, your source, your course context, your examples, and your explanation.",
+  "studentMisuseSignalsLabel": "What the student should repair instead",
+  "studentMisuseSignals": [
+    "Thin claims with no real support",
+    "Sources that do not match the sentence",
+    "Generic points the student cannot explain",
+    "Missing course or assignment context",
+    "Examples copied without digestion",
+    "Wording that hides the author trail"
+  ],
+  "studentMisuseGuardrail1": "Do not make the draft worse to look human.",
+  "studentMisuseGuardrail2": "Make the thinking visible before you re-scan.",
+  "studentMisusePunch": "The fix is clearer ownership, not messier English.",
   "sampleEyebrow": "Sample Report",
   "reportStrategyCarouselLabel": "Sample report and essay-aware revision guidance",
   "reportStrategyCarouselTabsLabel": "Sample report and revision guidance sections",

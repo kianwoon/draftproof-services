@@ -239,6 +239,23 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
       ),
     },
     {
+      id: 'student-detector-misconception',
+      eyebrow: t('landing.studentMisuseEyebrow'),
+      title: t('landing.studentMisuseTitle'),
+      body: [t('landing.studentMisuseBody1'), t('landing.studentMisuseBody2')],
+      renderPanel: () => (
+        <SignalPanel
+          label={t('landing.studentMisuseSignalsLabel')}
+          signals={t('landing.studentMisuseSignals', { returnObjects: true })}
+          guardrails={[
+            t('landing.studentMisuseGuardrail1'),
+            t('landing.studentMisuseGuardrail2'),
+          ]}
+          punch={t('landing.studentMisusePunch')}
+        />
+      ),
+    },
+    {
       id: 'humanizer-trap',
       eyebrow: t('landing.humanizerEyebrow'),
       title: t('landing.humanizerTitle'),
