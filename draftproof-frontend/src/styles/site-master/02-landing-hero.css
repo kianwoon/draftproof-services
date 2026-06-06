@@ -389,7 +389,7 @@
 
 .trust-bar {
   padding: 18px clamp(24px, 4vw, 48px);
-  background: var(--surface);
+  background: var(--surface-soft);
   border-bottom: .5px solid rgba(13, 27, 42, .06);
 }
 

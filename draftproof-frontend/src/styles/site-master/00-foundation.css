@@ -20,6 +20,10 @@
   --surface: #ffffff;
   --surface-soft: #F4F2EE;
   --surface-mint: #E1F5EE;
+  --footer-bg: #06101A;
+  --footer-text: rgba(255, 255, 255, .62);
+  --footer-muted: rgba(255, 255, 255, .42);
+  --footer-line: rgba(255, 255, 255, .10);
   --gold: #C9973A;
   --green: #3BA876;
   --green-dark: #0F6E56;

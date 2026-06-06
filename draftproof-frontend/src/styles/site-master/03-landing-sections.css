@@ -896,6 +896,10 @@
   gap: 24px;
 }
 
+#product {
+  background: var(--surface);
+}
+
 .why-card {
   min-height: 244px;
   padding: 28px;
@@ -1099,6 +1103,10 @@
   gap: 18px 24px;
 }
 
+.beliefs-section {
+  background: var(--surface-soft);
+}
+
 .belief-row {
   display: flex;
   align-items: center;
@@ -1176,9 +1184,9 @@
 
 .landing-footer {
   padding: 28px clamp(24px, 4vw, 48px);
-  background: var(--surface-soft);
-  color: var(--muted);
-  border-top: .5px solid rgba(13, 27, 42, .08);
+  background: var(--footer-bg);
+  color: var(--footer-text);
+  border-top: .5px solid var(--footer-line);
 }
 
 .landing-footer-inner {
@@ -1191,7 +1199,7 @@
 .footer-wordmark {
   display: inline-flex;
   margin-bottom: 10px;
-  color: var(--ink);
+  color: var(--surface);
   font-size: 14px;
   font-weight: 500;
 }
@@ -1199,7 +1207,7 @@
 .landing-footer p {
   max-width: 620px;
   margin: 0;
-  color: var(--muted);
+  color: var(--footer-muted);
   font-size: 12px;
 }
 
@@ -1214,12 +1222,12 @@
   gap: 28px;
   flex-wrap: wrap;
   justify-content: flex-end;
-  color: var(--muted);
+  color: var(--footer-text);
   font-size: 13px;
 }
 
 .landing-footer a:hover {
-  color: var(--ink);
+  color: var(--green);
 }
 
 @media (max-width: 900px) {
