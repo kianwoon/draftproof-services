@@ -14,6 +14,7 @@ import {
 } from '../utils/browserNotifications';
 import RewriteNoticeDialog from './report/RewriteNoticeDialog';
 import RepairSummary from './report/RepairSummary';
+import EditPencilIcon from './report/EditPencilIcon';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import useTextareaCaretOverlay from './report/useTextareaCaretOverlay';
 import {
@@ -2302,6 +2303,7 @@ export default function Report() {
                       setSubmittedHighlightRanges((current) => buildSubmittedHighlightRanges(current));
                     }}
                   >
+                    <EditPencilIcon />
                     {t('report.submitted.editor.editDraft')}
                   </button>
                 )}

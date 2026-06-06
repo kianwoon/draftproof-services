@@ -1,3 +1,5 @@
+import EditPencilIcon from './EditPencilIcon';
+
 export default function RepairSummary({
   summary,
   ariaLabel,
@@ -24,6 +26,7 @@ export default function RepairSummary({
           {actionHint && <p className="repair-summary-action-hint">{actionHint}</p>}
           {actionLabel && onAction && (
             <button type="button" className="repair-summary-action" onClick={onAction}>
+              <EditPencilIcon />
               {actionLabel}
             </button>
           )}

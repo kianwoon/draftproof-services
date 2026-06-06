@@ -441,6 +441,8 @@
 }
 
 .submitted-edit-button {
+  position: relative;
+  overflow: hidden;
   min-height: 48px;
   padding: 12px 20px;
   border: 1px solid var(--green-dark);
@@ -452,6 +454,49 @@
   line-height: 1.15;
   box-shadow: 0 14px 30px rgba(15, 110, 86, .3), 0 0 0 3px var(--blue-50);
   white-space: nowrap;
+}
+
+/* Shared "manual rewrite" CTA polish: pencil icon + a slow light sheen
+   that sweeps across to draw the eye. Applies to both CTA instances
+   (top risk card + submitted-content header) so they stay consistent. */
+.cta-edit-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.repair-summary-action::after,
+.submitted-edit-button::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 45%;
+  height: 100%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .5), transparent);
+  transform: skewX(-18deg);
+  pointer-events: none;
+  animation: ctaSheen 4.4s var(--ease) infinite;
+}
+
+.repair-summary-action:hover::after,
+.repair-summary-action:focus-visible::after,
+.submitted-edit-button:hover::after,
+.submitted-edit-button:focus-visible::after {
+  animation-play-state: paused;
+}
+
+@keyframes ctaSheen {
+  0% { left: -60%; }
+  60%, 100% { left: 130%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .repair-summary-action::after,
+  .submitted-edit-button::after {
+    display: none;
+    animation: none;
+  }
 }
 
 .submitted-edit-button:hover,

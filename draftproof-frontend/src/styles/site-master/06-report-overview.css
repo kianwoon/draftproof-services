@@ -367,6 +367,12 @@
 }
 
 .repair-summary-action {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
   justify-self: stretch;
   margin-top: .8rem;
   min-height: 44px;
