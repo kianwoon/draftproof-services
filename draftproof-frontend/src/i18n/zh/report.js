@@ -373,7 +373,7 @@ export const report = {
     "mapReady": "内容地图已就绪",
     "mapReadyBody": "提交文本可供审阅。新的扫描会为每个受影响段落提供更丰富的信号高亮。",
     "editor": {
-      "editDraft": "手动改写/修正",
+      "editDraft": "手动改写 / 修正",
       "kicker": "修订工作区",
       "title": "编辑提交内容",
       "priorScanNotice": "这里显示的信号来自上一次扫描。请重新扫描编辑后的草稿以刷新发现。",

@@ -373,7 +373,7 @@ export const report = {
     "mapReady": "Content map ready",
     "mapReadyBody": "The submitted text is available for review. New scans include richer signal highlights for each affected paragraph.",
     "editor": {
-      "editDraft": "Manual Rewrite/Correction",
+      "editDraft": "Manual Rewrite / Correction",
       "kicker": "Revision workspace",
       "title": "Edit submitted content",
       "priorScanNotice": "Signals shown here came from the previous scan. Re-scan the edited draft to refresh findings.",
