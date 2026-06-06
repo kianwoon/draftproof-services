@@ -441,8 +441,26 @@
 }
 
 .submitted-edit-button {
-  min-height: 38px;
+  min-height: 44px;
+  padding: 11px 18px;
+  border: 1px solid var(--green-dark);
+  background: var(--green);
+  color: #fff;
+  font-weight: 850;
+  box-shadow: 0 12px 26px rgba(15, 110, 86, .22);
   white-space: nowrap;
+}
+
+.submitted-edit-button:hover,
+.submitted-edit-button:focus-visible {
+  border-color: var(--green-dark);
+  background: var(--green-dark);
+  color: #fff;
+  outline: none;
+  box-shadow:
+    0 14px 30px rgba(15, 110, 86, .26),
+    0 0 0 3px rgba(58, 168, 118, .18);
+  transform: translateY(-1px);
 }
 
 .submitted-editor-backdrop {
