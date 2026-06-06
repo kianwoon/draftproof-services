@@ -497,7 +497,7 @@ export default function Report() {
     setRewriteNotice({
       title: t('report.rewrite.noRewriteableTitle'),
       message: isReviewOnlyRewriteMessage(message) && String(message).includes('token')
-        ? message
+        ? String(message).replace(/\bTokens\b/g, 'Credits').replace(/\btokens\b/g, 'credits').replace(/\btoken\b/g, 'credit')
         : t('report.rewrite.noRewriteableMessage'),
     });
   }, [t]);

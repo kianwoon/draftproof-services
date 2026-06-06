@@ -4,7 +4,7 @@ export const signin = {
   "body": "DraftProof keeps feedback focused on evidence, citations, source fit, and fixable writing signals.",
   "proof1": "Not an AI verdict",
   "proof2": "PDF reports",
-  "proof3": "1 token per 1,000 words",
+  "proof3": "1 credit per 1,000 words",
   "secureAccess": "Secure access",
   "continue": "Continue to DraftProof",
   "providerHelp": "Use your Google or Microsoft account to continue.",

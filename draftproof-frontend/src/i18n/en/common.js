@@ -1,8 +1,8 @@
 export const common = {
   "loading": "Loading...",
   "checking": "Checking",
-  "token_one": "{{count}} token",
-  "token_other": "{{count}} tokens",
+  "token_one": "{{count}} credit",
+  "token_other": "{{count}} credits",
   "pageOf": "Page {{page}} of {{totalPages}}",
   "previous": "Previous",
   "next": "Next",

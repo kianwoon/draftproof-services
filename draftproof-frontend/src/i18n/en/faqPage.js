@@ -1,7 +1,7 @@
 export const faqPage = {
   "eyebrow": "FAQ",
   "title": "Common questions, clear answers.",
-  "lead": "Learn how DraftProof helps before submission, what the report means, how guided rewrite works, and what to expect from tokens, privacy, and PDF delivery.",
+  "lead": "Learn how DraftProof helps before submission, what the report means, how guided rewrite works, and what to expect from credits, privacy, and PDF delivery.",
   "heroStatLabel": "Best use",
   "heroStatValue": "Before submission",
   "heroStatDetail": "Review, fix, and keep a record",
@@ -77,19 +77,19 @@ export const faqPage = {
     {
       "id": "tokens-and-billing",
       "kicker": "Billing",
-      "title": "Tokens and billing",
+      "title": "Credits and billing",
       "items": [
         {
-          "q": "How are scan tokens charged?",
-          "a": "Scans with 500 words or fewer are free. After that, 1 token covers each started 1,000-word block. For example, a 2,500-word document costs 3 tokens."
+          "q": "How are scan credits charged?",
+          "a": "Scans with 500 words or fewer are free. After that, 1 credit covers each started 1,000-word block. For example, a 2,500-word document costs 3 credits."
         },
         {
-          "q": "When are rewrite tokens deducted?",
-          "a": "Rewrite tokens are deducted only when DraftProof delivers rewritten content. If no useful revision candidate is found, the original text is preserved, the rewrite fails, or no rewritten content is produced, reserved tokens are released and not deducted."
+          "q": "When are rewrite credits deducted?",
+          "a": "Rewrite credits are deducted only when DraftProof delivers rewritten content. If no useful revision candidate is found, the original text is preserved, the rewrite fails, or no rewritten content is produced, reserved credits are released and not deducted."
         },
         {
-          "q": "Do tokens expire?",
-          "a": "No. Tokens stay in your account until you use them."
+          "q": "Do credits expire?",
+          "a": "No. Credits stay in your account until you use them."
         }
       ]
     },

@@ -27,7 +27,7 @@ export const landing = {
   "researchers": "大学学生",
   "educators": "研究生",
   "policyWriters": "非母语英语写作者",
-  "tokenRate": "每 1,000 词 1 个令牌",
+  "tokenRate": "每 1,000 词 1 个积分",
   "pdfReport": "PDF 报告",
   "citationGrounding": "引用 + 相似度审阅",
   "contentAwareRewrite": "依据感知修改建议",
@@ -166,7 +166,7 @@ export const landing = {
   "ctaTitle": "DraftProof 帮助你在提交前补强论文依据。",
   "ctaBody": "在论文、报告或文章提交前，检查作品是否原创、引用充分、表达清晰，并由来源或作者自己的推理负责支撑。",
   "ctaButton": "审阅我的论文",
-  "ctaSmall": "每 1,000 词 1 个令牌 · 包含 PDF 报告 · 不承诺绕过检测",
+  "ctaSmall": "每 1,000 词 1 个积分 · 包含 PDF 报告 · 不承诺绕过检测",
   "reportPreviewLabel": "DraftProof 示例论文审阅报告预览",
   "reportPreviewTabsLabel": "示例报告部分",
   "reportPreviewTabs": [

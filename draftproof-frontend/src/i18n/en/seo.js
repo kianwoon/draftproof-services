@@ -5,10 +5,10 @@ export const seo = {
   "whyDescription": "See why human-written essays can trigger AI-like signals and how DraftProof helps students review evidence, sources, and phrasing before submission.",
   "essayCheckerTitle": "Essay Checker for Citations and AI-Like Writing | DraftProof",
   "essayCheckerDescription": "Use DraftProof to check citation gaps, source fit, weak claim grounding, similarity risk, and AI-like writing signals before submission.",
-  "pricingTitle": "DraftProof Pricing | Essay Review Tokens",
-  "pricingDescription": "Review DraftProof token pricing for pre-submission essay checks covering citations, source grounding, similarity risk, and AI-like writing signals.",
+  "pricingTitle": "DraftProof Pricing | Essay Review Credits",
+  "pricingDescription": "Review DraftProof credit pricing for pre-submission essay checks covering citations, source grounding, similarity risk, and AI-like writing signals.",
   "faqTitle": "DraftProof FAQ | Essay Review, Rewrite, and Reports",
-  "faqDescription": "Answers about DraftProof essay reviews, reports, guided rewrite, privacy, token pricing, and pre-submission checks for students.",
+  "faqDescription": "Answers about DraftProof essay reviews, reports, guided rewrite, privacy, credit pricing, and pre-submission checks for students.",
   "privacyTitle": "Privacy Policy | DraftProof",
   "privacyDescription": "How DraftProof handles account data, uploaded documents, generated reports, payments, cookies, storage, and deletion requests.",
   "securityTitle": "Security | DraftProof",
@@ -18,7 +18,7 @@ export const seo = {
   "notFoundTitle": "Page Not Found | DraftProof",
   "notFoundDescription": "This DraftProof page does not exist or has moved.",
   "privateTitle": "DraftProof Workspace",
-  "privateDescription": "Private DraftProof workspace for essay scans, reports, rewrite guidance, tokens, and purchase history.",
+  "privateDescription": "Private DraftProof workspace for essay scans, reports, rewrite guidance, credits, and purchase history.",
   "imageAlt": "DraftProof essay grounding and integrity review dashboard preview",
   "offerDescription": "Pre-submission essay review per 1,000 words"
 };

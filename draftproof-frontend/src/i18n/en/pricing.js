@@ -1,14 +1,14 @@
 export const pricing = {
   "eyebrow": "Pricing",
   "title": "Pay for the review you need.",
-  "lead": "No subscriptions. Buy tokens once and use them for grounded review or focused revision.",
+  "lead": "No subscriptions. Buy credits once and use them for grounded review or focused revision.",
   "baseRate": "Base rate",
   "perWords": "per 1,000 words",
   "scanTitle": "Scan",
   "scanUnit": "/ 1,000 words",
   "scanFeatures": [
-    "1 token per 1,000 words",
-    "1,000 words included per token (larger documents use more tokens)",
+    "1 credit per 1,000 words",
+    "1,000 words included per credit (larger documents use more credits)",
     "Citation gap analysis",
     "Source integrity review",
     "Review-only phrasing and authorship signals",
@@ -17,7 +17,7 @@ export const pricing = {
   "rewriteTitle": "Guided revision",
   "rewriteUnit": "/ 1,000 words",
   "rewriteFeatures": [
-    "5 tokens per guided revision",
+    "5 credits per guided revision",
     "Up to 1,000 words per revision",
     "Showcase how to ground weak claims",
     "Replace vague phrasing with evidence-aware language",
@@ -47,7 +47,7 @@ export const pricing = {
     },
     {
       "q": "What counts as a scan?",
-      "a": "Scans with 500 words or fewer are free. After that, 1 token covers each started 1,000-word block. For example, a 2,500-word document costs 3 tokens."
+      "a": "Scans with 500 words or fewer are free. After that, 1 credit covers each started 1,000-word block. For example, a 2,500-word document costs 3 credits."
     },
     {
       "q": "Will the rewrite make my work safe to submit?",
@@ -58,12 +58,12 @@ export const pricing = {
       "a": "Yes. A completed scan is required before guided revision. DraftProof uses the scan report to identify which sections are safe and useful to revise."
     },
     {
-      "q": "When are rewrite tokens deducted?",
-      "a": "Rewrite tokens are deducted only when DraftProof delivers rewritten content. If no useful revision candidate is found, the original text is preserved, the rewrite fails, or no rewritten content is produced, reserved tokens are released and not deducted."
+      "q": "When are rewrite credits deducted?",
+      "a": "Rewrite credits are deducted only when DraftProof delivers rewritten content. If no useful revision candidate is found, the original text is preserved, the rewrite fails, or no rewritten content is produced, reserved credits are released and not deducted."
     },
     {
-      "q": "Do tokens expire?",
-      "a": "No. Your tokens stay in your account until you use them."
+      "q": "Do credits expire?",
+      "a": "No. Your credits stay in your account until you use them."
     },
     {
       "q": "How do I submit my text?",

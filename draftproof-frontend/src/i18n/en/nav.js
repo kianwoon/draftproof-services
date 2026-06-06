@@ -8,7 +8,7 @@ export const nav = {
   "scanning": "Scanning",
   "reports": "Reports",
   "viewReports": "View Reports/Guided Rewrite",
-  "buyTokens": "Buy Tokens",
+  "buyTokens": "Buy Credits",
   "history": "History",
   "why": "Why",
   "essayChecker": "Essay checker",

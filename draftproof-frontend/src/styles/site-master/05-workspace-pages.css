@@ -1,4 +1,4 @@
-/* ── Buy Tokens ─────────────────────────────── */
+/* ── Buy Credits ─────────────────────────────── */
 
 .balance-display {
   display: inline-block;
@@ -261,7 +261,7 @@
   }
 }
 
-/* ── Token Badge ──────────────────────────── */
+/* ── Credit Badge ──────────────────────────── */
 
 .token-badge {
   display: inline-flex;

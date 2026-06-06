@@ -27,7 +27,7 @@ export const landing = {
   "researchers": "University students",
   "educators": "Graduate students",
   "policyWriters": "ESL writers",
-  "tokenRate": "1 token per 1,000 words",
+  "tokenRate": "1 credit per 1,000 words",
   "pdfReport": "PDF report",
   "citationGrounding": "Citation + similarity review",
   "contentAwareRewrite": "Grounding-aware revision guidance",
@@ -166,7 +166,7 @@ export const landing = {
   "ctaTitle": "DraftProof helps you ground the essay before submission.",
   "ctaBody": "Before a paper, report, or essay is submitted, check that the work is original, properly cited, clearly written, and supported by sources or author-owned reasoning.",
   "ctaButton": "Review my essay",
-  "ctaSmall": "1 token per 1,000 words · PDF report included · No bypass claims",
+  "ctaSmall": "1 credit per 1,000 words · PDF report included · No bypass claims",
   "reportPreviewLabel": "DraftProof sample essay review report preview",
   "reportPreviewTabsLabel": "Sample report sections",
   "reportPreviewTabs": [

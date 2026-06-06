@@ -4,7 +4,7 @@ export const signin = {
   "body": "DraftProof 让反馈聚焦于证据、引用、来源适配和可修复的写作信号。",
   "proof1": "不是 AI 判定",
   "proof2": "PDF 报告",
-  "proof3": "每 1,000 词 1 个令牌",
+  "proof3": "每 1,000 词 1 个积分",
   "secureAccess": "安全访问",
   "continue": "继续使用 DraftProof",
   "providerHelp": "使用 Google 或 Microsoft 账户继续。",

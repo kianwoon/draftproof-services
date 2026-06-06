@@ -24,7 +24,7 @@ export const legal = {
           },
           {
             "title": "Payment Information",
-            "body": "We use Stripe to process payments. We never see or store your credit card number, only a tokenised confirmation and a record of your token purchases."
+            "body": "We use Stripe to process payments. We never see or store your credit card number, only a tokenised confirmation and a record of your credit purchases."
           }
         ]
       },
@@ -34,7 +34,7 @@ export const legal = {
           "Document scanning: uploaded files are analysed to produce integrity reports.",
           "Report delivery: scan results are saved so you can view and download them.",
           "Account management: email and name from OAuth are used to identify your account.",
-          "Token billing: Stripe processes one-time token purchases; we track your balance."
+          "Credit billing: Stripe processes one-time credit purchases; we track your balance."
         ]
       },
       {
@@ -129,7 +129,7 @@ export const legal = {
         "bullets": [
           "Stripe handles all card data: credit card numbers never touch our servers. Stripe is PCI DSS Level 1 certified.",
           "Webhook signature verification: payment confirmations from Stripe are cryptographically verified before processing.",
-          "Token-based billing: we track a prepaid token balance; no recurring charges or stored payment methods on our side."
+          "Credit-based billing: we track a prepaid credit balance; no recurring charges or stored payment methods on our side."
         ]
       },
       {

@@ -5,10 +5,10 @@ export const seo = {
   "whyDescription": "了解人类亲自写的论文为什么也可能触发类似 AI 的信号，以及 DraftProof 如何帮助学生在提交前审阅证据、来源和表达。",
   "essayCheckerTitle": "论文引用、来源与 AI 风格写作检查 | DraftProof",
   "essayCheckerDescription": "用 DraftProof 在提交前检查引用缺口、来源适配、论断依据薄弱、相似度风险和类似 AI 的写作信号。",
-  "pricingTitle": "DraftProof 价格 | 论文审阅令牌",
-  "pricingDescription": "查看 DraftProof 令牌价格，用于提交前论文检查，包括引用、来源支撑、相似度风险和类似 AI 的写作信号。",
+  "pricingTitle": "DraftProof 价格 | 论文审阅积分",
+  "pricingDescription": "查看 DraftProof 积分价格，用于提交前论文检查，包括引用、来源支撑、相似度风险和类似 AI 的写作信号。",
   "faqTitle": "DraftProof 常见问题 | 论文审阅、改写和报告",
-  "faqDescription": "了解 DraftProof 论文审阅、报告、引导式改写、隐私、令牌价格和学生提交前检查的常见问题。",
+  "faqDescription": "了解 DraftProof 论文审阅、报告、引导式改写、隐私、积分价格和学生提交前检查的常见问题。",
   "privacyTitle": "隐私政策 | DraftProof",
   "privacyDescription": "DraftProof 如何处理账户数据、上传文档、生成报告、付款、Cookie、存储和删除请求。",
   "securityTitle": "安全 | DraftProof",
@@ -18,7 +18,7 @@ export const seo = {
   "notFoundTitle": "页面未找到 | DraftProof",
   "notFoundDescription": "这个 DraftProof 页面不存在或已移动。",
   "privateTitle": "DraftProof 工作区",
-  "privateDescription": "DraftProof 私人工作区，用于论文扫描、报告、改写指导、令牌和购买记录。",
+  "privateDescription": "DraftProof 私人工作区，用于论文扫描、报告、改写指导、积分和购买记录。",
   "imageAlt": "DraftProof 论文依据支撑与完整性审阅仪表盘预览",
   "offerDescription": "每 1,000 词的提交前论文审阅"
 };
