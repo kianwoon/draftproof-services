@@ -218,6 +218,7 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
       id: 'content-anchors',
       eyebrow: t('landing.anchorEyebrow'),
       title: t('landing.anchorTitle'),
+      imageSrc: '/landing/content-anchors.svg',
       body: [t('landing.anchorBody1'), t('landing.anchorBody2')],
       renderPanel: () => (
         <div className="anchor-panel" aria-label={t('landing.anchorCardsLabel')}>
@@ -242,6 +243,7 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
       id: 'student-detector-misconception',
       eyebrow: t('landing.studentMisuseEyebrow'),
       title: t('landing.studentMisuseTitle'),
+      imageSrc: '/landing/student-misconception.svg',
       body: [t('landing.studentMisuseBody1'), t('landing.studentMisuseBody2')],
       renderPanel: () => (
         <SignalPanel
@@ -259,6 +261,7 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
       id: 'humanizer-trap',
       eyebrow: t('landing.humanizerEyebrow'),
       title: t('landing.humanizerTitle'),
+      imageSrc: '/landing/humanizer-trap.svg',
       body: [t('landing.humanizerBody1'), t('landing.humanizerBody2')],
       sourceLabel: t('landing.humanizerSourceLabel'),
       sourceUrl: t('landing.humanizerSourceUrl'),
@@ -278,6 +281,7 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
       id: 'ai-like-signals',
       eyebrow: t('landing.humanWrittenEyebrow'),
       title: t('landing.humanWrittenTitle'),
+      imageSrc: '/landing/signal-review.svg',
       body: [t('landing.humanWrittenBody1'), t('landing.humanWrittenBody2')],
       renderPanel: () => (
         <SignalPanel
@@ -312,6 +316,15 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
           >
             <div className="content-carousel-copy">
               <p className="eyebrow">{slide.eyebrow}</p>
+              {slide.imageSrc && (
+                <img
+                  className="content-carousel-visual"
+                  src={slide.imageSrc}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                />
+              )}
               <h2>{slide.title}</h2>
               {slide.body.map((paragraph) => (
                 <p key={paragraph}>{paragraph}</p>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" role="img">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#fff7ed"/>
+      <stop offset=".48" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#e1f5ee"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#0d1b2a" flood-opacity=".16"/>
+    </filter>
+  </defs>
+  <rect width="800" height="500" rx="34" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <rect x="86" y="92" width="286" height="316" rx="24" fill="#fff"/>
+    <path d="M132 150h184M132 194h130M132 238h168M132 282h110" stroke="#0d1b2a" stroke-width="14" stroke-linecap="round" opacity=".14"/>
+    <path d="M130 342c52-34 112 34 164 0" fill="none" stroke="#e24b4a" stroke-width="12" stroke-linecap="round"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="428" y="92" width="286" height="316" rx="24" fill="#fff"/>
+    <path d="M474 150h154M474 194h192M474 238h136M474 282h176" stroke="#3ba876" stroke-width="14" stroke-linecap="round" opacity=".42"/>
+    <path d="M474 342h120" stroke="#0d1b2a" stroke-width="14" stroke-linecap="round" opacity=".14"/>
+  </g>
+  <path d="M346 250h110" stroke="#0f6e56" stroke-width="8" stroke-linecap="round"/>
+  <path d="M430 220l34 30-34 30" fill="none" stroke="#0f6e56" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="642" cy="144" r="24" fill="#3ba876"/>
+  <path d="M630 144l9 9 18-21" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
