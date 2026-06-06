@@ -126,7 +126,7 @@
 }
 
 .hero-code-field {
-  opacity: 1;
+  opacity: .5;
 }
 
 .footer-code-texture {
@@ -179,6 +179,18 @@
 .checks-section .code-texture-layer .code-row-b text,
 .landing-cta .code-texture-layer .code-row-b text {
   fill: rgba(58, 168, 118, .58);
+}
+
+/* Hero-only: dim the code rain further so the headline owns the space.
+   Scoped to .hero-code-field (higher specificity than the shared
+   .landing-hero rules above) so checks/CTA sections are untouched. */
+.landing-hero .hero-code-field .code-texture-layer text {
+  fill: rgba(255, 255, 255, .2);
+  text-shadow: none;
+}
+
+.landing-hero .hero-code-field .code-texture-layer .code-row-b text {
+  fill: rgba(58, 168, 118, .34);
 }
 
 .code-row {
