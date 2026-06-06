@@ -70,12 +70,17 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 TOKEN_CURRENCY_CODE = os.getenv("TOKEN_CURRENCY_CODE", "SGD").strip().upper() or "SGD"
 TOKEN_STRIPE_CURRENCY = TOKEN_CURRENCY_CODE.lower()
 TOKEN_PRICE_SGD = float(os.getenv("TOKEN_PRICE_SGD", "0.90"))
+TOKEN_PRO_PACK_PRICE_SGD = float(os.getenv("TOKEN_PRO_PACK_PRICE_SGD", "20.00"))
 TOKEN_PACKS = {
-    "single": {"tokens": 1, "name": "Single Token"},
-    "starter": {"tokens": 5, "name": "Starter Pack"},
-    "standard": {"tokens": 10, "name": "Standard Pack"},
-    "pro": {"tokens": 25, "name": "Pro Pack"},
+    "single": {"tokens": 1, "name": "Single Token", "price_sgd": round(1 * TOKEN_PRICE_SGD, 2)},
+    "starter": {"tokens": 5, "name": "Starter Pack", "price_sgd": round(5 * TOKEN_PRICE_SGD, 2)},
+    "standard": {"tokens": 10, "name": "Standard Pack", "price_sgd": round(10 * TOKEN_PRICE_SGD, 2)},
+    "pro": {"tokens": 25, "name": "Pro Pack", "price_sgd": round(TOKEN_PRO_PACK_PRICE_SGD, 2)},
 }
+
+
+def get_token_pack_price_sgd(pack: dict) -> float:
+    return round(float(pack["price_sgd"]), 2)
 
 # Frontend URL for redirects
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")

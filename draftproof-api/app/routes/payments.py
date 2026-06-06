@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.config import (
     STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
-    TOKEN_CURRENCY_CODE, TOKEN_STRIPE_CURRENCY, TOKEN_PRICE_SGD, TOKEN_PACKS,
+    TOKEN_CURRENCY_CODE, TOKEN_STRIPE_CURRENCY, TOKEN_PACKS, get_token_pack_price_sgd,
     FRONTEND_URL, SECRET_KEY, JWT_ALGORITHM,
 )
 from app.models.db import get_db, User, CreditAccount, CreditLedger, Payment
@@ -45,7 +45,7 @@ async def get_packs():
             "id": key,
             "name": pack["name"],
             "tokens": pack["tokens"],
-            "price_sgd": round(pack["tokens"] * TOKEN_PRICE_SGD, 2),
+            "price_sgd": get_token_pack_price_sgd(pack),
         }
         for key, pack in TOKEN_PACKS.items()
     ]
@@ -60,7 +60,7 @@ async def create_checkout(body: CheckoutRequest, request: Request, db: AsyncSess
         raise HTTPException(status_code=400, detail="Invalid pack")
 
     pack = TOKEN_PACKS[pack_id]
-    price_sgd = round(pack["tokens"] * TOKEN_PRICE_SGD, 2)
+    price_sgd = get_token_pack_price_sgd(pack)
     price_cents = int(price_sgd * 100)
     log.info("Checkout: pack=%s, price=%d cents, currency=%s", pack_id, price_cents, TOKEN_STRIPE_CURRENCY)
 

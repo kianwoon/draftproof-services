@@ -63,12 +63,18 @@ class TestGetPacks:
     def test_pack_has_sgd_price(self, client):
         resp = client.get("/api/payments/packs")
         data = resp.json()
+        expected_prices = {
+            "single": 0.90,
+            "starter": 4.50,
+            "standard": 9.00,
+            "pro": 20.00,
+        }
 
         for pack in data:
             assert "price_sgd" in pack
             assert "tokens" in pack
             assert "name" in pack
-            assert pack["price_sgd"] == round(pack["tokens"] * 0.90, 2)
+            assert pack["price_sgd"] == expected_prices[pack["id"]]
 
     def test_single_pack_price(self, client):
         resp = client.get("/api/payments/packs")
@@ -80,7 +86,7 @@ class TestGetPacks:
         resp = client.get("/api/payments/packs")
         data = resp.json()
         pro = next(p for p in data if p["id"] == "pro")
-        assert pro["price_sgd"] == 22.50
+        assert pro["price_sgd"] == 20.00
 
 
 # ── POST /checkout ───────────────────────────────────────────────
@@ -141,7 +147,7 @@ class TestCheckout:
 
         assert resp.status_code == 200
         line_item = mock_create.call_args[1]["line_items"][0]
-        assert line_item["price_data"]["unit_amount"] == 2250  # $22.50 = 2250 cents
+        assert line_item["price_data"]["unit_amount"] == 2000  # SGD $20.00 = 2000 cents
 
     @patch("app.routes.payments.stripe.checkout.Session.create")
     def test_metadata_contains_user_and_pack(self, mock_create, client, auth_cookie):
@@ -227,7 +233,7 @@ class TestCheckout:
             "single": 90,
             "starter": 450,
             "standard": 900,
-            "pro": 2250,
+            "pro": 2000,
         }
 
         for pack_id, expected_cents in expected.items():
@@ -256,10 +262,10 @@ class TestPriceCalculation:
 
     def test_no_floating_point_rounding_errors(self):
         """Ensure price_cents is always an exact integer."""
-        from app.config import TOKEN_PRICE_SGD, TOKEN_PACKS
+        from app.config import TOKEN_PACKS, get_token_pack_price_sgd
 
         for pack_id, pack in TOKEN_PACKS.items():
-            price_sgd = round(pack["tokens"] * TOKEN_PRICE_SGD, 2)
+            price_sgd = get_token_pack_price_sgd(pack)
             price_cents = int(price_sgd * 100)
             assert price_cents == price_sgd * 100, (
                 f"{pack_id}: floating point mismatch — {price_sgd} * 100 != {price_cents}"
