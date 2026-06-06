@@ -37,7 +37,7 @@
 }
 
 .site-header-dark .nav-links > a:hover {
-  color: #fff;
+  color: var(--surface);
 }
 
 .site-header-dark .nav-dropdown-menu {
