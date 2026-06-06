@@ -702,6 +702,13 @@
   overflow: hidden;
   border-bottom: 1px solid #e2e8f0;
   background: #fff;
+  transition: background .15s var(--ease), box-shadow .15s var(--ease), border-color .15s var(--ease);
+}
+
+.submitted-editor-textarea-wrap:focus-within {
+  border-color: var(--green);
+  background: var(--blue-50);
+  box-shadow: inset 0 0 0 2px var(--blue-200), 0 0 0 3px var(--blue-50);
 }
 
 .submitted-editor-highlight-layer,
@@ -739,7 +746,12 @@
   resize: none;
   background: transparent;
   color: #172033;
-  caret-color: #172033;
+  caret-color: var(--green);
+}
+
+.submitted-editor-textarea::selection {
+  background: var(--blue-200);
+  color: var(--ink);
 }
 
 .submitted-editor-highlight-selected {
@@ -759,7 +771,7 @@
 }
 
 .submitted-editor-textarea:focus {
-  box-shadow: inset 0 0 0 2px rgba(45, 105, 90, .2);
+  box-shadow: inset 0 0 0 2px var(--blue-200);
 }
 
 .submitted-rescan-status {
