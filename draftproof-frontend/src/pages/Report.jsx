@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, getScanStatus, startScanWithText } from '../api/draftproofApi';
+import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, getScanStatus, startScanWithText, translateText } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import ParagraphSeverityBar from '../components/ParagraphSeverityBar';
@@ -418,6 +418,9 @@ export default function Report() {
   const [submittedRescanStatus, setSubmittedRescanStatus] = useState(null);
   const [submittedRescanError, setSubmittedRescanError] = useState(null);
   const [submittedRescanNeedsTokens, setSubmittedRescanNeedsTokens] = useState(false);
+  const [submittedTranslateBusy, setSubmittedTranslateBusy] = useState(false);
+  const [submittedTranslateError, setSubmittedTranslateError] = useState(null);
+  const [submittedPreTranslateText, setSubmittedPreTranslateText] = useState(null);
   const [submittedHighlightRanges, setSubmittedHighlightRanges] = useState({});
   const [submittedTrackedCopyStatus, setSubmittedTrackedCopyStatus] = useState('idle');
   const rewritePollRef = useRef(null);
@@ -634,6 +637,9 @@ export default function Report() {
     setSubmittedRescanStatus(null);
     setSubmittedRescanError(null);
     setSubmittedRescanNeedsTokens(false);
+    setSubmittedTranslateBusy(false);
+    setSubmittedTranslateError(null);
+    setSubmittedPreTranslateText(null);
     setSubmittedHighlightRanges({});
     setLockedParagraphId(null);
   }, [id, closeSubmittedEditor]);
@@ -1232,6 +1238,57 @@ export default function Report() {
         submittedTrackedCopyTimerRef.current = null;
       }, 2200);
     }
+  };
+
+  const translateSubmittedSelection = async () => {
+    const editor = submittedEditorRef.current;
+    if (!editor) return;
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const selected = (start != null && end != null && end > start)
+      ? submittedDraftText.slice(start, end)
+      : '';
+    if (!selected.trim()) {
+      setSubmittedTranslateError(t('report.submitted.editor.translateSelectFirst'));
+      return;
+    }
+    setSubmittedTranslateBusy(true);
+    setSubmittedTranslateError(null);
+    try {
+      const { data } = await translateText(selected, { target: 'en' });
+      const translated = (data?.text || '').trim();
+      if (!translated) {
+        setSubmittedTranslateError(t('report.submitted.editor.translateError'));
+        return;
+      }
+      const previous = submittedDraftText;
+      const nextText = previous.slice(0, start) + translated + previous.slice(end);
+      setSubmittedPreTranslateText(previous);
+      setSubmittedHighlightRanges((ranges) => adjustHighlightedRanges(ranges, previous, nextText));
+      setSubmittedDraftText(nextText);
+      setSubmittedRescanError(null);
+      window.requestAnimationFrame(() => {
+        const node = submittedEditorRef.current;
+        if (!node) return;
+        node.focus();
+        const caret = start + translated.length;
+        node.setSelectionRange(caret, caret);
+        scheduleSubmittedCaretUpdate();
+      });
+    } catch (err) {
+      setSubmittedTranslateError(t('report.submitted.editor.translateError'));
+    } finally {
+      setSubmittedTranslateBusy(false);
+    }
+  };
+
+  const undoSubmittedTranslate = () => {
+    if (submittedPreTranslateText == null) return;
+    const restore = submittedPreTranslateText;
+    setSubmittedHighlightRanges((ranges) => adjustHighlightedRanges(ranges, submittedDraftText, restore));
+    setSubmittedDraftText(restore);
+    setSubmittedPreTranslateText(null);
+    setSubmittedTranslateError(null);
   };
 
   const resetSubmittedDraft = async () => {
@@ -2528,6 +2585,36 @@ export default function Report() {
                           <span>{submittedDraftChanged ? t('report.submitted.editor.changed') : t('report.submitted.editor.unchanged')}</span>
                         </div>
                         <div className="submitted-editor-toolbar-actions">
+                          <div className="submitted-translate-group">
+                            <button
+                              type="button"
+                              className="btn btn-secondary submitted-translate-button"
+                              onClick={translateSubmittedSelection}
+                              disabled={submittedTranslateBusy || submittedRescanBusy}
+                              title={t('report.submitted.editor.translateNote')}
+                            >
+                              <svg className="cta-edit-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                                <path d="M4 5h7M7.5 5v1.5M9.5 5c0 4-2.5 7-5.5 8.5M6 9c.8 2 2.6 3.6 5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M13 19l3.2-8h.6L20 19M14 16.5h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                              {submittedTranslateBusy
+                                ? t('report.submitted.editor.translating')
+                                : t('report.submitted.editor.translateCnEn')}
+                            </button>
+                            {submittedPreTranslateText != null && (
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-small submitted-translate-undo"
+                                onClick={undoSubmittedTranslate}
+                                disabled={submittedTranslateBusy || submittedRescanBusy}
+                              >
+                                {t('report.submitted.editor.undoTranslate')}
+                              </button>
+                            )}
+                          </div>
+                          <span className={`submitted-translate-note${submittedTranslateError ? ' is-error' : ''}`}>
+                            {submittedTranslateError || t('report.submitted.editor.translateNote')}
+                          </span>
                           <button
                             type="button"
                             className="btn btn-ghost"
@@ -2575,6 +2662,7 @@ export default function Report() {
                             setSubmittedHighlightRanges((ranges) => adjustHighlightedRanges(ranges, submittedDraftText, nextText));
                             setSubmittedDraftText(nextText);
                             setSubmittedRescanError(null);
+                            setSubmittedPreTranslateText(null);
                             clearSubmittedTrackedCopyTimer();
                             setSubmittedTrackedCopyStatus('idle');
                             scheduleSubmittedCaretUpdate();

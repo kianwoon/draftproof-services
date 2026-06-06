@@ -667,6 +667,45 @@
   text-align: right;
 }
 
+/* CN -> EN translation aid for ESL students: a subtle mint helper button
+   (distinct from the green re-scan CTA) plus an honest "edit before
+   re-scan" caption dropped to the bottom of the action row via order. */
+.submitted-translate-group {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+}
+
+.submitted-translate-button {
+  border-color: var(--blue-200);
+  background: var(--surface-mint);
+  color: var(--green-dark);
+  font-weight: 800;
+}
+
+.submitted-translate-button:hover:not(:disabled),
+.submitted-translate-button:focus-visible:not(:disabled) {
+  background: var(--blue-100);
+  border-color: var(--green);
+  color: var(--green-dark);
+}
+
+.submitted-translate-note {
+  order: 10;
+  flex: 0 0 100%;
+  margin-top: -.1rem;
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 750;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.submitted-translate-note.is-error {
+  color: var(--red);
+  font-weight: 850;
+}
+
 .submitted-save-state {
   display: inline-flex;
   align-items: center;

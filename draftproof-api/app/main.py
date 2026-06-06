@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse
-from app.routes import documents, scans, reports, rewrites, auth, payments
+from app.routes import documents, scans, reports, rewrites, auth, payments, translate
 from app.models.db import init_db, async_session
 from app.config import COOKIE_SECURE, SECRET_KEY, FRONTEND_URL
 from sqlalchemy import text as sa_text
@@ -104,6 +104,7 @@ app.include_router(scans.router, prefix="/api/scans", tags=["scans"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(rewrites.router, prefix="/api/rewrites", tags=["rewrites"])
 app.include_router(payments.router, prefix="/api/payments", tags=["payments"])
+app.include_router(translate.router, prefix="/api/translate", tags=["translate"])
 
 
 @app.get("/api/health")
