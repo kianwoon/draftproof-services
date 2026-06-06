@@ -160,12 +160,7 @@ svg { display: block; }
   height: 100%;
   white-space: nowrap;
   will-change: transform;
-  animation: newsTickerScroll 42s linear infinite;
-}
-
-.news-ticker:hover .news-ticker-track,
-.news-ticker:focus-within .news-ticker-track {
-  animation-play-state: paused;
+  transform: translate3d(0, 0, 0);
 }
 
 .news-ticker-item {
@@ -199,16 +194,6 @@ svg { display: block; }
   flex: none;
   color: var(--green);
   font-weight: 850;
-}
-
-@keyframes newsTickerScroll {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .news-ticker-viewport { overflow-x: auto; }
-  .news-ticker-track { animation: none; }
 }
 
 .brand {
