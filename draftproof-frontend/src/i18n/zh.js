@@ -20,6 +20,7 @@ import { authorshipEvidence } from './zh/authorshipEvidence.js';
 import { rewriteFraming } from './zh/rewriteFraming.js';
 import { dialog } from './zh/dialog.js';
 import { errorReload } from './zh/errorReload.js';
+import { ticker } from './zh/ticker.js';
 
 export const zhTranslation = {
   "common": common,
@@ -44,4 +45,5 @@ export const zhTranslation = {
   "rewriteFraming": rewriteFraming,
   "dialog": dialog,
   "errorReload": errorReload,
+  "ticker": ticker,
 };

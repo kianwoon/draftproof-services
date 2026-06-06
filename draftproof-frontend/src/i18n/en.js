@@ -20,6 +20,7 @@ import { authorshipEvidence } from './en/authorshipEvidence.js';
 import { rewriteFraming } from './en/rewriteFraming.js';
 import { dialog } from './en/dialog.js';
 import { errorReload } from './en/errorReload.js';
+import { ticker } from './en/ticker.js';
 
 export const enTranslation = {
   "common": common,
@@ -44,4 +45,5 @@ export const enTranslation = {
   "rewriteFraming": rewriteFraming,
   "dialog": dialog,
   "errorReload": errorReload,
+  "ticker": ticker,
 };

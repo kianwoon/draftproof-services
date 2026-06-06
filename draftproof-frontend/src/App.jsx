@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Header from './components/Header';
+import NewsTicker from './components/NewsTicker';
 import Footer from './components/Footer';
 import Seo from './components/Seo';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -99,6 +100,7 @@ export default function App() {
       <div className="app-shell">
         <Seo />
         <Header />
+        <NewsTicker />
         <ScrollToRouteTop />
         <main className="app-main">
           <Routes>
