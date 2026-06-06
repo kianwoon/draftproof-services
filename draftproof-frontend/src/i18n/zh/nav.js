@@ -7,7 +7,7 @@ export const nav = {
   "scan": "扫描",
   "scanning": "开始扫描",
   "reports": "报告",
-  "viewReports": "查看报告",
+  "viewReports": "查看报告/引导改写",
   "buyTokens": "购买令牌",
   "history": "历史记录",
   "why": "为什么选择我们",
