@@ -668,21 +668,9 @@
 }
 
 /* CN -> EN translation aid for ESL students: a subtle mint helper button
-   (distinct from the green re-scan CTA) plus an honest "edit before
-   re-scan" caption dropped to the bottom of the action row via order. */
-.submitted-translate-group {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: .3rem;
-}
-
-.submitted-translate-buttons {
-  display: inline-flex;
-  align-items: center;
-  gap: .4rem;
-}
-
+   (distinct from the green re-scan CTA) sitting in the action row, with an
+   honest "edit before re-scan" hint on a full-width tip line just below the
+   toolbar so the buttons stay aligned on one row. */
 .submitted-translate-button {
   border-color: var(--blue-200);
   background: var(--surface-mint);
@@ -697,19 +685,33 @@
   color: var(--green-dark);
 }
 
-.submitted-translate-note {
-  max-width: 280px;
-  margin: 0;
+.submitted-translate-tip {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .45rem 1rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fbfdfc;
   color: var(--muted);
-  font-size: .74rem;
+  font-size: .76rem;
   font-weight: 750;
   line-height: 1.4;
-  text-align: left;
 }
 
-.submitted-translate-note.is-error {
+.submitted-translate-tip .cta-edit-icon {
+  flex: none;
+  color: var(--green-dark);
+}
+
+.submitted-translate-tip.is-error {
+  border-bottom-color: #fecaca;
+  background: #fef2f2;
   color: var(--red);
   font-weight: 850;
+}
+
+.submitted-translate-tip.is-error .cta-edit-icon {
+  color: var(--red);
 }
 
 .submitted-save-state {

@@ -2585,42 +2585,31 @@ export default function Report() {
                           <span>{submittedDraftChanged ? t('report.submitted.editor.changed') : t('report.submitted.editor.unchanged')}</span>
                         </div>
                         <div className="submitted-editor-toolbar-actions">
-                          <div className="submitted-translate-group">
-                            <div className="submitted-translate-buttons">
-                              <button
-                                type="button"
-                                className="btn btn-secondary submitted-translate-button"
-                                onClick={translateSubmittedSelection}
-                                disabled={submittedTranslateBusy || submittedRescanBusy}
-                                title={t('report.submitted.editor.translateNote')}
-                              >
-                                <svg className="cta-edit-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
-                                  <path d="M4 5h7M7.5 5v1.5M9.5 5c0 4-2.5 7-5.5 8.5M6 9c.8 2 2.6 3.6 5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                                  <path d="M13 19l3.2-8h.6L20 19M14 16.5h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                                {submittedTranslateBusy
-                                  ? t('report.submitted.editor.translating')
-                                  : t('report.submitted.editor.translateCnEn')}
-                              </button>
-                              {submittedPreTranslateText != null && (
-                                <button
-                                  type="button"
-                                  className="btn btn-ghost btn-small submitted-translate-undo"
-                                  onClick={undoSubmittedTranslate}
-                                  disabled={submittedTranslateBusy || submittedRescanBusy}
-                                >
-                                  {t('report.submitted.editor.undoTranslate')}
-                                </button>
-                              )}
-                            </div>
-                            <span className={`submitted-translate-note${submittedTranslateError ? ' is-error' : ''}`}>
-                              {submittedTranslateError
-                                ? submittedTranslateError
-                                : submittedPreTranslateText != null
-                                  ? t('report.submitted.editor.translateNote')
-                                  : t('report.submitted.editor.translateHint')}
-                            </span>
-                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-secondary submitted-translate-button"
+                            onClick={translateSubmittedSelection}
+                            disabled={submittedTranslateBusy || submittedRescanBusy}
+                            title={t('report.submitted.editor.translateNote')}
+                          >
+                            <svg className="cta-edit-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                              <path d="M4 5h7M7.5 5v1.5M9.5 5c0 4-2.5 7-5.5 8.5M6 9c.8 2 2.6 3.6 5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              <path d="M13 19l3.2-8h.6L20 19M14 16.5h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            {submittedTranslateBusy
+                              ? t('report.submitted.editor.translating')
+                              : t('report.submitted.editor.translateCnEn')}
+                          </button>
+                          {submittedPreTranslateText != null && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-small submitted-translate-undo"
+                              onClick={undoSubmittedTranslate}
+                              disabled={submittedTranslateBusy || submittedRescanBusy}
+                            >
+                              {t('report.submitted.editor.undoTranslate')}
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="btn btn-ghost"
@@ -2645,6 +2634,19 @@ export default function Report() {
                               : t('scan.freeScan')}
                           </span>
                         </div>
+                      </div>
+                      <div className={`submitted-translate-tip${submittedTranslateError ? ' is-error' : ''}`}>
+                        <svg className="cta-edit-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                          <path d="M4 5h7M7.5 5v1.5M9.5 5c0 4-2.5 7-5.5 8.5M6 9c.8 2 2.6 3.6 5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M13 19l3.2-8h.6L20 19M14 16.5h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        <span>
+                          {submittedTranslateError
+                            ? submittedTranslateError
+                            : submittedPreTranslateText != null
+                              ? t('report.submitted.editor.translateNote')
+                              : t('report.submitted.editor.translateHint')}
+                        </span>
                       </div>
                       <div className="submitted-editor-textarea-wrap">
                         <div
