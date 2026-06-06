@@ -19,7 +19,8 @@ export const report = {
     "mainRiskFallback": "Review the highlighted sections before submission.",
     "nextActionHighlighted": "Fix {{count}} highlighted paragraph(s), then re-scan the edited draft.",
     "nextActionFallback": "Review the draft, add concrete evidence where needed, then re-scan.",
-    "confidenceNote": "DraftProof reports writing signals, not a verdict. Use this as a repair plan before submission."
+    "confidenceNote": "DraftProof reports writing signals, not a verdict. Use this as a repair plan before submission.",
+    "editDraftHint": "Edit highlighted sections before you re-scan."
   },
   "whatToFixFirst": {
     "kicker": "Repair Plan",

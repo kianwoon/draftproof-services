@@ -4,6 +4,7 @@ export default function RepairSummary({
   kicker,
   mainRiskLabel,
   actionLabel,
+  actionHint,
   onAction,
 }) {
   if (!summary) return null;
@@ -20,6 +21,7 @@ export default function RepairSummary({
         <div className="repair-summary-risk">
           <span>{mainRiskLabel}</span>
           <strong>{summary.mainRisk}</strong>
+          {actionHint && <p className="repair-summary-action-hint">{actionHint}</p>}
           {actionLabel && onAction && (
             <button type="button" className="repair-summary-action" onClick={onAction}>
               {actionLabel}

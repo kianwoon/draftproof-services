@@ -2162,6 +2162,7 @@ export default function Report() {
           kicker={t('report.repairSummary.kicker')}
           mainRiskLabel={t('report.repairSummary.mainRisk')}
           actionLabel={t('report.submitted.editor.editDraft')}
+          actionHint={t('report.repairSummary.editDraftHint')}
           onAction={openSubmittedEditor}
         />
 

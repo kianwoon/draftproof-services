@@ -358,30 +358,38 @@
   line-height: 1.35;
 }
 
+.repair-summary-action-hint {
+  margin: .25rem 0 0;
+  color: var(--muted);
+  font-size: .82rem;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
 .repair-summary-action {
-  justify-self: start;
-  margin-top: .7rem;
-  min-height: 36px;
-  padding: .55rem .85rem;
+  justify-self: stretch;
+  margin-top: .8rem;
+  min-height: 44px;
+  padding: .75rem .95rem;
   border: 1px solid var(--green-dark);
   border-radius: 8px;
-  background: var(--green);
+  background: linear-gradient(135deg, var(--green), var(--green-dark));
   color: var(--surface);
   font: inherit;
-  font-size: .82rem;
-  font-weight: 850;
+  font-size: .86rem;
+  font-weight: 900;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 8px 18px rgba(58, 168, 118, .22);
+  box-shadow: 0 12px 26px rgba(15, 110, 86, .28), 0 0 0 3px var(--blue-50);
   transition: background .15s var(--ease), border-color .15s var(--ease), box-shadow .15s var(--ease), transform .15s var(--ease);
 }
 
 .repair-summary-action:hover,
 .repair-summary-action:focus-visible {
   background: var(--green-dark);
-  box-shadow: 0 10px 22px rgba(15, 110, 86, .24);
+  box-shadow: 0 16px 32px rgba(15, 110, 86, .34), 0 0 0 4px var(--blue-200);
   outline: 0;
-  transform: translateY(-1px);
+  transform: translateY(-2px);
 }
 
 .fix-first-card {

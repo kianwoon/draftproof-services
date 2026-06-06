@@ -19,7 +19,8 @@ export const report = {
     "mainRiskFallback": "提交前请审阅高亮段落。",
     "nextActionHighlighted": "先修复 {{count}} 个高亮段落，然后重新扫描编辑后的草稿。",
     "nextActionFallback": "审阅草稿，在需要处加入具体依据，然后重新扫描。",
-    "confidenceNote": "DraftProof 报告的是写作信号，不是判定。请把它作为提交前的修订计划。"
+    "confidenceNote": "DraftProof 报告的是写作信号，不是判定。请把它作为提交前的修订计划。",
+    "editDraftHint": "重新扫描前，先编辑高亮段落。"
   },
   "whatToFixFirst": {
     "kicker": "修订计划",
