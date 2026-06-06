@@ -754,6 +754,10 @@
   color: var(--ink);
 }
 
+.submitted-editor-custom-caret { position: absolute; z-index: 3; top: 0; left: 0; width: 4px; border-radius: 4px; background: var(--green); box-shadow: 0 0 0 1px var(--surface), 0 0 12px var(--blue-200); opacity: 0; pointer-events: none; }
+.submitted-editor-custom-caret.is-visible { opacity: 1; animation: submitted-caret-blink 1s steps(2, start) infinite; }
+@keyframes submitted-caret-blink { 50% { opacity: .28; } }
+
 .submitted-editor-highlight-selected {
   border-radius: 4px;
   background:

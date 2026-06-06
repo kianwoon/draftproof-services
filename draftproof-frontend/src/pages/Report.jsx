@@ -15,6 +15,7 @@ import {
 import RewriteNoticeDialog from './report/RewriteNoticeDialog';
 import RepairSummary from './report/RepairSummary';
 import FixFirstChecklist from './report/FixFirstChecklist';
+import useTextareaCaretOverlay from './report/useTextareaCaretOverlay';
 import {
   TIER_CONFIG,
   SEVERITY_CONFIG,
@@ -430,6 +431,11 @@ export default function Report() {
   const [panelOffset, setPanelOffset] = useState(0);
   const submittedEditorCloseTimerRef = useRef(null);
   const submittedTrackedCopyTimerRef = useRef(null);
+  const {
+    caret: submittedCaret,
+    hideCaret: hideSubmittedCaret,
+    scheduleCaretUpdate: scheduleSubmittedCaretUpdate,
+  } = useTextareaCaretOverlay(submittedEditorRef);
 
   const clearSubmittedEditorCloseTimer = useCallback(() => {
     if (submittedEditorCloseTimerRef.current) {
@@ -1179,6 +1185,7 @@ export default function Report() {
     if (!submittedEditorRef.current || !submittedHighlightRef.current) return;
     submittedHighlightRef.current.scrollTop = submittedEditorRef.current.scrollTop;
     submittedHighlightRef.current.scrollLeft = submittedEditorRef.current.scrollLeft;
+    scheduleSubmittedCaretUpdate();
   };
 
   const copySelectedParagraphGuidance = async () => {
@@ -2567,9 +2574,23 @@ export default function Report() {
                             setSubmittedRescanError(null);
                             clearSubmittedTrackedCopyTimer();
                             setSubmittedTrackedCopyStatus('idle');
+                            scheduleSubmittedCaretUpdate();
                           }}
+                          onClick={scheduleSubmittedCaretUpdate}
+                          onFocus={scheduleSubmittedCaretUpdate}
+                          onKeyUp={scheduleSubmittedCaretUpdate}
                           onScroll={syncSubmittedHighlightScroll}
+                          onSelect={scheduleSubmittedCaretUpdate}
+                          onBlur={hideSubmittedCaret}
                           spellCheck="true"
+                        />
+                        <div
+                          className={`submitted-editor-custom-caret${submittedCaret.visible ? ' is-visible' : ''}`}
+                          style={{
+                            height: `${submittedCaret.height}px`,
+                            transform: `translate(${submittedCaret.left}px, ${submittedCaret.top}px)`,
+                          }}
+                          aria-hidden="true"
                         />
                       </div>
                       {(submittedRescanStatus || submittedRescanError) && (
