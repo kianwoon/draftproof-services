@@ -1270,7 +1270,7 @@ export default function Report() {
       window.requestAnimationFrame(() => {
         const node = submittedEditorRef.current;
         if (!node) return;
-        node.focus();
+        node.focus({ preventScroll: true });
         const caret = start + translated.length;
         node.setSelectionRange(caret, caret);
         scheduleSubmittedCaretUpdate();
