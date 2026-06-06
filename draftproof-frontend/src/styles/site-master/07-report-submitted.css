@@ -672,6 +672,13 @@
    re-scan" caption dropped to the bottom of the action row via order. */
 .submitted-translate-group {
   display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .3rem;
+}
+
+.submitted-translate-buttons {
+  display: inline-flex;
   align-items: center;
   gap: .4rem;
 }
@@ -691,14 +698,13 @@
 }
 
 .submitted-translate-note {
-  order: 10;
-  flex: 0 0 100%;
-  margin-top: -.1rem;
+  max-width: 280px;
+  margin: 0;
   color: var(--muted);
-  font-size: .76rem;
+  font-size: .74rem;
   font-weight: 750;
   line-height: 1.4;
-  text-align: right;
+  text-align: left;
 }
 
 .submitted-translate-note.is-error {
