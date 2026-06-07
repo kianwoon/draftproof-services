@@ -27,7 +27,7 @@ export default function Footer() {
           <Link to={publicPath('/#product')}>{t('footer.product')}</Link>
           <Link to={publicPath('/#engine')}>{t('footer.howItWorks')}</Link>
           <Link to={publicPath('/#report')}>{t('footer.sampleReport')}</Link>
-          <Link to={publicPath('/essay-checker')}>{t('footer.essayChecker')}</Link>
+          <Link to={publicPath('/content-checker')}>{t('footer.essayChecker')}</Link>
           <Link to={publicPath('/pricing')}>{t('footer.pricing')}</Link>
           <Link to={publicPath('/faq')}>{t('footer.faq')}</Link>
           <Link to={publicPath('/privacy')}>{t('footer.privacy')}</Link>

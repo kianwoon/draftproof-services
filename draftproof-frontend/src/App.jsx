@@ -113,8 +113,10 @@ export default function App() {
             <Route path="/zh/faq" element={<FAQ />} />
             <Route path="/why" element={<Why />} />
             <Route path="/zh/why" element={<Why />} />
-            <Route path="/essay-checker" element={<EssayChecker />} />
-            <Route path="/zh/essay-checker" element={<EssayChecker />} />
+            <Route path="/content-checker" element={<EssayChecker />} />
+            <Route path="/zh/content-checker" element={<EssayChecker />} />
+            <Route path="/essay-checker" element={<Navigate to="/content-checker" replace />} />
+            <Route path="/zh/essay-checker" element={<Navigate to="/zh/content-checker" replace />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/zh/privacy" element={<Privacy />} />
             <Route path="/security" element={<Security />} />

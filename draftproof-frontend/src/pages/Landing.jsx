@@ -198,7 +198,7 @@ export default function Landing() {
             <a href="#product">{t('footer.product')}</a>
             <a href="#engine">{t('footer.howItWorks')}</a>
             <a href="#report">{t('footer.sampleReport')}</a>
-            <Link to={publicPath('/essay-checker')}>{t('footer.essayChecker')}</Link>
+            <Link to={publicPath('/content-checker')}>{t('footer.essayChecker')}</Link>
             <Link to={publicPath('/pricing')}>{t('footer.pricing')}</Link>
             <Link to={publicPath('/faq')}>{t('footer.faq')}</Link>
             <Link to={publicPath('/privacy')}>{t('footer.privacy')}</Link>
@@ -379,7 +379,7 @@ function ReportStrategyCarousel({ contentStrategies, publicPath, reportValueCard
                 </article>
               ))}
             </div>
-            <Link to={publicPath('/essay-checker')} className="btn btn-primary">{t('landing.runOwnScan')}</Link>
+            <Link to={publicPath('/content-checker')} className="btn btn-primary">{t('landing.runOwnScan')}</Link>
           </div>
 
           <SampleReportPreview />
@@ -387,7 +387,7 @@ function ReportStrategyCarousel({ contentStrategies, publicPath, reportValueCard
       ),
     },
     {
-      id: 'essay-aware-help',
+      id: 'content-aware-help',
       eyebrow: t('landing.strategyEyebrow'),
       renderSlide: () => (
         <article className="report-carousel-panel strategy-carousel-panel">

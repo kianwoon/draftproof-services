@@ -13,9 +13,9 @@ export default function EssayChecker() {
   const steps = t('essayChecker.steps', { returnObjects: true });
 
   return (
-    <main className="essay-checker-shell">
+    <main className="content-checker-shell">
       <div className="container">
-        <section className="app-hero app-hero-dark essay-checker-hero">
+        <section className="app-hero app-hero-dark content-checker-hero">
           <CodeTexture id="essayCheckerHero" />
           <div>
             <p className="eyebrow">{t('essayChecker.eyebrow')}</p>
@@ -33,7 +33,7 @@ export default function EssayChecker() {
           </div>
         </section>
 
-        <section className="essay-checker-intro">
+        <section className="content-checker-intro">
           <div>
             <h2>{t('essayChecker.problemTitle')}</h2>
             <p>{t('essayChecker.problemBody')}</p>
@@ -44,10 +44,10 @@ export default function EssayChecker() {
           </div>
         </section>
 
-        <section className="essay-checker-section">
+        <section className="content-checker-section">
           <p className="eyebrow">{t('essayChecker.checksEyebrow')}</p>
           <h2>{t('essayChecker.checksTitle')}</h2>
-          <div className="essay-checker-grid">
+          <div className="content-checker-grid">
             {checks.map((check) => (
               <article key={check.title}>
                 <h3>{check.title}</h3>
@@ -57,10 +57,10 @@ export default function EssayChecker() {
           </div>
         </section>
 
-        <section className="essay-checker-section essay-checker-steps">
+        <section className="content-checker-section content-checker-steps">
           <p className="eyebrow">{t('essayChecker.stepsEyebrow')}</p>
           <h2>{t('essayChecker.stepsTitle')}</h2>
-          <div className="essay-checker-grid">
+          <div className="content-checker-grid">
             {steps.map((step, index) => (
               <article key={step.title}>
                 <span>{String(index + 1).padStart(2, '0')}</span>
@@ -71,13 +71,13 @@ export default function EssayChecker() {
           </div>
         </section>
 
-        <section className="essay-checker-cta">
+        <section className="content-checker-cta">
           <h2>{t('essayChecker.ctaTitle')}</h2>
           <p>{t('essayChecker.ctaBody')}</p>
           <Link to={publicPath('/signin?next=/scan')} className="btn btn-primary">{t('essayChecker.startReview')}</Link>
         </section>
 
-        <PageFreshness path="/essay-checker" />
+        <PageFreshness path="/content-checker" />
       </div>
     </main>
   );
