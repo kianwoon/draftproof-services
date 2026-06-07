@@ -195,7 +195,6 @@ function HeroReviewPanel({ steps }) {
   const reviewSteps = Array.isArray(steps) ? steps : [];
   const carousel = useLandingCarousel(reviewSteps.length, 3800);
   const activeStep = reviewSteps[carousel.activeSlide] || reviewSteps[0];
-  const activeMetrics = Array.isArray(activeStep?.metrics) ? activeStep.metrics : [];
 
   if (!activeStep) return null;
 
@@ -234,18 +233,7 @@ function HeroReviewPanel({ steps }) {
       <div className="hero-review-stage" key={activeStep.id}>
         <h2>{activeStep.title}</h2>
         <p>{activeStep.body}</p>
-
-        <div className="review-grid">
-          {activeMetrics.map((metric) => (
-            <Metric
-              key={`${activeStep.id}-${metric.label}`}
-              label={metric.label}
-              value={metric.value}
-              tone={metric.tone}
-              width={metric.width}
-            />
-          ))}
-        </div>
+        <HeroReviewVisual step={activeStep} />
 
         <div className="primary-fix">
           <div>
@@ -257,6 +245,85 @@ function HeroReviewPanel({ steps }) {
       </div>
     </aside>
   );
+}
+
+function HeroReviewVisual({ step }) {
+  if (step.visual === 'findings') {
+    const findings = Array.isArray(step.findings) ? step.findings : [];
+    const summary = Array.isArray(step.summary) ? step.summary : [];
+
+    return (
+      <div className="hero-review-visual hero-findings-visual">
+        <div className="hero-finding-stack">
+          {findings.map((finding) => (
+            <div className={`hero-finding-item ${toneClass(finding.tone)}`} key={finding.label}>
+              <span>{finding.label}</span>
+              <p>{finding.body}</p>
+              <em>{finding.badge}</em>
+            </div>
+          ))}
+        </div>
+        <div className="hero-finding-summary">
+          {summary.map((item) => (
+            <span className={toneClass(item.tone)} key={item.label}>
+              {item.label}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (step.visual === 'diff') {
+    const diffRows = Array.isArray(step.diffRows) ? step.diffRows : [];
+    const fixSteps = Array.isArray(step.fixSteps) ? step.fixSteps : [];
+
+    return (
+      <div className="hero-review-visual hero-diff-visual">
+        <div className="hero-diff-card">
+          {diffRows.map((row) => (
+            <div className={`hero-diff-row ${toneClass(row.tone, ['remove', 'add', 'neutral'])}`} key={row.label}>
+              <span>{row.label}</span>
+              <p>{row.text}</p>
+            </div>
+          ))}
+        </div>
+        <div className="hero-fix-chips">
+          {fixSteps.map((fix) => (
+            <span key={fix}>{fix}</span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const scanLines = Array.isArray(step.scanLines) ? step.scanLines : [];
+  const scanStatus = Array.isArray(step.scanStatus) ? step.scanStatus : [];
+
+  return (
+    <div className="hero-review-visual hero-scan-visual">
+      <div className="hero-scan-document">
+        {scanLines.map((line) => (
+          <div className={`hero-scan-line ${toneClass(line.tone)}`} key={line.label}>
+            <span>{line.label}</span>
+            <p>{line.text}</p>
+          </div>
+        ))}
+      </div>
+      <div className="hero-scan-status">
+        {scanStatus.map((item) => (
+          <div className={toneClass(item.tone)} key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function toneClass(tone, allowed = ['positive', 'warning', 'neutral']) {
+  return allowed.includes(tone) ? `is-${tone}` : 'is-neutral';
 }
 
 function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals }) {
@@ -802,20 +869,6 @@ function SampleSignalBar({ label, value, tone }) {
       </div>
       <div className="sample-signal-track">
         <i className={`is-${tone}`} style={{ width: `${value}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function Metric({ label, value, tone, width }) {
-  const widthValue = typeof width === 'number' ? `${width}%` : width;
-
-  return (
-    <div className="review-metric">
-      <span>{label}</span>
-      <strong className={tone === 'positive' ? 'tier-low' : 'tier-medium'}>{value}</strong>
-      <div className={`review-bar ${tone}`}>
-        <i style={{ width: widthValue }} />
       </div>
     </div>
   );

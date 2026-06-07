@@ -25,34 +25,43 @@ export const landing = {
   "heroReviewSteps": [
     {
       "id": "scan-draft",
+      "visual": "scan",
       "stepLabel": "步骤 1",
       "shortLabel": "01",
       "title": "正在扫描你的草稿",
       "body": "DraftProof 会在提交前读取论断、引用、来源连接和类似 AI 的写作模式。",
-      "metrics": [
+      "scanLines": [
         {
-          "label": "内容地图",
+          "label": "论断",
+          "text": "好莱坞已经成为最强大的文化出口之一。",
+          "tone": "warning"
+        },
+        {
+          "label": "来源",
+          "text": "这句话附近还没有可见的来源连接。",
+          "tone": "warning"
+        },
+        {
+          "label": "语境",
+          "text": "保留学生自己的论点和课程重点。",
+          "tone": "positive"
+        }
+      ],
+      "scanStatus": [
+        {
+          "label": "地图",
           "value": "读取中",
-          "tone": "positive",
-          "width": 72
+          "tone": "positive"
         },
         {
-          "label": "论断锚点",
-          "value": "已定位",
-          "tone": "positive",
-          "width": 64
+          "label": "引用",
+          "value": "缺失",
+          "tone": "warning"
         },
         {
-          "label": "引用扫描",
-          "value": "匹配中",
-          "tone": "warning",
-          "width": 46
-        },
-        {
-          "label": "AI 类信号",
-          "value": "采样中",
-          "tone": "warning",
-          "width": 38
+          "label": "语气",
+          "value": "保留",
+          "tone": "positive"
         }
       ],
       "primaryLabel": "当前重点",
@@ -61,34 +70,43 @@ export const landing = {
     },
     {
       "id": "find-risks",
+      "visual": "findings",
       "stepLabel": "步骤 2",
       "shortLabel": "02",
       "title": "已发现内容风险",
       "body": "审阅会把证据缺口和措辞信号分开，让你知道哪里可能被质疑。",
-      "metrics": [
-        {
-          "label": "审阅等级",
-          "value": "中等",
-          "tone": "warning",
-          "width": 50
-        },
-        {
-          "label": "依据支撑",
-          "value": "需要补强",
-          "tone": "warning",
-          "width": 44
-        },
+      "findings": [
         {
           "label": "引用缺口",
-          "value": "发现 2 个",
-          "tone": "warning",
-          "width": 35
+          "body": "宽泛论断需要附近的引用或来源锚点。",
+          "badge": "高",
+          "tone": "warning"
+        },
+        {
+          "label": "依据薄弱",
+          "body": "读者还看不清来源和句子的关系。",
+          "badge": "中",
+          "tone": "warning"
         },
         {
           "label": "来源完整性",
-          "value": "已验证",
-          "tone": "positive",
-          "width": 92
+          "body": "现有来源信息可用，只需要放到正确位置。",
+          "badge": "已验证",
+          "tone": "positive"
+        }
+      ],
+      "summary": [
+        {
+          "label": "审阅等级 · 中等",
+          "tone": "warning"
+        },
+        {
+          "label": "2 个引用风险",
+          "tone": "warning"
+        },
+        {
+          "label": "来源已验证",
+          "tone": "positive"
         }
       ],
       "primaryLabel": "主要风险",
@@ -97,35 +115,27 @@ export const landing = {
     },
     {
       "id": "fix-plan",
+      "visual": "diff",
       "stepLabel": "步骤 3",
       "shortLabel": "03",
       "title": "修改计划已生成",
       "body": "DraftProof 会把发现转成清楚的修复顺序，让你在提交前直接行动。",
-      "metrics": [
+      "diffRows": [
         {
-          "label": "优先级",
-          "value": "高影响",
-          "tone": "warning",
-          "width": 76
+          "label": "修改前",
+          "text": "好莱坞已经成为历史上最强大的文化出口之一。",
+          "tone": "remove"
         },
         {
-          "label": "修复顺序",
-          "value": "先补引用",
-          "tone": "positive",
-          "width": 66
-        },
-        {
-          "label": "改写范围",
-          "value": "保留原意",
-          "tone": "positive",
-          "width": 82
-        },
-        {
-          "label": "报告记录",
-          "value": "PDF 就绪",
-          "tone": "positive",
-          "width": 92
+          "label": "修改后",
+          "text": "在来源支持下，好莱坞通过电影、流媒体和音乐影响全球受众。",
+          "tone": "add"
         }
+      ],
+      "fixSteps": [
+        "补上来源",
+        "连接来源与论断",
+        "保留原意"
       ],
       "primaryLabel": "主要修复",
       "primaryValue": "为论断补上来源",

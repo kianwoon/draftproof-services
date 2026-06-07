@@ -25,34 +25,43 @@ export const landing = {
   "heroReviewSteps": [
     {
       "id": "scan-draft",
+      "visual": "scan",
       "stepLabel": "Step 1",
       "shortLabel": "01",
       "title": "Scanning your draft",
       "body": "DraftProof reads claims, citations, source links, and AI-like writing patterns before submission.",
-      "metrics": [
+      "scanLines": [
         {
-          "label": "Content map",
+          "label": "Claim",
+          "text": "Hollywood has become one of the most powerful cultural exports.",
+          "tone": "warning"
+        },
+        {
+          "label": "Source",
+          "text": "No linked source appears near this sentence.",
+          "tone": "warning"
+        },
+        {
+          "label": "Context",
+          "text": "Draft keeps the student's argument and course focus.",
+          "tone": "positive"
+        }
+      ],
+      "scanStatus": [
+        {
+          "label": "Map",
           "value": "Reading",
-          "tone": "positive",
-          "width": 72
+          "tone": "positive"
         },
         {
-          "label": "Claim anchors",
-          "value": "Located",
-          "tone": "positive",
-          "width": 64
+          "label": "Cite",
+          "value": "Missing",
+          "tone": "warning"
         },
         {
-          "label": "Citation scan",
-          "value": "Matching",
-          "tone": "warning",
-          "width": 46
-        },
-        {
-          "label": "AI-like signals",
-          "value": "Sampling",
-          "tone": "warning",
-          "width": 38
+          "label": "Voice",
+          "value": "Kept",
+          "tone": "positive"
         }
       ],
       "primaryLabel": "Current focus",
@@ -61,34 +70,43 @@ export const landing = {
     },
     {
       "id": "find-risks",
+      "visual": "findings",
       "stepLabel": "Step 2",
       "shortLabel": "02",
       "title": "Content risks found",
       "body": "The review separates evidence gaps from wording signals so you know what may be questioned.",
-      "metrics": [
+      "findings": [
         {
-          "label": "Review tier",
-          "value": "Medium",
-          "tone": "warning",
-          "width": 50
+          "label": "Citation gap",
+          "body": "A broad claim needs a nearby citation or source anchor.",
+          "badge": "High",
+          "tone": "warning"
         },
         {
-          "label": "Grounding",
-          "value": "Needs support",
-          "tone": "warning",
-          "width": 44
-        },
-        {
-          "label": "Citation gaps",
-          "value": "2 found",
-          "tone": "warning",
-          "width": 35
+          "label": "Weak grounding",
+          "body": "The source relationship is not visible to the reader.",
+          "badge": "Medium",
+          "tone": "warning"
         },
         {
           "label": "Source integrity",
-          "value": "Verified",
-          "tone": "positive",
-          "width": 92
+          "body": "Existing source details look usable after citation placement.",
+          "badge": "Verified",
+          "tone": "positive"
+        }
+      ],
+      "summary": [
+        {
+          "label": "Review tier · Medium",
+          "tone": "warning"
+        },
+        {
+          "label": "2 citation risks",
+          "tone": "warning"
+        },
+        {
+          "label": "Source verified",
+          "tone": "positive"
         }
       ],
       "primaryLabel": "Main risk",
@@ -97,35 +115,27 @@ export const landing = {
     },
     {
       "id": "fix-plan",
+      "visual": "diff",
       "stepLabel": "Step 3",
       "shortLabel": "03",
       "title": "Revision plan ready",
       "body": "DraftProof turns the findings into a focused order of fixes you can act on before submission.",
-      "metrics": [
+      "diffRows": [
         {
-          "label": "Priority",
-          "value": "High impact",
-          "tone": "warning",
-          "width": 76
+          "label": "Before",
+          "text": "Hollywood has become one of the most powerful cultural exports in history.",
+          "tone": "remove"
         },
         {
-          "label": "Fix order",
-          "value": "Citation first",
-          "tone": "positive",
-          "width": 66
-        },
-        {
-          "label": "Rewrite scope",
-          "value": "Keep meaning",
-          "tone": "positive",
-          "width": 82
-        },
-        {
-          "label": "Report trail",
-          "value": "PDF ready",
-          "tone": "positive",
-          "width": 92
+          "label": "After",
+          "text": "Hollywood reaches global audiences through films, streaming, and music when supported by a source.",
+          "tone": "add"
         }
+      ],
+      "fixSteps": [
+        "Add source",
+        "Tie source to claim",
+        "Keep meaning"
       ],
       "primaryLabel": "Primary fix",
       "primaryValue": "Add source to claim",
