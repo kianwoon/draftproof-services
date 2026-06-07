@@ -21,6 +21,117 @@ export const landing = {
   "primaryFix": "Primary fix",
   "oneCitation": "1 citation",
   "actionable": "Actionable",
+  "heroReviewStepsLabel": "DraftProof review preview steps",
+  "heroReviewSteps": [
+    {
+      "id": "scan-draft",
+      "stepLabel": "Step 1",
+      "shortLabel": "01",
+      "title": "Scanning your draft",
+      "body": "DraftProof reads claims, citations, source links, and AI-like writing patterns before submission.",
+      "metrics": [
+        {
+          "label": "Content map",
+          "value": "Reading",
+          "tone": "positive",
+          "width": 72
+        },
+        {
+          "label": "Claim anchors",
+          "value": "Located",
+          "tone": "positive",
+          "width": 64
+        },
+        {
+          "label": "Citation scan",
+          "value": "Matching",
+          "tone": "warning",
+          "width": 46
+        },
+        {
+          "label": "AI-like signals",
+          "value": "Sampling",
+          "tone": "warning",
+          "width": 38
+        }
+      ],
+      "primaryLabel": "Current focus",
+      "primaryValue": "Claims without anchors",
+      "badge": "Scanning"
+    },
+    {
+      "id": "find-risks",
+      "stepLabel": "Step 2",
+      "shortLabel": "02",
+      "title": "Content risks found",
+      "body": "The review separates evidence gaps from wording signals so you know what may be questioned.",
+      "metrics": [
+        {
+          "label": "Review tier",
+          "value": "Medium",
+          "tone": "warning",
+          "width": 50
+        },
+        {
+          "label": "Grounding",
+          "value": "Needs support",
+          "tone": "warning",
+          "width": 44
+        },
+        {
+          "label": "Citation gaps",
+          "value": "2 found",
+          "tone": "warning",
+          "width": 35
+        },
+        {
+          "label": "Source integrity",
+          "value": "Verified",
+          "tone": "positive",
+          "width": 92
+        }
+      ],
+      "primaryLabel": "Main risk",
+      "primaryValue": "Evidence gap",
+      "badge": "Found"
+    },
+    {
+      "id": "fix-plan",
+      "stepLabel": "Step 3",
+      "shortLabel": "03",
+      "title": "Revision plan ready",
+      "body": "DraftProof turns the findings into a focused order of fixes you can act on before submission.",
+      "metrics": [
+        {
+          "label": "Priority",
+          "value": "High impact",
+          "tone": "warning",
+          "width": 76
+        },
+        {
+          "label": "Fix order",
+          "value": "Citation first",
+          "tone": "positive",
+          "width": 66
+        },
+        {
+          "label": "Rewrite scope",
+          "value": "Keep meaning",
+          "tone": "positive",
+          "width": 82
+        },
+        {
+          "label": "Report trail",
+          "value": "PDF ready",
+          "tone": "positive",
+          "width": 92
+        }
+      ],
+      "primaryLabel": "Primary fix",
+      "primaryValue": "Add source to claim",
+      "badge": "Actionable"
+    }
+  ],
   "builtFor": "Built for",
   "audienceDetails": "DraftProof audiences and review details",
   "students": "College students",

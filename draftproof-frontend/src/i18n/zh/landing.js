@@ -21,6 +21,117 @@ export const landing = {
   "primaryFix": "主要修复",
   "oneCitation": "1 条引用",
   "actionable": "可执行",
+  "heroReviewStepsLabel": "DraftProof 审阅预览步骤",
+  "heroReviewSteps": [
+    {
+      "id": "scan-draft",
+      "stepLabel": "步骤 1",
+      "shortLabel": "01",
+      "title": "正在扫描你的草稿",
+      "body": "DraftProof 会在提交前读取论断、引用、来源连接和类似 AI 的写作模式。",
+      "metrics": [
+        {
+          "label": "内容地图",
+          "value": "读取中",
+          "tone": "positive",
+          "width": 72
+        },
+        {
+          "label": "论断锚点",
+          "value": "已定位",
+          "tone": "positive",
+          "width": 64
+        },
+        {
+          "label": "引用扫描",
+          "value": "匹配中",
+          "tone": "warning",
+          "width": 46
+        },
+        {
+          "label": "AI 类信号",
+          "value": "采样中",
+          "tone": "warning",
+          "width": 38
+        }
+      ],
+      "primaryLabel": "当前重点",
+      "primaryValue": "缺少锚点的论断",
+      "badge": "扫描中"
+    },
+    {
+      "id": "find-risks",
+      "stepLabel": "步骤 2",
+      "shortLabel": "02",
+      "title": "已发现内容风险",
+      "body": "审阅会把证据缺口和措辞信号分开，让你知道哪里可能被质疑。",
+      "metrics": [
+        {
+          "label": "审阅等级",
+          "value": "中等",
+          "tone": "warning",
+          "width": 50
+        },
+        {
+          "label": "依据支撑",
+          "value": "需要补强",
+          "tone": "warning",
+          "width": 44
+        },
+        {
+          "label": "引用缺口",
+          "value": "发现 2 个",
+          "tone": "warning",
+          "width": 35
+        },
+        {
+          "label": "来源完整性",
+          "value": "已验证",
+          "tone": "positive",
+          "width": 92
+        }
+      ],
+      "primaryLabel": "主要风险",
+      "primaryValue": "证据缺口",
+      "badge": "已发现"
+    },
+    {
+      "id": "fix-plan",
+      "stepLabel": "步骤 3",
+      "shortLabel": "03",
+      "title": "修改计划已生成",
+      "body": "DraftProof 会把发现转成清楚的修复顺序，让你在提交前直接行动。",
+      "metrics": [
+        {
+          "label": "优先级",
+          "value": "高影响",
+          "tone": "warning",
+          "width": 76
+        },
+        {
+          "label": "修复顺序",
+          "value": "先补引用",
+          "tone": "positive",
+          "width": 66
+        },
+        {
+          "label": "改写范围",
+          "value": "保留原意",
+          "tone": "positive",
+          "width": 82
+        },
+        {
+          "label": "报告记录",
+          "value": "PDF 就绪",
+          "tone": "positive",
+          "width": 92
+        }
+      ],
+      "primaryLabel": "主要修复",
+      "primaryValue": "为论断补上来源",
+      "badge": "可执行"
+    }
+  ],
   "builtFor": "适用于",
   "audienceDetails": "DraftProof 适用人群和审阅详情",
   "students": "学院学生",

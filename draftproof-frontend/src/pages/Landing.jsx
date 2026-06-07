@@ -20,6 +20,7 @@ export default function Landing() {
   const humanizerSignals = t('landing.humanizerSignals', { returnObjects: true });
   const anchorCards = t('landing.anchorCards', { returnObjects: true });
   const anchorWorkflow = t('landing.anchorWorkflow', { returnObjects: true });
+  const heroReviewSteps = t('landing.heroReviewSteps', { returnObjects: true });
   const heroTitle = t('landing.heroTitle');
   const heroTitleHighlight = t('landing.heroTitleHighlight');
   const [heroTitleBefore, heroTitleAfter = ''] = heroTitle.split(heroTitleHighlight);
@@ -47,29 +48,7 @@ export default function Landing() {
             </div>
           </div>
 
-          <aside className="review-panel" aria-label={t('landing.quickSummary')}>
-            <div className="review-panel-top">
-              <p className="card-kicker">{t('landing.quickSummary')}</p>
-              <span className="live-dot">{t('landing.livePreview')}</span>
-            </div>
-            <h2>{t('landing.preSubmissionReview')}</h2>
-            <p>{t('landing.runningCheck')}</p>
-
-            <div className="review-grid">
-              <Metric label={t('landing.reviewTier')} value={t('landing.medium')} tone="warning" width="50%" />
-              <Metric label={t('landing.grounding')} value={t('landing.strong')} tone="positive" width="82%" />
-              <Metric label={t('landing.citationGaps')} value={t('landing.foundCount', { count: 2 })} tone="warning" width="35%" />
-              <Metric label={t('landing.sourceIntegrity')} value={t('landing.verified')} tone="positive" width="92%" />
-            </div>
-
-            <div className="primary-fix">
-              <div>
-                <span>{t('landing.primaryFix')}</span>
-                <strong>{t('landing.oneCitation')}</strong>
-              </div>
-              <em>{t('landing.actionable')}</em>
-            </div>
-          </aside>
+          <HeroReviewPanel steps={heroReviewSteps} />
         </div>
       </section>
 
@@ -208,6 +187,75 @@ export default function Landing() {
         </div>
       </footer>
     </main>
+  );
+}
+
+function HeroReviewPanel({ steps }) {
+  const { t } = useTranslation();
+  const reviewSteps = Array.isArray(steps) ? steps : [];
+  const carousel = useLandingCarousel(reviewSteps.length, 3800);
+  const activeStep = reviewSteps[carousel.activeSlide] || reviewSteps[0];
+  const activeMetrics = Array.isArray(activeStep?.metrics) ? activeStep.metrics : [];
+
+  if (!activeStep) return null;
+
+  return (
+    <aside
+      className="review-panel"
+      aria-label={t('landing.quickSummary')}
+      onMouseEnter={carousel.pause}
+      onMouseLeave={carousel.resume}
+      onFocusCapture={carousel.pause}
+    >
+      <div className="review-panel-top">
+        <p className="card-kicker">{t('landing.quickSummary')}</p>
+        <span className="live-dot">{t('landing.livePreview')}</span>
+      </div>
+
+      <div className="hero-review-step-row">
+        <span>{activeStep.stepLabel}</span>
+        <div className="hero-review-steps" role="tablist" aria-label={t('landing.heroReviewStepsLabel')}>
+          {reviewSteps.map((step, index) => (
+            <button
+              type="button"
+              key={step.id}
+              role="tab"
+              aria-selected={carousel.activeSlide === index}
+              aria-label={step.title}
+              className={carousel.activeSlide === index ? 'is-active' : ''}
+              onClick={() => carousel.goToSlide(index)}
+            >
+              {step.shortLabel}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="hero-review-stage" key={activeStep.id}>
+        <h2>{activeStep.title}</h2>
+        <p>{activeStep.body}</p>
+
+        <div className="review-grid">
+          {activeMetrics.map((metric) => (
+            <Metric
+              key={`${activeStep.id}-${metric.label}`}
+              label={metric.label}
+              value={metric.value}
+              tone={metric.tone}
+              width={metric.width}
+            />
+          ))}
+        </div>
+
+        <div className="primary-fix">
+          <div>
+            <span>{activeStep.primaryLabel}</span>
+            <strong>{activeStep.primaryValue}</strong>
+          </div>
+          <em>{activeStep.badge}</em>
+        </div>
+      </div>
+    </aside>
   );
 }
 
@@ -760,12 +808,14 @@ function SampleSignalBar({ label, value, tone }) {
 }
 
 function Metric({ label, value, tone, width }) {
+  const widthValue = typeof width === 'number' ? `${width}%` : width;
+
   return (
     <div className="review-metric">
       <span>{label}</span>
       <strong className={tone === 'positive' ? 'tier-low' : 'tier-medium'}>{value}</strong>
       <div className={`review-bar ${tone}`}>
-        <i style={{ width }} />
+        <i style={{ width: widthValue }} />
       </div>
     </div>
   );

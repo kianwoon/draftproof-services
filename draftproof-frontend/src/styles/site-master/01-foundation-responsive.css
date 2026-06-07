@@ -146,6 +146,9 @@
   .submitted-editor-backdrop.is-closing,
   .submitted-editor-sheet,
   .submitted-editor-backdrop.is-closing .submitted-editor-sheet,
+  .hero-review-stage,
+  .review-panel .live-dot::before,
+  .review-bar i,
   .sample-report-preview:not(.is-paused) .sample-preview-tabs button.is-active::after,
   .sample-preview-panel > * { animation: none !important; }
 }
