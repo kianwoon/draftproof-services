@@ -135,6 +135,10 @@ if os.path.isdir(static_path):
 
     @app.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def serve_spa(path: str):
+        redirect_target = legacy_frontend_redirect_target(path)
+        if redirect_target:
+            return RedirectResponse(url=redirect_target, status_code=301)
+
         file_path, cache_control, status_code, extra_headers = resolve_frontend_file(static_path, path)
         headers = dict(extra_headers)
         if cache_control:
@@ -152,6 +156,19 @@ PRIVATE_FRONTEND_PREFIXES = (
     "history",
     "auth/callback",
 )
+
+
+LEGACY_FRONTEND_REDIRECTS = {
+    "essay-checker": "/content-checker",
+    "zh/essay-checker": "/zh/content-checker",
+}
+
+
+def legacy_frontend_redirect_target(path: str) -> str | None:
+    normalized = os.path.normpath(path.strip("/"))
+    if normalized.startswith("..") or os.path.isabs(normalized):
+        return None
+    return LEGACY_FRONTEND_REDIRECTS.get(normalized)
 
 
 def resolve_frontend_file(root_path: str, path: str) -> tuple[str, str | None, int, dict[str, str]]:

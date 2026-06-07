@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.main import resolve_frontend_file
+from app.main import legacy_frontend_redirect_target, resolve_frontend_file
 
 
 def test_resolve_frontend_file_serves_home_for_root_path(tmp_path):
@@ -41,6 +41,15 @@ def test_resolve_frontend_file_keeps_exact_static_file(tmp_path):
     assert cache_control is None
     assert status_code == 200
     assert headers == {}
+
+
+def test_legacy_content_checker_routes_redirect_to_canonical_paths():
+    assert legacy_frontend_redirect_target("essay-checker") == "/content-checker"
+    assert legacy_frontend_redirect_target("zh/essay-checker") == "/zh/content-checker"
+
+
+def test_legacy_frontend_redirect_rejects_parent_directory_paths():
+    assert legacy_frontend_redirect_target("../essay-checker") is None
 
 
 def test_resolve_frontend_file_serves_private_route_with_noindex(tmp_path):
