@@ -45,8 +45,18 @@ export default function Reports() {
     setConfirmTarget(null);
     try {
       await deleteScan(scanId);
-      setScans((prev) => prev.filter((s) => s.id !== scanId));
-      setTotal((prev) => prev - 1);
+      const nextScans = scans.filter((s) => s.id !== scanId);
+      const nextTotal = Math.max(0, total - 1);
+      const nextTotalPages = Math.max(1, Math.ceil(nextTotal / PAGE_SIZE));
+
+      setTotal(nextTotal);
+      setTotalPages(nextTotalPages);
+      if (nextScans.length === 0 && page > nextTotalPages) {
+        setLoading(true);
+        setPage(nextTotalPages);
+      } else {
+        setScans(nextScans);
+      }
     } catch {
       alert(t('reports.deleteFailed'));
     } finally {
