@@ -190,6 +190,18 @@ svg { display: block; }
   background: var(--green);
 }
 
+.news-ticker-date {
+  flex: none;
+  padding: .12em .5em;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+  font-size: .68rem;
+  font-weight: 850;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
 .news-ticker-cta {
   flex: none;
   color: var(--green);

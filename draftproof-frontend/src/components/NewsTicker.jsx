@@ -48,6 +48,7 @@ export default function NewsTicker() {
     const body = (
       <>
         <span className="news-ticker-dot" aria-hidden="true" />
+        {item.date && <span className="news-ticker-date">{item.date}</span>}
         <span className="news-ticker-text">{item.text}</span>
         {item.url && <span className="news-ticker-cta">{t('ticker.readMore')}</span>}
       </>
