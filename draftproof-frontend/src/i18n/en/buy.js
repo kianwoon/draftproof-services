@@ -35,6 +35,7 @@ export const buy = {
   },
   "defaultPackNote": "Review credits for scans and guided revision.",
   "recommended": "Most useful",
+  "promo": "Promo",
   "tokenCount_one": "{{count}} credit",
   "tokenCount_other": "{{count}} credits",
   "redirecting": "Redirecting...",

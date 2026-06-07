@@ -130,7 +130,16 @@
   max-width: 8.5rem;
 }
 
-.pack-card-topline span {
+.pack-card-badges {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pack-card-badges span {
   flex: 0 0 auto;
   padding: 4px 7px;
   border: .5px solid rgba(15, 110, 86, .18);

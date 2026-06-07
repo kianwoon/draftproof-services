@@ -8,6 +8,7 @@ import CodeTexture from '../components/CodeTexture';
 import { TOKEN_CURRENCY_CODE } from '../pricingConfig';
 
 const RECOMMENDED_PACK_ID = 'standard';
+const PROMO_PACK_ID = 'pro';
 
 function formatNumber(value, locale) {
   return new Intl.NumberFormat(locale).format(value);
@@ -98,6 +99,7 @@ export default function BuyTokens() {
         <div className="pack-grid">
           {packs.map(pack => {
             const isRecommended = pack.id === RECOMMENDED_PACK_ID;
+            const isPromo = pack.id === PROMO_PACK_ID;
             const price = Number(pack.price_sgd || 0);
             return (
               <div
@@ -106,7 +108,10 @@ export default function BuyTokens() {
               >
                 <div className="pack-card-topline">
                   <p className="eyebrow">{pack.name}</p>
-                  {isRecommended && <span>{t('buy.recommended')}</span>}
+                  <div className="pack-card-badges">
+                    {isRecommended && <span>{t('buy.recommended')}</span>}
+                    {isPromo && <span>{t('buy.promo')}</span>}
+                  </div>
                 </div>
                 <div className="pack-tokens">{t('buy.tokenCount', { count: pack.tokens })}</div>
                 <div className="pack-price">{TOKEN_CURRENCY_CODE} ${price.toFixed(2)}</div>

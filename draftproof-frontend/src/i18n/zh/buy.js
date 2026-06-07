@@ -35,6 +35,7 @@ export const buy = {
   },
   "defaultPackNote": "可用于扫描和引导修改的审阅额度。",
   "recommended": "最实用",
+  "promo": "优惠",
   "tokenCount_one": "{{count}} 个积分",
   "tokenCount_other": "{{count}} 个积分",
   "redirecting": "正在跳转...",
