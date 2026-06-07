@@ -16,7 +16,7 @@ export const legal = {
           },
           {
             "title": "Documents",
-            "body": "Files you upload for scanning, typically essays, reports, or research papers, are stored temporarily so we can analyse them and generate your report."
+            "body": "Files you upload for scanning, typically content drafts, reports, or research papers, are stored temporarily so we can analyse them and generate your report."
           },
           {
             "title": "Scan Results",

@@ -1,7 +1,7 @@
 {
   "name": "DraftProof",
   "short_name": "DraftProof",
-  "description": "Pre-submission essay reviews for citation gaps, source grounding, similarity risk, and AI-like writing signals.",
+  "description": "Pre-submission content reviews for citation gaps, source grounding, similarity risk, and AI-like writing signals.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0D1B2A",

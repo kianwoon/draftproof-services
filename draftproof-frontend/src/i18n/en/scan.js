@@ -6,7 +6,7 @@ export const scan = {
   "balance": "Available balance",
   "freeThrough": "Free through 500 words",
   "documentText": "Document text",
-  "documentHelp": "Paste plain text from your paper, report, or essay.",
+  "documentHelp": "Paste plain text from your paper, report, or content draft.",
   "pricingNote": "Scans of 500 words or fewer are free — up to 5 times. Credit billing starts at 501 words.",
   "freeUsage": "{{used}} of {{limit}} free scans used",
   "freeRemaining_one": "{{count}} free scan remaining",

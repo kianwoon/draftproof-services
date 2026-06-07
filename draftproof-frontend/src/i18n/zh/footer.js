@@ -2,7 +2,7 @@ export const footer = {
   "product": "产品",
   "howItWorks": "工作方式",
   "sampleReport": "示例报告",
-  "essayChecker": "论文检查器",
+  "essayChecker": "内容检查器",
   "pricing": "价格",
   "faq": "常见问题",
   "privacy": "隐私",

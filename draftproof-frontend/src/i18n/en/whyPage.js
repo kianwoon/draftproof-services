@@ -50,7 +50,7 @@ export const whyPage = {
       "paragraphs": [
         "Many students face a confusing problem: they write their own assignment, then see an AI writing report that makes the work look suspicious.",
         "The issue is that AI detection tools analyse text patterns. They do not truly know whether a student personally wrote every sentence.",
-        "A human-written essay can still carry risk signals when the writing is too predictable, too evenly structured, too generic, too polished in the same way, or weakly grounded in sources and specific reasoning.",
+        "Human-written content can still carry risk signals when the writing is too predictable, too evenly structured, too generic, too polished in the same way, or weakly grounded in sources and specific reasoning.",
         "That is the gap DraftProof is built to address. Turnitin-style reports show the risk signal. DraftProof helps explain the writing patterns behind it."
       ],
       "list": [
@@ -103,7 +103,7 @@ export const whyPage = {
   ],
   "beliefsHighlight": "We believe users deserve clear, evidence-based feedback that helps them improve their work.",
   "ctaTitle": "The world now produces more information than people can easily verify.",
-  "ctaBody": "Before a paper, report, or essay is submitted, users need a way to check whether the work is properly grounded, clearly written, and responsibly supported.",
+  "ctaBody": "Before a paper, report, or content draft is submitted, users need a way to check whether the work is properly grounded, clearly written, and responsibly supported.",
   "ctaHighlight": "DraftProof is that review layer.",
   "ctaRun": "Run a pre-submission review",
   "ctaHow": "See how DraftProof works"

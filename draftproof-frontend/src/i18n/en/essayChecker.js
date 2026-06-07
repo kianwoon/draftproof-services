@@ -1,6 +1,6 @@
 export const essayChecker = {
-  "eyebrow": "Essay checker",
-  "title": "Check your essay before submission.",
+  "eyebrow": "Content checker",
+  "title": "Check your content before submission.",
   "lead": "DraftProof reviews citation gaps, weak claim grounding, source fit, similarity risk, and AI-like writing signals so students can revise responsibly before submission.",
   "startReview": "Start a review",
   "viewSample": "View sample report",
@@ -32,7 +32,7 @@ export const essayChecker = {
     },
     {
       "title": "Author reasoning",
-      "body": "Find places where the essay needs more specific explanation or personal reasoning."
+      "body": "Find places where the content needs more specific explanation or personal reasoning."
     },
     {
       "title": "PDF record",
@@ -40,11 +40,11 @@ export const essayChecker = {
     }
   ],
   "stepsEyebrow": "How to use it",
-  "stepsTitle": "A safer workflow for student essays.",
+  "stepsTitle": "A safer workflow for student content.",
   "steps": [
     {
       "title": "Scan the draft",
-      "body": "Paste your essay and run a pre-submission review."
+      "body": "Paste your content and run a pre-submission review."
     },
     {
       "title": "Read the report",
@@ -55,6 +55,6 @@ export const essayChecker = {
       "body": "Fix the strongest evidence and reasoning gaps first, then review any guided rewrite."
     }
   ],
-  "ctaTitle": "Review the essay before it becomes a submission problem.",
+  "ctaTitle": "Review the content before it becomes a submission problem.",
   "ctaBody": "Use DraftProof to understand what your writing is signalling and what needs attention before you submit."
 };

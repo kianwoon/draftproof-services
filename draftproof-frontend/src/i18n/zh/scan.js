@@ -6,7 +6,7 @@ export const scan = {
   "balance": "可用余额",
   "freeThrough": "500 词以内免费",
   "documentText": "文档文本",
-  "documentHelp": "从论文、报告或文章中粘贴纯文本。",
+  "documentHelp": "从内容草稿、报告或文章中粘贴纯文本。",
   "pricingNote": "500 词或更少的扫描免费，最多 5 次。积分计费从 501 词开始。",
   "freeUsage": "已使用 {{used}} / {{limit}} 次免费扫描",
   "freeRemaining_one": "剩余 {{count}} 次免费扫描",

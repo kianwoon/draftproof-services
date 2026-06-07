@@ -1,6 +1,6 @@
 export const essayChecker = {
-  "eyebrow": "论文检查器",
-  "title": "提交前检查你的论文。",
+  "eyebrow": "内容检查器",
+  "title": "提交前检查你的内容。",
   "lead": "DraftProof 会审阅引用缺口、论断依据薄弱、来源适配、相似度风险和类似 AI 的写作信号，帮助学生在提交前负责任地修改。",
   "startReview": "开始审阅",
   "viewSample": "查看示例报告",
@@ -40,11 +40,11 @@ export const essayChecker = {
     }
   ],
   "stepsEyebrow": "使用方式",
-  "stepsTitle": "更稳妥的学生论文流程。",
+  "stepsTitle": "更稳妥的学生内容流程。",
   "steps": [
     {
       "title": "扫描草稿",
-      "body": "粘贴论文并运行提交前审阅。"
+      "body": "粘贴内容并运行提交前审阅。"
     },
     {
       "title": "阅读报告",
@@ -55,6 +55,6 @@ export const essayChecker = {
       "body": "先修复最重要的证据和推理缺口，再审阅任何引导式改写。"
     }
   ],
-  "ctaTitle": "在论文变成提交问题前先审阅。",
+  "ctaTitle": "在内容变成提交问题前先审阅。",
   "ctaBody": "使用 DraftProof 理解你的写作正在传递什么信号，以及提交前哪里需要注意。"
 };

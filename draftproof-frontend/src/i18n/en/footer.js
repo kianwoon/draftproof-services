@@ -2,7 +2,7 @@ export const footer = {
   "product": "Product",
   "howItWorks": "How it works",
   "sampleReport": "Sample report",
-  "essayChecker": "Essay checker",
+  "essayChecker": "Content checker",
   "pricing": "Pricing",
   "faq": "FAQ",
   "privacy": "Privacy",
