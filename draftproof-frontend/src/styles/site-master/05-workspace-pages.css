@@ -785,24 +785,24 @@
 }
 
 .history-table-wrap {
-  max-width: 960px;
+  max-width: 100%;
   margin: 0 auto;
 }
 
 .history-summary-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  max-width: 960px;
-  margin: 18px auto 18px;
+  max-width: 100%;
+  margin: 18px auto 16px;
   border: .5px solid rgba(13, 27, 42, .08);
-  border-radius: 14px;
+  border-radius: 12px;
   overflow: hidden;
   background: var(--surface);
 }
 
 .history-summary-item {
   min-width: 0;
-  padding: 18px;
+  padding: 16px 18px;
   border-right: .5px solid rgba(13, 27, 42, .08);
 }
 
@@ -828,27 +828,39 @@
   display: block;
   margin: .45rem 0 .2rem;
   color: var(--ink);
-  font-size: clamp(1rem, 1.8vw, 1.35rem);
+  font-size: clamp(1rem, 1.45vw, 1.22rem);
   line-height: 1.2;
   overflow-wrap: anywhere;
 }
 
+.history-summary-amounts,
+.history-summary-date {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.history-summary-date small {
+  color: var(--ink);
+  font: inherit;
+}
+
 .history-ledger {
-  max-width: 960px;
+  max-width: 100%;
   margin: 0 auto;
 }
 
 .history-ledger-note {
   display: flex;
   align-items: center;
-  min-height: 42px;
+  min-height: 36px;
   margin-bottom: 10px;
-  padding: 10px 14px;
+  padding: 9px 13px;
   border: .5px solid rgba(58, 168, 118, .20);
-  border-radius: 12px;
+  border-radius: 10px;
   background: rgba(58, 168, 118, .08);
   color: var(--green-dark);
-  font-size: .84rem;
+  font-size: .8rem;
   font-weight: 700;
   line-height: 1.45;
 }
@@ -869,6 +881,28 @@
 .reports-col-count { width: 76px; }
 .reports-col-words { width: 72px; }
 .reports-col-actions { width: 138px; }
+
+.history-table {
+  min-width: 0;
+}
+
+.history-col-date { width: 28%; }
+.history-col-credits { width: 24%; }
+.history-col-amount { width: 30%; }
+.history-col-status { width: 18%; }
+
+.history-table th,
+.history-table td {
+  padding: 14px 16px;
+}
+
+.history-table .td-date {
+  font-size: .84rem;
+}
+
+.history-table .history-status-cell {
+  text-align: right;
+}
 
 .reports-table th,
 .reports-table td {

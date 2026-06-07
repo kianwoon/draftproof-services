@@ -15,12 +15,6 @@ const STATUS_TONES = {
   completed: 'positive',
 };
 
-function formatDate(iso, locale) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
 function formatDateParts(iso, locale) {
   if (!iso) return { date: '—', time: '' };
   const d = new Date(iso);
@@ -47,8 +41,10 @@ function summarizeAmounts(payments) {
   });
   if (totalsByCurrency.size === 0) return '—';
   return Array.from(totalsByCurrency.entries())
-    .map(([currencyCode, cents]) => formatAmount(cents, currencyCode))
-    .join(' · ');
+    .map(([currencyCode, cents]) => ({
+      currencyCode,
+      amount: formatAmount(cents, currencyCode),
+    }));
 }
 
 export default function PurchaseHistory() {
@@ -62,12 +58,32 @@ export default function PurchaseHistory() {
   const navigate = useNavigate();
   const locale = i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en-SG';
   const visibleTokenTotal = payments.reduce((sum, payment) => sum + (Number(payment.tokens) || 0), 0);
-  const latestPurchase = payments[0] ? formatDate(payments[0].created_at, locale) : '—';
+  const latestPurchase = payments[0] ? formatDateParts(payments[0].created_at, locale) : null;
+  const visibleSpend = summarizeAmounts(payments);
   const summaryStats = [
     { label: t('history.summary.totalPurchases'), value: total, note: t('history.summary.allTime') },
     { label: t('history.summary.visibleTokens'), value: t('common.token', { count: visibleTokenTotal }), note: t('history.summary.currentPage') },
-    { label: t('history.summary.visibleSpend'), value: summarizeAmounts(payments), note: t('history.summary.currentPage') },
-    { label: t('history.summary.latestPurchase'), value: latestPurchase, note: t('history.summary.recentActivity') },
+    {
+      label: t('history.summary.visibleSpend'),
+      value: Array.isArray(visibleSpend) ? (
+        <span className="history-summary-amounts">
+          {visibleSpend.map((item) => (
+            <span key={item.currencyCode}>{item.amount}</span>
+          ))}
+        </span>
+      ) : visibleSpend,
+      note: t('history.summary.currentPage'),
+    },
+    {
+      label: t('history.summary.latestPurchase'),
+      value: latestPurchase ? (
+        <span className="history-summary-date">
+          <span>{latestPurchase.date}</span>
+          <small>{latestPurchase.time}</small>
+        </span>
+      ) : '—',
+      note: t('history.summary.recentActivity'),
+    },
   ];
 
   useEffect(() => {
@@ -160,6 +176,12 @@ export default function PurchaseHistory() {
             </div>
             <div className="reports-table-wrap history-table-wrap">
               <table className="reports-table history-table">
+                <colgroup>
+                  <col className="history-col-date" />
+                  <col className="history-col-credits" />
+                  <col className="history-col-amount" />
+                  <col className="history-col-status" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>{t('history.date')}</th>
