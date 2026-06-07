@@ -3,6 +3,18 @@ from pathlib import Path
 from app.main import resolve_frontend_file
 
 
+def test_resolve_frontend_file_serves_home_for_root_path(tmp_path):
+    root = tmp_path
+    (root / "index.html").write_text("home", encoding="utf-8")
+
+    file_path, cache_control, status_code, headers = resolve_frontend_file(str(root), "")
+
+    assert Path(file_path) == root / "index.html"
+    assert cache_control == "no-cache"
+    assert status_code == 200
+    assert headers == {}
+
+
 def test_resolve_frontend_file_uses_prerendered_route_index(tmp_path):
     root = tmp_path
     (root / "index.html").write_text("home", encoding="utf-8")

@@ -157,7 +157,7 @@ PRIVATE_FRONTEND_PREFIXES = (
 def resolve_frontend_file(root_path: str, path: str) -> tuple[str, str | None, int, dict[str, str]]:
     normalized = os.path.normpath(path.strip("/"))
     if normalized in {"", "."}:
-        normalized = ""
+        return os.path.join(root_path, "index.html"), "no-cache", 200, {}
     elif normalized.startswith("..") or os.path.isabs(normalized):
         return frontend_not_found_file(root_path), "no-cache", 404, {"X-Robots-Tag": "noindex, nofollow"}
 
