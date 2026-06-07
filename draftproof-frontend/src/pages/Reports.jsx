@@ -19,10 +19,13 @@ const TIER_TONES = {
   red: 'negative',
 };
 
-function formatDate(iso, locale) {
-  if (!iso) return '—';
+function formatDateParts(iso, locale) {
+  if (!iso) return { date: '—', time: '' };
   const d = new Date(iso);
-  return d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return {
+    date: d.toLocaleDateString(locale, { day: 'numeric', month: 'short' }),
+    time: d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }),
+  };
 }
 
 export default function Reports() {
@@ -160,6 +163,7 @@ export default function Reports() {
                   {scans.map((scan) => {
                     const statusTone = scan.status === 'processing' ? 'active' : scan.status === 'completed' ? 'positive' : scan.status === 'failed' ? 'negative' : 'neutral';
                     const tierTone = TIER_TONES[scan.tier] || 'neutral';
+                    const createdAt = formatDateParts(scan.created_at, locale);
                     return (
                       <tr key={scan.id}>
                         <td className="td-report-meta">
@@ -168,7 +172,10 @@ export default function Reports() {
                           </strong>
                           {scan.content_preview && <span>{scan.content_preview}</span>}
                         </td>
-                        <td className="td-date">{formatDate(scan.created_at, locale)}</td>
+                        <td className="td-date">
+                          <span>{createdAt.date}</span>
+                          {createdAt.time && <small>{createdAt.time}</small>}
+                        </td>
                         <td>
                           <span className={`status-badge status-badge-${statusTone}`}>
                             {t(`reports.statuses.${scan.status}`, { defaultValue: scan.status || t('reports.statuses.pending') })}

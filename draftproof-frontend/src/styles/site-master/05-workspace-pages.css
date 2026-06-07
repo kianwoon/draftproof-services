@@ -858,17 +858,17 @@
   border-collapse: collapse;
   font-size: .9rem;
   table-layout: fixed;
-  min-width: 1188px;
+  min-width: 940px;
 }
 
-.reports-col-report { width: 320px; }
-.reports-col-date { width: 185px; }
-.reports-col-status { width: 100px; }
-.reports-col-tier { width: 100px; }
-.reports-col-score { width: 84px; }
-.reports-col-count { width: 88px; }
-.reports-col-words { width: 83px; }
-.reports-col-actions { width: 145px; }
+.reports-col-report { width: 330px; }
+.reports-col-date { width: 76px; }
+.reports-col-status { width: 86px; }
+.reports-col-tier { width: 86px; }
+.reports-col-score { width: 76px; }
+.reports-col-count { width: 76px; }
+.reports-col-words { width: 72px; }
+.reports-col-actions { width: 138px; }
 
 .reports-table th,
 .reports-table td {
@@ -877,7 +877,7 @@
 
 .reports-table th {
   text-align: left;
-  padding: 13px 14px;
+  padding: 12px 12px;
   font-size: 11px;
   font-weight: 500;
   color: var(--muted);
@@ -889,7 +889,7 @@
 }
 
 .reports-table td {
-  padding: 16px 14px;
+  padding: 15px 12px;
   border-bottom: .5px solid rgba(13, 27, 42, .06);
   vertical-align: middle;
 }
@@ -900,11 +900,10 @@
 
 .td-date {
   color: var(--ink);
-  font-size: .84rem;
+  font-size: .82rem;
   font-weight: 500;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.25;
 }
 
 .td-report-meta {
@@ -916,7 +915,6 @@
   display: block;
   max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .td-report-meta strong {
@@ -924,7 +922,10 @@
   font-size: .88rem;
   font-weight: 700;
   line-height: 1.35;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
 }
 
 .td-report-meta span {
@@ -937,6 +938,7 @@
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   white-space: normal;
+  text-overflow: ellipsis;
 }
 
 .td-date span,
@@ -948,9 +950,9 @@
 
 .td-date small,
 .history-amount small {
-  margin-top: .25rem;
+  margin-top: .18rem;
   color: var(--muted);
-  font-size: .74rem;
+  font-size: .72rem;
   font-weight: 700;
 }
 
@@ -1056,7 +1058,7 @@
 
 .td-actions .btn {
   min-width: 0;
-  padding-inline: 12px;
+  padding-inline: 10px;
 }
 
 .score-value {
