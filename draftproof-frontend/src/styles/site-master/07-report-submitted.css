@@ -392,6 +392,71 @@
   margin-top: .25rem;
 }
 
+.submitted-also-detected {
+  display: grid;
+  gap: .5rem;
+  padding: .85rem;
+  border: 1px solid #dbe4ea;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.submitted-also-detected-head {
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.submitted-also-detected ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: .55rem;
+}
+
+.submitted-also-detected li {
+  display: grid;
+  gap: .2rem;
+  padding-top: .55rem;
+  border-top: 1px solid #eef2f6;
+}
+
+.submitted-also-detected li:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.submitted-also-detected-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .6rem;
+}
+
+.submitted-also-detected-label strong {
+  color: #172033;
+  font-size: .84rem;
+  font-weight: 850;
+  text-transform: capitalize;
+}
+
+.submitted-also-detected-label span {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: .78rem;
+  font-weight: 800;
+}
+
+.submitted-also-detected p {
+  margin: 0;
+  color: #334155;
+  font-size: .84rem;
+  line-height: 1.5;
+}
+
 .submitted-panel-actions {
   display: grid;
   gap: .6rem;
@@ -1085,6 +1150,29 @@
   -webkit-box-orient: vertical;
 }
 
+.submitted-affected-meta {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+}
+
+.submitted-affected-item.is-edited {
+  border-color: #2d695a;
+  background: #f1faf6;
+}
+
+.submitted-affected-check {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #2d695a;
+  color: #fff !important;
+}
+
 .submitted-editor-detail {
   overflow: auto;
   display: flex;
@@ -1173,6 +1261,17 @@
   border-radius: inherit;
   background: linear-gradient(90deg, color-mix(in srgb, var(--signal-color) 72%, #fff), var(--signal-color));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal-color) 50%, transparent);
+}
+
+.submitted-signal-gauge.is-stale {
+  border-color: #cbd5e1;
+  background: linear-gradient(135deg, #f1f5f9 0%, #fff 72%), #fff;
+  opacity: .6;
+}
+
+.submitted-signal-gauge.is-stale .submitted-signal-gauge-track span {
+  background: linear-gradient(90deg, #cbd5e1, #94a3b8);
+  box-shadow: none;
 }
 
 /* Score profile */

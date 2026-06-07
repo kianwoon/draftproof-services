@@ -1107,6 +1107,9 @@ export default function Report() {
     ''
   );
   const selectedRewriteHint = selectedParagraphGuidance.rewrite_hint || '';
+  const selectedSecondarySignals = Array.isArray(selectedParagraph?.signals)
+    ? selectedParagraph.signals.filter((signal) => signal && signal.key !== selectedParagraph.primarySignal?.key)
+    : [];
   const originalSubmittedText = submittedContentToText(submittedContent);
   const submittedDraftChanged = submittedDraftText !== originalSubmittedText;
   const submittedTrackedDiff = submittedEditorOpen
@@ -1155,9 +1158,10 @@ export default function Report() {
   const renderSubmittedSignalGauge = () => {
     if (selectedSignalStrength == null || !selectedParagraph?.primarySignal) return null;
     const value = Math.round(selectedSignalStrength);
+    const stale = Boolean(selectedParagraph?.text) && !submittedDraftText.includes(selectedParagraph.text);
     return (
       <div
-        className="submitted-signal-gauge"
+        className={`submitted-signal-gauge${stale ? ' is-stale' : ''}`}
         style={{
           '--signal-color': selectedParagraph.primarySignal.color || '#b45309',
           '--signal-strength': `${value}%`,
@@ -2699,17 +2703,33 @@ export default function Report() {
                         {affectedParagraphs.map((paragraph) => {
                           const signal = paragraph.primarySignal || paragraph.signals[0];
                           const isSelected = selectedParagraph?.id === paragraph.id;
+                          const isEdited = Boolean(paragraph.text) && !submittedDraftText.includes(paragraph.text);
                           return (
                             <button
                               key={`affected-${paragraph.id}`}
                               type="button"
-                              className={`submitted-affected-item${isSelected ? ' is-selected' : ''}`}
+                              className={`submitted-affected-item${isSelected ? ' is-selected' : ''}${isEdited ? ' is-edited' : ''}`}
+                              title={isEdited
+                                ? t('report.submitted.editor.paragraphEdited')
+                                : t('report.submitted.editor.paragraphUnchanged')}
                               onClick={() => {
                                 setSelectedParagraphId(paragraph.id);
                                 focusParagraphInSubmittedEditor(paragraph);
                               }}
                             >
-                              <span>{paragraph.sentence_id}</span>
+                              <span className="submitted-affected-meta">
+                                <span>{paragraph.sentence_id}</span>
+                                {isEdited && (
+                                  <span
+                                    className="submitted-affected-check"
+                                    aria-label={t('report.submitted.editor.paragraphEdited')}
+                                  >
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                                      <path d="M5 12.5l4.2 4.2L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  </span>
+                                )}
+                              </span>
                               <strong>{signalLabel(signal.key, signal.label, t)}</strong>
                               <em>{paragraph.text}</em>
                             </button>
@@ -2738,6 +2758,16 @@ export default function Report() {
                               <span>{t('report.submitted.editor.signal')}</span>
                               <p>{selectedReaderSummary}</p>
                             </div>
+                            {selectedWhyFlagged.length > 0 && (
+                              <div className="submitted-panel-note">
+                                <span>{t('report.submitted.whyFlagged')}</span>
+                                <ul>
+                                  {selectedWhyFlagged.map((reason) => (
+                                    <li key={reason}>{reason}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
                             {selectedMainIssue && (
                               <div className="submitted-panel-note">
                                 <span>{t('report.submitted.mainIssue')}</span>
@@ -2754,6 +2784,27 @@ export default function Report() {
                               <div className="submitted-panel-note">
                                 <span>{t('report.submitted.rewriteHint')}</span>
                                 <p>{selectedRewriteHint}</p>
+                              </div>
+                            )}
+                            {selectedSecondarySignals.length > 0 && (
+                              <div className="submitted-also-detected">
+                                <span className="submitted-also-detected-head">{t('report.submitted.alsoDetected')}</span>
+                                <ul>
+                                  {selectedSecondarySignals.map((signal) => {
+                                    const advice = signal.recommendation
+                                      || signalDescription(signal.key, signal.description, t);
+                                    const strength = clampPercent(signal.score);
+                                    return (
+                                      <li key={signal.key}>
+                                        <div className="submitted-also-detected-label">
+                                          <strong>{signalLabel(signal.key, signal.label, t)}</strong>
+                                          {strength != null && <span>{Math.round(strength)}%</span>}
+                                        </div>
+                                        {advice && <p>{advice}</p>}
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
                               </div>
                             )}
                           </>
