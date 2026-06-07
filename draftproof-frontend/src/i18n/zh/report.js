@@ -4,7 +4,7 @@ export const report = {
   "loadFailed": "无法加载报告",
   "back": "返回报告",
   "eyebrow": "分析报告",
-  "documentTitle": "文档分析",
+  "documentTitle": "内容分析",
   "words": "{{count}} 词",
   "downloadPdf": "下载 PDF",
   "retentionNotice": "报告会在 DraftProof 中保留 3 天。PDF 副本也会发送到你的邮箱。",

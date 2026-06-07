@@ -4,7 +4,7 @@ export const report = {
   "loadFailed": "Failed to load report",
   "back": "Back to Reports",
   "eyebrow": "Analysis Report",
-  "documentTitle": "Document Analysis",
+  "documentTitle": "Content Analysis",
   "words": "{{count}} words",
   "downloadPdf": "Download PDF",
   "retentionNotice": "Available in DraftProof for 3 days. A PDF copy is also sent to your mailbox.",
