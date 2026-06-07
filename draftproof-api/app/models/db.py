@@ -156,6 +156,8 @@ class ScanJob(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
     input_text_hash = Column(Text, nullable=False)
     word_count = Column(Integer, nullable=False, default=0)
+    document_title = Column(Text)
+    content_preview = Column(Text)
     scan_type = Column(Text, nullable=False, default="scan")
     status = Column(Text, nullable=False, default="pending", index=True)
     tier = Column(Text)

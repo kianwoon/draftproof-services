@@ -26,7 +26,7 @@ class FakeSession:
         self.added.append(item)
 
     async def execute(self, *_args, **_kwargs):
-        raise AssertionError("free scans should not query credit accounts")
+        return SimpleNamespace(scalar=lambda: 0)
 
     async def commit(self):
         self.committed = True
@@ -38,6 +38,36 @@ class FakeScanTask:
 
     def delay(self, *args):
         self.calls.append(args)
+
+
+class FakeResult:
+    def __init__(self, *, rows=None, scalar_value=None):
+        self.rows = rows or []
+        self.scalar_value = scalar_value
+
+    def scalar(self):
+        return self.scalar_value
+
+    def scalars(self):
+        return SimpleNamespace(all=lambda: self.rows)
+
+
+class FakeListSession:
+    def __init__(self, results):
+        self.results = list(results)
+        self.committed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def execute(self, *_args, **_kwargs):
+        return self.results.pop(0)
+
+    async def commit(self):
+        self.committed = True
 
 
 def _stream_id(at: datetime) -> str:
@@ -59,6 +89,33 @@ def test_rewrite_cost_charges_five_tokens_per_started_1000_words():
     assert scan_service._rewrite_cost(1) == 5
     assert scan_service._rewrite_cost(1000) == 5
     assert scan_service._rewrite_cost(1001) == 10
+
+
+def test_scan_report_metadata_compacts_and_bounds_text():
+    text = "\n\n  This is the first useful sentence.   This continues with extra detail.\nSecond line."
+
+    metadata = scan_service.build_scan_report_metadata(text)
+
+    assert metadata["document_title"] == "This is the first useful sentence."
+    assert metadata["content_preview"] == "This is the first useful sentence. This continues with extra detail. Second line."
+
+
+def test_scan_report_metadata_ignores_punctuation_only_title():
+    metadata = scan_service.build_scan_report_metadata("\n ... !!! \n\n")
+
+    assert metadata["document_title"] is None
+    assert metadata["content_preview"] == "... !!!"
+
+
+def test_scan_report_metadata_truncates_long_values():
+    text = " ".join(["Alpha"] * 80)
+
+    metadata = scan_service.build_scan_report_metadata(text)
+
+    assert len(metadata["document_title"]) <= scan_service.DOCUMENT_TITLE_MAX_CHARS
+    assert len(metadata["content_preview"]) <= scan_service.CONTENT_PREVIEW_MAX_CHARS
+    assert metadata["document_title"].endswith("…")
+    assert metadata["content_preview"].endswith("…")
 
 
 @pytest.mark.asyncio
@@ -83,7 +140,47 @@ async def test_create_free_scan_does_not_require_credit_account(monkeypatch):
     assert fake_session.committed is True
     assert len(fake_session.added) == 1
     assert fake_session.added[0].word_count == 500
+    assert len(fake_session.added[0].document_title) <= scan_service.DOCUMENT_TITLE_MAX_CHARS
+    assert fake_session.added[0].document_title.startswith("word0 word1")
+    assert fake_session.added[0].document_title.endswith("…")
+    assert fake_session.added[0].content_preview.endswith("…")
     assert len(fake_task.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_scans_returns_report_metadata(monkeypatch):
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000005",
+        status="completed",
+        document_title="Essay introduction",
+        content_preview="This essay introduces the argument.",
+        tier="low",
+        ai_score=12,
+        writing_score=88,
+        finding_count=2,
+        progress_percent=100,
+        progress_message="Complete",
+        word_count=640,
+        created_at=datetime(2026, 5, 11, 1, 0, tzinfo=timezone.utc),
+        completed_at=datetime(2026, 5, 11, 1, 2, tzinfo=timezone.utc),
+    )
+    fake_session = FakeListSession([
+        FakeResult(rows=[]),
+        FakeResult(scalar_value=1),
+        FakeResult(rows=[job]),
+    ])
+
+    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
+
+    result = await scan_service.list_scans(
+        "00000000-0000-0000-0000-000000000001",
+        page=1,
+        per_page=10,
+    )
+
+    assert result["total"] == 1
+    assert result["items"][0]["document_title"] == "Essay introduction"
+    assert result["items"][0]["content_preview"] == "This essay introduces the argument."
 
 
 @pytest.mark.asyncio

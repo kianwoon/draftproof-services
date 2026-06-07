@@ -12,6 +12,8 @@ export const reports = {
   "emptyTitle": "还没有报告",
   "emptyBody": "运行第一次扫描后，结果会显示在这里。",
   "startScanning": "开始扫描",
+  "report": "报告",
+  "untitledReport": "未命名报告",
   "date": "日期",
   "status": "状态",
   "reviewTier": "审阅等级",

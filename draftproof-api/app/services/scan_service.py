@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -15,10 +16,43 @@ from app.services import progress_stream
 
 FREE_SCAN_WORD_LIMIT = 500
 FREE_SCAN_LIMIT = 5
+DOCUMENT_TITLE_MAX_CHARS = 90
+CONTENT_PREVIEW_MAX_CHARS = 220
 _STALE_THRESHOLD = timedelta(minutes=10)
 _PROCESSING_HEARTBEAT_STALE_THRESHOLD = timedelta(minutes=5)
 _ACTIVE_SCAN_STATUSES = ("pending", "processing", "retrying")
 _PROCESSING_SCAN_STATUSES = ("processing",)
+_MEANINGFUL_TEXT_RE = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]")
+
+
+def _compact_text(value: str) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _truncate_display_text(value: str, limit: int) -> str:
+    compact = _compact_text(value)
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _first_meaningful_segment(text: str) -> str:
+    for raw_line in str(text or "").splitlines():
+        line = _compact_text(raw_line)
+        if _MEANINGFUL_TEXT_RE.search(line):
+            sentence_match = re.match(r"^(.+?[.!?。！？])(?:\s|$)", line)
+            return sentence_match.group(1) if sentence_match else line
+    compact = _compact_text(text)
+    return compact if _MEANINGFUL_TEXT_RE.search(compact) else ""
+
+
+def build_scan_report_metadata(text: str) -> dict:
+    title_source = _first_meaningful_segment(text)
+    preview_source = _compact_text(text)
+    return {
+        "document_title": _truncate_display_text(title_source, DOCUMENT_TITLE_MAX_CHARS) or None,
+        "content_preview": _truncate_display_text(preview_source, CONTENT_PREVIEW_MAX_CHARS) or None,
+    }
 
 
 def _scan_cost(word_count: int) -> int:
@@ -128,6 +162,7 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
     text_hash = hashlib.sha256(text.encode()).hexdigest()
     word_count = len(text.split())
     job_id = uuid.uuid4()
+    report_metadata = build_scan_report_metadata(text)
 
     async with async_session() as session:
         job = ScanJob(
@@ -135,6 +170,8 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
             user_id=uuid.UUID(user_id) if user_id else None,
             input_text_hash=text_hash,
             word_count=word_count,
+            document_title=report_metadata["document_title"],
+            content_preview=report_metadata["content_preview"],
             scan_type="scan",
             status="pending",
         )
@@ -241,6 +278,8 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
                     "document_id": "",
                     "status": j.status,
                     "report_id": str(j.id) if j.status == "completed" else None,
+                    "document_title": j.document_title,
+                    "content_preview": j.content_preview,
                     "tier": j.tier,
                     "ai_score": float(j.ai_score) if j.ai_score is not None else None,
                     "writing_score": float(j.writing_score) if j.writing_score is not None else None,

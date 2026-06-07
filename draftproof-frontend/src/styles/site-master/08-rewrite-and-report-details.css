@@ -648,7 +648,7 @@
 
 @media (max-width: 768px) {
   .reports-table-wrap { overflow-x: auto; }
-  .reports-table { min-width: 780px; }
+  .reports-table { min-width: 980px; }
   .rewrite-diff-heading {
     align-items: flex-start;
     flex-direction: column;

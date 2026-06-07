@@ -12,6 +12,8 @@ export const reports = {
   "emptyTitle": "No reports yet",
   "emptyBody": "Run your first scan to see results here.",
   "startScanning": "Start Scanning",
+  "report": "Report",
+  "untitledReport": "Untitled report",
   "date": "Date",
   "status": "Status",
   "reviewTier": "Review tier",

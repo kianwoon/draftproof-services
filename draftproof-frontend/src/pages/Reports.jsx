@@ -134,6 +134,7 @@ export default function Reports() {
               <table className="reports-table">
                 <thead>
                   <tr>
+                    <th>{t('reports.report')}</th>
                     <th>{t('reports.date')}</th>
                     <th>{t('reports.status')}</th>
                     <th>{t('reports.reviewTier')}</th>
@@ -150,6 +151,10 @@ export default function Reports() {
                     const tierTone = TIER_TONES[scan.tier] || 'neutral';
                     return (
                       <tr key={scan.id}>
+                        <td className="td-report-meta">
+                          <strong>{scan.document_title || t('reports.untitledReport')}</strong>
+                          {scan.content_preview && <span>{scan.content_preview}</span>}
+                        </td>
                         <td className="td-date">{formatDate(scan.created_at, locale)}</td>
                         <td>
                           <span className={`status-badge status-badge-${statusTone}`}>
