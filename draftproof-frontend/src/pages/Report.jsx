@@ -1189,6 +1189,36 @@ export default function Report() {
     }
   };
 
+  const openSubmittedEditorForParagraph = (paragraph = selectedParagraph) => {
+    const targetParagraph = paragraph?.signals?.length
+      ? paragraph
+      : affectedParagraphs[0] || paragraph;
+
+    openSubmittedEditor();
+    setSubmittedRescanError(null);
+
+    if (targetParagraph?.id) {
+      setSelectedParagraphId(targetParagraph.id);
+    }
+
+    setSubmittedHighlightRanges((current) => {
+      const hydratedRanges = buildSubmittedHighlightRanges(current);
+      if (!targetParagraph?.id) return hydratedRanges;
+
+      const range = resolveSubmittedParagraphRange(targetParagraph, hydratedRanges);
+      return range
+        ? {
+          ...hydratedRanges,
+          [targetParagraph.id]: { ...range, segmentId: targetParagraph.id },
+        }
+        : hydratedRanges;
+    });
+
+    if (targetParagraph) {
+      requestAnimationFrame(() => focusParagraphInSubmittedEditor(targetParagraph));
+    }
+  };
+
   const syncSubmittedHighlightScroll = () => {
     if (!submittedEditorRef.current || !submittedHighlightRef.current) return;
     submittedHighlightRef.current.scrollTop = submittedEditorRef.current.scrollTop;
@@ -2164,7 +2194,7 @@ export default function Report() {
           mainRiskLabel={t('report.repairSummary.mainRisk')}
           actionLabel={t('report.submitted.editor.editDraft')}
           actionHint={t('report.repairSummary.editDraftHint')}
-          onAction={openSubmittedEditor}
+          onAction={() => openSubmittedEditorForParagraph()}
         />
 
         {transformationScorecard ? (
@@ -2297,11 +2327,7 @@ export default function Report() {
                   <button
                     type="button"
                     className="btn btn-secondary submitted-edit-button"
-                    onClick={() => {
-                      openSubmittedEditor();
-                      setSubmittedRescanError(null);
-                      setSubmittedHighlightRanges((current) => buildSubmittedHighlightRanges(current));
-                    }}
+                    onClick={() => openSubmittedEditorForParagraph()}
                   >
                     <EditPencilIcon />
                     {t('report.submitted.editor.editDraft')}
@@ -2446,12 +2472,7 @@ export default function Report() {
                       <button
                         type="button"
                         className="btn btn-secondary"
-                        onClick={() => {
-                          openSubmittedEditor();
-                          setSubmittedRescanError(null);
-                          setSubmittedHighlightRanges((current) => buildSubmittedHighlightRanges(current));
-                          requestAnimationFrame(() => focusParagraphInSubmittedEditor(selectedParagraph));
-                        }}
+                        onClick={() => openSubmittedEditorForParagraph(selectedParagraph)}
                         disabled={!canEditSubmittedDraft}
                       >
                         {t('report.submitted.editParagraph')}
