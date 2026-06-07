@@ -132,6 +132,17 @@ export default function Reports() {
           <>
             <div className="reports-table-wrap">
               <table className="reports-table">
+                <colgroup>
+                  <col className="reports-col-report" />
+                  <col className="reports-col-date" />
+                  <col className="reports-col-status" />
+                  <col className="reports-col-tier" />
+                  <col className="reports-col-score" />
+                  <col className="reports-col-score" />
+                  <col className="reports-col-count" />
+                  <col className="reports-col-words" />
+                  <col className="reports-col-actions" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>{t('reports.report')}</th>
@@ -152,7 +163,9 @@ export default function Reports() {
                     return (
                       <tr key={scan.id}>
                         <td className="td-report-meta">
-                          <strong>{scan.document_title || t('reports.untitledReport')}</strong>
+                          <strong title={scan.document_title || t('reports.untitledReport')}>
+                            {scan.document_title || t('reports.untitledReport')}
+                          </strong>
                           {scan.content_preview && <span>{scan.content_preview}</span>}
                         </td>
                         <td className="td-date">{formatDate(scan.created_at, locale)}</td>
