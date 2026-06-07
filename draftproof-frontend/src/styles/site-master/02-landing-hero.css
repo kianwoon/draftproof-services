@@ -408,10 +408,21 @@
 .trust-bar-inner {
   display: flex;
   align-items: center;
-  gap: 12px 24px;
-  flex-wrap: wrap;
+  gap: 18px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
   color: var(--muted);
   font-size: 13px;
+}
+
+.trust-bar-inner::-webkit-scrollbar {
+  display: none;
+}
+
+.trust-bar-inner > * {
+  flex: none;
+  white-space: nowrap;
 }
 
 .trust-bar strong {
