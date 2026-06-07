@@ -559,10 +559,10 @@
   place-items: center;
   width: 2.25rem;
   height: 2.25rem;
-  border: 1px solid #cbd5e1;
+  border: 1.5px solid #dc2626;
   border-radius: 999px;
-  background: #fff;
-  color: #172033;
+  background: #fff7f7;
+  color: #b91c1c;
   font-size: .88rem;
   font-weight: 900;
   line-height: 1;
@@ -572,12 +572,13 @@
 
 .submitted-editor-close-button:hover,
 .submitted-editor-close-button:focus-visible {
-  border-color: #2d695a;
-  color: #0f3f36;
+  border-color: #b91c1c;
+  background: #dc2626;
+  color: #fff;
   outline: none;
   box-shadow:
-    0 0 0 3px rgba(45, 105, 90, .15),
-    0 8px 18px rgba(15, 23, 42, .12);
+    0 0 0 4px rgba(220, 38, 38, .18),
+    0 10px 22px rgba(185, 28, 28, .24);
 }
 
 .submitted-editor-close-button:disabled {
