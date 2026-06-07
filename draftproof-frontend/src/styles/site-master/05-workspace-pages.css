@@ -1032,20 +1032,25 @@
 .muted-link { color: var(--muted); font-size: .84rem; }
 
 .reports-footnotes {
-  max-width: 860px;
-  margin: 14px 0 0;
-  color: var(--muted);
-  font-size: .82rem;
-  font-weight: 650;
-  line-height: 1.55;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: .5px solid rgba(13, 27, 42, .08);
+  color: #7a8493;
+  font-size: .76rem;
+  font-weight: 500;
+  line-height: 1.45;
 }
 
 .reports-footnotes p {
   margin: 0;
+  max-width: 32rem;
 }
 
 .reports-footnotes p + p {
-  margin-top: .45rem;
+  margin-top: 0;
 }
 .td-actions {
   display: flex;
