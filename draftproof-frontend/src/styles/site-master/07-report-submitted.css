@@ -513,13 +513,15 @@
 
 .submitted-editor-backdrop {
   position: fixed;
-  inset: 0;
+  inset: calc(var(--header-h) + var(--ticker-h)) 0 0;
   z-index: 80;
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
+  padding-top: .35rem;
   background: rgba(15, 23, 42, .42);
   backdrop-filter: blur(6px);
   animation: submitted-editor-backdrop-in .22s ease-out;
+  box-sizing: border-box;
 }
 
 .submitted-editor-backdrop.is-closing {
@@ -530,10 +532,10 @@
 .submitted-editor-sheet {
   position: relative;
   width: 100%;
-  height: 84vh;
-  height: 84dvh;
-  max-height: calc(100vh - 24px);
-  max-height: calc(100dvh - 24px);
+  height: calc(100vh - var(--header-h) - var(--ticker-h) - .35rem);
+  height: calc(100dvh - var(--header-h) - var(--ticker-h) - .35rem);
+  max-height: calc(100vh - var(--header-h) - var(--ticker-h) - .35rem);
+  max-height: calc(100dvh - var(--header-h) - var(--ticker-h) - .35rem);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   border: 1px solid rgba(148, 163, 184, .45);
@@ -585,7 +587,7 @@
 
 @keyframes submitted-editor-slide-up {
   from {
-    transform: translateY(56px);
+    transform: translateY(18px);
     opacity: .78;
   }
   to {

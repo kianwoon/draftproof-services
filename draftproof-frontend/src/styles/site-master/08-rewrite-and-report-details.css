@@ -816,7 +816,8 @@
     transition: none;
   }
   .submitted-editor-sheet {
-    height: 96vh;
+    height: calc(100vh - var(--header-h) - var(--ticker-h) - .35rem);
+    height: calc(100dvh - var(--header-h) - var(--ticker-h) - .35rem);
     border-radius: 14px 14px 0 0;
   }
   .submitted-editor-head,
