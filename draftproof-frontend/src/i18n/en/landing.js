@@ -1,6 +1,6 @@
 export const landing = {
   "heroPill": "Grounding-first essay review for students",
-  "heroTitle": "Show where your essay needs stronger evidence before anyone questions it.",
+  "heroTitle": "Show where your content needs stronger evidence before anyone questions it.",
   "heroTitleHighlight": "stronger evidence",
   "heroLead": "DraftProof reviews citation gaps, source fit, claim grounding, similarity risk, and AI-like writing signals, then turns them into a focused revision plan you can act on before submission.",
   "runCheck": "Review my essay",
