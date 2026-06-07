@@ -659,18 +659,33 @@
   .rewrite-diff-grid {
     grid-template-columns: 1fr;
   }
-  .report-hero { align-items: flex-start; }
-  .report-hero-title-row { align-items: flex-start; }
+  .report-hero { align-items: stretch; }
+  .report-hero-title-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: flex-start;
+  }
+  .report-hero-stats {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .report-hero-actions {
     width: 100%;
+    align-items: stretch;
+    flex-direction: column;
     justify-content: flex-start;
     gap: .8rem;
   }
+  .report-download-group {
+    align-items: flex-start;
+    width: 100%;
+  }
   .rewrite-action-group {
-    flex: 1 1 220px;
+    align-items: flex-start;
+    flex: 0 1 auto;
     margin-left: 0;
     min-width: 0;
     max-width: none;
+    width: 100%;
   }
   .rewrite-action-group span { white-space: normal; }
   .rewrite-token-estimate {
@@ -679,15 +694,16 @@
     text-align: left;
   }
   .rewrite-action-group .rewrite-btn {
-    align-self: stretch;
+    align-self: flex-start;
   }
-  .download-pdf-btn,
-  .rewrite-btn {
-    flex: 1 1 180px;
+  .report-hero-actions .download-pdf-btn,
+  .report-hero-actions .rewrite-btn {
+    flex: 0 0 auto;
+    width: auto;
   }
-  .report-doc-icon { width: 58px; height: 58px; flex-basis: 58px; border-radius: 14px; }
-  .report-doc-icon svg { width: 34px; height: 34px; }
-  .report-hero-info h1 { font-size: clamp(2.2rem, 12vw, 3.3rem); }
+  .report-doc-icon { width: 54px; height: 54px; border-radius: 12px; }
+  .report-doc-icon svg { width: 30px; height: 30px; }
+  .report-hero-info h1 { font-size: clamp(2rem, 10vw, 2.8rem); }
   .report-summary-bar,
   .report-rewrite-summary-bar {
     grid-template-columns: 1fr;
@@ -866,5 +882,19 @@
   }
   .score-profile-row-foot em {
     text-align: left;
+  }
+}
+
+@media (max-width: 520px) {
+  .report-hero-title-row {
+    grid-template-columns: 1fr;
+  }
+
+  .report-hero-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .report-doc-icon {
+    display: none;
   }
 }

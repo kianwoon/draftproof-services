@@ -301,7 +301,7 @@ export const report = {
     "starting": "Starting rewrite...",
     "resume": "Resume Rewrite",
     "rewriteAiSections": "Auto Rewrite / Correction",
-    "tokenEstimate": "{{tokens}} credits required for this rewrite, based on {{words}} submitted words.",
+    "tokenEstimate": "{{tokens}} required for this rewrite, based on {{words}} submitted words.",
     "emailPdfNotice": "We will email a PDF copy of the rewritten result to your account email when it is ready.",
     "keepOpenInline": "Keep this report open; results will appear when ready.",
     "done": "Done",

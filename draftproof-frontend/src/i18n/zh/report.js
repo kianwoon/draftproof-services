@@ -301,7 +301,7 @@ export const report = {
     "starting": "正在开始改写...",
     "resume": "继续改写",
     "rewriteAiSections": "自动改写 / 修正",
-    "tokenEstimate": "本次改写需要 {{tokens}} 个积分，按已提交的 {{words}} 词计算。",
+    "tokenEstimate": "本次改写需要 {{tokens}}，按已提交的 {{words}} 词计算。",
     "emailPdfNotice": "改写结果准备好后，我们会将 PDF 副本发送到你的账户邮箱。",
     "keepOpenInline": "请保持此报告打开；结果准备好后会显示。",
     "done": "完成",
