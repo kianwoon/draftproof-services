@@ -1044,10 +1044,15 @@
   cursor: pointer;
 }
 
-.submitted-affected-item:hover,
-.submitted-affected-item.is-selected {
+.submitted-affected-item:hover {
   border-color: #2d695a;
   box-shadow: 0 0 0 2px rgba(45, 105, 90, .12);
+}
+
+.submitted-affected-item.is-selected {
+  border: 2px solid #dc2626;
+  background: #fff7f7;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, .14);
 }
 
 .submitted-affected-item span {
