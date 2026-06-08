@@ -669,7 +669,6 @@ def _executive_signal_chart_html(
     # Authorship rating (label/detail/tone) is no longer rendered here — the seal was removed to
     # mirror the web page mesh. The rating is shown once in the report header ("Authorship Rating:").
     doc_ctx = data.get("document_context", {}) if isinstance(data, dict) else {}
-    ai_score = _display_ai_score(badge.get("ai_likelihood_score")) or 0.0
     contribution = _transformation_contribution_summary(features, rows, badge)
 
     confidence = transformation.get("confidence")
@@ -723,13 +722,8 @@ def _executive_signal_chart_html(
         # the header ("Authorship Rating:"), and its calibrated-risk detail no longer competes
         # with the AI Likelihood headline. Keeps page⇄PDF parity.
         '</header>',
-        '<div class="dp-scan-head">',
-        '<div>',
-        '<span>Original Scan</span>',
-        f'<strong>{escape(transformation.get("label") or "Pattern analysis")}</strong>',
-        '</div>',
-        f'<em>{ai_score:.0f}%</em>',
-        '</div>',
+        # "Original Scan" + pattern label removed: it just repeats the card header above (the AI
+        # score is already in the AI Likelihood headline). Mirrors the web page mesh.
         '<div class="dp-ratio-card">',
         '<div class="dp-ratio-copy">',
         '<span>Estimated Contribution</span>',

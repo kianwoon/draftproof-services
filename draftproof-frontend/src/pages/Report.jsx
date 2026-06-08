@@ -1634,25 +1634,30 @@ export default function Report() {
             ? { ...rewrittenBadge, ai_likelihood_score: rewrittenBadge.ai_likelihood_score ?? rewrittenAiScore }
             : { ...originalComparisonBadge, ai_likelihood_score: originalComparisonBadge.ai_likelihood_score ?? aiScore },
         )}
-        <div className="transformation-detail-head">
-          <div>
-            <span>{variant === 'rewritten' ? t('report.transformation.rewrittenScan') : t('report.transformation.originalScan')}</span>
-            <strong>{transformationLabel(pattern, t) || (variant === 'rewritten' ? t('report.transformation.rewrittenPatternFallback') : t('report.transformation.originalPatternFallback'))}</strong>
-            {ratingBadge?.label && (
-              <div
-                className="transformation-column-rating"
-                style={{
-                  '--rating-color': ratingBadge.tone?.color || '#334155',
-                  '--rating-bg': ratingBadge.tone?.bg || '#f8fafc',
-                }}
-                title={ratingBadge.fullLabel || ratingBadge.label}
-              >
-                <span>{ratingBadge.caption}</span>
-                <b>{ratingBadge.label}</b>
-              </div>
-            )}
+        {/* In single-scan mode the scan label/pattern just repeats the card header h2, so it is
+            hidden. In comparison mode the per-column "Original/Rewritten Scan" labels (and rating
+            badge) distinguish the two columns, so they are kept. */}
+        {(hasRewriteSignalComparison || ratingBadge?.label) && (
+          <div className="transformation-detail-head">
+            <div>
+              <span>{variant === 'rewritten' ? t('report.transformation.rewrittenScan') : t('report.transformation.originalScan')}</span>
+              <strong>{transformationLabel(pattern, t) || (variant === 'rewritten' ? t('report.transformation.rewrittenPatternFallback') : t('report.transformation.originalPatternFallback'))}</strong>
+              {ratingBadge?.label && (
+                <div
+                  className="transformation-column-rating"
+                  style={{
+                    '--rating-color': ratingBadge.tone?.color || '#334155',
+                    '--rating-bg': ratingBadge.tone?.bg || '#f8fafc',
+                  }}
+                  title={ratingBadge.fullLabel || ratingBadge.label}
+                >
+                  <span>{ratingBadge.caption}</span>
+                  <b>{ratingBadge.label}</b>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
         {summary && (
           <details className="ai-likelihood-calibration" open={hasRewriteSignalComparison}>
             <summary>{t('report.aiLikelihood.calibrateHeading')}</summary>
