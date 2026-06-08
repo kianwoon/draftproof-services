@@ -2193,7 +2193,7 @@ export default function Report() {
                     ? t('authorshipEvidence.bottomLinePresent', { count: authorshipEvidence.present_markers.length })
                     : t('authorshipEvidence.bottomLineNoMarkers')}
                   {authorshipEvidence.thin_signals?.length > 0
-                    ? t('authorshipEvidence.bottomLineAction', { action: authorshipEvidence.thin_signals[0].action })
+                    ? t('authorshipEvidence.bottomLineSpots', { count: authorshipEvidence.thin_signals.length })
                     : ''}
                 </p>
               </div>
