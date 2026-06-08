@@ -110,8 +110,8 @@
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(420px, clamp(480px, 44vw, 620px));
-  gap: clamp(40px, 6vw, 100px);
+  grid-template-columns: minmax(0, 1fr) minmax(400px, clamp(440px, 34vw, 500px));
+  gap: clamp(32px, 3vw, 56px);
   align-items: center;
 }
 
@@ -236,7 +236,7 @@
 }
 
 .landing-hero h1 {
-  max-width: 520px;
+  max-width: 660px;
   margin-bottom: 16px;
   color: #fff;
   font-size: clamp(2.75rem, 5vw, 4.25rem);
@@ -248,7 +248,7 @@
 }
 
 .landing-hero .lead {
-  max-width: 520px;
+  max-width: 600px;
   color: rgba(255, 255, 255, .68);
 }
 
