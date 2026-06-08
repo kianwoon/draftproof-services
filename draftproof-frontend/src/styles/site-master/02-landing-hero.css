@@ -85,10 +85,10 @@
 
 .landing-hero {
   position: relative;
-  min-height: 610px;
+  min-height: 560px;
   display: grid;
   align-items: center;
-  padding: 84px clamp(24px, 4vw, 48px) 56px;
+  padding: 60px clamp(24px, 4vw, 48px) 48px;
   background: var(--navy-950);
   color: #fff;
   overflow: hidden;
@@ -237,7 +237,7 @@
 
 .landing-hero h1 {
   max-width: 520px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   color: #fff;
   font-size: clamp(2.75rem, 5vw, 4.25rem);
   line-height: 1.06;
@@ -253,7 +253,7 @@
 }
 
 .landing-hero .hero-actions {
-  margin: 26px 0 18px;
+  margin: 20px 0 14px;
 }
 
 .landing-hero .btn-ghost,
@@ -276,9 +276,8 @@
 
 .review-panel {
   position: relative;
-  align-self: start;
+  align-self: center;
   min-height: 472px;
-  margin-top: clamp(28px, 4vw, 48px);
   overflow: hidden;
   padding: 28px;
   border: .5px solid rgba(255, 255, 255, .18);
