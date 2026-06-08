@@ -13,7 +13,6 @@ import {
   showBrowserNotification,
 } from '../utils/browserNotifications';
 import RewriteNoticeDialog from './report/RewriteNoticeDialog';
-import RepairSummary from './report/RepairSummary';
 import EditPencilIcon from './report/EditPencilIcon';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import ReportHero from './report/ReportHero';
@@ -42,8 +41,6 @@ import {
   buildTransformationSummary,
   deriveAuthorshipRatingFallback,
   deriveCalibratedAuthorshipRating,
-  formatAuthorshipSealDetail,
-  formatAuthorshipSealDetailWithReference,
   getAuthorshipTone,
   formatSignedDelta,
   formatPlainScore,
@@ -991,13 +988,6 @@ export default function Report() {
   const authorshipTone = getAuthorshipTone(authorshipRating);
   const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
   const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
-  const authorshipSealDetail = formatAuthorshipSealDetail({
-    rating: authorshipRating,
-    topkPatternScore,
-    topkCalibratedRisk,
-    calibratedAuthorshipRisk,
-    fallbackScore: originalComparisonAiScore,
-  }, t);
   const rewrittenStoredAuthorshipRating = rewrittenBadge.authorship_rating || deriveAuthorshipRatingFallback(
     rewrittenAiScore,
     rewrittenBadge.tier || badge.tier || report.tier,
@@ -1436,22 +1426,6 @@ export default function Report() {
   const transformationRewrittenScore = hasRewriteSignalComparison
     ? (rewriteResultSummary?.rewritten_ai_authorship ?? rewriteResultSummary?.rewrite_risk ?? rewrittenAiScore)
     : rewrittenAiScore;
-  // Scan-only seal still annotates the original's calibrated risk; the rewrite seal no longer
-  // shows a calibrated-risk reference (the verdict above carries the detector reality instead).
-  const sealReferenceScore = calibratedAuthorshipRisk;
-  const sealRatingBadge = hasRewriteSignalComparison ? rewrittenColumnRatingBadge : originalColumnRatingBadge;
-  const sealTone = sealRatingBadge.tone || { color: '#334155', bg: '#f8fafc' };
-  const sealRatingCaption = sealRatingBadge.caption || (hasRewriteSignalComparison ? t('report.transformation.rewrittenAiSignal') : t('report.transformation.aiSignal'));
-  const sealRatingLabel = sealRatingBadge.label;
-  const sealAuthorshipDetail = rewrittenRequiresAuthorReview
-    ? t('rewritePage.authorReviewTitle')
-    : rewrittenRequiresExternalReview
-    ? t('rewritePage.externalReviewTitle')
-    : hasRewriteSignalComparison
-    // Rewrite seal: credit the grounding work and direct the user to finish it -- no risk % that
-    // would compete with the headline or imply a detector pass.
-    ? t('report.transformation.verdict.groundingDetail')
-    : formatAuthorshipSealDetailWithReference(authorshipSealDetail, sealReferenceScore, t);
   const reportAllowsRewrite = report.can_start_rewrite ?? hasAIFindings;
   const canStartRewrite = reportAllowsRewrite === true && !hasRewriteResult;
   const showNoRewriteableNotice = reportAllowsRewrite === false && !hasRewriteResult && !rewriteInProgress && !rewriteLoading && !rewriteError;
@@ -1686,12 +1660,7 @@ export default function Report() {
               <div className="transformation-ratio-copy">
                 <span>{t('report.transformation.estimatedContribution')}</span>
                 <p>{summary.summary}</p>
-                <div className="transformation-adjustment-row">
-                  <strong>{t('report.transformation.calibratedAiRisk', { value: summary.adjustedAiRisk })}</strong>
-                  <strong>{t('report.transformation.humanAnchorDiscount', { value: summary.humanAnchorDiscount })}</strong>
-                  <strong>{t('report.transformation.calibrationConfidence', { value: summary.calibrationConfidence })}</strong>
-                  <strong>{t('report.transformation.reportingSuppression', { value: summary.reportingSuppression })}</strong>
-                </div>
+                {renderSignalGaugeStrip(summary)}
               </div>
               <div className="transformation-ratio-bars" aria-label={t('report.transformation.contributionEstimate', { variant: variant === 'rewritten' ? t('report.transformation.rewritten') : t('report.transformation.original') })}>
                 <div className="transformation-ratio-row">
@@ -1805,25 +1774,8 @@ export default function Report() {
               {hasRewriteSignalComparison && (
                 <span className="transformation-pill">{t('report.transformation.rewriteComparison')}</span>
               )}
-              <span className="transformation-pill">{t('report.transformation.notVerdict')}</span>
             </div>
           </div>
-        </div>
-        {!hasRewriteSignalComparison && renderSignalGaugeStrip(transformationSummary)}
-        <div
-          className="transformation-authorship-seal"
-          style={{
-            '--rating-color': sealTone.color,
-            '--rating-bg': sealTone.bg,
-          }}
-        >
-          <span>{sealRatingCaption}</span>
-          <strong title={sealRatingBadge.fullLabel || sealRatingLabel}>
-            {sealRatingLabel}
-          </strong>
-          <em>
-            {sealAuthorshipDetail}
-          </em>
         </div>
       </div>
       <div className="transformation-chart">
@@ -2145,6 +2097,11 @@ export default function Report() {
           currentRewrite={currentRewrite}
           onRewrite={handleRewrite}
           onCancelRewrite={handleCancelRewrite}
+          repairSummary={repairSummary}
+          repairMainRiskLabel={t('report.repairSummary.mainRisk')}
+          repairActionLabel={t('report.submitted.editor.editDraft')}
+          repairActionHint={t('report.repairSummary.editDraftHint')}
+          onRepairAction={() => openSubmittedEditorForParagraph()}
         />
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>
@@ -2190,16 +2147,6 @@ export default function Report() {
             <p>{t('report.rewrite.noRewriteableMessage')}</p>
           </section>
         )}
-
-        <RepairSummary
-          summary={repairSummary}
-          ariaLabel={t('report.repairSummary.ariaLabel')}
-          kicker={t('report.repairSummary.kicker')}
-          mainRiskLabel={t('report.repairSummary.mainRisk')}
-          actionLabel={t('report.submitted.editor.editDraft')}
-          actionHint={t('report.repairSummary.editDraftHint')}
-          onAction={() => openSubmittedEditorForParagraph()}
-        />
 
         {transformationScorecard ? (
           <section className={`report-overview-card${hasRewriteSignalComparison ? ' is-rewrite-comparison' : ''}`} aria-label={t('report.overview')}>

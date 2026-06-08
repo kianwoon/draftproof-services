@@ -4,6 +4,7 @@ import {
   formatDate,
   formatMetricPercent,
 } from './reportHelpers';
+import EditPencilIcon from './EditPencilIcon';
 
 export default function ReportHero({
   t,
@@ -21,6 +22,11 @@ export default function ReportHero({
   currentRewrite,
   onRewrite,
   onCancelRewrite,
+  repairSummary,
+  repairMainRiskLabel,
+  repairActionLabel,
+  repairActionHint,
+  onRepairAction,
 }) {
   const showActions = report.report_pdf_url || canStartRewrite || rewriteLoading || rewriteInProgress;
 
@@ -115,6 +121,28 @@ export default function ReportHero({
                 {rewriteCanceling ? t('report.rewrite.canceling') : t('report.rewrite.cancelRewrite')}
               </button>
             )}
+          </div>
+        )}
+
+        {repairSummary && (
+          <div className="report-hero-repair" aria-label={t('report.repairSummary.ariaLabel')}>
+            <div className="report-hero-repair-plan">
+              <span className="report-hero-repair-kicker">{t('report.repairSummary.kicker')}</span>
+              <strong>{repairSummary.status}</strong>
+              <p>{repairSummary.nextAction}</p>
+              <span className="report-hero-repair-note">{repairSummary.confidenceNote}</span>
+            </div>
+            <div className="report-hero-repair-risk">
+              <span>{repairMainRiskLabel}</span>
+              <strong>{repairSummary.mainRisk}</strong>
+              {repairActionHint && <p className="report-hero-repair-action-hint">{repairActionHint}</p>}
+              {repairActionLabel && onRepairAction && (
+                <button type="button" className="repair-summary-action" onClick={onRepairAction}>
+                  <EditPencilIcon />
+                  {repairActionLabel}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>

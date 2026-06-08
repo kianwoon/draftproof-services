@@ -666,54 +666,9 @@ def _executive_signal_chart_html(
         "RED": "#fef2f2",
     }.get(badge_tier, "#f8fafc")
 
+    # Authorship rating (label/detail/tone) is no longer rendered here — the seal was removed to
+    # mirror the web page mesh. The rating is shown once in the report header ("Authorship Rating:").
     doc_ctx = data.get("document_context", {}) if isinstance(data, dict) else {}
-    rating = _display_authorship_rating_from_badge(badge, doc_ctx, data)
-    rating_label = (
-        rating.get("short_label")
-        or rating.get("label")
-        or badge.get("authorship_rating_label")
-        or "Not Rated"
-    )
-    calibrated_score = _tf_pct(features.get("calibrated_ai_risk"))
-    rating_tone = _authorship_rating_tone(rating)
-    ai_components = badge.get("ai_components") or {}
-    topk_score = _tf_pct(ai_components.get("topk_pattern_raw", ai_components.get("topk_pattern")))
-    topk_calibrated_score = _tf_pct(ai_components.get("topk_calibrated_risk"))
-    if rating.get("code") == "insufficient_sample":
-        sample = rating.get("sample_context") or {}
-        if sample.get("word_count") is not None:
-            rating_detail = f"{sample['word_count']:.0f} words · not enough text"
-        elif sample.get("sentence_count") is not None:
-            rating_detail = f"{sample['sentence_count']:.0f} sentences · not enough text"
-        else:
-            rating_detail = "Not enough text"
-    elif rating.get("sample_limited"):
-        sample = rating.get("sample_context") or {}
-        if sample.get("word_count") is not None:
-            rating_detail = f"{sample['word_count']:.0f} words · sample limited"
-        elif sample.get("sentence_count") is not None:
-            rating_detail = f"{sample['sentence_count']:.0f} sentences · sample limited"
-        else:
-            rating_detail = "Sample limited"
-    elif rating.get("topk_strong_signal") and (topk_calibrated_score is not None or topk_score is not None) and rating.get("supporting_signal"):
-        support = rating["supporting_signal"]
-        if topk_calibrated_score is not None:
-            rating_detail = f"{topk_calibrated_score:.0f}% calibrated top-k · {support['score']:.0f}% {support['label'].lower()}"
-        else:
-            rating_detail = f"{topk_score:.0f}% top-k · {support['score']:.0f}% {support['label'].lower()}"
-    elif rating.get("topk_escalated") and (topk_calibrated_score is not None or topk_score is not None):
-        topk_detail_score = topk_calibrated_score if topk_calibrated_score is not None else topk_score
-        if rating.get("supporting_signal"):
-            support = rating["supporting_signal"]
-            rating_detail = f"{topk_detail_score:.0f}% calibrated top-k · {support['score']:.0f}% {support['label'].lower()}"
-        else:
-            rating_detail = f"{topk_detail_score:.0f}% calibrated top-k"
-    elif calibrated_score is not None:
-        rating_detail = f"{calibrated_score:.0f}% calibrated risk"
-    else:
-        rating_detail = f"{(_tf_pct(badge.get('ai_likelihood_score')) or 0.0):.0f}% raw signal"
-    rating_reference_score = calibrated_score if calibrated_score is not None else badge.get("ai_likelihood_score")
-    rating_detail = _with_ai_reference(rating_detail, rating_reference_score)
     ai_score = _display_ai_score(badge.get("ai_likelihood_score")) or 0.0
     contribution = _transformation_contribution_summary(features, rows, badge)
 
@@ -721,7 +676,8 @@ def _executive_signal_chart_html(
     pills = []
     if confidence:
         pills.append(f"{str(confidence).title()} Confidence")
-    pills.append("Not A Verdict")
+    # "Not A Verdict" disclaimer is stated once in the repair plan / AI-likelihood note now,
+    # mirroring the web page mesh — no longer repeated here.
 
     adjustment_chips = [
         f"Calibrated AI risk {contribution['calibrated_ai_risk']}%",
@@ -763,17 +719,9 @@ def _executive_signal_chart_html(
         '</div>',
         '</div>',
         '</div>',
-        (
-            '<div class="dp-rating-seal" style="'
-            f'--rating-color:{rating_tone["color"]};--rating-bg:{rating_tone["bg"]};'
-            f'color:{rating_tone["color"]};border-color:{rating_tone["color"]};background:{rating_tone["bg"]}">'
-        ),
-        # Seal shows the authorship RATING (matches the web page's "Original Rating" stamp),
-        # not the generic _ai_signal_stamp label — keeps page⇄PDF parity.
-        '<span>Original Rating</span>',
-        f'<strong>{escape(rating_label)}</strong>',
-        f'<em>{escape(rating_detail)}</em>',
-        '</div>',
+        # Rating seal removed to match the web page mesh: the authorship rating is shown once in
+        # the header ("Authorship Rating:"), and its calibrated-risk detail no longer competes
+        # with the AI Likelihood headline. Keeps page⇄PDF parity.
         '</header>',
         '<div class="dp-scan-head">',
         '<div>',
