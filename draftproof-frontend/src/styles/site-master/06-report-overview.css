@@ -984,7 +984,7 @@ button.fix-first-item:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1.2rem;
-  padding: 1.15rem 1.15rem 1rem;
+  padding: .9rem 1.15rem;
   border-bottom: 1px solid #e2e8f0;
 }
 
@@ -1094,7 +1094,7 @@ button.fix-first-item:focus-visible {
 }
 
 .transformation-summary h2 {
-  margin: .35rem 0 .8rem;
+  margin: .3rem 0 0;
   color: var(--navy-950);
   font-size: clamp(1.15rem, 2vw, 1.55rem);
   font-weight: 850;
@@ -1201,7 +1201,10 @@ button.fix-first-item:focus-visible {
 .transformation-meta-row {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: .45rem;
+  align-self: flex-start;
+  flex: 0 0 auto;
 }
 
 .transformation-pill {
@@ -1219,7 +1222,7 @@ button.fix-first-item:focus-visible {
 }
 
 .transformation-chart {
-  padding: 1rem 1.15rem 1.15rem;
+  padding: .85rem 1.15rem 1rem;
 }
 
 .transformation-comparison-grid {
@@ -1246,7 +1249,7 @@ button.fix-first-item:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: .8rem;
-  margin-bottom: .85rem;
+  margin-bottom: .55rem;
 }
 
 .transformation-detail-head div {

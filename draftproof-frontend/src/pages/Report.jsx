@@ -1767,16 +1767,18 @@ export default function Report() {
           <div>
             <span className="transformation-kicker">{t('report.transformation.kicker')}</span>
             <h2>{hasRewriteSignalComparison ? t('report.transformation.originalVsRewritten') : transformationLabel(transformation, t) || t('report.transformation.patternAnalysis')}</h2>
-            <div className="transformation-meta-row">
-              {transformation.confidence && (
-                <span className="transformation-pill">{t('report.transformation.confidence', { value: confidenceLabel(transformation.confidence, t) })}</span>
-              )}
-              {hasRewriteSignalComparison && (
-                <span className="transformation-pill">{t('report.transformation.rewriteComparison')}</span>
-              )}
-            </div>
           </div>
         </div>
+        {(transformation.confidence || hasRewriteSignalComparison) && (
+          <div className="transformation-meta-row">
+            {transformation.confidence && (
+              <span className="transformation-pill">{t('report.transformation.confidence', { value: confidenceLabel(transformation.confidence, t) })}</span>
+            )}
+            {hasRewriteSignalComparison && (
+              <span className="transformation-pill">{t('report.transformation.rewriteComparison')}</span>
+            )}
+          </div>
+        )}
       </div>
       <div className="transformation-chart">
         {hasRewriteSignalComparison ? (
