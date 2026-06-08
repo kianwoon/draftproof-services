@@ -81,7 +81,7 @@ export const faqPage = {
       "items": [
         {
           "q": "How are scan credits charged?",
-          "a": "Scans with 500 words or fewer are free. After that, 1 credit covers each started 1,000-word block. For example, a 2,500-word document costs 3 credits."
+          "a": "Scans of 500 words or fewer are free for your first 5 scans. After that, 1 credit covers each started 1,000-word block. For example, a 2,500-word document costs 3 credits."
         },
         {
           "q": "When are rewrite credits deducted?",
@@ -100,11 +100,11 @@ export const faqPage = {
       "items": [
         {
           "q": "Is my document stored?",
-          "a": "Uploaded documents and generated reports are stored so DraftProof can produce reports and let you revisit scan history. You can delete reports from your account."
+          "a": "Uploaded documents and generated reports are stored temporarily so DraftProof can produce reports and let you revisit them from your dashboard. Scan and rewrite reports stay available for 3 days before the system copy is purged, so a PDF copy is emailed to you to keep your own record. You can also delete reports from your account at any time."
         },
         {
           "q": "Can I delete my reports?",
-          "a": "Yes. You can delete individual reports from your dashboard. If you request account deletion, DraftProof removes your personal data, uploaded files, and scan history."
+          "a": "Yes. You can delete individual reports from your dashboard at any time. To request full account deletion, contact us at support@draftproof.app and we will remove your personal data, uploaded files, and scan history."
         },
         {
           "q": "Who should use DraftProof?",
