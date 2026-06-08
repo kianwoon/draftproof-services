@@ -20,9 +20,8 @@ export default function Header() {
     { to: publicPath('/faq'), label: t('nav.faq') },
     { to: publicPath('/#report'), label: t('nav.sampleReport') },
   ];
-  const signedInPublicLinks = [
-    { to: publicPath('/pricing'), label: t('nav.pricing') },
-  ];
+  // Signed-in users buy via "Buy Tokens"; pricing/marketing links are hidden.
+  const signedInPublicLinks = [];
   const visiblePublicLinks = user ? signedInPublicLinks : marketingLinks;
 
   useEffect(() => { setMenuOpen(false); }, [location.hash, location.pathname]);
