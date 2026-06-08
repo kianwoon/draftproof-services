@@ -22,6 +22,7 @@ from app.config import (
     FEEDBACK_GITHUB_TOKEN,
     FEEDBACK_GITHUB_REPO,
     TURNSTILE_SECRET_KEY,
+    TURNSTILE_SITE_KEY,
     SECRET_KEY,
     JWT_ALGORITHM,
 )
@@ -52,6 +53,20 @@ class FeedbackIn(BaseModel):
 class FeedbackOut(BaseModel):
     ok: bool
     url: Optional[str] = None
+
+
+class FeedbackConfigOut(BaseModel):
+    # Public values only — safe to expose to the browser.
+    turnstile_site_key: str
+    enabled: bool
+
+
+@router.get("/config", response_model=FeedbackConfigOut)
+async def feedback_config():
+    """Runtime public config for the feedback widget. Lets the SITE key live as a
+    plain Koyeb env var (read here) instead of a Vite build-time inline."""
+    enabled = bool(FEEDBACK_GITHUB_TOKEN and TURNSTILE_SECRET_KEY and TURNSTILE_SITE_KEY)
+    return FeedbackConfigOut(turnstile_site_key=TURNSTILE_SITE_KEY, enabled=enabled)
 
 
 def _optional_user(request: Request) -> Optional[dict]:

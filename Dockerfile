@@ -4,12 +4,6 @@ WORKDIR /app
 COPY draftproof-frontend/package*.json ./
 RUN npm ci
 COPY draftproof-frontend/ .
-# Vite inlines import.meta.env.* at BUILD time, so the Turnstile site key must be
-# present here (not just in the API runtime env). Pass it via --build-arg /
-# Koyeb build-time env: VITE_TURNSTILE_SITE_KEY. Empty value disables the widget
-# gracefully (it shows a "not configured" message instead of breaking).
-ARG VITE_TURNSTILE_SITE_KEY=""
-ENV VITE_TURNSTILE_SITE_KEY=$VITE_TURNSTILE_SITE_KEY
 RUN npm run build
 
 # Stage 2: API + static frontend

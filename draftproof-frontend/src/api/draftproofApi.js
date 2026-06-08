@@ -41,6 +41,9 @@ export const translateText = (text, { source = 'auto', target = 'en' } = {}) =>
 // Feedback — files a GitHub issue server-side, gated by a Turnstile token.
 // payload: { type: 'bug'|'feature', title, body, email?, page_url?, turnstile_token }
 export const submitFeedback = (payload) => api.post('/feedback', payload);
+// Public runtime config (Turnstile site key) — served by the API so the key
+// stays a plain env var instead of a Vite build-time inline.
+export const getFeedbackConfig = () => api.get('/feedback/config');
 
 // Payments
 export const getPurchaseHistory = (page = 1, perPage = 5, opts = {}) =>

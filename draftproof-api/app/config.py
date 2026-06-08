@@ -131,3 +131,6 @@ REWRITE_CANCEL_TERMINATE_SIGNAL = os.getenv("REWRITE_CANCEL_TERMINATE_SIGNAL", "
 FEEDBACK_GITHUB_TOKEN = os.getenv("FEEDBACK_GITHUB_TOKEN", "").strip()
 FEEDBACK_GITHUB_REPO = os.getenv("FEEDBACK_GITHUB_REPO", "kianwoon/draftproof-services").strip()
 TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
+# Public Turnstile SITE key — served to the browser at runtime via
+# GET /api/feedback/config so it stays a plain Koyeb env var (no Vite build-arg).
+TURNSTILE_SITE_KEY = os.getenv("TURNSTILE_SITE_KEY", "").strip()

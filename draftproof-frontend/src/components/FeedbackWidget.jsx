@@ -2,11 +2,10 @@
 // (button labels, placeholders) — presentational craft, not a scoring/matching
 // oracle. No logic branches on these strings.
 import { useEffect, useRef, useState } from 'react';
-import { submitFeedback } from '../api/draftproofApi';
+import { submitFeedback, getFeedbackConfig } from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 
 const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
-const SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY || '';
 
 // Load the Turnstile script once, shared across opens. Resolves when the global
 // `turnstile` object is ready so we can explicitly render into our modal's div.
@@ -36,18 +35,29 @@ export default function FeedbackWidget() {
   const [status, setStatus] = useState('idle'); // idle | submitting | success | error
   const [error, setError] = useState('');
   const [issueUrl, setIssueUrl] = useState('');
+  const [siteKey, setSiteKey] = useState('');
   const widgetRef = useRef(null);
   const widgetIdRef = useRef(null);
 
+  // Fetch the public site key once from the API (runtime config, not a build-time
+  // inline) so the key stays a plain Koyeb env var.
+  useEffect(() => {
+    let active = true;
+    getFeedbackConfig()
+      .then(({ data }) => { if (active) setSiteKey(data?.turnstile_site_key || ''); })
+      .catch(() => { /* leave empty → widget shows a 'not configured' message */ });
+    return () => { active = false; };
+  }, []);
+
   // Render the Turnstile widget when the modal opens; clean it up on close.
   useEffect(() => {
-    if (!open || !SITE_KEY) return;
+    if (!open || !siteKey) return;
     let cancelled = false;
     loadTurnstile()
       .then((turnstile) => {
         if (cancelled || !widgetRef.current) return;
         widgetIdRef.current = turnstile.render(widgetRef.current, {
-          sitekey: SITE_KEY,
+          sitekey: siteKey,
           callback: (tok) => setToken(tok),
           'expired-callback': () => setToken(''),
           'error-callback': () => setToken(''),
@@ -62,7 +72,7 @@ export default function FeedbackWidget() {
       widgetIdRef.current = null;
       setToken('');
     };
-  }, [open]);
+  }, [open, siteKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -82,7 +92,7 @@ export default function FeedbackWidget() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
-    if (!SITE_KEY) { setError('Feedback is not configured (missing Turnstile site key).'); return; }
+    if (!siteKey) { setError('Feedback is not configured (missing Turnstile site key).'); return; }
     if (!token) { setError('Please complete the verification below.'); return; }
     setStatus('submitting');
     try {
