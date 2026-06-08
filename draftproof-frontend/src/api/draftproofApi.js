@@ -38,6 +38,10 @@ export const getReport = (reportId, opts = {}) => api.get(`/reports/${reportId}`
 export const translateText = (text, { source = 'auto', target = 'en' } = {}) =>
   api.post('/translate', { text, source, target });
 
+// Feedback — files a GitHub issue server-side, gated by a Turnstile token.
+// payload: { type: 'bug'|'feature', title, body, email?, page_url?, turnstile_token }
+export const submitFeedback = (payload) => api.post('/feedback', payload);
+
 // Payments
 export const getPurchaseHistory = (page = 1, perPage = 5, opts = {}) =>
   api.get('/payments/history', { params: { page, per_page: perPage }, signal: opts.signal });

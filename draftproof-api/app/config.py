@@ -122,3 +122,12 @@ REWRITE_STALE_THRESHOLD_MINUTES = max(
 # late-ack task redelivery, so keep it opt-in for emergency operations only.
 REWRITE_CANCEL_TERMINATE = os.getenv("REWRITE_CANCEL_TERMINATE", "false").strip().lower() in {"1", "true", "yes", "on"}
 REWRITE_CANCEL_TERMINATE_SIGNAL = os.getenv("REWRITE_CANCEL_TERMINATE_SIGNAL", "SIGTERM").strip() or "SIGTERM"
+
+# In-app feedback → GitHub Issues. The repo is private, so visitors can't file
+# issues directly; the API files them server-side with a fine-grained PAT that
+# has only Issues:write on FEEDBACK_GITHUB_REPO. Bot abuse is fenced off with a
+# Cloudflare Turnstile challenge verified server-side before any issue is cut.
+# All three must be set for the /api/feedback endpoint to accept submissions.
+FEEDBACK_GITHUB_TOKEN = os.getenv("FEEDBACK_GITHUB_TOKEN", "").strip()
+FEEDBACK_GITHUB_REPO = os.getenv("FEEDBACK_GITHUB_REPO", "kianwoon/draftproof-services").strip()
+TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "").strip()

@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Header from './components/Header';
 import NewsTicker from './components/NewsTicker';
 import Footer from './components/Footer';
+import FeedbackWidget from './components/FeedbackWidget';
 import Seo from './components/Seo';
 import ProtectedRoute from './components/ProtectedRoute';
 import Landing from './pages/Landing';
@@ -134,6 +135,7 @@ export default function App() {
           </Routes>
         </main>
         {!hideFooter && <Footer />}
+        <FeedbackWidget />
       </div>
     </AuthProvider>
   );
