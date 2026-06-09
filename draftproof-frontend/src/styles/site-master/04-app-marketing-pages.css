@@ -728,6 +728,37 @@
   }
 }
 
+/* Each step's number node "lights up" as the flow reaches it — a signal
+   travelling scan -> report -> rewrite. Same --i delay as the reveal, so the
+   pulse tracks the cascade. The node settles back to its resting style. */
+.dash-flow-map.dash-anim.is-animating .step-num {
+  animation: dashNodeLight 1s ease-out calc(var(--i, 0) * 140ms + .15s) 1;
+}
+
+@keyframes dashNodeLight {
+  0% {
+    background: rgba(58, 168, 118, .15);
+    border-color: rgba(58, 168, 118, .30);
+    color: var(--green);
+    box-shadow: 0 0 0 0 rgba(58, 168, 118, 0);
+    transform: scale(1);
+  }
+  35% {
+    background: var(--green);
+    border-color: var(--green);
+    color: #fff;
+    box-shadow: 0 0 0 6px rgba(58, 168, 118, .18), 0 6px 16px rgba(58, 168, 118, .35);
+    transform: scale(1.14);
+  }
+  100% {
+    background: rgba(58, 168, 118, .15);
+    border-color: rgba(58, 168, 118, .30);
+    color: var(--green);
+    box-shadow: 0 0 0 0 rgba(58, 168, 118, 0);
+    transform: scale(1);
+  }
+}
+
 /* Connectors "draw" left-to-right as the flow advances (desktop only —
    on mobile they become short vertical ticks, so we just fade them). */
 @media (min-width: 921px) {
@@ -775,7 +806,8 @@
 @media (prefers-reduced-motion: reduce) {
   .dash-flow-map.dash-anim .dash-step,
   .dash-flow-map.dash-anim .dash-report-node,
-  .dash-flow-map.dash-anim .dash-unlock-pill {
+  .dash-flow-map.dash-anim .dash-unlock-pill,
+  .dash-flow-map.dash-anim .step-num {
     opacity: 1;
     transform: none;
     filter: none;
