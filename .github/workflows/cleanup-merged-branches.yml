@@ -1,0 +1,70 @@
+name: Cleanup merged branches
+
+# On every push to the default branch, delete any branch whose commits are all
+# already contained in it (status "behind" = fully merged, no unique work).
+# This covers branches merged by a DIRECT PUSH to main (merge-commit or
+# fast-forward), and sweeps stale ancestor branches. PR merges (including
+# squash/rebase, which leave a "diverged" branch) are handled separately by
+# delete-merged-branch.yml.
+#
+# Kept: the default branch, protected branches, branches at the current tip
+# ("identical"), and branches with unique commits ("ahead"/"diverged").
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete fully-merged branches
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const base = context.payload.repository.default_branch;
+            const branches = await github.paginate(github.rest.repos.listBranches, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            for (const b of branches) {
+              if (b.name === base) continue;
+              if (b.protected) { core.info(`skip protected: ${b.name}`); continue; }
+
+              let status;
+              try {
+                const cmp = await github.rest.repos.compareCommitsWithBasehead({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  basehead: `${base}...${b.name}`,
+                });
+                status = cmp.data.status; // ahead | behind | identical | diverged
+              } catch (err) {
+                core.warning(`compare failed for ${b.name}: ${err.status}`);
+                continue;
+              }
+
+              if (status !== 'behind') {
+                core.info(`keep ${b.name} (${status})`);
+                continue;
+              }
+
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${b.name}`,
+                });
+                core.info(`deleted merged branch: ${b.name}`);
+              } catch (err) {
+                if (err.status === 422 || err.status === 404) {
+                  core.info(`already gone: ${b.name}`);
+                } else {
+                  core.warning(`delete failed for ${b.name}: ${err.status}`);
+                }
+              }
+            }
