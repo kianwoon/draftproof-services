@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     R2_PUBLIC_URL: str = ""
     DRAFTPROOF_R2_REPORT_PREFIX: str = "reports/"
     DRAFTPROOF_R2_REPORT_RETENTION_DAYS: int = 3
+    DRAFTPROOF_REPORT_RETENTION_DAYS: int = 3
     PREDICTABILITY_MODEL: str = "gpt2"
     SEMANTIC_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     LLM_API_KEY: str = ""

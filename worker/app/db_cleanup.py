@@ -22,6 +22,7 @@ class DbReportCleanupResult:
     deleted_rewrite_jobs: int = 0
     released_orphan_reservations: int = 0
     released_orphan_tokens: int = 0
+    updated_credit_accounts: int = 0
 
 
 def _utc_datetime(value: datetime) -> datetime:
@@ -63,8 +64,13 @@ def cleanup_old_report_rows(
         )
         old_rewrite_jobs = _count(
             cur,
-            "SELECT count(*) AS n FROM rewrite_jobs WHERE created_at < %s",
-            (cutoff,),
+            """
+            SELECT count(*) AS n
+            FROM rewrite_jobs
+            WHERE created_at < %s
+               OR scan_id IN (SELECT id FROM scan_jobs WHERE created_at < %s)
+            """,
+            (cutoff, cutoff),
         )
 
         if dry_run:
@@ -76,6 +82,48 @@ def cleanup_old_report_rows(
             )
             logger.info("DB report cleanup dry-run: %s", result)
             return result
+
+        cur.execute(
+            """
+            WITH old_jobs AS (
+                SELECT 'scan'::text AS job_type, id AS job_id
+                FROM scan_jobs
+                WHERE created_at < %s
+                UNION ALL
+                SELECT 'rewrite'::text AS job_type, id AS job_id
+                FROM rewrite_jobs
+                WHERE created_at < %s
+                   OR scan_id IN (SELECT id FROM scan_jobs WHERE created_at < %s)
+            ), released AS (
+                UPDATE credit_reservations cr
+                SET status = 'released', updated_at = now()
+                FROM old_jobs oj
+                WHERE cr.status = 'active'
+                  AND cr.job_type = oj.job_type
+                  AND cr.job_id = oj.job_id
+                RETURNING cr.credit_account_id, cr.tokens_reserved
+            ), totals AS (
+                SELECT credit_account_id, sum(tokens_reserved) AS tokens_to_free
+                FROM released
+                GROUP BY credit_account_id
+            ), updated_accounts AS (
+                UPDATE credit_accounts ca
+                SET reserved_tokens = GREATEST(0, ca.reserved_tokens - totals.tokens_to_free)
+                FROM totals
+                WHERE ca.id = totals.credit_account_id
+                RETURNING ca.id
+            )
+            SELECT
+                (SELECT count(*) FROM released) AS n,
+                COALESCE((SELECT sum(tokens_reserved) FROM released), 0) AS tokens,
+                (SELECT count(*) FROM updated_accounts) AS accounts
+            """,
+            (cutoff, cutoff, cutoff),
+        )
+        released_row = cur.fetchone()
+        released_orphan_reservations = int(released_row["n"])
+        released_orphan_tokens = int(released_row["tokens"])
+        updated_credit_accounts = int(released_row["accounts"])
 
         cur.execute(
             """
@@ -96,28 +144,29 @@ def cleanup_old_report_rows(
                 SET status = 'released', updated_at = now()
                 FROM stale
                 WHERE cr.id = stale.id
-                RETURNING cr.tokens_reserved
+                RETURNING cr.credit_account_id, cr.tokens_reserved
+            ), totals AS (
+                SELECT credit_account_id, sum(tokens_reserved) AS tokens_to_free
+                FROM released
+                GROUP BY credit_account_id
+            ), updated_accounts AS (
+                UPDATE credit_accounts ca
+                SET reserved_tokens = GREATEST(0, ca.reserved_tokens - totals.tokens_to_free)
+                FROM totals
+                WHERE ca.id = totals.credit_account_id
+                RETURNING ca.id
             )
-            SELECT count(*) AS n, COALESCE(sum(tokens_reserved), 0) AS tokens FROM released
+            SELECT
+                (SELECT count(*) FROM released) AS n,
+                COALESCE((SELECT sum(tokens_reserved) FROM released), 0) AS tokens,
+                (SELECT count(*) FROM updated_accounts) AS accounts
             """,
             (cutoff,),
         )
         released_row = cur.fetchone()
-        released_orphan_reservations = int(released_row["n"])
-        released_orphan_tokens = int(released_row["tokens"])
-
-        cur.execute(
-            """
-            WITH deleted AS (
-                DELETE FROM rewrite_jobs
-                WHERE created_at < %s
-                RETURNING id
-            )
-            SELECT count(*) AS n FROM deleted
-            """,
-            (cutoff,),
-        )
-        deleted_rewrite_jobs = int(cur.fetchone()["n"])
+        released_orphan_reservations += int(released_row["n"])
+        released_orphan_tokens += int(released_row["tokens"])
+        updated_credit_accounts += int(released_row["accounts"])
 
         cur.execute(
             """
@@ -132,6 +181,25 @@ def cleanup_old_report_rows(
         )
         deleted_scan_jobs = int(cur.fetchone()["n"])
 
+        cur.execute(
+            """
+            DELETE FROM rewrite_jobs
+            WHERE created_at < %s
+            """,
+            (cutoff,),
+        )
+
+        cur.execute(
+            """
+            SELECT count(*) AS n
+            FROM rewrite_jobs
+            WHERE created_at < %s
+               OR scan_id IN (SELECT id FROM scan_jobs WHERE created_at < %s)
+            """,
+            (cutoff, cutoff),
+        )
+        deleted_rewrite_jobs = old_rewrite_jobs - int(cur.fetchone()["n"])
+
     result = DbReportCleanupResult(
         cutoff=cutoff,
         dry_run=False,
@@ -141,6 +209,7 @@ def cleanup_old_report_rows(
         deleted_rewrite_jobs=deleted_rewrite_jobs,
         released_orphan_reservations=released_orphan_reservations,
         released_orphan_tokens=released_orphan_tokens,
+        updated_credit_accounts=updated_credit_accounts,
     )
     logger.info("DB report cleanup: %s", result)
     return result
