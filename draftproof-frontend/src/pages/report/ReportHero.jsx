@@ -25,6 +25,7 @@ export default function ReportHero({
   repairActionLabel,
   repairActionHint,
   onRepairAction,
+  isRewrittenView = false,
 }) {
   const showActions = report.report_pdf_url || canStartRewrite || rewriteLoading || rewriteInProgress;
 
@@ -46,8 +47,11 @@ export default function ReportHero({
             </svg>
           </div>
           <div className="report-hero-info">
-            <div className="report-eyebrow">{t('report.eyebrow')}</div>
+            <div className="report-eyebrow">{isRewrittenView ? t('report.eyebrowRewritten') : t('report.eyebrow')}</div>
             <h1>{t('report.documentTitle')}</h1>
+            {isRewrittenView && (
+              <p className="report-hero-rewrite-note">{t('report.rewrittenHeroNote')}</p>
+            )}
             {report.created_at && (
               <p className="report-meta">
                 <svg width="17" height="17" viewBox="0 0 16 16" fill="none" aria-hidden="true">

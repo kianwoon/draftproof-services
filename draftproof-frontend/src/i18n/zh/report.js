@@ -4,6 +4,8 @@ export const report = {
   "loadFailed": "无法加载报告",
   "back": "返回报告",
   "eyebrow": "分析报告",
+  "eyebrowRewritten": "改写稿分析",
+  "rewrittenHeroNote": "基于改写稿测量——通常仍会被标记。这是供审阅的草稿，并非干净或最终结论。",
   "documentTitle": "内容分析",
   "words": "{{count}} 词",
   "downloadPdf": "下载 PDF",

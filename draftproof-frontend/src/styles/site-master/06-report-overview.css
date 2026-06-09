@@ -95,6 +95,15 @@
   text-transform: uppercase;
 }
 
+.report-hero-rewrite-note {
+  margin: .15rem 0 .55rem;
+  max-width: 46ch;
+  color: #92400e;
+  font-size: .82rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 .report-meta {
   display: flex;
   flex-wrap: wrap;

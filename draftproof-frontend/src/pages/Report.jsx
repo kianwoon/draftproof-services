@@ -990,6 +990,28 @@ export default function Report() {
       }
     : null;
   const rewrittenWritingScore = rewrittenScan.writing_score ?? rewrittenBadge.writing_quality_score ?? null;
+  // Once a rewrite's report has loaded, the hero header reflects the REWRITTEN draft
+  // instead of the original submission. Gated on rewriteResultReport (not just
+  // hasRewriteResult) so the numbers never flicker original→rewritten mid-load. The
+  // tier shown is the rewrite's real tier — it usually stays flagged — and the header
+  // is labeled "rewritten" (rewrittenHeroView) so a lower number can't read as a
+  // clean/final verdict (expose-the-ugly-side: no green-washing).
+  const rewrittenHeroView = hasRewriteResult && Boolean(rewriteResultReport);
+  const rewrittenTierKey = rewrittenBadge.tier || report.tier;
+  const heroReport = rewrittenHeroView
+    ? {
+      ...report,
+      tier: rewrittenTierKey,
+      word_count: countWords(rewriteResultReport?.final_text) || report.word_count,
+    }
+    : report;
+  const heroTier = rewrittenHeroView ? (TIER_CONFIG[rewrittenTierKey] || tier) : tier;
+  // Rewritten writing score is frequently null; fall back to the original rather than
+  // render a bare "-" (readability rarely changes meaningfully in a rewrite anyway).
+  const heroWritingScore = rewrittenHeroView ? (rewrittenWritingScore ?? writingScore) : writingScore;
+  const heroFindingsCount = rewrittenHeroView
+    ? (rewriteResultSummary?.rewritten_findings ?? issues.length)
+    : issues.length;
   const calibratedAuthorshipRisk = clampPercent(authorshipFeatures.calibrated_ai_risk);
   const topkPatternScore = clampPercent(originalComparisonBadge.ai_components?.topk_pattern_raw ?? originalComparisonBadge.ai_components?.topk_pattern);
   const topkCalibratedRisk = clampPercent(originalComparisonBadge.ai_components?.topk_calibrated_risk);
@@ -2126,10 +2148,11 @@ export default function Report() {
         <ReportHero
           t={t}
           locale={locale}
-          report={report}
-          tier={tier}
-          issuesCount={issues.length}
-          writingScore={writingScore}
+          report={heroReport}
+          tier={heroTier}
+          issuesCount={heroFindingsCount}
+          writingScore={heroWritingScore}
+          isRewrittenView={rewrittenHeroView}
           canStartRewrite={canStartRewrite}
           rewriteLoading={rewriteLoading}
           rewriteCanceling={rewriteCanceling}

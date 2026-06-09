@@ -4,6 +4,8 @@ export const report = {
   "loadFailed": "Failed to load report",
   "back": "Back to Reports",
   "eyebrow": "Analysis Report",
+  "eyebrowRewritten": "Rewritten Draft Analysis",
+  "rewrittenHeroNote": "Measured on the rewritten draft — typically still flagged. This is a review draft, not a clean or final verdict.",
   "documentTitle": "Content Analysis",
   "words": "{{count}} words",
   "downloadPdf": "Download PDF",
