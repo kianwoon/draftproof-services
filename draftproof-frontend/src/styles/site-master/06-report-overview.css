@@ -26,9 +26,9 @@
 
 .report-hero {
   display: grid;
-  gap: 1rem;
+  gap: .65rem;
   margin-bottom: 1.5rem;
-  padding: clamp(1rem, 2.4vw, 1.5rem);
+  padding: clamp(.85rem, 1.8vw, 1.15rem);
   border: 1px solid rgba(13, 27, 42, .1);
   border-top: 4px solid var(--green);
   border-radius: 14px;
@@ -40,9 +40,9 @@
 
 .report-hero-title-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(300px, .78fr);
-  align-items: stretch;
-  gap: clamp(1rem, 2.2vw, 1.4rem);
+  grid-template-columns: auto minmax(0, 1fr) minmax(240px, .62fr);
+  align-items: center;
+  gap: clamp(.8rem, 1.6vw, 1.1rem);
   width: 100%;
   min-width: 0;
 }
@@ -71,10 +71,10 @@
 }
 
 .report-hero-info h1 {
-  max-width: min(680px, 100%);
-  margin-bottom: .75rem;
-  font-size: clamp(2.25rem, 4.8vw, 3.45rem);
-  line-height: .96;
+  max-width: min(520px, 100%);
+  margin-bottom: .4rem;
+  font-size: clamp(1.9rem, 3.2vw, 2.6rem);
+  line-height: 1;
   overflow-wrap: anywhere;
 }
 
@@ -127,14 +127,14 @@
 
 .report-hero-stats {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: .65rem;
-  align-self: stretch;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .55rem;
+  align-self: center;
 }
 
 .report-hero-stat {
   min-width: 0;
-  padding: .8rem .9rem;
+  padding: .6rem .8rem;
   border: 1px solid rgba(13, 27, 42, .08);
   border-radius: 10px;
   background: rgba(255, 255, 255, .72);
