@@ -40,7 +40,9 @@
 
 .report-hero-title-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(250px, .66fr);
+  /* Give the stats/download column a larger share so it reaches into the middle space
+     (instead of an empty gap + a squeezed right strip), and so multi-word tiers fit. */
+  grid-template-columns: auto minmax(0, 1fr) minmax(340px, 1.25fr);
   align-items: start;
   gap: clamp(.8rem, 1.6vw, 1.1rem);
   width: 100%;
@@ -166,9 +168,10 @@
   font-size: clamp(1rem, 1.8vw, 1.28rem);
   font-weight: 850;
   line-height: 1.15;
-  /* Allow multi-word tiers (e.g. "Moderate Risk") to wrap instead of truncating to
-     "Moder…" in the narrow 3-up column. */
-  overflow-wrap: anywhere;
+  /* Multi-word tiers (e.g. "Moderate Risk") may wrap at the SPACE to a second line,
+     but never break mid-word ("Moder / e Risk"). */
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .report-hero-tier {
