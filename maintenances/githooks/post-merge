@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#
+# post-merge: after a merge or `git pull` lands on the default branch, reap any
+# local branches that are now fully merged into it. Mirrors the GitHub
+# cleanup-on-merge behaviour locally.
+#
+set -euo pipefail
+
+cur="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')"
+base="${base:-main}"
+
+# Only reap when the merge happened on the default branch.
+[ "$cur" = "$base" ] || exit 0
+
+"$(dirname "$0")/../reap-merged-branches.sh" || true
+exit 0

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#
+# pre-push: when pushing the default branch, reap local branches that are fully
+# merged into it. Mirrors the GitHub "cleanup on push to main" workflow locally.
+# Never blocks the push (always exits 0).
+#
+# stdin lines: <local ref> <local sha> <remote ref> <remote sha>
+#
+set -uo pipefail
+
+base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')"
+base="${base:-main}"
+
+pushing_base=0
+while read -r _localref _localsha remoteref _remotesha; do
+  [ "$remoteref" = "refs/heads/${base}" ] && pushing_base=1
+done
+
+if [ "$pushing_base" = 1 ]; then
+  "$(dirname "$0")/../reap-merged-branches.sh" || true
+fi
+exit 0
