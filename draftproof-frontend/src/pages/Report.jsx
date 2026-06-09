@@ -1157,6 +1157,11 @@ export default function Report() {
     t,
   });
   const fixFirstItems = buildFixFirstItems({ submittedContent, authorshipEvidence, t });
+  // The "Repair Summary" band and "Repair Plan" checklist describe the ORIGINAL
+  // submission's findings. Once a rewrite has completed, the rewrite completion band
+  // and the (rewrite-aware) editor drive the flow, so the original-content guidance is
+  // stale — suppress it rather than show risks that no longer match what's on screen.
+  const showOriginalRepairGuidance = !hasRewriteResult;
 
   const resolveSubmittedParagraphRange = (paragraph, existingRanges = submittedHighlightRanges) => {
     if (!paragraph?.id || !paragraph.text) return null;
@@ -2133,7 +2138,7 @@ export default function Report() {
           currentRewrite={currentRewrite}
           onRewrite={handleRewrite}
           onCancelRewrite={handleCancelRewrite}
-          repairSummary={repairSummary}
+          repairSummary={showOriginalRepairGuidance ? repairSummary : null}
           repairMainRiskLabel={t('report.repairSummary.mainRisk')}
           repairActionLabel={t('report.submitted.editor.editDraft')}
           repairActionHint={t('report.repairSummary.editDraftHint')}
@@ -2202,12 +2207,14 @@ export default function Report() {
           reportSummaryBar
         )}
 
-        <FixFirstChecklist
-          items={fixFirstItems}
-          onSelectParagraph={lockAndScrollParagraph}
-          title={t('report.whatToFixFirst.title')}
-          kicker={t('report.whatToFixFirst.kicker')}
-        />
+        {showOriginalRepairGuidance && (
+          <FixFirstChecklist
+            items={fixFirstItems}
+            onSelectParagraph={lockAndScrollParagraph}
+            title={t('report.whatToFixFirst.title')}
+            kicker={t('report.whatToFixFirst.kicker')}
+          />
+        )}
 
         {rewriteCompletionBand}
 
