@@ -859,7 +859,9 @@
   background: #fff;
 }
 
-.submitted-editor-guide-head span {
+/* Scope to the inner title block only — must not restyle the count badge span,
+   otherwise its higher specificity turns the count gray-on-dark (an invisible dot). */
+.submitted-editor-guide-head > div > span {
   display: block;
   color: #64748b;
   font-size: .72rem;
