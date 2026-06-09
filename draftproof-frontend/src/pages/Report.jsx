@@ -903,7 +903,12 @@ export default function Report() {
   // is labeled "rewritten" (rewrittenHeroView) so a lower number can't read as a
   // clean/final verdict (expose-the-ugly-side: no green-washing).
   const rewrittenHeroView = hasRewriteResult && Boolean(rewriteResultReport);
-  const rewrittenTierKey = rewrittenBadge.tier || report.tier;
+  // Derive the rewritten tier from the SAME DraftProof band the comparison panel shows
+  // (aiLikelihoodBands), not rewrittenBadge.tier — that field is empty on the rewritten
+  // scan, so `|| report.tier` was silently falling back to the ORIGINAL tier (e.g. red /
+  // "Critical Risk") under a "rewritten" header, contradicting the amber band shown below.
+  const rewrittenBandTierKey = (aiLikelihoodBands(rewrittenBadge).draftproof?.tier || '').toLowerCase();
+  const rewrittenTierKey = rewrittenBandTierKey || rewrittenBadge.tier || report.tier;
   const heroReport = rewrittenHeroView
     ? {
       ...report,
