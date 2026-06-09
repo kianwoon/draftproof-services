@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 // submitted-draft editor sheet in Report.jsx (reuses the same submitted-editor-* CSS),
 // minus the original-scan highlight overlay and affected-paragraph panel — neither maps
 // onto rewritten text, so rewrite mode never showed them.
-export default function RewriteDraftEditor({ storageKey, baselineText, onClose }) {
+export default function RewriteDraftEditor({ storageKey, baselineText, workedExamples = [], onClose }) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language;
   const navigate = useNavigate();
@@ -48,6 +48,8 @@ export default function RewriteDraftEditor({ storageKey, baselineText, onClose }
   const [trackedCopyStatus, setTrackedCopyStatus] = useState('idle');
 
   const draftChanged = draftText !== baselineText;
+  const guideExamples = Array.isArray(workedExamples) ? workedExamples.filter(Boolean) : [];
+  const hasGuide = guideExamples.length > 0;
   const trackedDiff = buildTrackedDiff(baselineText, draftText);
   const draftWordCount = countWords(draftText);
   const draftTokensRequired = scanTokensRequired(draftWordCount);
@@ -329,7 +331,7 @@ export default function RewriteDraftEditor({ storageKey, baselineText, onClose }
           </div>
         </div>
 
-        <div className="submitted-editor-grid">
+        <div className={`submitted-editor-grid${hasGuide ? '' : ' is-solo'}`}>
           <section className="submitted-editor-main" aria-label={t('report.submitted.editor.documentEditor')}>
             <div className="submitted-editor-toolbar">
               <div>
@@ -449,6 +451,36 @@ export default function RewriteDraftEditor({ storageKey, baselineText, onClose }
               </div>
             </div>
           </section>
+
+          {hasGuide && (
+            <aside className="submitted-editor-guide" aria-label={t('rewritePage.workedExamples.heading')}>
+              <div className="submitted-editor-guide-head">
+                <div>
+                  <span>{t('rewritePage.workedExamples.kicker')}</span>
+                  <strong className="submitted-editor-guide-heading">{t('rewritePage.workedExamples.heading')}</strong>
+                </div>
+                <span className="submitted-editor-guide-count">{guideExamples.length}</span>
+              </div>
+              <p className="submitted-editor-guide-copy">{t('rewritePage.workedExamples.copy')}</p>
+              <div className="submitted-editor-guide-list">
+                {guideExamples.map((item, i) => (
+                  <article className="rewrite-suggestion-card" key={`guide-${i}`}>
+                    <div className="rewrite-target-block">
+                      <span>{t('rewritePage.workedExamples.generalClaim')}</span>
+                      <p>{item.sentence}</p>
+                    </div>
+                    <div className="rewrite-addition-block">
+                      <span>{t('rewritePage.workedExamples.moreGrounded')}</span>
+                      <p>{item.suggestion}</p>
+                    </div>
+                    {item.why && (
+                      <div className="rewrite-review-note"><p>{t('rewritePage.workedExamples.why')}: {item.why}</p></div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </aside>
+          )}
         </div>
       </div>
     </div>

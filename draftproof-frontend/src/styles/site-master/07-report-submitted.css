@@ -833,6 +833,77 @@
   gap: 0;
 }
 
+/* When there is no guide panel (e.g. no worked examples), the editor spans full width
+   instead of leaving an empty right column. */
+.submitted-editor-grid.is-solo {
+  grid-template-columns: 1fr;
+}
+
+/* "How to ground a claim" worked-examples reference shown in the rewrite editor's
+   right column. */
+.submitted-editor-guide {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  background: #f8fafc;
+}
+
+.submitted-editor-guide-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .85rem 1rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+.submitted-editor-guide-head span {
+  display: block;
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.submitted-editor-guide-heading {
+  display: block;
+  margin-top: .2rem;
+  color: #0f172a;
+  font-size: .98rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.submitted-editor-guide-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  background: #172033;
+  color: #fff;
+  font-size: .86rem;
+}
+
+.submitted-editor-guide-copy {
+  margin: 0;
+  padding: .7rem 1rem 0;
+  color: #475569;
+  font-size: .82rem;
+  line-height: 1.45;
+}
+
+.submitted-editor-guide-list {
+  overflow: auto;
+  display: grid;
+  gap: .7rem;
+  padding: .75rem 1rem 1rem;
+}
+
 .submitted-editor-main {
   min-width: 0;
   min-height: 0;

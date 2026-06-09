@@ -729,6 +729,7 @@ export default function Rewrite() {
         <RewriteDraftEditor
           storageKey={`${scanId}:rewrite:${rewriteId}`}
           baselineText={report.final_text}
+          workedExamples={workedExamples}
           onClose={() => setEditorOpen(false)}
         />
       )}
