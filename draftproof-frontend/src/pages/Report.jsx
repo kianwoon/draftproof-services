@@ -841,6 +841,23 @@ export default function Report() {
   // back here with ?edit=1 to auto-open this same (rewrite-aware) editor — so we hide
   // the on-page buttons after a rewrite while the editor itself stays reachable.
   const showSubmittedEditEntry = submittedEditorReady && !hasRewriteResult;
+
+  // Auto-open the editor when arriving from the /rewrite page's "Manual Rewrite /
+  // Correction" button (/report/{id}?edit=1). Must live ABOVE the loading/error/!report
+  // early returns below so the hook is called unconditionally (rules of hooks). Wait
+  // until the editor baseline is ready (submittedEditorReady gates on the rewrite report
+  // having loaded, so the seed effect has loaded the rewritten text), open the modal
+  // once via the stable openSubmittedEditor callback, then strip the param so a
+  // refresh/close won't reopen it.
+  useEffect(() => {
+    if (searchParams.get('edit') !== '1' || autoOpenedEditorRef.current) return;
+    if (!submittedEditorReady) return;
+    autoOpenedEditorRef.current = true;
+    openSubmittedEditor();
+    const next = new URLSearchParams(searchParams);
+    next.delete('edit');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, submittedEditorReady, openSubmittedEditor, setSearchParams]);
   const rewriteTimerActive = rewriteLoading || rewriteInProgress;
 
   useEffect(() => {
@@ -1279,19 +1296,6 @@ export default function Report() {
     }
   };
 
-  // Auto-open the editor when arriving from the /rewrite page's "Manual Rewrite /
-  // Correction" button (/report/{id}?edit=1). Wait until the editor baseline is ready
-  // (submittedEditorReady gates on the rewrite report having loaded so it seeds the
-  // rewritten text), then open once and strip the param so a refresh/close won't reopen.
-  useEffect(() => {
-    if (searchParams.get('edit') !== '1' || autoOpenedEditorRef.current) return;
-    if (!submittedEditorReady) return;
-    autoOpenedEditorRef.current = true;
-    openSubmittedEditorForParagraph();
-    const next = new URLSearchParams(searchParams);
-    next.delete('edit');
-    setSearchParams(next, { replace: true });
-  }, [searchParams, submittedEditorReady, setSearchParams]);
 
   const syncSubmittedHighlightScroll = () => {
     if (!submittedEditorRef.current || !submittedHighlightRef.current) return;
