@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import {
-  calibratedReportAiScore,
   formatDate,
   formatMetricPercent,
 } from './reportHelpers';
@@ -12,7 +11,6 @@ export default function ReportHero({
   report,
   tier,
   issuesCount,
-  aiScore,
   writingScore,
   canStartRewrite,
   rewriteLoading,
@@ -66,10 +64,6 @@ export default function ReportHero({
             <div className="report-hero-stat">
               <span>{t('report.summary.riskTier')}</span>
               <strong style={{ color: tier.color }}>{t(`report.tiers.${report.tier}`, { defaultValue: tier.label })}</strong>
-            </div>
-            <div className="report-hero-stat">
-              <span>{t('report.signalGroups.ai_authorship.label')}</span>
-              <strong>{aiScore != null ? formatMetricPercent(calibratedReportAiScore(aiScore), 0) : '-'}</strong>
             </div>
             <div className="report-hero-stat">
               <span>{t('report.summary.writingScore')}</span>

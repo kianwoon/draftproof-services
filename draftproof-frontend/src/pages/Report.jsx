@@ -1591,7 +1591,6 @@ export default function Report() {
     if (!bands.draftproof) return null;
     const dp = bands.draftproof;
     const ext = bands.external;
-    const tc = variantBadge?.transformation_classification || {};
     const ratingLabel = variantBadge?.authorship_rating_label;
     return (
       <div className="ai-likelihood-block">
@@ -1617,10 +1616,9 @@ export default function Report() {
             </div>
           )}
         </div>
-        <div className="ai-likelihood-meta">
-          {tc.label ? `${tc.label}${tc.confidence ? ` (${tc.confidence})` : ''}` : null}
-          {ratingLabel ? `  ·  ${ratingLabel}` : null}
-        </div>
+        {ratingLabel && (
+          <div className="ai-likelihood-meta">{ratingLabel}</div>
+        )}
         <div className="ai-likelihood-why">{EXTERNAL_ESTIMATE_DISPLAY_ENABLED ? t('report.aiLikelihood.whyDiffer') : t('report.aiLikelihood.externalDemoted')}</div>
       </div>
     );
@@ -2094,7 +2092,6 @@ export default function Report() {
           report={report}
           tier={tier}
           issuesCount={issues.length}
-          aiScore={aiScore}
           writingScore={writingScore}
           canStartRewrite={canStartRewrite}
           rewriteLoading={rewriteLoading}

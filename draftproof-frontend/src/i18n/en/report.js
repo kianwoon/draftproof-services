@@ -112,7 +112,7 @@ export const report = {
     "mainDrivers": "Main drivers: {{drivers}}.",
     "rewrittenContributionEstimate": "Rewritten contribution estimate from the completed rewrite scan.",
     "noSinglePattern": "No single transformation pattern dominates",
-    "turnitinReferenceNote": "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage because low-range results are less reliable. DraftProof scores are review signals, not verdicts.",
+    "turnitinReferenceNote": "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage because low-range results are less reliable.",
     "labels": {
       "fully_ai_written": "Fully AI-written pattern",
       "ai_cleaned_human_writing": "AI-cleaned human writing pattern",

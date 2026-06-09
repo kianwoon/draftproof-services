@@ -151,7 +151,7 @@ def _tf_pct(value) -> float | None:
 _TURNITIN_AI_REFERENCE_THRESHOLD = 20
 _TURNITIN_AI_REFERENCE_NOTE = (
     "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage "
-    "because low-range results are less reliable. DraftProof scores are review signals, not verdicts."
+    "because low-range results are less reliable."
 )
 
 

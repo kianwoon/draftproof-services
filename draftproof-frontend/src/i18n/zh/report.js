@@ -112,7 +112,7 @@ export const report = {
     "mainDrivers": "主要驱动因素：{{drivers}}。",
     "rewrittenContributionEstimate": "来自已完成改写扫描的改写贡献估计。",
     "noSinglePattern": "没有单一转换模式占主导",
-    "turnitinReferenceNote": "Turnitin 参考：低于 20% 的 AI 分数可能显示为 *%，而不是精确百分比，因为低分区间结果可靠性较低。DraftProof 分数仅供审阅，不是判定。",
+    "turnitinReferenceNote": "Turnitin 参考：低于 20% 的 AI 分数可能显示为 *%，而不是精确百分比，因为低分区间结果可靠性较低。",
     "labels": {
       "fully_ai_written": "完全 AI 写作模式",
       "ai_cleaned_human_writing": "AI 润色人类写作模式",
