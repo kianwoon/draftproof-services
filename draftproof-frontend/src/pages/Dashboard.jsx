@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
@@ -6,6 +7,30 @@ import CodeTexture from '../components/CodeTexture';
 export default function Dashboard() {
   const { user, loading, balance } = useAuth();
   const { t } = useTranslation();
+
+  // Reveal the workflow map (scan → report → rewrite) once it scrolls into view.
+  const flowRef = useRef(null);
+  const [flowVisible, setFlowVisible] = useState(false);
+
+  useEffect(() => {
+    const node = flowRef.current;
+    if (!node || flowVisible) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setFlowVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setFlowVisible(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.25 },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [user, flowVisible]);
 
   if (loading) {
     return (
@@ -103,7 +128,10 @@ export default function Dashboard() {
             <h2>{t('dashboard.workflowTitle')}</h2>
           </div>
 
-          <div className="dash-flow-map">
+          <div
+            ref={flowRef}
+            className={`dash-flow-map dash-anim${flowVisible ? ' is-animating' : ''}`}
+          >
             <div className="dash-flow-panel dash-flow-panel-scan">
               <div className="dash-workflow-panel-heading">
                 <span className="brand-pill">{t('dashboard.scanWorkflowLabel')}</span>
@@ -111,7 +139,7 @@ export default function Dashboard() {
               </div>
               <ol className="dash-steps">
                 {scanSteps.map((step, index) => (
-                  <li className="dash-step" key={step.title}>
+                  <li className="dash-step" key={step.title} style={{ '--i': index }}>
                     <span className="step-num">{index + 1}</span>
                     <strong>{step.title}</strong>
                     <p>{step.body}</p>
@@ -123,7 +151,7 @@ export default function Dashboard() {
 
             {reportStep && (
               <div className="dash-report-gate">
-                <div className="dash-report-node">
+                <div className="dash-report-node" style={{ '--i': 3 }}>
                   <div className="dash-report-flow-label dash-report-flow-label-top">
                     {t('dashboard.scanCreatesReport')}
                   </div>
@@ -140,12 +168,12 @@ export default function Dashboard() {
             <div className="dash-flow-panel dash-flow-panel-rewrite">
               <div className="dash-workflow-panel-heading">
                 <span className="brand-pill">{t('dashboard.rewriteWorkflowLabel')}</span>
-                <span className="dash-unlock-pill">{t('dashboard.unlockAfterReport')}</span>
+                <span className="dash-unlock-pill" style={{ '--i': 3 }}>{t('dashboard.unlockAfterReport')}</span>
                 <h3>{t('dashboard.rewriteWorkflowTitle')}</h3>
               </div>
               <ol className="dash-steps">
                 {rewriteSteps.map((step, index) => (
-                  <li className="dash-step" key={step.title}>
+                  <li className="dash-step" key={step.title} style={{ '--i': index + 4 }}>
                     <span className="step-num">{index + 1}</span>
                     <strong>{step.title}</strong>
                     <p>{step.body}</p>
