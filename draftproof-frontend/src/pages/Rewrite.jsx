@@ -3,6 +3,7 @@ import { Link, Navigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { getRewriteStatus, getRewriteReport, getRewriteDownload } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
+import RewriteDraftEditor from './report/RewriteDraftEditor';
 import { useAuth } from '../context/AuthContext';
 import {
   requiresRewriteAuthorReview,
@@ -175,6 +176,7 @@ export default function Rewrite() {
   const [loading, setLoading] = useState(Boolean(rewriteId));
   const [error, setError] = useState(null);
   const [copyStatus, setCopyStatus] = useState('idle');
+  const [editorOpen, setEditorOpen] = useState(false);
   const originalDiffRef = useRef(null);
   const rewrittenDiffRef = useRef(null);
   const diffScrollSyncingRef = useRef(false);
@@ -480,12 +482,13 @@ export default function Rewrite() {
               </div>
               <div className="rewritten-document-actions">
                 {scanId && (
-                  <Link
-                    to={`/report/${scanId}?edit=1`}
+                  <button
+                    type="button"
                     className="manual-correction-btn"
+                    onClick={() => setEditorOpen(true)}
                   >
                     {t('rewritePage.manualCorrection')}
-                  </Link>
+                  </button>
                 )}
                 <button
                   type="button"
@@ -722,6 +725,13 @@ export default function Rewrite() {
           </div>
         )}
       </div>
+      {editorOpen && report?.final_text && scanId && (
+        <RewriteDraftEditor
+          storageKey={`${scanId}:rewrite:${rewriteId}`}
+          baselineText={report.final_text}
+          onClose={() => setEditorOpen(false)}
+        />
+      )}
     </main>
   );
 }

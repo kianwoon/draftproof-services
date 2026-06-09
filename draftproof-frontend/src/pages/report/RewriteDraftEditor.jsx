@@ -1,0 +1,456 @@
+// allow-hardcode: this is a presentational React component — the repeated string
+// literals are CSS class names (submitted-editor-*, btn btn-ghost) and i18n message
+// keys, i.e. UI markup, not a content detect-list or scoring/matching oracle. It
+// mirrors the editor sheet markup in Report.jsx so both share identical styling.
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { startScanWithText, translateText, getScanStatus } from '../../api/draftproofApi';
+import { getReportDraft, saveReportDraft, deleteReportDraft } from '../../utils/reportDraftStorage';
+import { countWords, scanTokensRequired } from '../../utils/scanBilling';
+import { useAuth } from '../../context/AuthContext';
+import { formatDate } from './reportHelpers';
+import { buildTrackedDiff, trackedDiffToPlainText, trackedDiffToHtml } from './trackedDiff';
+
+const TRANSITION_MS = 480;
+const RESCAN_POLL_INTERVAL = 3000;
+const RESCAN_MAX_POLLS = 200;
+const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+// In-place "Manual Rewrite / Correction" editor for the /rewrite page. Edits the
+// rewritten draft (baselineText = rewrite final_text), autosaves to the namespaced
+// draft key, and re-scans the edited text into a fresh /report/{id}. Mirrors the
+// submitted-draft editor sheet in Report.jsx (reuses the same submitted-editor-* CSS),
+// minus the original-scan highlight overlay and affected-paragraph panel — neither maps
+// onto rewritten text, so rewrite mode never showed them.
+export default function RewriteDraftEditor({ storageKey, baselineText, onClose }) {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language;
+  const navigate = useNavigate();
+  const { balance, refreshBalance } = useAuth();
+
+  const editorRef = useRef(null);
+  const closeTimerRef = useRef(null);
+  const trackedCopyTimerRef = useRef(null);
+
+  const [draftText, setDraftText] = useState(baselineText || '');
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const [draftStatus, setDraftStatus] = useState('idle');
+  const [draftUpdatedAt, setDraftUpdatedAt] = useState(null);
+  const [closing, setClosing] = useState(false);
+  const [rescanBusy, setRescanBusy] = useState(false);
+  const [rescanStatus, setRescanStatus] = useState(null);
+  const [rescanError, setRescanError] = useState(null);
+  const [needsTokens, setNeedsTokens] = useState(false);
+  const [translateBusy, setTranslateBusy] = useState(false);
+  const [translateError, setTranslateError] = useState(null);
+  const [preTranslateText, setPreTranslateText] = useState(null);
+  const [trackedCopyStatus, setTrackedCopyStatus] = useState('idle');
+
+  const draftChanged = draftText !== baselineText;
+  const trackedDiff = buildTrackedDiff(baselineText, draftText);
+  const draftWordCount = countWords(draftText);
+  const draftTokensRequired = scanTokensRequired(draftWordCount);
+
+  const clearCloseTimer = () => {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+  const clearTrackedCopyTimer = () => {
+    if (trackedCopyTimerRef.current) {
+      window.clearTimeout(trackedCopyTimerRef.current);
+      trackedCopyTimerRef.current = null;
+    }
+  };
+
+  const handleClose = () => {
+    if (rescanBusy) return;
+    clearCloseTimer();
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) {
+      onClose?.();
+      return;
+    }
+    setClosing(true);
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      onClose?.();
+    }, TRANSITION_MS);
+  };
+
+  // Seed from the rewritten baseline, then hydrate any saved local draft.
+  useEffect(() => {
+    let cancelled = false;
+    setDraftLoaded(false);
+    setDraftText(baselineText || '');
+    setDraftStatus('idle');
+    setDraftUpdatedAt(null);
+
+    getReportDraft(storageKey)
+      .then((draft) => {
+        if (cancelled) return;
+        if (draft?.text) {
+          setDraftText(draft.text);
+          setDraftStatus('saved');
+          setDraftUpdatedAt(draft.updatedAt || null);
+        }
+        setDraftLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDraftLoaded(true);
+          setDraftStatus('error');
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [storageKey, baselineText]);
+
+  // Debounced autosave; delete the draft once it matches the baseline again.
+  useEffect(() => {
+    if (!draftLoaded) return undefined;
+    if (draftText === baselineText) {
+      setDraftStatus('idle');
+      setDraftUpdatedAt(null);
+      deleteReportDraft(storageKey).catch(() => {});
+      return undefined;
+    }
+    setDraftStatus('saving');
+    const timer = window.setTimeout(() => {
+      saveReportDraft(storageKey, draftText)
+        .then((draft) => {
+          setDraftStatus('saved');
+          setDraftUpdatedAt(draft?.updatedAt || null);
+        })
+        .catch(() => setDraftStatus('error'));
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [draftText, draftLoaded, baselineText, storageKey]);
+
+  // Escape closes (unless a re-scan is in flight); clean up timers on unmount.
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !rescanBusy) handleClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rescanBusy]);
+
+  useEffect(() => () => {
+    clearCloseTimer();
+    clearTrackedCopyTimer();
+  }, []);
+
+  const handleChange = (event) => {
+    setDraftText(event.target.value);
+    setRescanError(null);
+    setPreTranslateText(null);
+    clearTrackedCopyTimer();
+    setTrackedCopyStatus('idle');
+  };
+
+  const resetDraft = async () => {
+    setDraftText(baselineText || '');
+    setDraftStatus('idle');
+    setDraftUpdatedAt(null);
+    setRescanError(null);
+    setPreTranslateText(null);
+    await deleteReportDraft(storageKey).catch(() => {});
+  };
+
+  const translateSelection = async () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const selected = (start != null && end != null && end > start) ? draftText.slice(start, end) : '';
+    if (!selected.trim()) {
+      setTranslateError(t('report.submitted.editor.translateSelectFirst'));
+      return;
+    }
+    setTranslateBusy(true);
+    setTranslateError(null);
+    try {
+      const { data } = await translateText(selected, { target: 'en' });
+      const translated = (data?.text || '').trim();
+      if (!translated) {
+        setTranslateError(t('report.submitted.editor.translateError'));
+        return;
+      }
+      const previous = draftText;
+      const nextText = previous.slice(0, start) + translated + previous.slice(end);
+      setPreTranslateText(previous);
+      setDraftText(nextText);
+      setRescanError(null);
+      window.requestAnimationFrame(() => {
+        const node = editorRef.current;
+        if (!node) return;
+        node.focus({ preventScroll: true });
+        const caret = start + translated.length;
+        node.setSelectionRange(caret, caret);
+      });
+    } catch {
+      setTranslateError(t('report.submitted.editor.translateError'));
+    } finally {
+      setTranslateBusy(false);
+    }
+  };
+
+  const undoTranslate = () => {
+    if (preTranslateText == null) return;
+    setDraftText(preTranslateText);
+    setPreTranslateText(null);
+    setTranslateError(null);
+  };
+
+  const copyTrackedChanges = async () => {
+    const plainText = trackedDiffToPlainText(trackedDiff);
+    const html = trackedDiffToHtml(trackedDiff);
+    clearTrackedCopyTimer();
+    try {
+      if (navigator.clipboard?.write && window.ClipboardItem) {
+        await navigator.clipboard.write([
+          new window.ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([plainText], { type: 'text/plain' }),
+          }),
+        ]);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(plainText);
+      } else {
+        throw new Error('Clipboard API unavailable');
+      }
+      setTrackedCopyStatus('copied');
+      trackedCopyTimerRef.current = window.setTimeout(() => {
+        setTrackedCopyStatus('idle');
+        trackedCopyTimerRef.current = null;
+      }, 1800);
+    } catch {
+      setTrackedCopyStatus('error');
+      trackedCopyTimerRef.current = window.setTimeout(() => {
+        setTrackedCopyStatus('idle');
+        trackedCopyTimerRef.current = null;
+      }, 2200);
+    }
+  };
+
+  const rescanDraft = async () => {
+    const text = draftText.trim();
+    if (!text) {
+      setRescanError(t('report.submitted.editor.emptyDraft'));
+      return;
+    }
+    if (balance !== null && balance < draftTokensRequired) {
+      setNeedsTokens(true);
+      setRescanError(null);
+      setRescanStatus(null);
+      return;
+    }
+
+    setRescanBusy(true);
+    setRescanError(null);
+    setRescanStatus(t('report.submitted.editor.rescanQueueing'));
+
+    try {
+      const { data: scan } = await startScanWithText(text);
+      setRescanStatus(t('report.submitted.editor.rescanProcessing'));
+
+      if (scan.status === 'completed') {
+        refreshBalance?.();
+        navigate(`/report/${scan.id}`);
+        return;
+      }
+
+      for (let i = 0; i < RESCAN_MAX_POLLS; i += 1) {
+        await sleep(RESCAN_POLL_INTERVAL);
+        const { data } = await getScanStatus(scan.id);
+        if (data.status === 'completed') {
+          refreshBalance?.();
+          navigate(`/report/${scan.id}`);
+          return;
+        }
+        if (data.status === 'failed') {
+          throw new Error(data.error || t('report.submitted.editor.rescanFailed'));
+        }
+        if (data.progress_message) {
+          setRescanStatus(data.progress_message);
+        }
+      }
+      throw new Error(t('report.submitted.editor.rescanTimedOut'));
+    } catch (err) {
+      setRescanError(err?.response?.data?.detail || err?.message || t('report.submitted.editor.rescanFailed'));
+      setRescanStatus(null);
+      setRescanBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className={`submitted-editor-backdrop${closing ? ' is-closing' : ''}`}
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('report.submitted.editor.rewriteTitle')}
+    >
+      <div className="submitted-editor-sheet">
+        <button
+          type="button"
+          className="submitted-editor-close-button"
+          aria-label={t('report.submitted.editor.close')}
+          title={t('report.submitted.editor.close')}
+          onClick={handleClose}
+          disabled={rescanBusy}
+        >
+          X
+        </button>
+        <div className="submitted-editor-head">
+          <div>
+            <span className="submitted-content-kicker">{t('report.submitted.editor.kicker')}</span>
+            <h2>{t('report.submitted.editor.rewriteTitle')}</h2>
+            <p>{t('report.submitted.editor.rewriteNotice')}</p>
+          </div>
+          <div className="submitted-editor-actions">
+            <span className={`submitted-save-state is-${draftStatus}`}>
+              {draftStatus === 'saving'
+                ? t('report.submitted.editor.saving')
+                : draftStatus === 'saved'
+                  ? t('report.submitted.editor.saved', {
+                    value: draftUpdatedAt ? formatDate(draftUpdatedAt, locale) : t('common.lastUpdated'),
+                  })
+                  : draftStatus === 'error'
+                    ? t('report.submitted.editor.saveError')
+                    : t('report.submitted.editor.noDraft')}
+            </span>
+            <button type="button" className="btn btn-ghost" onClick={handleClose} disabled={rescanBusy}>
+              {t('report.submitted.editor.close')}
+            </button>
+          </div>
+        </div>
+
+        <div className="submitted-editor-grid">
+          <section className="submitted-editor-main" aria-label={t('report.submitted.editor.documentEditor')}>
+            <div className="submitted-editor-toolbar">
+              <div>
+                <strong>{t('report.submitted.editor.documentEditor')}</strong>
+                <span>{draftChanged ? t('report.submitted.editor.changed') : t('report.submitted.editor.unchanged')}</span>
+              </div>
+              <div className="submitted-editor-toolbar-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary submitted-translate-button"
+                  onClick={translateSelection}
+                  disabled={translateBusy || rescanBusy}
+                  title={t('report.submitted.editor.translateNote')}
+                >
+                  <svg className="cta-edit-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                    <path d="M4 5h7M7.5 5v1.5M9.5 5c0 4-2.5 7-5.5 8.5M6 9c.8 2 2.6 3.6 5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M13 19l3.2-8h.6L20 19M14 16.5h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  {translateBusy ? t('report.submitted.editor.translating') : t('report.submitted.editor.translateCnEn')}
+                </button>
+                {preTranslateText != null && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small submitted-translate-undo"
+                    onClick={undoTranslate}
+                    disabled={translateBusy || rescanBusy}
+                  >
+                    {t('report.submitted.editor.undoTranslate')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={resetDraft}
+                  disabled={!draftChanged || rescanBusy}
+                >
+                  {t('report.submitted.editor.discardDraft')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={rescanDraft}
+                  disabled={rescanBusy || !draftText.trim()}
+                >
+                  {rescanBusy ? t('report.submitted.editor.rescanning') : t('report.submitted.editor.rescanDraft')}
+                </button>
+                <span className="submitted-rescan-token-note">
+                  {t('scan.word', { count: draftWordCount })}
+                  {' · '}
+                  {draftTokensRequired > 0
+                    ? t('scan.tokensRequired', { count: draftTokensRequired })
+                    : t('scan.freeScan')}
+                </span>
+              </div>
+            </div>
+            <div className={`submitted-translate-tip${translateError ? ' is-error' : ''}`}>
+              <svg className="cta-edit-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                <path d="M4 5h7M7.5 5v1.5M9.5 5c0 4-2.5 7-5.5 8.5M6 9c.8 2 2.6 3.6 5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M13 19l3.2-8h.6L20 19M14 16.5h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>
+                {translateError
+                  ? translateError
+                  : preTranslateText != null
+                    ? t('report.submitted.editor.translateNote')
+                    : t('report.submitted.editor.translateHint')}
+              </span>
+            </div>
+            <div className="submitted-editor-textarea-wrap">
+              <textarea
+                ref={editorRef}
+                className="submitted-editor-textarea"
+                value={draftText}
+                onChange={handleChange}
+                spellCheck="true"
+              />
+            </div>
+            {(rescanStatus || rescanError) && (
+              <div className={`submitted-rescan-status${rescanError ? ' is-error' : ''}`}>
+                {rescanError || rescanStatus}
+              </div>
+            )}
+            {needsTokens && (
+              <div className="submitted-rescan-status is-error">
+                <span>{t('scan.notEnoughMessage')}</span>
+                {' '}
+                <button type="button" className="btn btn-ghost btn-small" onClick={() => navigate('/buy')}>
+                  {t('scan.buyTokens')}
+                </button>
+              </div>
+            )}
+            <div className="submitted-tracked-preview" aria-label={t('report.submitted.editor.trackedPreview')}>
+              <div className="submitted-tracked-head">
+                <div className="submitted-tracked-title">
+                  <strong>{t('report.submitted.editor.trackedPreview')}</strong>
+                  <span>{t('report.submitted.editor.trackedPreviewBody')}</span>
+                </div>
+                <button
+                  type="button"
+                  className={`submitted-tracked-copy-button${trackedCopyStatus === 'copied' ? ' is-copied' : ''}${trackedCopyStatus === 'error' ? ' has-error' : ''}`}
+                  onClick={copyTrackedChanges}
+                  disabled={!trackedDiff.length}
+                >
+                  {trackedCopyStatus === 'copied'
+                    ? t('report.submitted.editor.copiedTrackedChanges')
+                    : trackedCopyStatus === 'error'
+                      ? t('report.submitted.editor.copyTrackedChangesFailed')
+                      : t('report.submitted.editor.copyTrackedChanges')}
+                </button>
+              </div>
+              <div className="submitted-tracked-body">
+                {trackedDiff.map((part, index) => (
+                  <span key={`${part.type}-${index}`} className={`submitted-diff-${part.type}`}>
+                    {part.text}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
