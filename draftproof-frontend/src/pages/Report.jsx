@@ -647,6 +647,22 @@ export default function Report() {
     clearSubmittedTrackedCopyTimer();
   }, [clearSubmittedEditorCloseTimer, clearSubmittedTrackedCopyTimer]);
 
+  // Which text the "Manual Rewrite / Correction" editor works on:
+  //   • before any rewrite          → the original submission
+  //   • after a completed rewrite    → the REWRITTEN draft (rewriteResultReport.final_text)
+  // final_text loads asynchronously (see the loadRewriteReport effect), so editingRewriteDraft
+  // only flips true once it is present — that keeps the editor from ever seeding blank and lets
+  // us gate the open buttons until the correct baseline is ready. Drafts are namespaced per mode
+  // so an original-mode draft and a rewrite-mode draft never clobber each other in IndexedDB.
+  const completedRewriteJob = rewriteJob?.status === 'completed' ? rewriteJob : report?.rewrite;
+  const rewriteFinalText = (completedRewriteJob?.id && completedRewriteJob.status === 'completed')
+    ? (rewriteResultReport?.final_text || '')
+    : '';
+  const editingRewriteDraft = Boolean(rewriteFinalText);
+  const submittedDraftStorageKey = editingRewriteDraft
+    ? `${id}:rewrite:${completedRewriteJob.id}`
+    : id;
+
   useEffect(() => {
     if (!report) return undefined;
 
@@ -654,13 +670,14 @@ export default function Report() {
     const reportIssues = Array.isArray(report.issues) ? report.issues : [];
     const model = buildSubmittedContentModel({ ...report, issues: reportIssues });
     const originalText = submittedContentToText(model);
+    const baselineText = editingRewriteDraft ? rewriteFinalText : originalText;
 
     setSubmittedDraftLoaded(false);
-    setSubmittedDraftText(originalText);
+    setSubmittedDraftText(baselineText);
     setSubmittedDraftStatus('idle');
     setSubmittedDraftUpdatedAt(null);
 
-    getReportDraft(id)
+    getReportDraft(submittedDraftStorageKey)
       .then((draft) => {
         if (cancelled) return;
         if (draft?.text) {
@@ -680,7 +697,7 @@ export default function Report() {
     return () => {
       cancelled = true;
     };
-  }, [id, report?.id]);
+  }, [id, report?.id, editingRewriteDraft, rewriteFinalText, submittedDraftStorageKey]);
 
   useEffect(() => {
     if (!report || !submittedDraftLoaded) return undefined;
@@ -688,16 +705,17 @@ export default function Report() {
     const reportIssues = Array.isArray(report.issues) ? report.issues : [];
     const model = buildSubmittedContentModel({ ...report, issues: reportIssues });
     const originalText = submittedContentToText(model);
-    if (submittedDraftText === originalText) {
+    const baselineText = editingRewriteDraft ? rewriteFinalText : originalText;
+    if (submittedDraftText === baselineText) {
       setSubmittedDraftStatus('idle');
       setSubmittedDraftUpdatedAt(null);
-      deleteReportDraft(id).catch(() => {});
+      deleteReportDraft(submittedDraftStorageKey).catch(() => {});
       return undefined;
     }
 
     setSubmittedDraftStatus('saving');
     const timer = window.setTimeout(() => {
-      saveReportDraft(id, submittedDraftText)
+      saveReportDraft(submittedDraftStorageKey, submittedDraftText)
         .then((draft) => {
           setSubmittedDraftStatus('saved');
           setSubmittedDraftUpdatedAt(draft?.updatedAt || null);
@@ -708,7 +726,7 @@ export default function Report() {
     }, 650);
 
     return () => window.clearTimeout(timer);
-  }, [id, report?.id, submittedDraftLoaded, submittedDraftText]);
+  }, [id, report?.id, submittedDraftLoaded, submittedDraftText, editingRewriteDraft, rewriteFinalText, submittedDraftStorageKey]);
 
   useEffect(() => {
     if (!submittedEditorOpen) return undefined;
@@ -804,7 +822,18 @@ export default function Report() {
   const rewriteInProgress = isRewriteActive(currentRewrite?.status);
   const hasCompletedRewrite = currentRewrite?.status === 'completed';
   const hasRewriteResult = hasCompletedRewrite && Boolean(currentRewrite?.id);
-  const canEditSubmittedDraft = !hasRewriteResult && !rewriteInProgress;
+  // Manual editing stays available after a completed rewrite — the user refines the
+  // rewritten draft (or, before any rewrite, their original submission) and re-scans,
+  // which spins up a fresh /report/{id}. Only an in-flight rewrite locks editing, to
+  // avoid editing against a moving baseline.
+  const canEditSubmittedDraft = !rewriteInProgress;
+  // Don't let the user open the editor until its baseline is actually loaded: the
+  // original text is always ready, but after a rewrite we wait for its report to load
+  // so we seed the rewritten text (not the original) — otherwise a click right after a
+  // rewrite would edit the original by mistake. If a completed rewrite carries no
+  // final_text (e.g. the original was preserved), editingRewriteDraft stays false and
+  // the editor falls back to the original submission rather than going dead.
+  const submittedEditorReady = canEditSubmittedDraft && (!hasRewriteResult || Boolean(rewriteResultReport));
   const rewriteTimerActive = rewriteLoading || rewriteInProgress;
 
   useEffect(() => {
@@ -1101,9 +1130,12 @@ export default function Report() {
     ? selectedParagraph.signals.filter((signal) => signal && signal.key !== selectedParagraph.primarySignal?.key)
     : [];
   const originalSubmittedText = submittedContentToText(submittedContent);
-  const submittedDraftChanged = submittedDraftText !== originalSubmittedText;
+  // In rewrite mode the editor's baseline is the rewritten draft, so "changed" and the
+  // tracked-changes view are measured against it (not the original submission).
+  const submittedBaselineText = editingRewriteDraft ? rewriteFinalText : originalSubmittedText;
+  const submittedDraftChanged = submittedDraftText !== submittedBaselineText;
   const submittedTrackedDiff = submittedEditorOpen
-    ? buildTrackedDiff(originalSubmittedText, submittedDraftText)
+    ? buildTrackedDiff(submittedBaselineText, submittedDraftText)
     : [];
   const affectedParagraphs = highlightedParagraphs;
   const originalAffectedRanges = buildOriginalSegmentRanges(originalSubmittedText, affectedParagraphs);
@@ -1317,16 +1349,16 @@ export default function Report() {
   };
 
   const resetSubmittedDraft = async () => {
-    setSubmittedDraftText(originalSubmittedText);
+    setSubmittedDraftText(submittedBaselineText);
     setSubmittedHighlightRanges((current) => {
       if (!selectedParagraph?.text || !Object.keys(current || {}).length) return {};
-      const range = findTextRange(originalSubmittedText, selectedParagraph.text);
+      const range = findTextRange(submittedBaselineText, selectedParagraph.text);
       return range ? { [selectedParagraph.id]: { ...range, segmentId: selectedParagraph.id } } : {};
     });
     setSubmittedDraftStatus('idle');
     setSubmittedDraftUpdatedAt(null);
     setSubmittedRescanError(null);
-    await deleteReportDraft(id);
+    await deleteReportDraft(submittedDraftStorageKey);
   };
 
   const rescanSubmittedDraft = async () => {
@@ -2105,7 +2137,7 @@ export default function Report() {
           repairMainRiskLabel={t('report.repairSummary.mainRisk')}
           repairActionLabel={t('report.submitted.editor.editDraft')}
           repairActionHint={t('report.repairSummary.editDraftHint')}
-          onRepairAction={() => openSubmittedEditorForParagraph()}
+          onRepairAction={submittedEditorReady ? () => openSubmittedEditorForParagraph() : null}
         />
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>
@@ -2278,7 +2310,7 @@ export default function Report() {
                   <strong>{submittedContent.highlightedCount}</strong>
                   <span>{t('report.submitted.highlightedSections')}</span>
                 </div>
-                {canEditSubmittedDraft && (
+                {submittedEditorReady && (
                   <button
                     type="button"
                     className="btn btn-secondary submitted-edit-button"
@@ -2428,7 +2460,7 @@ export default function Report() {
                         type="button"
                         className="btn btn-secondary"
                         onClick={() => openSubmittedEditorForParagraph(selectedParagraph)}
-                        disabled={!canEditSubmittedDraft}
+                        disabled={!submittedEditorReady}
                       >
                         {t('report.submitted.editParagraph')}
                       </button>
@@ -2470,8 +2502,8 @@ export default function Report() {
                   <div className="submitted-editor-head">
                     <div>
                       <span className="submitted-content-kicker">{t('report.submitted.editor.kicker')}</span>
-                      <h2>{t('report.submitted.editor.title')}</h2>
-                      <p>{t('report.submitted.editor.priorScanNotice')}</p>
+                      <h2>{t(editingRewriteDraft ? 'report.submitted.editor.rewriteTitle' : 'report.submitted.editor.title')}</h2>
+                      <p>{t(editingRewriteDraft ? 'report.submitted.editor.rewriteNotice' : 'report.submitted.editor.priorScanNotice')}</p>
                     </div>
                     <div className="submitted-editor-actions">
                       <span className={`submitted-save-state is-${submittedDraftStatus}`}>
