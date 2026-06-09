@@ -714,9 +714,20 @@
   transition-delay: calc(var(--i, 0) * 140ms);
 }
 
-/* The report node is the "aha" beat — glow pulse after it lands */
+/* --- Phase 2: travelling light-up ---
+   Reveal (phase 1) finishes around 1.55s (last --i = 7 → 7*140ms + .55s).
+   --light-base holds everything off until the content is fully loaded, then
+   each node fires in --i order with a clear 200ms gap so a single highlight
+   visibly walks scan → report → rewrite, left to right. */
+.dash-flow-map.dash-anim {
+  --light-base: 1.65s;
+  --light-step: 200ms;
+}
+
+/* The report node is the "aha" beat in the middle of the travelling light */
 .dash-flow-map.dash-anim.is-animating .dash-report-node {
-  animation: dashReportGlow 1.8s ease-out calc(var(--i, 3) * 140ms + .45s) 1;
+  animation: dashReportGlow 1.4s ease-out
+    calc(var(--light-base) + var(--i, 3) * var(--light-step)) 1;
 }
 
 @keyframes dashReportGlow {
@@ -732,7 +743,8 @@
    travelling scan -> report -> rewrite. Same --i delay as the reveal, so the
    pulse tracks the cascade. The node settles back to its resting style. */
 .dash-flow-map.dash-anim.is-animating .step-num {
-  animation: dashNodeLight 1s ease-out calc(var(--i, 0) * 140ms + .15s) 1;
+  animation: dashNodeLight .9s ease-out
+    calc(var(--light-base) + var(--i, 0) * var(--light-step)) 1;
 }
 
 @keyframes dashNodeLight {
@@ -792,8 +804,9 @@
   opacity: 1;
   filter: none;
   transition: opacity .4s ease, filter .4s ease;
-  transition-delay: calc(var(--i, 3) * 140ms + .55s);
-  animation: dashUnlockPop .7s ease-out calc(var(--i, 3) * 140ms + .55s) 1;
+  transition-delay: calc(var(--light-base) + var(--i, 3) * var(--light-step));
+  animation: dashUnlockPop .7s ease-out
+    calc(var(--light-base) + var(--i, 3) * var(--light-step)) 1;
 }
 
 @keyframes dashUnlockPop {
