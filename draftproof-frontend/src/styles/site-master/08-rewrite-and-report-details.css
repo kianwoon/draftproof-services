@@ -693,8 +693,10 @@
     grid-template-columns: auto minmax(0, 1fr);
     align-items: flex-start;
   }
-  .report-hero-stats {
+  .report-hero-side {
     grid-column: 1 / -1;
+  }
+  .report-hero-stats {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .report-hero-actions {

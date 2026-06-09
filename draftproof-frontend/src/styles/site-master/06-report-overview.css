@@ -40,10 +40,19 @@
 
 .report-hero-title-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(240px, .62fr);
-  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) minmax(250px, .66fr);
+  align-items: start;
   gap: clamp(.8rem, 1.6vw, 1.1rem);
   width: 100%;
+  min-width: 0;
+}
+
+/* Right column: stats sit at the top, the Download PDF group fills the space below
+   them (instead of leaving the right side empty / a separate band underneath). */
+.report-hero-side {
+  display: flex;
+  flex-direction: column;
+  gap: .8rem;
   min-width: 0;
 }
 
@@ -129,7 +138,7 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: .55rem;
-  align-self: center;
+  align-self: stretch;
 }
 
 .report-hero-stat {
@@ -156,10 +165,10 @@
   color: var(--navy-950);
   font-size: clamp(1rem, 1.8vw, 1.28rem);
   font-weight: 850;
-  line-height: 1.1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.15;
+  /* Allow multi-word tiers (e.g. "Moderate Risk") to wrap instead of truncating to
+     "Moder…" in the narrow 3-up column. */
+  overflow-wrap: anywhere;
 }
 
 .report-hero-tier {

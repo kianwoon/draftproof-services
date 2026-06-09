@@ -27,7 +27,9 @@ export default function ReportHero({
   onRepairAction,
   isRewrittenView = false,
 }) {
-  const showActions = report.report_pdf_url || canStartRewrite || rewriteLoading || rewriteInProgress;
+  // Download PDF moved up into the info column (under the date); the actions band below
+  // now exists only for rewrite controls, so it disappears entirely after a rewrite.
+  const showActions = canStartRewrite || rewriteLoading || rewriteInProgress;
 
   return (
     <>
@@ -64,24 +66,21 @@ export default function ReportHero({
               </p>
             )}
           </div>
-          <div className="report-hero-stats" aria-label={t('report.overview')}>
-            <div className="report-hero-stat">
-              <span>{t('report.summary.riskTier')}</span>
-              <strong style={{ color: tier.color }}>{t(`report.tiers.${report.tier}`, { defaultValue: tier.label })}</strong>
+          <div className="report-hero-side">
+            <div className="report-hero-stats" aria-label={t('report.overview')}>
+              <div className="report-hero-stat">
+                <span>{t('report.summary.riskTier')}</span>
+                <strong style={{ color: tier.color }}>{t(`report.tiers.${report.tier}`, { defaultValue: tier.label })}</strong>
+              </div>
+              <div className="report-hero-stat">
+                <span>{t('report.summary.writingScore')}</span>
+                <strong>{writingScore != null ? formatMetricPercent(writingScore, 0) : '-'}</strong>
+              </div>
+              <div className="report-hero-stat">
+                <span>{t('reports.findings')}</span>
+                <strong>{issuesCount}</strong>
+              </div>
             </div>
-            <div className="report-hero-stat">
-              <span>{t('report.summary.writingScore')}</span>
-              <strong>{writingScore != null ? formatMetricPercent(writingScore, 0) : '-'}</strong>
-            </div>
-            <div className="report-hero-stat">
-              <span>{t('reports.findings')}</span>
-              <strong>{issuesCount}</strong>
-            </div>
-          </div>
-        </div>
-
-        {showActions && (
-          <div className="report-hero-actions">
             {report.report_pdf_url && (
               <div className="report-download-group">
                 <a href={report.report_pdf_url} target="_blank" rel="noopener noreferrer" className="download-pdf-btn">
@@ -93,6 +92,11 @@ export default function ReportHero({
                 <span>{t('report.retentionNotice')}</span>
               </div>
             )}
+          </div>
+        </div>
+
+        {showActions && (
+          <div className="report-hero-actions">
             {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
               <div className="rewrite-action-group">
                 <button
