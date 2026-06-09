@@ -22,6 +22,7 @@ export const rewritePage = {
   "copy": "复制",
   "copied": "已复制",
   "copyFailed": "复制失败",
+  "manualCorrection": "手动改写 / 修正",
   "externalReviewTitle": "需要外部审阅",
   "externalReviewCopy": "DraftProof 已生成修改候选稿，但仍有一些审阅信号存在。使用或提交前请先人工审阅。",
   "authorReviewTitle": "需要作者审阅",

@@ -22,6 +22,7 @@ export const rewritePage = {
   "copy": "Copy",
   "copied": "Copied",
   "copyFailed": "Copy failed",
+  "manualCorrection": "Manual Rewrite / Correction",
   "externalReviewTitle": "External review required",
   "externalReviewCopy": "DraftProof generated a changed candidate, but some review signals remain. Review it manually before using or submitting it.",
   "authorReviewTitle": "Author review required",

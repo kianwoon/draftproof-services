@@ -217,6 +217,35 @@
   color: #b91c1c;
 }
 
+.rewritten-document-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+}
+
+.manual-correction-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: .55rem 1rem;
+  border: 1px solid var(--green-dark);
+  border-radius: 8px;
+  background: var(--green-dark);
+  color: #fff;
+  font: inherit;
+  font-size: .86rem;
+  font-weight: 750;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background .15s var(--ease), border-color .15s var(--ease), opacity .15s var(--ease);
+}
+
+.manual-correction-btn:hover {
+  opacity: .92;
+}
+
 .rewritten-document-content {
   max-height: 600px;
   overflow: auto;

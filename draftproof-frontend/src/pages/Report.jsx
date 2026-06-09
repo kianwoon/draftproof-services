@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, getScanStatus, startScanWithText, translateText } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
@@ -386,6 +386,7 @@ function highlightedEditorParts(text, range) {
 export default function Report() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { refreshBalance, balance, logout } = useAuth();
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en-SG';
@@ -427,6 +428,7 @@ export default function Report() {
   const watchedRewriteIdsRef = useRef(new Set());
   const notifiedRewriteIdsRef = useRef(new Set());
   const submittedEditorRef = useRef(null);
+  const autoOpenedEditorRef = useRef(false);
   const submittedHighlightRef = useRef(null);
   const submittedDocumentRef = useRef(null);
   const submittedPanelRef = useRef(null);
@@ -834,6 +836,11 @@ export default function Report() {
   // final_text (e.g. the original was preserved), editingRewriteDraft stays false and
   // the editor falls back to the original submission rather than going dead.
   const submittedEditorReady = canEditSubmittedDraft && (!hasRewriteResult || Boolean(rewriteResultReport));
+  // On-page "Manual Rewrite / Correction" entry buttons show only BEFORE a rewrite.
+  // Once a rewrite exists, that entry point lives on the /rewrite page, which routes
+  // back here with ?edit=1 to auto-open this same (rewrite-aware) editor — so we hide
+  // the on-page buttons after a rewrite while the editor itself stays reachable.
+  const showSubmittedEditEntry = submittedEditorReady && !hasRewriteResult;
   const rewriteTimerActive = rewriteLoading || rewriteInProgress;
 
   useEffect(() => {
@@ -1271,6 +1278,20 @@ export default function Report() {
       requestAnimationFrame(() => focusParagraphInSubmittedEditor(targetParagraph));
     }
   };
+
+  // Auto-open the editor when arriving from the /rewrite page's "Manual Rewrite /
+  // Correction" button (/report/{id}?edit=1). Wait until the editor baseline is ready
+  // (submittedEditorReady gates on the rewrite report having loaded so it seeds the
+  // rewritten text), then open once and strip the param so a refresh/close won't reopen.
+  useEffect(() => {
+    if (searchParams.get('edit') !== '1' || autoOpenedEditorRef.current) return;
+    if (!submittedEditorReady) return;
+    autoOpenedEditorRef.current = true;
+    openSubmittedEditorForParagraph();
+    const next = new URLSearchParams(searchParams);
+    next.delete('edit');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, submittedEditorReady, setSearchParams]);
 
   const syncSubmittedHighlightScroll = () => {
     if (!submittedEditorRef.current || !submittedHighlightRef.current) return;
@@ -2165,7 +2186,7 @@ export default function Report() {
           repairMainRiskLabel={t('report.repairSummary.mainRisk')}
           repairActionLabel={t('report.submitted.editor.editDraft')}
           repairActionHint={t('report.repairSummary.editDraftHint')}
-          onRepairAction={submittedEditorReady ? () => openSubmittedEditorForParagraph() : null}
+          onRepairAction={showSubmittedEditEntry ? () => openSubmittedEditorForParagraph() : null}
         />
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>
@@ -2340,7 +2361,7 @@ export default function Report() {
                   <strong>{submittedContent.highlightedCount}</strong>
                   <span>{t('report.submitted.highlightedSections')}</span>
                 </div>
-                {submittedEditorReady && (
+                {showSubmittedEditEntry && (
                   <button
                     type="button"
                     className="btn btn-secondary submitted-edit-button"
@@ -2486,14 +2507,15 @@ export default function Report() {
                       </div>
                     )}
                     <div className="submitted-panel-actions">
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() => openSubmittedEditorForParagraph(selectedParagraph)}
-                        disabled={!submittedEditorReady}
-                      >
-                        {t('report.submitted.editParagraph')}
-                      </button>
+                      {showSubmittedEditEntry && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => openSubmittedEditorForParagraph(selectedParagraph)}
+                        >
+                          {t('report.submitted.editParagraph')}
+                        </button>
+                      )}
                       <button type="button" className="btn btn-ghost" onClick={copySelectedParagraphGuidance}>
                         {t('report.submitted.copyGuidance')}
                       </button>

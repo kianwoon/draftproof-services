@@ -478,14 +478,24 @@ export default function Rewrite() {
                 <h3>{t('rewritePage.rewrittenDocument')}</h3>
                 <span>{t('rewritePage.word', { count: rewrittenWordCount })}</span>
               </div>
-              <button
-                type="button"
-                className={`copy-rewrite-btn${copyStatus === 'copied' ? ' is-copied' : ''}${copyStatus === 'error' ? ' has-error' : ''}`}
-                onClick={handleCopyRewrittenDocument}
-                aria-live="polite"
-              >
-                {copyStatus === 'copied' ? t('rewritePage.copied') : copyStatus === 'error' ? t('rewritePage.copyFailed') : t('rewritePage.copy')}
-              </button>
+              <div className="rewritten-document-actions">
+                {scanId && (
+                  <Link
+                    to={`/report/${scanId}?edit=1`}
+                    className="manual-correction-btn"
+                  >
+                    {t('rewritePage.manualCorrection')}
+                  </Link>
+                )}
+                <button
+                  type="button"
+                  className={`copy-rewrite-btn${copyStatus === 'copied' ? ' is-copied' : ''}${copyStatus === 'error' ? ' has-error' : ''}`}
+                  onClick={handleCopyRewrittenDocument}
+                  aria-live="polite"
+                >
+                  {copyStatus === 'copied' ? t('rewritePage.copied') : copyStatus === 'error' ? t('rewritePage.copyFailed') : t('rewritePage.copy')}
+                </button>
+              </div>
             </div>
             {hasTopkHighlights ? (
               <p className="topk-legend">
