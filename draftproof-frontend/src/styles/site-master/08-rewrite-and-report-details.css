@@ -225,6 +225,8 @@
 }
 
 .manual-correction-btn {
+  position: relative;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   justify-content: center;

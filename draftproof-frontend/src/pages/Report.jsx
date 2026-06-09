@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, getScanStatus, startScanWithText, translateText } from '../api/draftproofApi';
+import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, getRewriteDownload, getScanStatus, startScanWithText, translateText } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import ParagraphSeverityBar from '../components/ParagraphSeverityBar';
@@ -1300,6 +1300,27 @@ export default function Report() {
     await deleteReportDraft(submittedDraftStorageKey);
   };
 
+  // After a rewrite, the hero "Download PDF" serves the REWRITTEN PDF (the rewrite job's
+  // generated copy) rather than the original scan's PDF. Mirrors the /rewrite page's
+  // download: getRewriteDownload returns a signed { url } opened in a new tab.
+  const handleDownloadRewrittenPdf = async () => {
+    const rewriteId = currentRewrite?.id;
+    if (!rewriteId) return;
+    const downloadWindow = window.open('about:blank', '_blank');
+    if (downloadWindow) downloadWindow.opener = null;
+    try {
+      const { data } = await getRewriteDownload(rewriteId, 'pdf');
+      if (data?.url) {
+        if (downloadWindow) downloadWindow.location.replace(data.url);
+        else window.location.assign(data.url);
+      } else {
+        downloadWindow?.close();
+      }
+    } catch {
+      downloadWindow?.close();
+    }
+  };
+
   const rescanSubmittedDraft = async () => {
     const text = submittedDraftText.trim();
     if (!text) {
@@ -2065,6 +2086,7 @@ export default function Report() {
           issuesCount={heroFindingsCount}
           writingScore={heroWritingScore}
           isRewrittenView={rewrittenHeroView}
+          onDownloadRewrittenPdf={handleDownloadRewrittenPdf}
           canStartRewrite={canStartRewrite}
           rewriteLoading={rewriteLoading}
           rewriteCanceling={rewriteCanceling}

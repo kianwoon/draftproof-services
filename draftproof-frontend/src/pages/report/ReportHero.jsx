@@ -26,6 +26,7 @@ export default function ReportHero({
   repairActionHint,
   onRepairAction,
   isRewrittenView = false,
+  onDownloadRewrittenPdf,
 }) {
   // Download PDF moved up into the info column (under the date); the actions band below
   // now exists only for rewrite controls, so it disappears entirely after a rewrite.
@@ -81,7 +82,17 @@ export default function ReportHero({
                 <strong>{issuesCount}</strong>
               </div>
             </div>
-            {report.report_pdf_url && (
+            {isRewrittenView && onDownloadRewrittenPdf ? (
+              <div className="report-download-group">
+                <button type="button" className="download-pdf-btn" onClick={onDownloadRewrittenPdf}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M3 10v2.5A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V10M8 2v8M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  {t('report.downloadRewrittenPdf')}
+                </button>
+                <span>{t('report.retentionNotice')}</span>
+              </div>
+            ) : report.report_pdf_url && (
               <div className="report-download-group">
                 <a href={report.report_pdf_url} target="_blank" rel="noopener noreferrer" className="download-pdf-btn">
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">

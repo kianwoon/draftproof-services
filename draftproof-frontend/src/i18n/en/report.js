@@ -9,6 +9,7 @@ export const report = {
   "documentTitle": "Content Analysis",
   "words": "{{count}} words",
   "downloadPdf": "Download PDF",
+  "downloadRewrittenPdf": "Download Rewritten PDF",
   "retentionNotice": "Available in DraftProof for 3 days. A PDF copy is also sent to your mailbox.",
   "overview": "Report overview",
   "originalScanSummary": "Original scan summary",

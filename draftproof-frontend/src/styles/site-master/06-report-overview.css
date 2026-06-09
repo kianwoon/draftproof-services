@@ -433,6 +433,8 @@
 }
 
 .rewrite-results-link {
+  position: relative;
+  overflow: hidden;
   background: #059669;
   box-shadow: 0 10px 22px rgba(5, 150, 105, .22);
 }

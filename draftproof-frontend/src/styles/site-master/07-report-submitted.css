@@ -531,7 +531,9 @@
 }
 
 .repair-summary-action::after,
-.submitted-edit-button::after {
+.submitted-edit-button::after,
+.rewrite-results-link::after,
+.manual-correction-btn::after {
   content: "";
   position: absolute;
   top: 0;
@@ -547,7 +549,11 @@
 .repair-summary-action:hover::after,
 .repair-summary-action:focus-visible::after,
 .submitted-edit-button:hover::after,
-.submitted-edit-button:focus-visible::after {
+.submitted-edit-button:focus-visible::after,
+.rewrite-results-link:hover::after,
+.rewrite-results-link:focus-visible::after,
+.manual-correction-btn:hover::after,
+.manual-correction-btn:focus-visible::after {
   animation-play-state: paused;
 }
 
@@ -558,7 +564,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .repair-summary-action::after,
-  .submitted-edit-button::after {
+  .submitted-edit-button::after,
+  .rewrite-results-link::after,
+  .manual-correction-btn::after {
     display: none;
     animation: none;
   }

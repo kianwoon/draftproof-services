@@ -9,6 +9,7 @@ export const report = {
   "documentTitle": "内容分析",
   "words": "{{count}} 词",
   "downloadPdf": "下载 PDF",
+  "downloadRewrittenPdf": "下载改写稿 PDF",
   "retentionNotice": "报告会在 DraftProof 中保留 3 天。PDF 副本也会发送到你的邮箱。",
   "overview": "报告概览",
   "originalScanSummary": "原始扫描摘要",
