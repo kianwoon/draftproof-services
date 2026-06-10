@@ -1218,10 +1218,12 @@
 }
 
 .landing-footer nav {
-  display: flex;
-  gap: 28px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 10px 36px;
+  justify-content: end;
+  justify-items: start;
+  align-content: start;
   color: var(--footer-text);
   font-size: 13px;
 }
@@ -1311,11 +1313,16 @@
     flex-direction: column;
   }
   .landing-footer nav {
-    justify-content: flex-start;
+    justify-content: start;
+    justify-items: start;
   }
 }
 
 @media (max-width: 640px) {
+  .landing-footer nav {
+    grid-template-columns: 1fr;
+    gap: 12px 0;
+  }
   .faq-shell {
     padding-bottom: 3rem;
   }
