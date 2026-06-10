@@ -14,7 +14,7 @@ from app.models.db import async_session, ScanJob, CreditAccount, CreditReservati
 from app.services import progress_stream
 
 
-FREE_SCAN_WORD_LIMIT = 500
+FREE_SCAN_WORD_LIMIT = 800
 FREE_SCAN_LIMIT = 5
 DOCUMENT_TITLE_MAX_CHARS = 90
 CONTENT_PREVIEW_MAX_CHARS = 220
@@ -56,7 +56,7 @@ def build_scan_report_metadata(text: str) -> dict:
 
 
 def _scan_cost(word_count: int) -> int:
-    """Free through 500 words, then 1 token per started 1,000 words."""
+    """Free through 800 words, then 1 token per started 1,000 words."""
     if word_count <= FREE_SCAN_WORD_LIMIT:
         return 0
     return max(1, -(-word_count // 1000))

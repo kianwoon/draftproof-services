@@ -8,7 +8,7 @@ export const dashboard = {
   "preSubmission": "Pre-submission review",
   "startTitle": "Start a new integrity scan",
   "startBody": "Paste your draft and check citation gaps, source grounding, generic phrasing, and review-only authorship signals before submission.",
-  "freeScanNote": "Try DraftProof free with a scan of 500 words or fewer.",
+  "freeScanNote": "Try DraftProof free with a scan of 800 words or fewer.",
   "tokenRate": "1 credit per 1,000 words",
   "startScan": "Start scan",
   "viewReports": "View reports",

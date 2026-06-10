@@ -47,7 +47,7 @@ export const pricing = {
     },
     {
       "q": "What counts as a scan?",
-      "a": "Scans with 500 words or fewer are free. After that, 1 credit covers each started 1,000-word block. For example, a 2,500-word document costs 3 credits."
+      "a": "Scans with 800 words or fewer are free. After that, 1 credit covers each started 1,000-word block. For example, a 2,500-word document costs 3 credits."
     },
     {
       "q": "Will the rewrite make my work safe to submit?",

@@ -81,7 +81,7 @@ export const faqPage = {
       "items": [
         {
           "q": "How are scan credits charged?",
-          "a": "Scans of 500 words or fewer are free for your first 5 scans. After that, 1 credit covers each started 1,000-word block. For example, a 2,500-word document costs 3 credits."
+          "a": "Scans of 800 words or fewer are free for your first 5 scans. After that, 1 credit covers each started 1,000-word block. For example, a 2,500-word document costs 3 credits."
         },
         {
           "q": "When are rewrite credits deducted?",

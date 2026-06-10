@@ -1,4 +1,4 @@
-export const FREE_SCAN_WORD_LIMIT = 500;
+export const FREE_SCAN_WORD_LIMIT = 800;
 
 export function countWords(text) {
   const trimmed = String(text || '').trim();

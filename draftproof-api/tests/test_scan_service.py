@@ -74,13 +74,13 @@ def _stream_id(at: datetime) -> str:
     return f"{int(at.timestamp() * 1000)}-0"
 
 
-def test_scan_cost_is_free_through_500_words():
+def test_scan_cost_is_free_through_800_words():
     assert scan_service._scan_cost(1) == 0
-    assert scan_service._scan_cost(500) == 0
+    assert scan_service._scan_cost(800) == 0
 
 
-def test_scan_cost_charges_from_501_words():
-    assert scan_service._scan_cost(501) == 1
+def test_scan_cost_charges_from_801_words():
+    assert scan_service._scan_cost(801) == 1
     assert scan_service._scan_cost(1000) == 1
     assert scan_service._scan_cost(1001) == 2
 

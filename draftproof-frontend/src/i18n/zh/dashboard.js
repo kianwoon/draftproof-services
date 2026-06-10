@@ -8,7 +8,7 @@ export const dashboard = {
   "preSubmission": "提交前审阅",
   "startTitle": "开始新的完整性扫描",
   "startBody": "粘贴你的草稿，在提交前检查引用缺口、来源支撑、泛化表达和仅供审阅的作者身份信号。",
-  "freeScanNote": "使用 500 词或更少的扫描，免费试用 DraftProof。",
+  "freeScanNote": "使用 800 词或更少的扫描，免费试用 DraftProof。",
   "tokenRate": "每 1,000 词 1 个积分",
   "startScan": "开始扫描",
   "viewReports": "查看报告",
