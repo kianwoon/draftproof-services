@@ -118,39 +118,43 @@ export default function ReportHero({
               <span>{repairMainRiskLabel}</span>
               <strong>{repairSummary.mainRisk}</strong>
               {repairActionHint && <p className="report-hero-repair-action-hint">{repairActionHint}</p>}
-              {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
-                <div className="rewrite-action-group">
+            </div>
+            {(canStartRewrite || rewriteLoading || rewriteInProgress || (repairActionLabel && onRepairAction)) && (
+              <div className="report-hero-repair-cta">
+                {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
+                  <div className="rewrite-action-group">
+                    <button
+                      type="button"
+                      className="rewrite-btn"
+                      onClick={onRewrite}
+                      disabled={rewriteLoading || rewriteCanceling}
+                    >
+                      {rewriteLoading ? t('report.rewrite.starting') : rewriteInProgress ? t('report.rewrite.resume') : t('report.rewrite.rewriteAiSections')}
+                    </button>
+                    {rewriteTokenEstimate && (
+                      <strong className="rewrite-token-estimate">{rewriteTokenEstimate}</strong>
+                    )}
+                    <span>{t('report.rewrite.emailPdfNotice')}</span>
+                  </div>
+                )}
+                {rewriteInProgress && currentRewrite?.id && (
                   <button
                     type="button"
-                    className="rewrite-btn"
-                    onClick={onRewrite}
-                    disabled={rewriteLoading || rewriteCanceling}
+                    className="rewrite-btn rewrite-cancel-btn"
+                    onClick={onCancelRewrite}
+                    disabled={rewriteCanceling}
                   >
-                    {rewriteLoading ? t('report.rewrite.starting') : rewriteInProgress ? t('report.rewrite.resume') : t('report.rewrite.rewriteAiSections')}
+                    {rewriteCanceling ? t('report.rewrite.canceling') : t('report.rewrite.cancelRewrite')}
                   </button>
-                  {rewriteTokenEstimate && (
-                    <strong className="rewrite-token-estimate">{rewriteTokenEstimate}</strong>
-                  )}
-                  <span>{t('report.rewrite.emailPdfNotice')}</span>
-                </div>
-              )}
-              {rewriteInProgress && currentRewrite?.id && (
-                <button
-                  type="button"
-                  className="rewrite-btn rewrite-cancel-btn"
-                  onClick={onCancelRewrite}
-                  disabled={rewriteCanceling}
-                >
-                  {rewriteCanceling ? t('report.rewrite.canceling') : t('report.rewrite.cancelRewrite')}
-                </button>
-              )}
-              {repairActionLabel && onRepairAction && (
-                <button type="button" className="repair-summary-action" onClick={onRepairAction}>
-                  <EditPencilIcon />
-                  {repairActionLabel}
-                </button>
-              )}
-            </div>
+                )}
+                {repairActionLabel && onRepairAction && (
+                  <button type="button" className="repair-summary-action" onClick={onRepairAction}>
+                    <EditPencilIcon />
+                    {repairActionLabel}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -257,39 +257,49 @@
   background: #f8fafc;
 }
 
-/* Auto Rewrite CTA + its credit/email text now live inside the repair-risk box (next to
-   Manual Rewrite) instead of a separate floated band, so they fill the box width. */
-.report-hero-repair-risk .rewrite-action-group {
+/* Both rewrite CTAs (Auto + Manual) sit in a full-width action row spanning the bottom
+   of the repair band, side by side — so the band height drops (no tall stacked box) and
+   the previously-empty left space is used. */
+.report-hero-repair-cta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: .85rem 1rem;
+  margin-top: .25rem;
+}
+
+.report-hero-repair-cta .rewrite-action-group {
+  flex: 1 1 340px;
   align-items: stretch;
-  width: 100%;
   min-width: 0;
-  margin-left: 0;
-  margin-top: .8rem;
+  margin: 0;
   gap: .3rem;
 }
 
-.report-hero-repair-risk .rewrite-action-group .rewrite-btn {
+.report-hero-repair-cta .rewrite-action-group .rewrite-btn {
   width: 100%;
 }
 
-.report-hero-repair-risk .rewrite-token-estimate {
+.report-hero-repair-cta .rewrite-token-estimate {
   justify-content: flex-start;
   max-width: none;
   text-align: left;
 }
 
-.report-hero-repair-risk .rewrite-action-group span {
+.report-hero-repair-cta .rewrite-action-group span {
   white-space: normal;
 }
 
-.report-hero-repair-risk .rewrite-cancel-btn {
-  width: 100%;
-  margin-top: .35rem;
+.report-hero-repair-cta .repair-summary-action {
+  flex: 1 1 240px;
+  margin-top: 0;
+  align-self: flex-start;
 }
 
-/* The Manual Rewrite button now sits below the Auto CTA; keep a normal gap. */
-.report-hero-repair-risk .repair-summary-action {
-  margin-top: .55rem;
+.report-hero-repair-cta .rewrite-cancel-btn {
+  flex: 0 0 auto;
+  width: auto;
 }
 
 .report-hero-repair-risk > span {
