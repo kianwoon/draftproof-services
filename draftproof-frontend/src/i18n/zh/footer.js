@@ -7,6 +7,7 @@ export const footer = {
   "faq": "常见问题",
   "privacy": "隐私",
   "security": "安全",
+  "community": "社区",
   "supportEmail": "support@draftproof.app",
   "disclaimer": "DraftProof 提供写作完整性信号与审阅建议。它不判定不当行为、抄袭或 AI 作者身份。"
 };

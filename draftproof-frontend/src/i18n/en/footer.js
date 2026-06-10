@@ -7,6 +7,7 @@ export const footer = {
   "faq": "FAQ",
   "privacy": "Privacy",
   "security": "Security",
+  "community": "Community",
   "supportEmail": "support@draftproof.app",
   "disclaimer": "DraftProof provides writing integrity signals and review guidance. It does not determine misconduct, plagiarism, or AI authorship."
 };
