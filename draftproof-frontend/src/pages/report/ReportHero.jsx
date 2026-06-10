@@ -28,9 +28,9 @@ export default function ReportHero({
   isRewrittenView = false,
   onDownloadRewrittenPdf,
 }) {
-  // Download PDF moved up into the info column (under the date); the actions band below
-  // now exists only for rewrite controls, so it disappears entirely after a rewrite.
-  const showActions = canStartRewrite || rewriteLoading || rewriteInProgress;
+  // Download PDF lives in the info column (under the date). The rewrite CTAs (Auto
+  // Rewrite + cancel) live inside the Repair Summary risk box, next to Manual Rewrite —
+  // so there's no separate actions band.
 
   return (
     <>
@@ -106,37 +106,6 @@ export default function ReportHero({
           </div>
         </div>
 
-        {showActions && (
-          <div className="report-hero-actions">
-            {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
-              <div className="rewrite-action-group">
-                <button
-                  type="button"
-                  className="rewrite-btn"
-                  onClick={onRewrite}
-                  disabled={rewriteLoading || rewriteCanceling}
-                >
-                  {rewriteLoading ? t('report.rewrite.starting') : rewriteInProgress ? t('report.rewrite.resume') : t('report.rewrite.rewriteAiSections')}
-                </button>
-                {rewriteTokenEstimate && (
-                  <strong className="rewrite-token-estimate">{rewriteTokenEstimate}</strong>
-                )}
-                <span>{t('report.rewrite.emailPdfNotice')}</span>
-              </div>
-            )}
-            {rewriteInProgress && currentRewrite?.id && (
-              <button
-                type="button"
-                className="rewrite-btn rewrite-cancel-btn"
-                onClick={onCancelRewrite}
-                disabled={rewriteCanceling}
-              >
-                {rewriteCanceling ? t('report.rewrite.canceling') : t('report.rewrite.cancelRewrite')}
-              </button>
-            )}
-          </div>
-        )}
-
         {repairSummary && (
           <div className="report-hero-repair" aria-label={t('report.repairSummary.ariaLabel')}>
             <div className="report-hero-repair-plan">
@@ -149,6 +118,32 @@ export default function ReportHero({
               <span>{repairMainRiskLabel}</span>
               <strong>{repairSummary.mainRisk}</strong>
               {repairActionHint && <p className="report-hero-repair-action-hint">{repairActionHint}</p>}
+              {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
+                <div className="rewrite-action-group">
+                  <button
+                    type="button"
+                    className="rewrite-btn"
+                    onClick={onRewrite}
+                    disabled={rewriteLoading || rewriteCanceling}
+                  >
+                    {rewriteLoading ? t('report.rewrite.starting') : rewriteInProgress ? t('report.rewrite.resume') : t('report.rewrite.rewriteAiSections')}
+                  </button>
+                  {rewriteTokenEstimate && (
+                    <strong className="rewrite-token-estimate">{rewriteTokenEstimate}</strong>
+                  )}
+                  <span>{t('report.rewrite.emailPdfNotice')}</span>
+                </div>
+              )}
+              {rewriteInProgress && currentRewrite?.id && (
+                <button
+                  type="button"
+                  className="rewrite-btn rewrite-cancel-btn"
+                  onClick={onCancelRewrite}
+                  disabled={rewriteCanceling}
+                >
+                  {rewriteCanceling ? t('report.rewrite.canceling') : t('report.rewrite.cancelRewrite')}
+                </button>
+              )}
               {repairActionLabel && onRepairAction && (
                 <button type="button" className="repair-summary-action" onClick={onRepairAction}>
                   <EditPencilIcon />

@@ -200,11 +200,11 @@
 /* Merged repair plan (absorbed from the former standalone Repair Summary card) */
 .report-hero-repair {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 32%);
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 34%);
   gap: 1rem;
   width: 100%;
-  margin-top: 1rem;
-  padding-top: 1rem;
+  margin-top: .7rem;
+  padding-top: .7rem;
   border-top: 1px solid rgba(13, 27, 42, .08);
 }
 
@@ -255,6 +255,41 @@
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   background: #f8fafc;
+}
+
+/* Auto Rewrite CTA + its credit/email text now live inside the repair-risk box (next to
+   Manual Rewrite) instead of a separate floated band, so they fill the box width. */
+.report-hero-repair-risk .rewrite-action-group {
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  margin-left: 0;
+  margin-top: .8rem;
+  gap: .3rem;
+}
+
+.report-hero-repair-risk .rewrite-action-group .rewrite-btn {
+  width: 100%;
+}
+
+.report-hero-repair-risk .rewrite-token-estimate {
+  justify-content: flex-start;
+  max-width: none;
+  text-align: left;
+}
+
+.report-hero-repair-risk .rewrite-action-group span {
+  white-space: normal;
+}
+
+.report-hero-repair-risk .rewrite-cancel-btn {
+  width: 100%;
+  margin-top: .35rem;
+}
+
+/* The Manual Rewrite button now sits below the Auto CTA; keep a normal gap. */
+.report-hero-repair-risk .repair-summary-action {
+  margin-top: .55rem;
 }
 
 .report-hero-repair-risk > span {
