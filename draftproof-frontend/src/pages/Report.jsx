@@ -1749,6 +1749,11 @@ export default function Report() {
     );
   };
 
+  // The "Human / uncertain pattern" classification already conveys the uncertainty in its
+  // label, so a "Low confidence" pill alongside it is redundant and reads as contradictory
+  // (reassuring "Human /" vs "Low confidence"). Show the confidence pill only for the
+  // specific AI patterns, where it adds real signal.
+  const showTransformationConfidence = Boolean(transformation?.confidence) && transformation?.code !== 'human_uncertain';
   const transformationScorecard = transformation && transformationSignals.length > 0 ? (
     <section className="transformation-scorecard" aria-label={t('report.transformation.scorecard')}>
       <div className="transformation-header">
@@ -1764,9 +1769,9 @@ export default function Report() {
             <h2>{hasRewriteSignalComparison ? t('report.transformation.originalVsRewritten') : transformationLabel(transformation, t) || t('report.transformation.patternAnalysis')}</h2>
           </div>
         </div>
-        {(transformation.confidence || hasRewriteSignalComparison) && (
+        {(showTransformationConfidence || hasRewriteSignalComparison) && (
           <div className="transformation-meta-row">
-            {transformation.confidence && (
+            {showTransformationConfidence && (
               <span className="transformation-pill">{t('report.transformation.confidence', { value: confidenceLabel(transformation.confidence, t) })}</span>
             )}
             {hasRewriteSignalComparison && (
