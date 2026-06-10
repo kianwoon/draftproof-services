@@ -2153,17 +2153,9 @@ export default function Report() {
 
         {transformationScorecard ? (
           <section className={`report-overview-card${hasRewriteSignalComparison ? ' is-rewrite-comparison' : ''}`} aria-label={t('report.overview')}>
-            {hasRewriteSignalComparison ? (
-              <>
-                {transformationScorecard}
-                <div className="report-baseline-summary" aria-label={t('report.originalScanSummary')}>
-                  <span className="report-baseline-label">{t('report.originalScanBaseline')}</span>
-                  {reportSummaryBar}
-                </div>
-              </>
-            ) : (
-              transformationScorecard
-            )}
+            {/* After a rewrite the scorecard already shows original-vs-rewritten, so the
+                separate "Original scan baseline" bar is redundant — omit it. */}
+            {transformationScorecard}
           </section>
         ) : (
           reportSummaryBar
