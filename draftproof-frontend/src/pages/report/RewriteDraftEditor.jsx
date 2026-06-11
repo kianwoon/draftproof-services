@@ -11,6 +11,7 @@ import { countWords, scanTokensRequired } from '../../utils/scanBilling';
 import { useAuth } from '../../context/AuthContext';
 import { formatDate } from './reportHelpers';
 import { buildTrackedDiff, trackedDiffToPlainText, trackedDiffToHtml } from './trackedDiff';
+import { keptSentences } from '../../utils/bracketSpans';
 
 const TRANSITION_MS = 480;
 const RESCAN_POLL_INTERVAL = 3000;
@@ -23,7 +24,14 @@ const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 // submitted-draft editor sheet in Report.jsx (reuses the same submitted-editor-* CSS),
 // minus the original-scan highlight overlay and affected-paragraph panel — neither maps
 // onto rewritten text, so rewrite mode never showed them.
-export default function RewriteDraftEditor({ storageKey, baselineText, workedExamples = [], onClose }) {
+//
+// The right panel is amber-first: bracketSpans carries the rewrite's green/amber spans,
+// from which we extract the AMBER ('kept') sentences — the ones the rewrite could not
+// safely improve, i.e. the user's to ground. We surface them as an "edit these" checklist
+// above the "how to ground a claim" worked examples. We do NOT highlight inline in the
+// textarea: the span offsets are valid only against the unedited baseline and would drift
+// on the first keystroke.
+export default function RewriteDraftEditor({ storageKey, baselineText, workedExamples = [], bracketSpans = [], onClose }) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language;
   const navigate = useNavigate();
@@ -50,6 +58,10 @@ export default function RewriteDraftEditor({ storageKey, baselineText, workedExa
   const draftChanged = draftText !== baselineText;
   const guideExamples = Array.isArray(workedExamples) ? workedExamples.filter(Boolean) : [];
   const hasGuide = guideExamples.length > 0;
+  // Amber ('kept') sentences the rewrite left for the user to ground themselves.
+  const amberSentences = keptSentences(baselineText, bracketSpans);
+  const hasAmber = amberSentences.length > 0;
+  const hasPanel = hasGuide || hasAmber;
   const trackedDiff = buildTrackedDiff(baselineText, draftText);
   const draftWordCount = countWords(draftText);
   const draftTokensRequired = scanTokensRequired(draftWordCount);
@@ -331,7 +343,7 @@ export default function RewriteDraftEditor({ storageKey, baselineText, workedExa
           </div>
         </div>
 
-        <div className={`submitted-editor-grid${hasGuide ? '' : ' is-solo'}`}>
+        <div className={`submitted-editor-grid${hasPanel ? '' : ' is-solo'}`}>
           <section className="submitted-editor-main" aria-label={t('report.submitted.editor.documentEditor')}>
             <div className="submitted-editor-toolbar">
               <div>
@@ -452,32 +464,63 @@ export default function RewriteDraftEditor({ storageKey, baselineText, workedExa
             </div>
           </section>
 
-          {hasGuide && (
-            <aside className="submitted-editor-guide" aria-label={t('rewritePage.workedExamples.heading')}>
+          {hasPanel && (
+            <aside
+              className="submitted-editor-guide"
+              aria-label={hasAmber
+                ? t('report.submitted.editor.amberGuideHeading')
+                : t('rewritePage.workedExamples.heading')}
+            >
               <div className="submitted-editor-guide-head">
                 <div>
-                  <span>{t('rewritePage.workedExamples.kicker')}</span>
-                  <strong className="submitted-editor-guide-heading">{t('rewritePage.workedExamples.heading')}</strong>
+                  <span>{hasAmber
+                    ? t('report.submitted.editor.amberGuideKicker')
+                    : t('rewritePage.workedExamples.kicker')}</span>
+                  <strong className="submitted-editor-guide-heading">{hasAmber
+                    ? t('report.submitted.editor.amberGuideHeading')
+                    : t('rewritePage.workedExamples.heading')}</strong>
                 </div>
-                <span className="submitted-editor-guide-count">{guideExamples.length}</span>
+                <span className="submitted-editor-guide-count">{hasAmber ? amberSentences.length : guideExamples.length}</span>
               </div>
-              <p className="submitted-editor-guide-copy">{t('rewritePage.workedExamples.copy')}</p>
+              <p className="submitted-editor-guide-copy">{hasAmber
+                ? t('report.submitted.editor.amberGuideCopy')
+                : t('rewritePage.workedExamples.copy')}</p>
               <div className="submitted-editor-guide-list">
-                {guideExamples.map((item, i) => (
-                  <article className="rewrite-suggestion-card" key={`guide-${i}`}>
-                    <div className="rewrite-target-block">
-                      <span>{t('rewritePage.workedExamples.generalClaim')}</span>
-                      <p>{item.sentence}</p>
-                    </div>
-                    <div className="rewrite-addition-block">
-                      <span>{t('rewritePage.workedExamples.moreGrounded')}</span>
-                      <p>{item.suggestion}</p>
-                    </div>
-                    {item.why && (
-                      <div className="rewrite-review-note"><p>{t('rewritePage.workedExamples.why')}: {item.why}</p></div>
+                {hasAmber && (
+                  <>
+                    <p className="submitted-editor-guide-subhead">{t('report.submitted.editor.amberListHeading')}</p>
+                    {amberSentences.map((sentence, i) => (
+                      <article className="rewrite-suggestion-card is-amber" key={`amber-${i}`}>
+                        <div className="rewrite-target-block">
+                          <span>{t('report.submitted.editor.amberItemLabel')}</span>
+                          <p>{sentence}</p>
+                        </div>
+                      </article>
+                    ))}
+                  </>
+                )}
+                {hasGuide && (
+                  <>
+                    {hasAmber && (
+                      <p className="submitted-editor-guide-subhead">{t('rewritePage.workedExamples.heading')}</p>
                     )}
-                  </article>
-                ))}
+                    {guideExamples.map((item, i) => (
+                      <article className="rewrite-suggestion-card" key={`guide-${i}`}>
+                        <div className="rewrite-target-block">
+                          <span>{t('rewritePage.workedExamples.generalClaim')}</span>
+                          <p>{item.sentence}</p>
+                        </div>
+                        <div className="rewrite-addition-block">
+                          <span>{t('rewritePage.workedExamples.moreGrounded')}</span>
+                          <p>{item.suggestion}</p>
+                        </div>
+                        {item.why && (
+                          <div className="rewrite-review-note"><p>{t('rewritePage.workedExamples.why')}: {item.why}</p></div>
+                        )}
+                      </article>
+                    ))}
+                  </>
+                )}
               </div>
             </aside>
           )}

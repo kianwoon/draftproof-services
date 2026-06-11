@@ -730,6 +730,7 @@ export default function Rewrite() {
           storageKey={`${scanId}:rewrite:${rewriteId}`}
           baselineText={report.final_text}
           workedExamples={workedExamples}
+          bracketSpans={bracketSpans}
           onClose={() => setEditorOpen(false)}
         />
       )}
