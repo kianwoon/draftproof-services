@@ -941,6 +941,31 @@
   background: #fffdf5;
 }
 
+.rewrite-suggestion-card.is-amber.is-clickable {
+  cursor: pointer;
+  transition: box-shadow .15s var(--ease), transform .15s var(--ease), border-color .15s var(--ease);
+}
+
+.rewrite-suggestion-card.is-amber.is-clickable:hover,
+.rewrite-suggestion-card.is-amber.is-clickable:focus-visible {
+  border-left-color: #b45309;
+  box-shadow: 0 12px 24px rgba(180, 83, 9, .16);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+/* Amber card whose sentence has been edited away: no longer actionable, dimmed. */
+.rewrite-suggestion-card.is-amber.is-resolved {
+  border-left-color: #cbd5e1;
+  background: #f8fafc;
+  opacity: .6;
+}
+
+.rewrite-suggestion-card.is-amber.is-resolved .rewrite-target-block {
+  border-color: #e2e8f0;
+  background: #fff;
+}
+
 .submitted-editor-main {
   min-width: 0;
   min-height: 0;

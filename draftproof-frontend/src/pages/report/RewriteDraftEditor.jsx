@@ -11,7 +11,7 @@ import { countWords, scanTokensRequired } from '../../utils/scanBilling';
 import { useAuth } from '../../context/AuthContext';
 import { formatDate } from './reportHelpers';
 import { buildTrackedDiff, trackedDiffToPlainText, trackedDiffToHtml } from './trackedDiff';
-import { keptSentences } from '../../utils/bracketSpans';
+import { keptSentences, findSentenceRange, highlightParts } from '../../utils/bracketSpans';
 
 const TRANSITION_MS = 480;
 const RESCAN_POLL_INTERVAL = 3000;
@@ -38,6 +38,7 @@ export default function RewriteDraftEditor({ storageKey, baselineText, workedExa
   const { balance, refreshBalance } = useAuth();
 
   const editorRef = useRef(null);
+  const highlightRef = useRef(null);
   const closeTimerRef = useRef(null);
   const trackedCopyTimerRef = useRef(null);
 
@@ -62,6 +63,17 @@ export default function RewriteDraftEditor({ storageKey, baselineText, workedExa
   const amberSentences = keptSentences(baselineText, bracketSpans);
   const hasAmber = amberSentences.length > 0;
   const hasPanel = hasGuide || hasAmber;
+  // Re-find each amber sentence in the CURRENT draft so highlights survive edits
+  // elsewhere and clear once the sentence itself is rewritten. `index` ties each
+  // overlay span (and the right-panel card) together for click-to-jump.
+  const amberMatches = amberSentences
+    .map((sentence, index) => ({ sentence, index, range: findSentenceRange(draftText, sentence) }))
+    .filter((m) => m.range);
+  const amberRangeByIndex = new Map(amberMatches.map((m) => [m.index, m.range]));
+  const editorHighlightParts = highlightParts(
+    draftText,
+    amberMatches.map((m) => ({ ...m.range, index: m.index })),
+  );
   const trackedDiff = buildTrackedDiff(baselineText, draftText);
   const draftWordCount = countWords(draftText);
   const draftTokensRequired = scanTokensRequired(draftWordCount);
@@ -164,6 +176,33 @@ export default function RewriteDraftEditor({ storageKey, baselineText, workedExa
     setPreTranslateText(null);
     clearTrackedCopyTimer();
     setTrackedCopyStatus('idle');
+  };
+
+  // Keep the (pointer-events: none) highlight overlay aligned with the textarea.
+  const syncHighlightScroll = () => {
+    const editor = editorRef.current;
+    const layer = highlightRef.current;
+    if (!editor || !layer) return;
+    layer.scrollTop = editor.scrollTop;
+    layer.scrollLeft = editor.scrollLeft;
+  };
+
+  // Click an amber card -> select that sentence in the editor and scroll to it.
+  // No-op once the sentence has been edited away (its range no longer matches).
+  const jumpToAmber = (index) => {
+    const range = amberRangeByIndex.get(index);
+    const editor = editorRef.current;
+    if (!range || !editor) return;
+    editor.focus({ preventScroll: true });
+    editor.setSelectionRange(range.start, range.end);
+    // Measure against the overlay span (identical metrics) and centre it.
+    const span = highlightRef.current?.querySelector(`[data-amber-index="${index}"]`);
+    const layer = highlightRef.current;
+    if (span && layer) {
+      const target = span.offsetTop - layer.clientHeight / 2 + span.offsetHeight / 2;
+      editor.scrollTop = Math.max(0, target);
+    }
+    syncHighlightScroll();
   };
 
   const resetDraft = async () => {
@@ -413,11 +452,26 @@ export default function RewriteDraftEditor({ storageKey, baselineText, workedExa
               </span>
             </div>
             <div className="submitted-editor-textarea-wrap">
+              {hasAmber && (
+                <div ref={highlightRef} className="submitted-editor-highlight-layer" aria-hidden="true">
+                  {editorHighlightParts.map((part, index) => (
+                    <span
+                      key={`${part.type}-${index}`}
+                      className={`submitted-editor-highlight-${part.type}`}
+                      data-amber-index={part.type === 'selected' ? part.index : undefined}
+                    >
+                      {part.text}
+                    </span>
+                  ))}
+                  {'\n'}
+                </div>
+              )}
               <textarea
                 ref={editorRef}
                 className="submitted-editor-textarea"
                 value={draftText}
                 onChange={handleChange}
+                onScroll={hasAmber ? syncHighlightScroll : undefined}
                 spellCheck="true"
               />
             </div>
@@ -489,14 +543,29 @@ export default function RewriteDraftEditor({ storageKey, baselineText, workedExa
                 {hasAmber && (
                   <>
                     <p className="submitted-editor-guide-subhead">{t('report.submitted.editor.amberListHeading')}</p>
-                    {amberSentences.map((sentence, i) => (
-                      <article className="rewrite-suggestion-card is-amber" key={`amber-${i}`}>
-                        <div className="rewrite-target-block">
-                          <span>{t('report.submitted.editor.amberItemLabel')}</span>
-                          <p>{sentence}</p>
-                        </div>
-                      </article>
-                    ))}
+                    {amberSentences.map((sentence, i) => {
+                      const matched = amberRangeByIndex.has(i);
+                      return (
+                        <article
+                          className={`rewrite-suggestion-card is-amber${matched ? ' is-clickable' : ' is-resolved'}`}
+                          key={`amber-${i}`}
+                          role={matched ? 'button' : undefined}
+                          tabIndex={matched ? 0 : undefined}
+                          onClick={matched ? () => jumpToAmber(i) : undefined}
+                          onKeyDown={matched ? (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jumpToAmber(i); }
+                          } : undefined}
+                          title={matched ? t('report.submitted.editor.amberJumpHint') : t('report.submitted.editor.amberResolved')}
+                        >
+                          <div className="rewrite-target-block">
+                            <span>{matched
+                              ? t('report.submitted.editor.amberItemLabel')
+                              : t('report.submitted.editor.amberResolved')}</span>
+                            <p>{sentence}</p>
+                          </div>
+                        </article>
+                      );
+                    })}
                   </>
                 )}
                 {hasGuide && (
