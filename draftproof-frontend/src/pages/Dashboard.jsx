@@ -2,11 +2,29 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
+import { listScans, getPurchaseHistory } from '../api/draftproofApi';
 import CodeTexture from '../components/CodeTexture';
 
 export default function Dashboard() {
   const { user, loading, balance } = useAuth();
   const { t } = useTranslation();
+
+  // Lightweight count badges for the side-stack cards. We only need the `total`
+  // field, so request a single-item page rather than pulling full lists.
+  const [reportCount, setReportCount] = useState(null);
+  const [purchaseCount, setPurchaseCount] = useState(null);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const ac = new AbortController();
+    listScans(1, 1, { signal: ac.signal })
+      .then(({ data }) => setReportCount(data.total))
+      .catch(() => {});
+    getPurchaseHistory(1, 1, { signal: ac.signal })
+      .then(({ data }) => setPurchaseCount(data.total))
+      .catch(() => {});
+    return () => ac.abort();
+  }, [user]);
 
   // Reveal the workflow map (scan → report → rewrite) once it scrolls into view.
   const flowRef = useRef(null);
@@ -104,6 +122,14 @@ export default function Dashboard() {
                 <h3>{t('dashboard.viewReports')}</h3>
                 <p>{t('dashboard.reportsBody')}</p>
               </div>
+              {reportCount > 0 && (
+                <span
+                  className="dash-card-count"
+                  aria-label={t('dashboard.reportsCount', { count: reportCount })}
+                >
+                  {reportCount}
+                </span>
+              )}
             </Link>
 
             <Link to="/history" className="dash-small-card">
@@ -118,6 +144,14 @@ export default function Dashboard() {
                 <h3>{t('dashboard.purchaseHistory')}</h3>
                 <p>{t('dashboard.historyBody')}</p>
               </div>
+              {purchaseCount > 0 && (
+                <span
+                  className="dash-card-count"
+                  aria-label={t('dashboard.purchasesCount', { count: purchaseCount })}
+                >
+                  {purchaseCount}
+                </span>
+              )}
             </Link>
           </div>
         </section>

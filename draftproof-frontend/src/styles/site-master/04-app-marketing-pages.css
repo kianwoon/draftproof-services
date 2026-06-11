@@ -425,6 +425,25 @@
   font-size: 0.875rem;
 }
 
+.dash-card-count {
+  margin-left: auto;
+  align-self: center;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(58, 168, 118, .12);
+  color: var(--green-dark);
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
 .dash-section {
   padding: 28px;
   border: .5px solid rgba(13, 27, 42, .07);
