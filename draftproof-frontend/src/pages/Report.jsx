@@ -14,6 +14,7 @@ import {
 } from '../utils/browserNotifications';
 import RewriteNoticeDialog from './report/RewriteNoticeDialog';
 import EditPencilIcon from './report/EditPencilIcon';
+import SignalHighlights from './report/SignalHighlights';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import ReportHero from './report/ReportHero';
 import useTextareaCaretOverlay from './report/useTextareaCaretOverlay';
@@ -2278,510 +2279,342 @@ export default function Report() {
           </details>
         )}
 
+        {/* allow-hardcode: CSS classNames in JSX markup — UI layout, not a scoring oracle */}
         {submittedContent.paragraphs.length > 0 && (
-          <section className="submitted-content-review" aria-label={t('report.submitted.sectionLabel')}>
-            <div className="submitted-content-head">
-              <div>
-                <span className="submitted-content-kicker">{t('report.submitted.kicker')}</span>
-                <h2>{t('report.submitted.title')}</h2>
-              </div>
-              <div className="submitted-content-actions">
-                <div className="submitted-content-count">
-                  <strong>{submittedContent.highlightedCount}</strong>
-                  <span>{t('report.submitted.highlightedSections')}</span>
-                </div>
-                {showSubmittedEditEntry && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary submitted-edit-button"
-                    onClick={() => openSubmittedEditorForParagraph()}
-                  >
-                    <EditPencilIcon />
-                    {t('report.submitted.editor.editDraft')}
-                  </button>
-                )}
-              </div>
-            </div>
-            {paragraphSeverityBar && paragraphSeverityBar.length > 0 && (
-              <ParagraphSeverityBar
-                bar={paragraphSeverityBar}
-                selectedId={selectedParagraph?.id}
-                onSelect={lockAndScrollParagraph}
-              />
-            )}
-            {submittedContent.legend.length > 0 && (
-              <div className="submitted-signal-legend" aria-label={t('report.submitted.legend')}>
-                {submittedContent.legend.slice(0, 6).map((signal) => (
-                  <span
-                    key={signal.key}
-                    className={`submitted-signal-chip signal-style-${signalClassName(signal.key)}`}
-                    style={{ '--signal-color': signal.color }}
-                  >
-                    <i aria-hidden="true" />
-                    {signalLabel(signal.key, signal.label, t)}
-                    <strong>{signal.count}</strong>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="submitted-content-grid">
-              <div className="submitted-document" ref={submittedDocumentRef} aria-label={t('report.submitted.documentText')}>
-                {submittedContent.paragraphs.map((paragraph) => {
-                  const signal = paragraph.primarySignal;
-                  const isSelected = selectedParagraph?.id === paragraph.id;
-                  if (!signal) {
-                    return (
-                      <p key={paragraph.id}>
-                        <button
-                          type="button"
-                          data-paragraph-id={paragraph.id}
-                          className={`submitted-clean-paragraph${isSelected ? ' is-selected' : ''}`}
-                          onMouseEnter={() => previewParagraph(paragraph.id)}
-                          onFocus={() => previewParagraph(paragraph.id)}
-                          onClick={() => lockAndScrollParagraph(paragraph.id)}
-                        >
-                          {paragraph.text}
-                        </button>
-                      </p>
-                    );
-                  }
-                  return (
-                    <p key={paragraph.id}>
-                      <button
-                        type="button"
-                        data-paragraph-id={paragraph.id}
-                        className={`submitted-highlight submitted-paragraph-highlight signal-style-${signalClassName(signal.key)}${isSelected ? ' is-selected' : ''}`}
-                        style={{ '--signal-color': signal.color }}
-                        title={signalDescription(signal.key, signal.description, t)}
-                        onMouseEnter={() => previewParagraph(paragraph.id)}
-                        onFocus={() => previewParagraph(paragraph.id)}
-                        onClick={() => {
-                          lockAndScrollParagraph(paragraph.id);
-                        }}
-                      >
-                        {paragraph.text}
-                      </button>
-                    </p>
-                  );
-                })}
-              </div>
-              <aside
-                className="submitted-signal-panel"
-                ref={submittedPanelRef}
-                style={{ transform: `translateY(${panelOffset}px)` }}
-                aria-label={t('report.submitted.selectedSignal')}
+          <SignalHighlights
+            submittedContent={submittedContent}
+            selectedParagraph={selectedParagraph}
+            selectedParagraphId={selectedParagraphId}
+            highlightedParagraphs={highlightedParagraphs}
+            selectedHighlightPosition={selectedHighlightPosition}
+            paragraphSeverityBar={paragraphSeverityBar}
+            selectedReaderSummary={selectedReaderSummary}
+            selectedMainIssue={selectedMainIssue}
+            selectedWhyFlagged={selectedWhyFlagged}
+            selectedRecommendation={selectedRecommendation}
+            selectedRewriteHint={selectedRewriteHint}
+            showSubmittedEditEntry={showSubmittedEditEntry}
+            onSelectParagraph={lockAndScrollParagraph}
+            onPreviewParagraph={previewParagraph}
+            onAdjacent={selectAdjacentHighlightedParagraph}
+            onEditParagraph={openSubmittedEditorForParagraph}
+            onCopyGuidance={copySelectedParagraphGuidance}
+            renderSignalGauge={renderSubmittedSignalGauge}
+          />
+        )}
+        {submittedEditorOpen && (
+          <div className={`submitted-editor-backdrop${submittedEditorClosing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-label={t('report.submitted.editor.title')}>
+            <div className="submitted-editor-sheet">
+              <button
+                type="button"
+                className="submitted-editor-close-button"
+                aria-label={t('report.submitted.editor.close')}
+                title={t('report.submitted.editor.close')}
+                onClick={() => closeSubmittedEditor()}
+                disabled={submittedRescanBusy}
               >
-                {selectedParagraph?.primarySignal ? (
-                  <>
-                    <div className="submitted-panel-title-row">
-                      <div>
-                        <span className="submitted-panel-kicker">{selectedParagraph.sentence_id}</span>
-                        <h3>{t('report.submitted.paragraphRepairTitle')}</h3>
-                      </div>
-                      {selectedHighlightPosition && (
-                        <span className="submitted-panel-position">
-                          {t('report.submitted.position', {
-                            current: selectedHighlightPosition,
-                            total: highlightedParagraphs.length,
-                          })}
-                        </span>
-                      )}
-                    </div>
-                    <p>{selectedReaderSummary}</p>
-                    {renderSubmittedSignalGauge()}
-                    <div className="submitted-panel-meta">
-                      <span>{t('report.submitted.signalBadge', { value: signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t) })}</span>
-                      {selectedParagraph.primarySignal.tier && (
-                        <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedParagraph.primarySignal.tier}`, { defaultValue: selectedParagraph.primarySignal.tier }) })}</span>
-                      )}
-                      <span>{t('report.submitted.paragraphSignals', { count: selectedParagraph.signalCount || selectedParagraph.signals.length })}</span>
-                      {selectedParagraph.primarySignal.actionability && (
-                        <span>{selectedParagraph.primarySignal.actionability.replaceAll('_', ' ')}</span>
-                      )}
-                    </div>
-                    {selectedParagraph.signals.length > 1 && (
-                      <div className="submitted-panel-stack">
-                        <span>{t('report.submitted.alsoDetected')}</span>
-                        {selectedParagraph.signals.slice(1, 4).map((signal) => (
-                          <em key={`${selectedParagraph.id}-${signal.key}-${signal.finding_id}`}>{signalLabel(signal.key, signal.label, t)}</em>
-                        ))}
-                      </div>
-                    )}
-                    {selectedMainIssue && (
-                      <div className="submitted-panel-note">
-                        <span>{t('report.submitted.mainIssue')}</span>
-                        <p>{selectedMainIssue}</p>
-                      </div>
-                    )}
-                    {selectedWhyFlagged.length > 0 && (
-                      <div className="submitted-panel-note">
-                        <span>{t('report.submitted.whyFlagged')}</span>
-                        <ul>
-                          {selectedWhyFlagged.map((reason) => (
-                            <li key={reason}>{reason}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {selectedRecommendation && (
-                      <div className="submitted-panel-note">
-                        <span>{t('report.submitted.recommendation')}</span>
-                        <p>{selectedRecommendation}</p>
-                      </div>
-                    )}
-                    {selectedRewriteHint && (
-                      <div className="submitted-panel-note">
-                        <span>{t('report.submitted.rewriteHint')}</span>
-                        <p>{selectedRewriteHint}</p>
-                      </div>
-                    )}
-                    <div className="submitted-panel-actions">
-                      {showSubmittedEditEntry && (
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={() => openSubmittedEditorForParagraph(selectedParagraph)}
-                        >
-                          {t('report.submitted.editParagraph')}
-                        </button>
-                      )}
-                      <button type="button" className="btn btn-ghost" onClick={copySelectedParagraphGuidance}>
-                        {t('report.submitted.copyGuidance')}
-                      </button>
-                      <div className="submitted-panel-nav">
-                        <button type="button" onClick={() => selectAdjacentHighlightedParagraph(-1)} disabled={highlightedParagraphs.length < 2}>
-                          {t('report.submitted.previousIssue')}
-                        </button>
-                        <button type="button" onClick={() => selectAdjacentHighlightedParagraph(1)} disabled={highlightedParagraphs.length < 2}>
-                          {t('report.submitted.nextIssue')}
-                        </button>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <span className="submitted-panel-kicker">{t('report.submitted.noSignal')}</span>
-                    <h3>{t('report.submitted.cleanParagraphTitle')}</h3>
-                    <p>{t('report.submitted.cleanParagraphBody')}</p>
-                  </>
-                )}
-              </aside>
-            </div>
-            {submittedEditorOpen && (
-              <div className={`submitted-editor-backdrop${submittedEditorClosing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-label={t('report.submitted.editor.title')}>
-                <div className="submitted-editor-sheet">
+                X
+              </button>
+              <div className="submitted-editor-head">
+                <div>
+                  <span className="submitted-content-kicker">{t('report.submitted.editor.kicker')}</span>
+                  <h2>{t(editingRewriteDraft ? 'report.submitted.editor.rewriteTitle' : 'report.submitted.editor.title')}</h2>
+                  <p>{t(editingRewriteDraft ? 'report.submitted.editor.rewriteNotice' : 'report.submitted.editor.priorScanNotice')}</p>
+                </div>
+                <div className="submitted-editor-actions">
+                  <span className={`submitted-save-state is-${submittedDraftStatus}`}>
+                    {submittedDraftStatus === 'saving'
+                      ? t('report.submitted.editor.saving')
+                      : submittedDraftStatus === 'saved'
+                        ? t('report.submitted.editor.saved', {
+                          value: submittedDraftUpdatedAt ? formatDate(submittedDraftUpdatedAt, locale) : t('common.lastUpdated'),
+                        })
+                        : submittedDraftStatus === 'error'
+                          ? t('report.submitted.editor.saveError')
+                          : t('report.submitted.editor.noDraft')}
+                  </span>
                   <button
                     type="button"
-                    className="submitted-editor-close-button"
-                    aria-label={t('report.submitted.editor.close')}
-                    title={t('report.submitted.editor.close')}
+                    className="btn btn-ghost"
                     onClick={() => closeSubmittedEditor()}
                     disabled={submittedRescanBusy}
                   >
-                    X
+                    {t('report.submitted.editor.close')}
                   </button>
-                  <div className="submitted-editor-head">
+                </div>
+              </div>
+
+              <div className="submitted-editor-grid">
+                <section className="submitted-editor-main" aria-label={t('report.submitted.editor.documentEditor')}>
+                  <div className="submitted-editor-toolbar">
                     <div>
-                      <span className="submitted-content-kicker">{t('report.submitted.editor.kicker')}</span>
-                      <h2>{t(editingRewriteDraft ? 'report.submitted.editor.rewriteTitle' : 'report.submitted.editor.title')}</h2>
-                      <p>{t(editingRewriteDraft ? 'report.submitted.editor.rewriteNotice' : 'report.submitted.editor.priorScanNotice')}</p>
+                      <strong>{t('report.submitted.editor.documentEditor')}</strong>
+                      <span>{submittedDraftChanged ? t('report.submitted.editor.changed') : t('report.submitted.editor.unchanged')}</span>
                     </div>
-                    <div className="submitted-editor-actions">
-                      <span className={`submitted-save-state is-${submittedDraftStatus}`}>
-                        {submittedDraftStatus === 'saving'
-                          ? t('report.submitted.editor.saving')
-                          : submittedDraftStatus === 'saved'
-                            ? t('report.submitted.editor.saved', {
-                              value: submittedDraftUpdatedAt ? formatDate(submittedDraftUpdatedAt, locale) : t('common.lastUpdated'),
-                            })
-                            : submittedDraftStatus === 'error'
-                              ? t('report.submitted.editor.saveError')
-                              : t('report.submitted.editor.noDraft')}
-                      </span>
+                    <div className="submitted-editor-toolbar-actions">
                       <button
                         type="button"
-                        className="btn btn-ghost"
-                        onClick={() => closeSubmittedEditor()}
-                        disabled={submittedRescanBusy}
+                        className="btn btn-secondary submitted-translate-button"
+                        onClick={translateSubmittedSelection}
+                        disabled={submittedTranslateBusy || submittedRescanBusy}
+                        title={t('report.submitted.editor.translateNote')}
                       >
-                        {t('report.submitted.editor.close')}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="submitted-editor-grid">
-                    <section className="submitted-editor-main" aria-label={t('report.submitted.editor.documentEditor')}>
-                      <div className="submitted-editor-toolbar">
-                        <div>
-                          <strong>{t('report.submitted.editor.documentEditor')}</strong>
-                          <span>{submittedDraftChanged ? t('report.submitted.editor.changed') : t('report.submitted.editor.unchanged')}</span>
-                        </div>
-                        <div className="submitted-editor-toolbar-actions">
-                          <button
-                            type="button"
-                            className="btn btn-secondary submitted-translate-button"
-                            onClick={translateSubmittedSelection}
-                            disabled={submittedTranslateBusy || submittedRescanBusy}
-                            title={t('report.submitted.editor.translateNote')}
-                          >
-                            <svg className="cta-edit-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
-                              <path d="M4 5h7M7.5 5v1.5M9.5 5c0 4-2.5 7-5.5 8.5M6 9c.8 2 2.6 3.6 5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                              <path d="M13 19l3.2-8h.6L20 19M14 16.5h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                            {submittedTranslateBusy
-                              ? t('report.submitted.editor.translating')
-                              : t('report.submitted.editor.translateCnEn')}
-                          </button>
-                          {submittedPreTranslateText != null && (
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-small submitted-translate-undo"
-                              onClick={undoSubmittedTranslate}
-                              disabled={submittedTranslateBusy || submittedRescanBusy}
-                            >
-                              {t('report.submitted.editor.undoTranslate')}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="btn btn-ghost"
-                            onClick={resetSubmittedDraft}
-                            disabled={!submittedDraftChanged || submittedRescanBusy}
-                          >
-                            {t('report.submitted.editor.discardDraft')}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            onClick={rescanSubmittedDraft}
-                            disabled={submittedRescanBusy || !submittedDraftText.trim()}
-                          >
-                            {submittedRescanBusy ? t('report.submitted.editor.rescanning') : t('report.submitted.editor.rescanDraft')}
-                          </button>
-                          <span className="submitted-rescan-token-note">
-                            {t('scan.word', { count: submittedDraftWordCount })}
-                            {' · '}
-                            {submittedDraftTokensRequired > 0
-                              ? t('scan.tokensRequired', { count: submittedDraftTokensRequired })
-                              : t('scan.freeScan')}
-                          </span>
-                        </div>
-                      </div>
-                      <div className={`submitted-translate-tip${submittedTranslateError ? ' is-error' : ''}`}>
-                        <svg className="cta-edit-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                        <svg className="cta-edit-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
                           <path d="M4 5h7M7.5 5v1.5M9.5 5c0 4-2.5 7-5.5 8.5M6 9c.8 2 2.6 3.6 5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                           <path d="M13 19l3.2-8h.6L20 19M14 16.5h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
-                        <span>
-                          {submittedTranslateError
-                            ? submittedTranslateError
-                            : submittedPreTranslateText != null
-                              ? t('report.submitted.editor.translateNote')
-                              : t('report.submitted.editor.translateHint')}
-                        </span>
-                      </div>
-                      <div className="submitted-editor-textarea-wrap">
-                        <div
-                          ref={submittedHighlightRef}
-                          className="submitted-editor-highlight-layer"
-                          aria-hidden="true"
+                        {submittedTranslateBusy
+                          ? t('report.submitted.editor.translating')
+                          : t('report.submitted.editor.translateCnEn')}
+                      </button>
+                      {submittedPreTranslateText != null && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-small submitted-translate-undo"
+                          onClick={undoSubmittedTranslate}
+                          disabled={submittedTranslateBusy || submittedRescanBusy}
                         >
-                          {submittedEditorHighlightParts.map((part, index) => (
-                            <span key={`${part.type}-${index}`} className={`submitted-editor-highlight-${part.type}`}>
-                              {part.text}
-                            </span>
-                          ))}
-                          {'\n'}
-                        </div>
-                        <textarea
-                          ref={submittedEditorRef}
-                          className="submitted-editor-textarea"
-                          value={submittedDraftText}
-                          onChange={(event) => {
-                            const nextText = event.target.value;
-                            setSubmittedHighlightRanges((ranges) => adjustHighlightedRanges(ranges, submittedDraftText, nextText));
-                            setSubmittedDraftText(nextText);
-                            setSubmittedRescanError(null);
-                            setSubmittedPreTranslateText(null);
-                            clearSubmittedTrackedCopyTimer();
-                            setSubmittedTrackedCopyStatus('idle');
-                            scheduleSubmittedCaretUpdate();
-                          }}
-                          onClick={scheduleSubmittedCaretUpdate}
-                          onFocus={scheduleSubmittedCaretUpdate}
-                          onKeyUp={scheduleSubmittedCaretUpdate}
-                          onScroll={syncSubmittedHighlightScroll}
-                          onSelect={scheduleSubmittedCaretUpdate}
-                          onBlur={hideSubmittedCaret}
-                          spellCheck="true"
-                        />
-                        <div
-                          className={`submitted-editor-custom-caret${submittedCaret.visible ? ' is-visible' : ''}`}
-                          style={{
-                            height: `${submittedCaret.height}px`,
-                            transform: `translate(${submittedCaret.left}px, ${submittedCaret.top}px)`,
-                          }}
-                          aria-hidden="true"
-                        />
-                      </div>
-                      {(submittedRescanStatus || submittedRescanError) && (
-                        <div className={`submitted-rescan-status${submittedRescanError ? ' is-error' : ''}`}>
-                          {submittedRescanError || submittedRescanStatus}
-                        </div>
+                          {t('report.submitted.editor.undoTranslate')}
+                        </button>
                       )}
-                      <div className="submitted-tracked-preview" aria-label={t('report.submitted.editor.trackedPreview')}>
-                        <div className="submitted-tracked-head">
-                          <div className="submitted-tracked-title">
-                            <strong>{t('report.submitted.editor.trackedPreview')}</strong>
-                            <span>{t('report.submitted.editor.trackedPreviewBody')}</span>
-                          </div>
-                          <button
-                            type="button"
-                            className={`submitted-tracked-copy-button${submittedTrackedCopyStatus === 'copied' ? ' is-copied' : ''}${submittedTrackedCopyStatus === 'error' ? ' has-error' : ''}`}
-                            onClick={copySubmittedTrackedChanges}
-                            disabled={!submittedTrackedDiff.length}
-                          >
-                            {submittedTrackedCopyStatus === 'copied'
-                              ? t('report.submitted.editor.copiedTrackedChanges')
-                              : submittedTrackedCopyStatus === 'error'
-                                ? t('report.submitted.editor.copyTrackedChangesFailed')
-                                : t('report.submitted.editor.copyTrackedChanges')}
-                          </button>
-                        </div>
-                        <div className="submitted-tracked-body">
-                          {submittedTrackedDiff.map((part, index) => (
-                            <span key={`${part.type}-${index}`} className={`submitted-diff-${part.type}`}>
-                              {part.text}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </section>
-
-                    <aside className="submitted-affected-panel" aria-label={t('report.submitted.editor.affectedParagraphs')}>
-                      <div className="submitted-affected-head">
-                        <span>{t('report.submitted.editor.affectedParagraphs')}</span>
-                        <strong>{affectedParagraphs.length}</strong>
-                      </div>
-                      <div className="submitted-affected-list">
-                        {affectedParagraphs.map((paragraph) => {
-                          const signal = paragraph.primarySignal || paragraph.signals[0];
-                          const isSelected = selectedParagraph?.id === paragraph.id;
-                          const isEdited = Boolean(paragraph.text) && !submittedDraftText.includes(paragraph.text);
-                          return (
-                            <button
-                              key={`affected-${paragraph.id}`}
-                              type="button"
-                              className={`submitted-affected-item${isSelected ? ' is-selected' : ''}${isEdited ? ' is-edited' : ''}`}
-                              title={isEdited
-                                ? t('report.submitted.editor.paragraphEdited')
-                                : t('report.submitted.editor.paragraphUnchanged')}
-                              onClick={() => {
-                                setSelectedParagraphId(paragraph.id);
-                                focusParagraphInSubmittedEditor(paragraph);
-                              }}
-                            >
-                              <span className="submitted-affected-meta">
-                                <span>{paragraph.sentence_id}</span>
-                                {isEdited && (
-                                  <span
-                                    className="submitted-affected-check"
-                                    aria-label={t('report.submitted.editor.paragraphEdited')}
-                                  >
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
-                                      <path d="M5 12.5l4.2 4.2L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  </span>
-                                )}
-                              </span>
-                              <strong>{signalLabel(signal.key, signal.label, t)}</strong>
-                              <em>{paragraph.text}</em>
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      <div className="submitted-editor-detail">
-                        {selectedParagraph?.primarySignal ? (
-                          <>
-                            <span className="submitted-panel-kicker">{selectedParagraph.sentence_id}</span>
-                            <h3>{signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t)}</h3>
-                            <div className="submitted-editor-sentence">
-                              <span>{t('report.submitted.editor.affectedParagraph')}</span>
-                              <p>{selectedParagraph.text}</p>
-                            </div>
-                            {renderSubmittedSignalGauge()}
-                            <div className="submitted-panel-meta">
-                              <span>{selectedParagraphDraftStatus}</span>
-                              <span>{t('report.submitted.paragraphSignals', { count: selectedParagraph.signalCount || selectedParagraph.signals.length })}</span>
-                              {selectedParagraph.primarySignal.tier && (
-                                <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedParagraph.primarySignal.tier}`, { defaultValue: selectedParagraph.primarySignal.tier }) })}</span>
-                              )}
-                            </div>
-                            <div className="submitted-editor-signal">
-                              <span>{t('report.submitted.editor.signal')}</span>
-                              <p>{selectedReaderSummary}</p>
-                            </div>
-                            {selectedWhyFlagged.length > 0 && (
-                              <div className="submitted-panel-note">
-                                <span>{t('report.submitted.whyFlagged')}</span>
-                                <ul>
-                                  {selectedWhyFlagged.map((reason) => (
-                                    <li key={reason}>{reason}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                            {selectedMainIssue && (
-                              <div className="submitted-panel-note">
-                                <span>{t('report.submitted.mainIssue')}</span>
-                                <p>{selectedMainIssue}</p>
-                              </div>
-                            )}
-                            {selectedRecommendation && (
-                              <div className="submitted-panel-note">
-                                <span>{t('report.submitted.recommendation')}</span>
-                                <p>{selectedRecommendation}</p>
-                              </div>
-                            )}
-                            {selectedRewriteHint && (
-                              <div className="submitted-panel-note">
-                                <span>{t('report.submitted.rewriteHint')}</span>
-                                <p>{selectedRewriteHint}</p>
-                              </div>
-                            )}
-                            {selectedSecondarySignals.length > 0 && (
-                              <div className="submitted-also-detected">
-                                <span className="submitted-also-detected-head">{t('report.submitted.alsoDetected')}</span>
-                                <ul>
-                                  {selectedSecondarySignals.map((signal) => {
-                                    const advice = signal.recommendation
-                                      || signalDescription(signal.key, signal.description, t);
-                                    const strength = clampPercent(signal.score);
-                                    return (
-                                      <li key={signal.key}>
-                                        <div className="submitted-also-detected-label">
-                                          <strong>{signalLabel(signal.key, signal.label, t)}</strong>
-                                          {strength != null && <span>{Math.round(strength)}%</span>}
-                                        </div>
-                                        {advice && <p>{advice}</p>}
-                                      </li>
-                                    );
-                                  })}
-                                </ul>
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <p>{t('report.submitted.mapReadyBody')}</p>
-                        )}
-                      </div>
-                    </aside>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={resetSubmittedDraft}
+                        disabled={!submittedDraftChanged || submittedRescanBusy}
+                      >
+                        {t('report.submitted.editor.discardDraft')}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={rescanSubmittedDraft}
+                        disabled={submittedRescanBusy || !submittedDraftText.trim()}
+                      >
+                        {submittedRescanBusy ? t('report.submitted.editor.rescanning') : t('report.submitted.editor.rescanDraft')}
+                      </button>
+                      <span className="submitted-rescan-token-note">
+                        {t('scan.word', { count: submittedDraftWordCount })}
+                        {' · '}
+                        {submittedDraftTokensRequired > 0
+                          ? t('scan.tokensRequired', { count: submittedDraftTokensRequired })
+                          : t('scan.freeScan')}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                  <div className={`submitted-translate-tip${submittedTranslateError ? ' is-error' : ''}`}>
+                    <svg className="cta-edit-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                      <path d="M4 5h7M7.5 5v1.5M9.5 5c0 4-2.5 7-5.5 8.5M6 9c.8 2 2.6 3.6 5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M13 19l3.2-8h.6L20 19M14 16.5h5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span>
+                      {submittedTranslateError
+                        ? submittedTranslateError
+                        : submittedPreTranslateText != null
+                          ? t('report.submitted.editor.translateNote')
+                          : t('report.submitted.editor.translateHint')}
+                    </span>
+                  </div>
+                  <div className="submitted-editor-textarea-wrap">
+                    <div
+                      ref={submittedHighlightRef}
+                      className="submitted-editor-highlight-layer"
+                      aria-hidden="true"
+                    >
+                      {submittedEditorHighlightParts.map((part, index) => (
+                        <span key={`${part.type}-${index}`} className={`submitted-editor-highlight-${part.type}`}>
+                          {part.text}
+                        </span>
+                      ))}
+                      {'\n'}
+                    </div>
+                    <textarea
+                      ref={submittedEditorRef}
+                      className="submitted-editor-textarea"
+                      value={submittedDraftText}
+                      onChange={(event) => {
+                        const nextText = event.target.value;
+                        setSubmittedHighlightRanges((ranges) => adjustHighlightedRanges(ranges, submittedDraftText, nextText));
+                        setSubmittedDraftText(nextText);
+                        setSubmittedRescanError(null);
+                        setSubmittedPreTranslateText(null);
+                        clearSubmittedTrackedCopyTimer();
+                        setSubmittedTrackedCopyStatus('idle');
+                        scheduleSubmittedCaretUpdate();
+                      }}
+                      onClick={scheduleSubmittedCaretUpdate}
+                      onFocus={scheduleSubmittedCaretUpdate}
+                      onKeyUp={scheduleSubmittedCaretUpdate}
+                      onScroll={syncSubmittedHighlightScroll}
+                      onSelect={scheduleSubmittedCaretUpdate}
+                      onBlur={hideSubmittedCaret}
+                      spellCheck="true"
+                    />
+                    <div
+                      className={`submitted-editor-custom-caret${submittedCaret.visible ? ' is-visible' : ''}`}
+                      style={{
+                        height: `${submittedCaret.height}px`,
+                        transform: `translate(${submittedCaret.left}px, ${submittedCaret.top}px)`,
+                      }}
+                      aria-hidden="true"
+                    />
+                  </div>
+                  {(submittedRescanStatus || submittedRescanError) && (
+                    <div className={`submitted-rescan-status${submittedRescanError ? ' is-error' : ''}`}>
+                      {submittedRescanError || submittedRescanStatus}
+                    </div>
+                  )}
+                  <div className="submitted-tracked-preview" aria-label={t('report.submitted.editor.trackedPreview')}>
+                    <div className="submitted-tracked-head">
+                      <div className="submitted-tracked-title">
+                        <strong>{t('report.submitted.editor.trackedPreview')}</strong>
+                        <span>{t('report.submitted.editor.trackedPreviewBody')}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className={`submitted-tracked-copy-button${submittedTrackedCopyStatus === 'copied' ? ' is-copied' : ''}${submittedTrackedCopyStatus === 'error' ? ' has-error' : ''}`}
+                        onClick={copySubmittedTrackedChanges}
+                        disabled={!submittedTrackedDiff.length}
+                      >
+                        {submittedTrackedCopyStatus === 'copied'
+                          ? t('report.submitted.editor.copiedTrackedChanges')
+                          : submittedTrackedCopyStatus === 'error'
+                            ? t('report.submitted.editor.copyTrackedChangesFailed')
+                            : t('report.submitted.editor.copyTrackedChanges')}
+                      </button>
+                    </div>
+                    <div className="submitted-tracked-body">
+                      {submittedTrackedDiff.map((part, index) => (
+                        <span key={`${part.type}-${index}`} className={`submitted-diff-${part.type}`}>
+                          {part.text}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                <aside className="submitted-affected-panel" aria-label={t('report.submitted.editor.affectedParagraphs')}>
+                  <div className="submitted-affected-head">
+                    <span>{t('report.submitted.editor.affectedParagraphs')}</span>
+                    <strong>{affectedParagraphs.length}</strong>
+                  </div>
+                  <div className="submitted-affected-list">
+                    {affectedParagraphs.map((paragraph) => {
+                      const signal = paragraph.primarySignal || paragraph.signals[0];
+                      const isSelected = selectedParagraph?.id === paragraph.id;
+                      const isEdited = Boolean(paragraph.text) && !submittedDraftText.includes(paragraph.text);
+                      return (
+                        <button
+                          key={`affected-${paragraph.id}`}
+                          type="button"
+                          className={`submitted-affected-item${isSelected ? ' is-selected' : ''}${isEdited ? ' is-edited' : ''}`}
+                          title={isEdited
+                            ? t('report.submitted.editor.paragraphEdited')
+                            : t('report.submitted.editor.paragraphUnchanged')}
+                          onClick={() => {
+                            setSelectedParagraphId(paragraph.id);
+                            focusParagraphInSubmittedEditor(paragraph);
+                          }}
+                        >
+                          <span className="submitted-affected-meta">
+                            <span>{paragraph.sentence_id}</span>
+                            {isEdited && (
+                              <span
+                                className="submitted-affected-check"
+                                aria-label={t('report.submitted.editor.paragraphEdited')}
+                              >
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                                  <path d="M5 12.5l4.2 4.2L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </span>
+                            )}
+                          </span>
+                          <strong>{signalLabel(signal.key, signal.label, t)}</strong>
+                          <em>{paragraph.text}</em>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="submitted-editor-detail">
+                    {selectedParagraph?.primarySignal ? (
+                      <>
+                        <span className="submitted-panel-kicker">{selectedParagraph.sentence_id}</span>
+                        <h3>{signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t)}</h3>
+                        <div className="submitted-editor-sentence">
+                          <span>{t('report.submitted.editor.affectedParagraph')}</span>
+                          <p>{selectedParagraph.text}</p>
+                        </div>
+                        {renderSubmittedSignalGauge()}
+                        <div className="submitted-panel-meta">
+                          <span>{selectedParagraphDraftStatus}</span>
+                          <span>{t('report.submitted.paragraphSignals', { count: selectedParagraph.signalCount || selectedParagraph.signals.length })}</span>
+                          {selectedParagraph.primarySignal.tier && (
+                            <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedParagraph.primarySignal.tier}`, { defaultValue: selectedParagraph.primarySignal.tier }) })}</span>
+                          )}
+                        </div>
+                        <div className="submitted-editor-signal">
+                          <span>{t('report.submitted.editor.signal')}</span>
+                          <p>{selectedReaderSummary}</p>
+                        </div>
+                        {selectedWhyFlagged.length > 0 && (
+                          <div className="submitted-panel-note">
+                            <span>{t('report.submitted.whyFlagged')}</span>
+                            <ul>
+                              {selectedWhyFlagged.map((reason) => (
+                                <li key={reason}>{reason}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {selectedMainIssue && (
+                          <div className="submitted-panel-note">
+                            <span>{t('report.submitted.mainIssue')}</span>
+                            <p>{selectedMainIssue}</p>
+                          </div>
+                        )}
+                        {selectedRecommendation && (
+                          <div className="submitted-panel-note">
+                            <span>{t('report.submitted.recommendation')}</span>
+                            <p>{selectedRecommendation}</p>
+                          </div>
+                        )}
+                        {selectedRewriteHint && (
+                          <div className="submitted-panel-note">
+                            <span>{t('report.submitted.rewriteHint')}</span>
+                            <p>{selectedRewriteHint}</p>
+                          </div>
+                        )}
+                        {selectedSecondarySignals.length > 0 && (
+                          <div className="submitted-also-detected">
+                            <span className="submitted-also-detected-head">{t('report.submitted.alsoDetected')}</span>
+                            <ul>
+                              {selectedSecondarySignals.map((signal) => {
+                                const advice = signal.recommendation
+                                  || signalDescription(signal.key, signal.description, t);
+                                const strength = clampPercent(signal.score);
+                                return (
+                                  <li key={signal.key}>
+                                    <div className="submitted-also-detected-label">
+                                      <strong>{signalLabel(signal.key, signal.label, t)}</strong>
+                                      {strength != null && <span>{Math.round(strength)}%</span>}
+                                    </div>
+                                    {advice && <p>{advice}</p>}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <p>{t('report.submitted.mapReadyBody')}</p>
+                    )}
+                  </div>
+                </aside>
               </div>
-            )}
-          </section>
+            </div>
+          </div>
         )}
 
         {scoreProfileSection}
