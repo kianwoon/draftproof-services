@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, getRewriteDownload, getScanStatus, startScanWithText, translateText } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
-import ParagraphSeverityBar from '../components/ParagraphSeverityBar';
 import { useAuth } from '../context/AuthContext';
 import { deleteReportDraft, getReportDraft, saveReportDraft } from '../utils/reportDraftStorage';
 import { countWords, scanTokensRequired } from '../utils/scanBilling';
@@ -21,7 +20,6 @@ import { buildTrackedDiff, trackedDiffToPlainText, trackedDiffToHtml } from './r
 import {
   TIER_CONFIG,
   SEVERITY_CONFIG,
-  signalClassName,
   formatDate,
   signalLabel,
   signalDescription,
