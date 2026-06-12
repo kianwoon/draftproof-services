@@ -13,7 +13,6 @@ import {
   showBrowserNotification,
 } from '../utils/browserNotifications';
 import RewriteNoticeDialog from './report/RewriteNoticeDialog';
-import EditPencilIcon from './report/EditPencilIcon';
 import SignalHighlights from './report/SignalHighlights';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import ReportHero from './report/ReportHero';
@@ -316,8 +315,6 @@ export default function Report() {
   const autoOpenedEditorRef = useRef(false);
   const submittedHighlightRef = useRef(null);
   const submittedDocumentRef = useRef(null);
-  const submittedPanelRef = useRef(null);
-  const [panelOffset, setPanelOffset] = useState(0);
   const submittedEditorCloseTimerRef = useRef(null);
   const submittedTrackedCopyTimerRef = useRef(null);
   const {
@@ -769,22 +766,6 @@ export default function Report() {
     return () => clearInterval(timer);
   }, [rewriteTimerActive, activeRewriteForTimer?.id]);
 
-  // Slide panel to align with the selected paragraph
-  useEffect(() => {
-    if (!selectedParagraphId || !submittedDocumentRef.current || !submittedPanelRef.current) {
-      setPanelOffset(0);
-      return;
-    }
-    const container = submittedDocumentRef.current;
-    const panel = submittedPanelRef.current;
-    const btn = container.querySelector(`[data-paragraph-id="${selectedParagraphId}"]`);
-    if (!btn) { setPanelOffset(0); return; }
-    const containerRect = container.getBoundingClientRect();
-    const btnRect = btn.getBoundingClientRect();
-    const rawOffset = btnRect.top - containerRect.top;
-    const maxOffset = containerRect.height - panel.getBoundingClientRect().height;
-    setPanelOffset(Math.max(0, Math.min(rawOffset, maxOffset)));
-  }, [selectedParagraphId]);
 
   if (loading) return (
     <main className="dash-shell">
@@ -1039,7 +1020,6 @@ export default function Report() {
   };
   const highlightedParagraphs = submittedContent.paragraphs.filter((paragraph) => paragraph.signals.length > 0);
   const selectedHighlightIndex = highlightedParagraphs.findIndex((paragraph) => paragraph.id === selectedParagraph?.id);
-  const selectedHighlightPosition = selectedHighlightIndex >= 0 ? selectedHighlightIndex + 1 : null;
   const selectAdjacentHighlightedParagraph = (direction) => {
     if (!highlightedParagraphs.length) return;
     const currentIndex = selectedHighlightIndex >= 0 ? selectedHighlightIndex : 0;
@@ -2286,7 +2266,6 @@ export default function Report() {
             selectedParagraph={selectedParagraph}
             selectedParagraphId={selectedParagraphId}
             highlightedParagraphs={highlightedParagraphs}
-            selectedHighlightPosition={selectedHighlightPosition}
             paragraphSeverityBar={paragraphSeverityBar}
             selectedReaderSummary={selectedReaderSummary}
             selectedMainIssue={selectedMainIssue}

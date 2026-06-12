@@ -6,7 +6,7 @@ import EditPencilIcon from './EditPencilIcon';
 
 export default function SignalHighlights({
   submittedContent, selectedParagraph, selectedParagraphId, highlightedParagraphs,
-  selectedHighlightPosition, paragraphSeverityBar, selectedReaderSummary,
+  paragraphSeverityBar, selectedReaderSummary,
   selectedMainIssue, selectedWhyFlagged, selectedRecommendation, selectedRewriteHint,
   showSubmittedEditEntry, onSelectParagraph, onPreviewParagraph, onAdjacent,
   onEditParagraph, onCopyGuidance, renderSignalGauge,
