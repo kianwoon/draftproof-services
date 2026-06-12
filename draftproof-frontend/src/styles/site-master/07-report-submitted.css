@@ -1919,7 +1919,7 @@ button.paragraph-severity-seg {
   padding: .5rem .85rem; background: none; border: none; font: inherit; text-align: left; cursor: pointer;
 }
 .issue-card-head:focus-visible { outline: 2px solid var(--green-500, #3ba876); outline-offset: 2px; }
-.issue-card-num { min-width: 56px; font-size: .72rem; font-weight: 800; color: #94a3b8; }
+.issue-card-num { font-style: normal; font-size: .68rem; font-weight: 800; letter-spacing: .02em; padding: .12rem .45rem; border-radius: 999px; color: #475569; background: #e8edf3; }
 .issue-card-main { flex: 1; min-width: 0; }
 .issue-card-chips { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .2rem; }
 .issue-chip { font-style: normal; font-size: .68rem; font-weight: 800; padding: .12rem .5rem; border-radius: 999px; background: #f1f5f9; color: #334155; }
@@ -1928,7 +1928,7 @@ button.paragraph-severity-seg {
 .issue-chip-tier.is-low { background: #f0fdf4; color: #15803d; }
 .issue-card-snippet { display: block; font-size: .9rem; line-height: 1.4; color: #475569; }
 .issue-card-caret { color: #94a3b8; font-size: 1rem; }
-.issue-card-body { padding: 0 .85rem .6rem 4rem; }
+.issue-card-body { padding: 0 .85rem .6rem; }
 .issue-card-summary { font-size: .9rem; color: #475569; line-height: 1.45; margin: 0 0 .45rem; }
 .issue-action { border: 1px solid #e2e8f0; border-left: 3px solid var(--green-700, #0f766e); border-radius: 6px; padding: .45rem .7rem; margin-bottom: .4rem; background: #f8fafc; }
 .issue-action-label { display: block; font-size: .66rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--green-700, #0f766e); margin-bottom: .25rem; }
@@ -1941,7 +1941,3 @@ button.paragraph-severity-seg {
 .submitted-issues-empty { padding: 2rem 1.15rem; text-align: center; }
 .submitted-issues-empty h3 { color: var(--navy-950); }
 
-@media (max-width: 760px) {
-  .issue-card-body { padding-left: .85rem; }
-  .issue-card-num { min-width: 44px; }
-}

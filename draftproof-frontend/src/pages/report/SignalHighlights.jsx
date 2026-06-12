@@ -141,9 +141,11 @@ export default function SignalHighlights({
                     aria-expanded={isOpen}
                     onClick={() => { toggleCard(paragraph.id); onSelectParagraph(paragraph.id); }}
                     onMouseEnter={() => onPreviewParagraph(paragraph.id)}>
-                    <span className="issue-card-num">{t('report.submitted.position', { current: index + 1, total: highlightedParagraphs.length })}</span>
                     <span className="issue-card-main">
                       <span className="issue-card-chips">
+                        <em className="issue-card-num" aria-label={t('report.submitted.position', { current: index + 1, total: highlightedParagraphs.length })}>
+                          {t('report.submitted.positionShort', { current: index + 1, total: highlightedParagraphs.length })}
+                        </em>
                         {tier && <em className={`issue-chip issue-chip-tier is-${tier}`}>{t(`report.severities.${tier}`, { defaultValue: tier })}</em>}
                         {signal && <em className="issue-chip">{signalLabel(signal.key, signal.label, t)}</em>}
                         <em className="issue-chip">{t('report.submitted.paragraphSignals', { count: paragraph.signalCount || paragraph.signals.length })}</em>

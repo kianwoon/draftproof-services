@@ -367,6 +367,7 @@ export const report = {
     "paragraphRepairTitle": "Paragraph repair note",
     "signalBadge": "Signal: {{value}}",
     "position": "{{current}} of {{total}} highlighted sections",
+    "positionShort": "{{current}}/{{total}}",
     "editParagraph": "Edit this paragraph",
     "copyGuidance": "Copy guidance",
     "previousIssue": "Previous issue",

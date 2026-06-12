@@ -367,6 +367,7 @@ export const report = {
     "paragraphRepairTitle": "段落修订说明",
     "signalBadge": "信号：{{value}}",
     "position": "{{current}} / {{total}} 个高亮段落",
+    "positionShort": "{{current}}/{{total}}",
     "editParagraph": "编辑这个段落",
     "copyGuidance": "复制建议",
     "previousIssue": "上一个问题",
