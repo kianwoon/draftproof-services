@@ -32,3 +32,6 @@ uploads/
 # NonCommercial calibration data (PERSUADE) — internal only, never redistribute
 poc/calibration/authorship_cases_local/
 poc/calibration/_persuade_raw/
+
+# Brainstorming visual-companion artifacts
+.superpowers/
