@@ -52,7 +52,7 @@
 
 .site-header-dark .nav-dropdown-item:hover {
   background: var(--surface-soft);
-  color: var(--blue-700);
+  color: var(--green-700);
 }
 
 .site-header-dark .nav-dropdown-item svg {
@@ -60,7 +60,7 @@
 }
 
 .site-header-dark .nav-dropdown-item:hover svg {
-  color: var(--blue-700);
+  color: var(--green-700);
 }
 
 .site-header-dark > .btn-primary {

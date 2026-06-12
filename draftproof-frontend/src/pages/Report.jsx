@@ -38,6 +38,8 @@ import {
   buildPairedTransformationSignals,
   groupTransformationSignals,
   getTransformationSignalImprovement,
+  transformationSignalDirection,
+  transformationSignalSeverity,
   transformationSignalFeatureMap,
   buildTransformationSummary,
   deriveAuthorshipRatingFallback,
@@ -1820,11 +1822,14 @@ export default function Report() {
     });
     const improvedCount = signalEntries.filter((entry) => entry.improvement).length;
     const topEntry = [...signalEntries].sort((a, b) => Number(b.current?.value || 0) - Number(a.current?.value || 0))[0];
+    const topKey = topEntry?.current?.key;
     return {
       ...group,
       improvedCount,
       topSignal: topEntry?.current ? translatedSignal(topEntry.current, t) : null,
       topValue: topEntry?.current?.value,
+      topDirection: topKey ? transformationSignalDirection(topKey) : null,
+      topSeverity: topKey ? transformationSignalSeverity(topKey, topEntry?.current?.value) : null,
     };
   });
   const scoreProfileSummaryText = hasRewriteSignalComparison
@@ -1867,7 +1872,7 @@ export default function Report() {
       <div className="score-profile-head">
         <div>
           <span className="score-profile-kicker">{t('report.scoreProfile.kicker')}</span>
-          <h2>{t('report.scoreProfile.title')}</h2>
+          <h2>{hasRewriteSignalComparison ? t('report.scoreProfile.title') : t('report.scoreProfile.titleOriginal')}</h2>
           <p>{scoreProfileSummaryText}</p>
         </div>
         <div className="score-profile-stat">
@@ -1900,7 +1905,19 @@ export default function Report() {
               <p>{group.description || t('report.scoreProfile.groupFallback')}</p>
               <div className="score-profile-summary-meta">
                 {group.topValue != null && (
-                  <em>{t('report.scoreProfile.leadingSignal', { value: Math.round(group.topValue) })}</em>
+                  <em
+                    className="score-profile-leading"
+                    style={{ '--sev-color': group.topSeverity?.color || '#94a3b8' }}
+                  >
+                    {t('report.scoreProfile.leadingSignal', { value: Math.round(group.topValue) })}
+                  </em>
+                )}
+                {group.topDirection && (
+                  <em className="score-profile-direction">
+                    {t(group.topDirection === 'higher'
+                      ? 'report.scoreProfile.directionHigher'
+                      : 'report.scoreProfile.directionLower')}
+                  </em>
                 )}
                 {hasRewriteSignalComparison && (
                   <em>{t('report.scoreProfile.improvedSignals', { count: group.improvedCount })}</em>
@@ -1924,7 +1941,6 @@ export default function Report() {
             <div className="score-profile-group-head">
               <div>
                 <h3>{activeGroup.label}</h3>
-                {activeGroup.description && <p>{activeGroup.description}</p>}
               </div>
               <span>{t('report.transformation.signals', { count: activeGroup.signals.length })}</span>
             </div>
@@ -1934,7 +1950,10 @@ export default function Report() {
                 const rewrittenSignal = pair.rewritten ? translatedSignal(pair.rewritten, t) : null;
                 const currentSignal = hasRewriteSignalComparison ? (rewrittenSignal || originalSignal) : originalSignal;
                 const improvement = getTransformationSignalImprovement(pair.rewritten, pair.original);
-                const signalColor = currentSignal?.color || originalSignal?.color || pair.color || '#0f766e';
+                // Colour by severity (resolved via the signal's polarity), not by
+                // signal identity — so hue means "how concerning", matching the
+                // "lower/higher is better" captions. Length still carries magnitude.
+                const signalColor = transformationSignalSeverity(pair.key, currentSignal?.value).color;
                 return (
                   <div key={pair.key} className="score-profile-row">
                      <div className="score-profile-row-head">

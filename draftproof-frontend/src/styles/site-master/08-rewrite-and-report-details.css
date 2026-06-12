@@ -200,9 +200,9 @@
 }
 
 .copy-rewrite-btn:hover {
-  border-color: var(--blue-700);
-  background: var(--blue-100);
-  color: var(--blue-700);
+  border-color: var(--green-700);
+  background: var(--green-100);
+  color: var(--green-700);
 }
 
 .copy-rewrite-btn.is-copied {
@@ -595,7 +595,7 @@
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: var(--blue-700);
+  background: var(--green-700);
   animation: pulse 1.4s ease-in-out infinite;
 }
 

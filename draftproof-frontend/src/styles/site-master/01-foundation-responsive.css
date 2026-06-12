@@ -151,3 +151,31 @@
   .sample-report-preview:not(.is-paused) .sample-preview-tabs button.is-active::after,
   .sample-preview-panel > * { animation: none !important; }
 }
+
+/* Floating feedback launcher. Positioning lives in CSS (not inline) so it can
+   respect the mobile safe-area and shrink on small screens, where it used to
+   overlap the hero "Built for" audience chips. */
+.feedback-fab {
+  position: fixed;
+  right: 20px;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  z-index: 1000;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 999px;
+  background: #111827;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
+}
+
+@media (max-width: 760px) {
+  .feedback-fab {
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    padding: 8px 13px;
+    font-size: 13px;
+  }
+}

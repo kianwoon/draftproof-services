@@ -443,6 +443,30 @@ function getTransformationSignalImprovement(signal, baselineSignal) {
   return null;
 }
 
+// Which way is "good" for a signal: 'lower' (value high = concerning) or
+// 'higher' (value low = concerning). Returns null when the signal has no known
+// polarity, so callers can fall back to neutral treatment.
+function transformationSignalDirection(key) {
+  return TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION[key] || null;
+}
+
+// Resolve a signal value to a severity tier USING the signal's polarity, so the
+// bar's colour encodes "how concerning" rather than signal identity. Bar length
+// already carries magnitude; this frees hue to carry good/bad. Reuses the
+// existing TIER_CONFIG palette — no new colour list. Unknown-polarity signals
+// return a neutral slate so they read as informational, not alarming.
+function transformationSignalSeverity(key, value) {
+  const direction = TRANSFORMATION_SIGNAL_IMPROVEMENT_DIRECTION[key];
+  const numeric = Number(value);
+  if (!direction || !Number.isFinite(numeric)) {
+    return { tier: 'neutral', color: '#94a3b8', direction: direction || null };
+  }
+  // "badness" = how far the value sits in the undesirable direction (0..100).
+  const badness = direction === 'higher' ? 100 - numeric : numeric;
+  const tier = badness >= 67 ? 'high' : badness >= 34 ? 'moderate' : 'low';
+  return { tier, color: TIER_CONFIG[tier].color, direction };
+}
+
 function buildTransformationSummary(features = {}, signals = [], contributionOverride = null, t = null) {
   const tr = t || ((key, options = {}) => options.defaultValue || key);
   const humanAnchor = clampPercent(features.human_anchor_score) ?? 0;
@@ -1591,6 +1615,8 @@ export {
   buildPairedTransformationSignals,
   groupTransformationSignals,
   getTransformationSignalImprovement,
+  transformationSignalDirection,
+  transformationSignalSeverity,
   buildTransformationSummary,
   deriveAuthorshipRatingFallback,
   deriveCalibratedAuthorshipRating,

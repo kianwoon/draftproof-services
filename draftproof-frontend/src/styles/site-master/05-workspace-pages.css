@@ -2,8 +2,8 @@
 
 .balance-display {
   display: inline-block;
-  background: var(--blue-100);
-  color: var(--blue-700);
+  background: var(--green-100);
+  color: var(--green-700);
   padding: 0.5rem 1.25rem;
   border-radius: var(--radius-sm);
   font-size: 0.95rem;
@@ -276,8 +276,8 @@
   display: inline-flex;
   align-items: center;
   gap: .35rem;
-  background: var(--blue-100);
-  color: var(--blue-700);
+  background: var(--green-100);
+  color: var(--green-700);
   padding: .3rem .75rem;
   border-radius: 99px;
   font-size: .78rem;
@@ -288,8 +288,8 @@
 }
 
 .token-badge:hover {
-  background: var(--blue-200);
-  color: var(--blue-700);
+  background: var(--green-200);
+  color: var(--green-700);
 }
 
 /* ── Scan Page ──────────────────────────── */
@@ -329,7 +329,7 @@
 }
 
 .scan-tabs .tab:hover { color: var(--ink); }
-.scan-tabs .tab.active { color: var(--blue-700); border-bottom-color: var(--blue-700); }
+.scan-tabs .tab.active { color: var(--green-700); border-bottom-color: var(--green-700); }
 
 .scan-form {
   display: flex;
@@ -493,7 +493,7 @@
 }
 
 .word-limit { color: #c0392b; font-weight: 600; }
-.word-tokens { color: var(--blue-500, #2563eb); font-weight: 500; }
+.word-tokens { color: var(--green-500); font-weight: 500; }
 
 .scan-progress {
   display: flex;
@@ -620,7 +620,7 @@
 .rewrite-progress-link {
   display: inline-flex;
   margin-top: .85rem;
-  color: var(--blue-700);
+  color: var(--green-700);
   font-size: .86rem;
   font-weight: 700;
 }

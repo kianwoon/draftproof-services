@@ -123,12 +123,6 @@ export default function FeedbackWidget() {
         className="feedback-fab"
         aria-label="Send feedback"
         onClick={() => setOpen(true)}
-        style={{
-          position: 'fixed', right: '20px', bottom: '20px', zIndex: 1000,
-          padding: '10px 16px', borderRadius: '999px', border: 'none',
-          background: '#111827', color: '#fff', fontSize: '14px', fontWeight: 600,
-          cursor: 'pointer', boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
-        }}
       >
         💬 Feedback
       </button>

@@ -33,13 +33,13 @@
 }
 
 .pagination-btn:hover {
-  background: var(--blue-50);
-  border-color: var(--blue-700);
+  background: var(--green-50);
+  border-color: var(--green-700);
 }
 
 .pagination-btn.active {
-  background: var(--blue-700);
-  border-color: var(--blue-700);
+  background: var(--green-700);
+  border-color: var(--green-700);
   color: #fff;
   font-weight: 600;
 }
@@ -91,7 +91,7 @@
   top: 3rem;
   font-size: 2.5rem;
   font-weight: 800;
-  color: var(--blue-200);
+  color: var(--green-200);
   line-height: 1;
 }
 
@@ -110,7 +110,7 @@
 .why-punch {
   font-weight: 700;
   font-size: 1.1rem;
-  color: var(--blue-700) !important;
+  color: var(--green-700) !important;
   margin-top: 1.5rem !important;
 }
 
@@ -151,7 +151,7 @@
   content: '→';
   position: absolute;
   left: 0;
-  color: var(--blue-700);
+  color: var(--green-700);
   font-weight: 700;
 }
 
@@ -323,7 +323,7 @@
 }
 
 .legal-section a {
-  color: var(--blue-700);
+  color: var(--green-700);
   text-decoration: none;
 }
 

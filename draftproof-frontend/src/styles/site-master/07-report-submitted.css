@@ -517,7 +517,7 @@
   font-weight: 900;
   letter-spacing: 0;
   line-height: 1.15;
-  box-shadow: 0 14px 30px rgba(15, 110, 86, .3), 0 0 0 3px var(--blue-50);
+  box-shadow: 0 14px 30px rgba(15, 110, 86, .3), 0 0 0 3px var(--green-50);
   white-space: nowrap;
 }
 
@@ -580,7 +580,7 @@
   outline: none;
   box-shadow:
     0 18px 36px rgba(15, 110, 86, .34),
-    0 0 0 4px var(--blue-200);
+    0 0 0 4px var(--green-200);
   transform: translateY(-2px);
 }
 
@@ -761,7 +761,7 @@
    honest "edit before re-scan" hint on a full-width tip line just below the
    toolbar so the buttons stay aligned on one row. */
 .submitted-translate-button {
-  border-color: var(--blue-200);
+  border-color: var(--green-200);
   background: var(--surface-mint);
   color: var(--green-dark);
   font-weight: 800;
@@ -769,7 +769,7 @@
 
 .submitted-translate-button:hover:not(:disabled),
 .submitted-translate-button:focus-visible:not(:disabled) {
-  background: var(--blue-100);
+  background: var(--green-100);
   border-color: var(--green);
   color: var(--green-dark);
 }
@@ -1013,8 +1013,8 @@
 
 .submitted-editor-textarea-wrap:focus-within {
   border-color: var(--green);
-  background: var(--blue-50);
-  box-shadow: inset 0 0 0 2px var(--blue-200), 0 0 0 3px var(--blue-50);
+  background: var(--green-50);
+  box-shadow: inset 0 0 0 2px var(--green-200), 0 0 0 3px var(--green-50);
 }
 
 .submitted-editor-highlight-layer,
@@ -1056,11 +1056,11 @@
 }
 
 .submitted-editor-textarea::selection {
-  background: var(--blue-200);
+  background: var(--green-200);
   color: var(--ink);
 }
 
-.submitted-editor-custom-caret { position: absolute; z-index: 3; top: 0; left: 0; width: 4px; border-radius: 4px; background: var(--green); box-shadow: 0 0 0 1px var(--surface), 0 0 12px var(--blue-200); opacity: 0; pointer-events: none; }
+.submitted-editor-custom-caret { position: absolute; z-index: 3; top: 0; left: 0; width: 4px; border-radius: 4px; background: var(--green); box-shadow: 0 0 0 1px var(--surface), 0 0 12px var(--green-200); opacity: 0; pointer-events: none; }
 .submitted-editor-custom-caret.is-visible { opacity: 1; animation: submitted-caret-blink 1s steps(2, start) infinite; }
 @keyframes submitted-caret-blink { 50% { opacity: .28; } }
 
@@ -1081,7 +1081,7 @@
 }
 
 .submitted-editor-textarea:focus {
-  box-shadow: inset 0 0 0 2px var(--blue-200);
+  box-shadow: inset 0 0 0 2px var(--green-200);
 }
 
 .submitted-rescan-status {
@@ -1159,7 +1159,7 @@
 .submitted-tracked-copy-button:hover:not(:disabled),
 .submitted-tracked-copy-button:focus-visible {
   background: var(--surface-mint);
-  box-shadow: 0 0 0 3px var(--blue-50);
+  box-shadow: 0 0 0 3px var(--green-50);
   outline: 0;
   transform: translateY(-1px);
 }
@@ -1498,6 +1498,7 @@
 }
 
 .score-profile-summary-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1507,6 +1508,8 @@
   border-left: 4px solid #0f766e;
   border-radius: 8px;
   background: #fff;
+  text-align: left;
+  transition: border-color .15s var(--ease, ease), box-shadow .15s var(--ease, ease), transform .15s var(--ease, ease);
 }
 
 .score-profile-summary-card.is-ai_authorship {
@@ -1519,6 +1522,42 @@
 
 .score-profile-summary-card.is-quality_calibration {
   border-left-color: #0e7490;
+}
+
+/* Hover: signal these category cards are interactive (they switch the panel). */
+.score-profile-summary-card:hover {
+  border-color: #c3ced8;
+  box-shadow: 0 4px 14px rgba(13, 27, 42, .08);
+}
+
+/* Selected tab: lift + ring + thicker category rail so the active category —
+   and which panel is showing below — is unmistakable. */
+.score-profile-summary-card.is-active {
+  border-left-width: 6px;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 22px rgba(13, 27, 42, .12);
+}
+
+.score-profile-summary-card.is-active::after {
+  content: "";
+  position: absolute;
+  inset-inline: 10%;
+  bottom: -1rem;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: currentColor;
+  opacity: .55;
+}
+
+.score-profile-summary-card.is-active.is-ai_authorship { color: #c2410c; }
+.score-profile-summary-card.is-active.is-human_authenticity { color: #16a34a; }
+.score-profile-summary-card.is-active.is-quality_calibration { color: #0e7490; }
+
+/* Visible keyboard focus — the tablist is fully keyboard-navigable but had no
+   focus ring (outline was none, even on focus). */
+.score-profile-summary-card:focus-visible {
+  outline: 2px solid var(--green-500, #3ba876);
+  outline-offset: 2px;
 }
 
 .score-profile-summary-card > span {
@@ -1567,6 +1606,28 @@
   font-size: .7rem;
   font-style: normal;
   font-weight: 800;
+}
+
+/* Severity dot on the leading-signal chip — colour resolved via the signal's
+   polarity, so a high "risk" value reads as concerning, not neutral. */
+.score-profile-leading::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-right: .4rem;
+  border-radius: 50%;
+  background: var(--sev-color, #94a3b8);
+}
+
+/* Direction cue ("Lower/Higher is better") — plain text, not a boxed chip, so
+   it reads as a label rather than another metric. */
+.score-profile-direction {
+  padding-inline: 0 !important;
+  color: #64748b !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  font-weight: 700 !important;
 }
 
 .score-profile-details {
