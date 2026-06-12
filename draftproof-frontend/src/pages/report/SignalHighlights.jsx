@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { signalClassName, signalLabel, signalDescription } from './reportHelpers';
 import ParagraphSeverityBar from '../../components/ParagraphSeverityBar';
@@ -16,6 +16,16 @@ export default function SignalHighlights({
   const [openId, setOpenId] = useState(highlightedParagraphs[0]?.id ?? null);
   const [showMore, setShowMore] = useState(false);
   const toggleCard = (id) => setOpenId((cur) => { setShowMore(false); return cur === id ? null : id; });
+  const issuesRef = useRef(null);
+  useEffect(() => {
+    if (tab !== 'issues' || !selectedParagraph?.id) return;
+    setOpenId(selectedParagraph.id);
+    const el = issuesRef.current?.querySelector(`[data-issue-id="${selectedParagraph.id}"]`);
+    if (el) {
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      el.scrollIntoView({ block: 'nearest', behavior: prefersReduced ? 'auto' : 'smooth' });
+    }
+  }, [selectedParagraph?.id, tab]);
 
   if (!submittedContent?.paragraphs?.length) return null;
 
@@ -112,7 +122,7 @@ export default function SignalHighlights({
             <p>{t('report.submitted.issuesEmptyBody')}</p>
           </div>
         ) : (
-          <div className="submitted-issues">
+          <div className="submitted-issues" ref={issuesRef}>
             {highlightedParagraphs.map((paragraph, index) => {
               const signal = paragraph.primarySignal;
               const isOpen = openId === paragraph.id;
@@ -120,6 +130,7 @@ export default function SignalHighlights({
               const snippet = (paragraph.text || '').slice(0, 160);
               return (
                 <article key={paragraph.id}
+                  data-issue-id={paragraph.id}
                   className={`issue-card signal-style-${signalClassName(signal?.key)}${isOpen ? ' is-open' : ''}`}
                   style={{ '--signal-color': signal?.color }}>
                   <button type="button" className="issue-card-head"
@@ -183,6 +194,31 @@ export default function SignalHighlights({
                               {renderSignalGauge()}
                             </div>
                           )}
+
+                          <div className="issue-card-foot">
+                            <div className="issue-card-foot-left">
+                              {showSubmittedEditEntry && (
+                                <button type="button" className="btn btn-primary btn-small" onClick={() => onEditParagraph(paragraph)}>
+                                  <EditPencilIcon />{t('report.submitted.editParagraph')}
+                                </button>
+                              )}
+                              <button type="button" className="btn btn-ghost btn-small" onClick={onCopyGuidance}>
+                                {t('report.submitted.copyGuidance')}
+                              </button>
+                            </div>
+                            <div className="issue-card-nav">
+                              <button type="button" className="btn btn-secondary btn-small"
+                                disabled={highlightedParagraphs.length < 2}
+                                onClick={() => { onAdjacent(-1); }}>
+                                {t('report.submitted.previousIssue')}
+                              </button>
+                              <button type="button" className="btn btn-secondary btn-small"
+                                disabled={highlightedParagraphs.length < 2}
+                                onClick={() => { onAdjacent(1); }}>
+                                {t('report.submitted.nextIssue')}
+                              </button>
+                            </div>
+                          </div>
                         </>
                       ) : (
                         <p className="issue-card-summary">{t('report.submitted.noSignal')}</p>
