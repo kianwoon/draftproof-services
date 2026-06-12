@@ -13,6 +13,8 @@ export default function SignalHighlights({
 }) {
   const { t } = useTranslation();
   const [tab, setTab] = useState('issues'); // 'issues' | 'document'
+  const [openId, setOpenId] = useState(highlightedParagraphs[0]?.id ?? null);
+  const toggleCard = (id) => setOpenId((cur) => (cur === id ? null : id));
 
   if (!submittedContent?.paragraphs?.length) return null;
 
@@ -102,7 +104,45 @@ export default function SignalHighlights({
       </div>
 
       {tab === 'document' && FullDocument}
-      {tab === 'issues' && <div className="submitted-issues-placeholder">issues go here</div>}
+      {tab === 'issues' && (
+        highlightedParagraphs.length === 0 ? (
+          <div className="submitted-issues-empty">
+            <h3>{t('report.submitted.issuesEmptyTitle')}</h3>
+            <p>{t('report.submitted.issuesEmptyBody')}</p>
+          </div>
+        ) : (
+          <div className="submitted-issues">
+            {highlightedParagraphs.map((paragraph, index) => {
+              const signal = paragraph.primarySignal;
+              const isOpen = openId === paragraph.id;
+              const tier = signal?.tier;
+              const snippet = (paragraph.text || '').slice(0, 160);
+              return (
+                <article key={paragraph.id}
+                  className={`issue-card signal-style-${signalClassName(signal?.key)}${isOpen ? ' is-open' : ''}`}
+                  style={{ '--signal-color': signal?.color }}>
+                  <button type="button" className="issue-card-head"
+                    aria-expanded={isOpen}
+                    onClick={() => { toggleCard(paragraph.id); onSelectParagraph(paragraph.id); }}
+                    onMouseEnter={() => onPreviewParagraph(paragraph.id)}>
+                    <span className="issue-card-num">{t('report.submitted.position', { current: index + 1, total: highlightedParagraphs.length })}</span>
+                    <span className="issue-card-main">
+                      <span className="issue-card-chips">
+                        {tier && <em className={`issue-chip issue-chip-tier is-${tier}`}>{t(`report.severities.${tier}`, { defaultValue: tier })}</em>}
+                        {signal && <em className="issue-chip">{signalLabel(signal.key, signal.label, t)}</em>}
+                        <em className="issue-chip">{t('report.submitted.paragraphSignals', { count: paragraph.signalCount || paragraph.signals.length })}</em>
+                      </span>
+                      <span className="issue-card-snippet">{snippet}{paragraph.text.length > 160 ? '…' : ''}</span>
+                    </span>
+                    <span className="issue-card-caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
+                  </button>
+                  {isOpen && <div className="issue-card-body">{/* Task 3 fills this */}</div>}
+                </article>
+              );
+            })}
+          </div>
+        )
+      )}
     </section>
   );
 }
