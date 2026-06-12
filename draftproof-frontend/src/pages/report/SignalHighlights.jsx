@@ -102,27 +102,31 @@ export default function SignalHighlights({
       )}
 
       <div className="submitted-tabs" role="tablist" aria-label={t('report.submitted.title')}>
-        <button type="button" role="tab" aria-selected={tab === 'issues'}
+        <button type="button" role="tab" id="sh-tab-issues" aria-selected={tab === 'issues'}
+          aria-controls="sh-panel-issues"
           className={`submitted-tab${tab === 'issues' ? ' is-active' : ''}`}
           onClick={() => setTab('issues')}>
           {t('report.submitted.tabIssues', { count: highlightedParagraphs.length })}
         </button>
-        <button type="button" role="tab" aria-selected={tab === 'document'}
+        <button type="button" role="tab" id="sh-tab-document" aria-selected={tab === 'document'}
+          aria-controls="sh-panel-document"
           className={`submitted-tab${tab === 'document' ? ' is-active' : ''}`}
           onClick={() => setTab('document')}>
           {t('report.submitted.tabDocument')}
         </button>
       </div>
 
-      {tab === 'document' && FullDocument}
+      {tab === 'document' && (
+        <div role="tabpanel" id="sh-panel-document" aria-labelledby="sh-tab-document">{FullDocument}</div>
+      )}
       {tab === 'issues' && (
         highlightedParagraphs.length === 0 ? (
-          <div className="submitted-issues-empty">
+          <div className="submitted-issues-empty" role="tabpanel" id="sh-panel-issues" aria-labelledby="sh-tab-issues">
             <h3>{t('report.submitted.issuesEmptyTitle')}</h3>
             <p>{t('report.submitted.issuesEmptyBody')}</p>
           </div>
         ) : (
-          <div className="submitted-issues" ref={issuesRef}>
+          <div className="submitted-issues" ref={issuesRef} role="tabpanel" id="sh-panel-issues" aria-labelledby="sh-tab-issues">
             {highlightedParagraphs.map((paragraph, index) => {
               const signal = paragraph.primarySignal;
               const isOpen = openId === paragraph.id;
