@@ -14,7 +14,8 @@ export default function SignalHighlights({
   const { t } = useTranslation();
   const [tab, setTab] = useState('issues'); // 'issues' | 'document'
   const [openId, setOpenId] = useState(highlightedParagraphs[0]?.id ?? null);
-  const toggleCard = (id) => setOpenId((cur) => (cur === id ? null : id));
+  const [showMore, setShowMore] = useState(false);
+  const toggleCard = (id) => setOpenId((cur) => { setShowMore(false); return cur === id ? null : id; });
 
   if (!submittedContent?.paragraphs?.length) return null;
 
@@ -136,7 +137,58 @@ export default function SignalHighlights({
                     </span>
                     <span className="issue-card-caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
                   </button>
-                  {isOpen && <div className="issue-card-body">{/* Task 3 fills this */}</div>}
+                  {isOpen && (
+                    <div className="issue-card-body">
+                      {selectedParagraph?.id === paragraph.id ? (
+                        <>
+                          <p className="issue-card-summary">{selectedReaderSummary}</p>
+                          {selectedMainIssue && (
+                            <div className="issue-action">
+                              <span className="issue-action-label">{t('report.submitted.mainIssue')}</span>
+                              <p>{selectedMainIssue}</p>
+                            </div>
+                          )}
+                          {selectedRecommendation && (
+                            <div className="issue-action">
+                              <span className="issue-action-label">{t('report.submitted.recommendation')}</span>
+                              <p>{selectedRecommendation}</p>
+                            </div>
+                          )}
+
+                          <button type="button" className="issue-more-toggle" aria-expanded={showMore}
+                            onClick={() => setShowMore((v) => !v)}>
+                            {showMore ? t('report.submitted.lessDetail') : t('report.submitted.moreDetail')}
+                          </button>
+
+                          {showMore && (
+                            <div className="issue-more">
+                              {selectedWhyFlagged.length > 0 && (
+                                <div className="issue-action">
+                                  <span className="issue-action-label">{t('report.submitted.whyFlagged')}</span>
+                                  <ul>{selectedWhyFlagged.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                                </div>
+                              )}
+                              {selectedRewriteHint && (
+                                <div className="issue-action">
+                                  <span className="issue-action-label">{t('report.submitted.rewriteHint')}</span>
+                                  <p>{selectedRewriteHint}</p>
+                                </div>
+                              )}
+                              {selectedParagraph.signals.length > 1 && (
+                                <div className="issue-action">
+                                  <span className="issue-action-label">{t('report.submitted.alsoDetected')}</span>
+                                  <p>{selectedParagraph.signals.slice(1, 4).map((s) => signalLabel(s.key, s.label, t)).join(' · ')}</p>
+                                </div>
+                              )}
+                              {renderSignalGauge()}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="issue-card-summary">{t('report.submitted.noSignal')}</p>
+                      )}
+                    </div>
+                  )}
                 </article>
               );
             })}
