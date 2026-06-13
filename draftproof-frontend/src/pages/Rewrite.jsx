@@ -291,9 +291,8 @@ export default function Rewrite() {
   ).filter(Boolean);
   const manualSuggestions = (summary.manual_suggestions || report?.manual_suggestions || []).filter(Boolean);
   const authorProxyContext = summary.author_proxy_context || report?.author_proxy_context || {};
-  const authorshipEvidence = report?.authorship_evidence || summary.authorship_evidence || null;
   // Prod nests the rewrite summary under report.summary, so the hoisted estimate lands there;
-  // the poc/bare path exposes it top-level. Check both (mirrors authorshipEvidence above).
+  // the poc/bare path exposes it top-level. Check both.
   const externalEstimate = report?.external_detector_estimate || summary?.external_detector_estimate || null;
   const authorReviewCards = (
     summary.author_review_cards ||
@@ -426,49 +425,6 @@ export default function Rewrite() {
                 </div>
               </article>
             </div>
-          </section>
-        )}
-
-        {authorshipEvidence && (
-          <section className="rewrite-review-section">
-            <div className="rewrite-review-heading">
-              <div>
-                <span className="rewrite-review-kicker">{t('authorshipEvidence.scanKicker')}</span>
-                <h3>{t('authorshipEvidence.rewriteTitle')}</h3>
-              </div>
-            </div>
-            <p className="rewrite-review-copy">{t('authorshipEvidence.rewriteCopy')}</p>
-            {authorshipEvidence.preserved_ideas?.length > 0 && (
-              <div className="rewrite-target-block">
-                <span>{t('authorshipEvidence.preservedTitle')}</span>
-                {authorshipEvidence.preserved_ideas.slice(0, 8).map((p, i) => <p key={i}>{p.text}</p>)}
-              </div>
-            )}
-            {authorshipEvidence.present_markers?.length > 0 && (
-              <div className="rewrite-target-block">
-                <span>{t('authorshipEvidence.presentTitle')}</span>
-                <ul className="signal-list">
-                  {authorshipEvidence.present_markers.map((m, i) => <li key={`${m.signal}-${i}`}>{m.label}</li>)}
-                </ul>
-              </div>
-            )}
-            {authorshipEvidence.thin_signals?.length > 0 && (
-              <div className="rewrite-addition-block">
-                <span>{t('authorshipEvidence.thinTitle')}</span>
-                <p className="rewrite-review-copy">{t('authorshipEvidence.thinCopy')}</p>
-                <ul className="signal-list">
-                  {authorshipEvidence.thin_signals.map((tn, i) => <li key={`${tn.signal}-${i}`}>{tn.action}</li>)}
-                </ul>
-              </div>
-            )}
-            {authorshipEvidence.strengthen_examples?.length > 0 && (
-              <div className="rewrite-target-block">
-                <span>{t('authorshipEvidence.strengthenExamplesTitle')}</span>
-                {authorshipEvidence.strengthen_examples.slice(0, 5).map((s, i) => (
-                  <p key={i}>{s}</p>
-                ))}
-              </div>
-            )}
           </section>
         )}
 
