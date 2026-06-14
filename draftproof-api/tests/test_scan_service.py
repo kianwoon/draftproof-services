@@ -70,6 +70,38 @@ class FakeListSession:
         self.committed = True
 
 
+class CountingFreeScanSession:
+    """Simulates SQLAlchemy autoflush: the free-scan count query sees any job
+    already ``add``-ed to the session (real bug mechanism). If the limit check
+    runs after ``session.add(job)``, the in-flight pending scan counts against
+    itself — the off-by-one this guards."""
+
+    def __init__(self, prior_free_scans: int):
+        self.prior = prior_free_scans
+        self.added = []
+        self.committed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def add(self, item):
+        self.added.append(item)
+
+    async def execute(self, *_args, **_kwargs):
+        flushed = sum(
+            1
+            for j in self.added
+            if getattr(j, "word_count", 10 ** 9) <= scan_service.FREE_SCAN_WORD_LIMIT
+        )
+        return SimpleNamespace(scalar=lambda: self.prior + flushed)
+
+    async def commit(self):
+        self.committed = True
+
+
 def _stream_id(at: datetime) -> str:
     return f"{int(at.timestamp() * 1000)}-0"
 
@@ -145,6 +177,55 @@ async def test_create_free_scan_does_not_require_credit_account(monkeypatch):
     assert fake_session.added[0].document_title.endswith("…")
     assert fake_session.added[0].content_preview.endswith("…")
     assert len(fake_task.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_fifth_free_scan_allowed_when_four_used(monkeypatch):
+    """Regression: the in-flight pending scan must not count against itself.
+    With 4 free scans already used, the legitimate 5th must be allowed."""
+    fake_session = CountingFreeScanSession(prior_free_scans=4)
+    fake_task = FakeScanTask()
+
+    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
+    monkeypatch.setitem(
+        sys.modules,
+        "app.services.celery_client",
+        SimpleNamespace(scan_document=fake_task),
+    )
+
+    result = await scan_service.create_scan(
+        "paste",
+        user_id="00000000-0000-0000-0000-000000000001",
+        text=words(300),
+    )
+
+    assert result["status"] == "pending"
+    assert fake_session.committed is True
+    assert len(fake_session.added) == 1
+    assert len(fake_task.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_sixth_free_scan_blocked_when_five_used(monkeypatch):
+    """The limit still holds: a 6th short scan with 5 genuinely used is blocked."""
+    fake_session = CountingFreeScanSession(prior_free_scans=5)
+    fake_task = FakeScanTask()
+
+    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
+    monkeypatch.setitem(
+        sys.modules,
+        "app.services.celery_client",
+        SimpleNamespace(scan_document=fake_task),
+    )
+
+    with pytest.raises(ValueError, match="Free scan limit reached"):
+        await scan_service.create_scan(
+            "paste",
+            user_id="00000000-0000-0000-0000-000000000001",
+            text=words(300),
+        )
+
+    assert len(fake_task.calls) == 0
 
 
 @pytest.mark.asyncio

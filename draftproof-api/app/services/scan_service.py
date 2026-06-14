@@ -165,6 +165,22 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
     report_metadata = build_scan_report_metadata(text)
 
     async with async_session() as session:
+        # Reserve tokens based on word count. Short scans are free and should
+        # not require an existing credit account.
+        cost = _scan_cost(word_count)
+        # Enforce the free-scan limit BEFORE adding this job to the session.
+        # Otherwise SQLAlchemy autoflushes the new pending row before the count
+        # query runs, so the in-flight scan counts against itself — an
+        # off-by-one that blocks the user's legitimate Nth free scan even though
+        # only N-1 have actually been used.
+        if user_id and cost == 0:
+            used = await _count_free_scans_used(session, uuid.UUID(user_id))
+            if used >= FREE_SCAN_LIMIT:
+                raise ValueError(
+                    f"Free scan limit reached ({FREE_SCAN_LIMIT} scans). "
+                    "Please purchase credits to continue scanning."
+                )
+
         job = ScanJob(
             id=job_id,
             user_id=uuid.UUID(user_id) if user_id else None,
@@ -177,16 +193,6 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
         )
         session.add(job)
 
-        # Reserve tokens based on word count. Short scans are free and should
-        # not require an existing credit account.
-        cost = _scan_cost(word_count)
-        if user_id and cost == 0:
-            used = await _count_free_scans_used(session, uuid.UUID(user_id))
-            if used >= FREE_SCAN_LIMIT:
-                raise ValueError(
-                    f"Free scan limit reached ({FREE_SCAN_LIMIT} scans). "
-                    "Please purchase credits to continue scanning."
-                )
         if user_id and cost > 0:
             uid = uuid.UUID(user_id)
             result = await session.execute(
