@@ -26,7 +26,8 @@ class FakeSession:
         self.added.append(item)
 
     async def execute(self, *_args, **_kwargs):
-        return SimpleNamespace(scalar=lambda: 0)
+        # `.first()` returns a row -> free-scan increment is under the limit.
+        return SimpleNamespace(scalar=lambda: 0, first=lambda: (1,))
 
     async def commit(self):
         self.committed = True
@@ -70,14 +71,13 @@ class FakeListSession:
         self.committed = True
 
 
-class CountingFreeScanSession:
-    """Simulates SQLAlchemy autoflush: the free-scan count query sees any job
-    already ``add``-ed to the session (real bug mechanism). If the limit check
-    runs after ``session.add(job)``, the in-flight pending scan counts against
-    itself — the off-by-one this guards."""
+class FreeScanCounterSession:
+    """Models the durable-counter enforcement path. The single execute() in the
+    free path is the atomic ``UPDATE users ... WHERE free_scans_used < limit
+    RETURNING`` increment: a row means under the limit, None means at the cap."""
 
-    def __init__(self, prior_free_scans: int):
-        self.prior = prior_free_scans
+    def __init__(self, *, under_limit: bool):
+        self.under_limit = under_limit
         self.added = []
         self.committed = False
 
@@ -91,15 +91,32 @@ class CountingFreeScanSession:
         self.added.append(item)
 
     async def execute(self, *_args, **_kwargs):
-        flushed = sum(
-            1
-            for j in self.added
-            if getattr(j, "word_count", 10 ** 9) <= scan_service.FREE_SCAN_WORD_LIMIT
-        )
-        return SimpleNamespace(scalar=lambda: self.prior + flushed)
+        row = (1,) if self.under_limit else None
+        return SimpleNamespace(first=lambda: row)
 
     async def commit(self):
         self.committed = True
+
+
+class RefundCaptureSession:
+    """Captures the SQL that _refund_free_scan issues. The first execute() is the
+    CAS flip (returns a user_id row only if the scan was still counted); the
+    second is the decrement, recorded so tests can assert it fired exactly once."""
+
+    def __init__(self, *, was_counted: bool):
+        self.was_counted = was_counted
+        self.statements = []
+
+    async def execute(self, statement, params=None):
+        self.statements.append((str(statement), params))
+        if "UPDATE scan_jobs" in str(statement):
+            row = ("11111111-1111-1111-1111-111111111111",) if self.was_counted else None
+            return SimpleNamespace(first=lambda: row)
+        return SimpleNamespace(first=lambda: None)
+
+    @property
+    def decrement_calls(self):
+        return [s for s, _ in self.statements if "free_scans_used = GREATEST" in s]
 
 
 def _stream_id(at: datetime) -> str:
@@ -180,10 +197,10 @@ async def test_create_free_scan_does_not_require_credit_account(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_fifth_free_scan_allowed_when_four_used(monkeypatch):
-    """Regression: the in-flight pending scan must not count against itself.
-    With 4 free scans already used, the legitimate 5th must be allowed."""
-    fake_session = CountingFreeScanSession(prior_free_scans=4)
+async def test_free_scan_allowed_increments_and_marks_counted(monkeypatch):
+    """Under the durable limit: the scan is created, flagged free_scan_counted
+    (so a later failure can refund), committed, and enqueued."""
+    fake_session = FreeScanCounterSession(under_limit=True)
     fake_task = FakeScanTask()
 
     monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
@@ -202,13 +219,16 @@ async def test_fifth_free_scan_allowed_when_four_used(monkeypatch):
     assert result["status"] == "pending"
     assert fake_session.committed is True
     assert len(fake_session.added) == 1
+    assert fake_session.added[0].free_scan_counted is True
     assert len(fake_task.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_sixth_free_scan_blocked_when_five_used(monkeypatch):
-    """The limit still holds: a 6th short scan with 5 genuinely used is blocked."""
-    fake_session = CountingFreeScanSession(prior_free_scans=5)
+async def test_free_scan_blocked_when_counter_at_limit(monkeypatch):
+    """Durable counter at the cap: the conditional increment returns no row, so
+    the scan is rejected and never created or enqueued. This survives the
+    report-retention cleanup that deletes scan_jobs rows."""
+    fake_session = FreeScanCounterSession(under_limit=False)
     fake_task = FakeScanTask()
 
     monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
@@ -225,7 +245,48 @@ async def test_sixth_free_scan_blocked_when_five_used(monkeypatch):
             text=words(300),
         )
 
+    assert fake_session.added == []
     assert len(fake_task.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_refund_free_scan_decrements_once_when_counted():
+    """A failed free scan that was still counted refunds the durable counter."""
+    session = RefundCaptureSession(was_counted=True)
+    job = SimpleNamespace(
+        id="22222222-2222-2222-2222-222222222222",
+        user_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    await scan_service._refund_free_scan(session, job)
+
+    assert len(session.decrement_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_refund_free_scan_is_noop_when_already_refunded():
+    """Idempotent: if the CAS flip finds nothing to flip (already refunded or
+    paid scan), no decrement is issued."""
+    session = RefundCaptureSession(was_counted=False)
+    job = SimpleNamespace(
+        id="22222222-2222-2222-2222-222222222222",
+        user_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    await scan_service._refund_free_scan(session, job)
+
+    assert session.decrement_calls == []
+
+
+@pytest.mark.asyncio
+async def test_refund_free_scan_skips_anonymous_scan():
+    """No user means no durable counter to touch — nothing is queried."""
+    session = RefundCaptureSession(was_counted=True)
+    job = SimpleNamespace(id="22222222-2222-2222-2222-222222222222", user_id=None)
+
+    await scan_service._refund_free_scan(session, job)
+
+    assert session.statements == []
 
 
 @pytest.mark.asyncio

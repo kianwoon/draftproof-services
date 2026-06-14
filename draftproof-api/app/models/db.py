@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, DateTime, Integer, Boolean, Text, ForeignKey, CheckConstraint, UniqueConstraint, Numeric
+from sqlalchemy import Column, String, DateTime, Integer, Boolean, Text, ForeignKey, CheckConstraint, UniqueConstraint, Numeric, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime, timezone
 import uuid
@@ -33,6 +33,10 @@ class User(Base):
     display_name = Column(Text)
     avatar_url = Column(Text)
     status = Column(Text, nullable=False, default="active")
+    # Durable lifetime count of free (<=800 word) scans consumed. Authoritative
+    # for the free-scan quota — must NOT be derived from scan_jobs, which the
+    # report-retention cleanup purges. See migration 012.
+    free_scans_used = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -159,6 +163,10 @@ class ScanJob(Base):
     document_title = Column(Text)
     content_preview = Column(Text)
     scan_type = Column(Text, nullable=False, default="scan")
+    # CAS token: TRUE while this free scan's increment is live on
+    # users.free_scans_used. Refund flips it TRUE->FALSE exactly once so a
+    # failed/canceled free scan decrements the counter at most once.
+    free_scan_counted = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     status = Column(Text, nullable=False, default="pending", index=True)
     tier = Column(Text)
     ai_score = Column(Numeric(6, 2))

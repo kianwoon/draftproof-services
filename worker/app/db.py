@@ -317,6 +317,33 @@ def release_scan_credits(job_id: str):
         )
 
 
+def refund_free_scan(job_id: str):
+    """Refund a free scan's durable counter on failure/timeout (idempotent).
+
+    Free (0-cost) scans have no credit reservation, so this is the free-path
+    analog of release_scan_credits. The CAS on scan_jobs.free_scan_counted
+    ('flip TRUE->FALSE') guarantees the users.free_scans_used decrement fires at
+    most once, even across a redelivered task and a concurrent API-side
+    stale-recovery refund.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """UPDATE scan_jobs
+               SET free_scan_counted = FALSE
+               WHERE id = %s AND free_scan_counted = TRUE
+               RETURNING user_id""",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        if not row or row["user_id"] is None:
+            return
+        cur.execute(
+            "UPDATE users SET free_scans_used = GREATEST(free_scans_used - 1, 0) WHERE id = %s",
+            (row["user_id"],),
+        )
+
+
 def release_rewrite_credits(job_id: str):
     """Release reserved tokens back to available balance on failure/cancel (idempotent).
 

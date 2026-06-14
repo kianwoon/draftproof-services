@@ -7,7 +7,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text as sql_text
 
 from app.config import UPLOAD_DIR
 from app.models.db import async_session, ScanJob, CreditAccount, CreditReservation
@@ -62,16 +62,33 @@ def _scan_cost(word_count: int) -> int:
     return max(1, -(-word_count // 1000))
 
 
-async def _count_free_scans_used(session, user_id: uuid.UUID) -> int:
-    from sqlalchemy import func
-    result = await session.execute(
-        select(func.count()).select_from(ScanJob).where(
-            ScanJob.user_id == user_id,
-            ScanJob.word_count <= FREE_SCAN_WORD_LIMIT,
-            ScanJob.status.notin_(["failed", "canceled"]),
-        )
+async def _refund_free_scan(session, job: ScanJob) -> None:
+    """Refund a free scan's durable counter exactly once on failure/cancel.
+
+    Free scans have no credit reservation, so this mirrors release_scan_credits
+    for the 0-cost path. The CAS on scan_jobs.free_scan_counted guarantees the
+    decrement fires at most once even if multiple recovery paths run.
+    """
+    if job.user_id is None:
+        return
+    flipped = await session.execute(
+        sql_text(
+            "UPDATE scan_jobs SET free_scan_counted = FALSE "
+            "WHERE id = :jid AND free_scan_counted = TRUE "
+            "RETURNING user_id"
+        ),
+        {"jid": job.id},
     )
-    return result.scalar() or 0
+    row = flipped.first()
+    if row is None:
+        return
+    await session.execute(
+        sql_text(
+            "UPDATE users SET free_scans_used = GREATEST(free_scans_used - 1, 0) "
+            "WHERE id = :uid"
+        ),
+        {"uid": row[0]},
+    )
 
 
 def _rewrite_cost(word_count: int) -> int:
@@ -149,6 +166,7 @@ async def _mark_scan_interrupted(session, job: ScanJob) -> int:
     job.error = "Scan interrupted during worker restart"
     job.progress_message = "Scan worker restarted. Please retry."
     job.completed_at = datetime.now(timezone.utc)
+    await _refund_free_scan(session, job)
     return await _release_active_scan_reservations(session, job.id)
 
 
@@ -168,18 +186,29 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
         # Reserve tokens based on word count. Short scans are free and should
         # not require an existing credit account.
         cost = _scan_cost(word_count)
-        # Enforce the free-scan limit BEFORE adding this job to the session.
-        # Otherwise SQLAlchemy autoflushes the new pending row before the count
-        # query runs, so the in-flight scan counts against itself — an
-        # off-by-one that blocks the user's legitimate Nth free scan even though
-        # only N-1 have actually been used.
+
+        # Free scans draw on a durable lifetime counter (users.free_scans_used),
+        # NOT a count of scan_jobs rows — those get purged by the report
+        # retention cleanup, which would silently refill the quota. The
+        # conditional increment is an atomic compare-and-swap: it succeeds only
+        # while under the limit, which both enforces the cap and closes the
+        # concurrent-submission race (no row returned == limit reached).
+        free_counted = False
         if user_id and cost == 0:
-            used = await _count_free_scans_used(session, uuid.UUID(user_id))
-            if used >= FREE_SCAN_LIMIT:
+            increment = await session.execute(
+                sql_text(
+                    "UPDATE users SET free_scans_used = free_scans_used + 1 "
+                    "WHERE id = :uid AND free_scans_used < :limit "
+                    "RETURNING free_scans_used"
+                ),
+                {"uid": uuid.UUID(user_id), "limit": FREE_SCAN_LIMIT},
+            )
+            if increment.first() is None:
                 raise ValueError(
                     f"Free scan limit reached ({FREE_SCAN_LIMIT} scans). "
                     "Please purchase credits to continue scanning."
                 )
+            free_counted = True
 
         job = ScanJob(
             id=job_id,
@@ -190,6 +219,7 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
             content_preview=report_metadata["content_preview"],
             scan_type="scan",
             status="pending",
+            free_scan_counted=free_counted,
         )
         session.add(job)
 
@@ -234,7 +264,12 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
 async def get_free_scan_usage(user_id: str) -> dict:
     uid = uuid.UUID(user_id)
     async with async_session() as session:
-        used = await _count_free_scans_used(session, uid)
+        result = await session.execute(
+            sql_text("SELECT free_scans_used FROM users WHERE id = :uid"),
+            {"uid": uid},
+        )
+        row = result.first()
+    used = int(row[0]) if row else 0
     return {"used": used, "limit": FREE_SCAN_LIMIT, "remaining": max(0, FREE_SCAN_LIMIT - used)}
 
 
