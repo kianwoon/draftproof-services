@@ -6,12 +6,13 @@ from detect.external_grouped_scoring import (
 
 
 def test_grouped_formula_matches_contract_example():
+    # v2 weights: 0.15*72 + 0.25*65 + 0.40*78 + 0.20*35 = 65.25
     assert grouped_external_score_from_groups(
         probability_shape_risk=72,
         detector_agreement_risk=65,
         writing_pattern_risk=78,
         grounding_gap_risk=35,
-    ) == 66.85
+    ) == 65.25
 
 
 def test_higher_topk_increases_probability_group_and_score():

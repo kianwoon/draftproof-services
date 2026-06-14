@@ -13,12 +13,21 @@ import statistics
 from typing import Any, Iterable
 
 
-MODEL_VERSION = "external_grouped_v1"
+# v2: down-weight probability_shape (was 0.35, the largest). Across a corpus of
+# scans it is a flat-to-INVERTED fluent-text floor — it scores as high (or higher)
+# on green/human docs as on the one genuinely-AI red doc, so it carries no
+# AI-discriminating information and only inflated the external estimate on polished
+# human writing (the documented intrinsic over-flag floor). Weight shifts to the
+# signals that actually separate human from AI and are user-actionable: writing
+# patterns (generic/unanchored claims) and grounding. This is a known-false-positive
+# floor removal — NOT validated against third-party detectors (N=1 Turnitin sample).
+# Additive-only: does not affect tier, ai_likelihood, or any rewrite gate.
+MODEL_VERSION = "external_grouped_v2"
 GROUP_WEIGHTS = {
-    "probability_shape_risk": 0.35,
-    "detector_agreement_risk": 0.20,
-    "writing_pattern_risk": 0.30,
-    "grounding_gap_risk": 0.15,
+    "probability_shape_risk": 0.15,
+    "detector_agreement_risk": 0.25,
+    "writing_pattern_risk": 0.40,
+    "grounding_gap_risk": 0.20,
 }
 
 PROBABILITY_SIGNAL_WEIGHTS = {
@@ -39,11 +48,18 @@ DETECTOR_SIGNAL_WEIGHTS = {
 WRITING_SIGNAL_WEIGHTS = {
     "generic_opener_broad_claim": 5.0,
     "template_phrase_density": 5.0,
-    "predictable_paragraph_route": 5.0,
+    # v2: predictable_paragraph_route + packed_list_compression are the strongest
+    # human/AI discriminators in this group, so they absorb the weight pulled from
+    # overpolish_register_mismatch.
+    "predictable_paragraph_route": 6.5,
     "sentence_rhythm_regularity": 4.0,
-    "packed_list_compression": 4.0,
+    "packed_list_compression": 5.5,
     "repetition_structural_reuse": 3.0,
-    "overpolish_register_mismatch": 4.0,
+    # v2: overpolish penalizes polished register, but polished prose is also how
+    # skilled HUMANS write — it reads ~47 on green/human docs and barely climbs on
+    # the AI doc (weakest discriminator in the group). Demoted 4.0 -> 1.0 so the
+    # group's higher weight (0.40) does not amplify this false-positive floor.
+    "overpolish_register_mismatch": 1.0,
 }
 
 GROUNDING_SIGNAL_WEIGHTS = {
