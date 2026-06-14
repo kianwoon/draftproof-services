@@ -1570,6 +1570,16 @@ export default function Report() {
     const ratingLabel = variantBadge?.authorship_rating_label;
     const diag = groundingDiagnosis(variantBadge);
     const driver = GROUNDING_DIAGNOSIS_LEAD_ENABLED && diag?.primary_driver ? diag : null;
+    const driverBuckets = driver?.buckets || {};
+    // Driver bar first (emphasized), remaining dimensions by gap score descending.
+    const orderedDriverKeys = driver
+      ? [
+          driver.primary_driver,
+          ...GROUNDING_DIAGNOSIS_BUCKETS
+            .filter((k) => k !== driver.primary_driver && driverBuckets[k])
+            .sort((a, b) => (driverBuckets[b]?.score || 0) - (driverBuckets[a]?.score || 0)),
+        ].filter((k) => driverBuckets[k])
+      : [];
     return (
       <div className="ai-likelihood-block">
         <div className="ai-likelihood-caption">{t('report.aiLikelihood.title')}</div>
@@ -1582,14 +1592,22 @@ export default function Report() {
               {t(`report.groundingDiagnosis.drivers.${driver.primary_driver}.action`)}
               {driver.caveat ? ` (${t('report.groundingDiagnosis.tentative')})` : ''}
             </div>
-            <div className="ai-likelihood-buckets" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '6px', fontSize: '12px' }}>
-              {GROUNDING_DIAGNOSIS_BUCKETS.map((k) => (
-                driver.buckets?.[k] ? (
-                  <span key={k} className="ai-likelihood-bucket">
-                    {t(`report.groundingDiagnosis.buckets.${k}`)} {Math.round(driver.buckets[k].score)}
-                  </span>
-                ) : null
-              ))}
+            <div className="ai-likelihood-bars" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+              {orderedDriverKeys.map((k) => {
+                const score = Math.round(driverBuckets[k].score || 0);
+                const isDriver = k === driver.primary_driver;
+                return (
+                  <div key={k} className="ai-likelihood-bar-row">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '2px' }}>
+                      <span style={{ fontWeight: isDriver ? 500 : 400 }}>{t(`report.groundingDiagnosis.buckets.${k}`)}</span>
+                      <span style={{ color: isDriver ? '#854F0B' : 'var(--color-text-secondary, #64748b)', fontWeight: isDriver ? 500 : 400 }}>{score}</span>
+                    </div>
+                    <div style={{ height: '10px', background: 'var(--color-background-secondary, #eef0f2)', borderRadius: '5px', overflow: 'hidden' }}>
+                      <div style={{ width: `${score}%`, height: '100%', background: isDriver ? '#EF9F27' : '#B4B2A9', borderRadius: '5px' }} />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
