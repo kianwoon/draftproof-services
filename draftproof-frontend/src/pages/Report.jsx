@@ -69,6 +69,9 @@ import {
   aiLikelihoodBands,
   rewriteDetectorVerdict,
   buildRepairSummary,
+  groundingDiagnosis,
+  GROUNDING_DIAGNOSIS_LEAD_ENABLED,
+  GROUNDING_DIAGNOSIS_BUCKETS,
   buildFixFirstItems,
   EXTERNAL_ESTIMATE_DISPLAY_ENABLED,
 } from './report/reportHelpers';
@@ -1565,9 +1568,31 @@ export default function Report() {
     const dp = bands.draftproof;
     const ext = bands.external;
     const ratingLabel = variantBadge?.authorship_rating_label;
+    const diag = groundingDiagnosis(variantBadge);
+    const driver = GROUNDING_DIAGNOSIS_LEAD_ENABLED && diag?.primary_driver ? diag : null;
     return (
       <div className="ai-likelihood-block">
         <div className="ai-likelihood-caption">{t('report.aiLikelihood.title')}</div>
+        {driver && (
+          <div className="ai-likelihood-driver" style={{ marginBottom: '12px' }}>
+            <div className="ai-likelihood-driver-label" style={{ fontWeight: 500 }}>
+              {t('report.groundingDiagnosis.primaryDriver')}: {t(`report.groundingDiagnosis.drivers.${driver.primary_driver}.label`)}
+            </div>
+            <div className="ai-likelihood-driver-action" style={{ color: 'var(--color-text-secondary, #64748b)' }}>
+              {t(`report.groundingDiagnosis.drivers.${driver.primary_driver}.action`)}
+              {driver.caveat ? ` (${t('report.groundingDiagnosis.tentative')})` : ''}
+            </div>
+            <div className="ai-likelihood-buckets" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '6px', fontSize: '12px' }}>
+              {GROUNDING_DIAGNOSIS_BUCKETS.map((k) => (
+                driver.buckets?.[k] ? (
+                  <span key={k} className="ai-likelihood-bucket">
+                    {t(`report.groundingDiagnosis.buckets.${k}`)} {Math.round(driver.buckets[k].score)}
+                  </span>
+                ) : null
+              ))}
+            </div>
+          </div>
+        )}
         <div className="ai-likelihood-pair">
           <div className="ai-likelihood-metric">
             <div className="ai-likelihood-caption">{t('report.aiLikelihood.draftproof')}</div>

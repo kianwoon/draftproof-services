@@ -25,6 +25,22 @@ export const report = {
     "confidenceNote": "DraftProof 报告的是写作信号，不是判定。请把它作为提交前的修订计划。",
     "editDraftHint": "重新扫描前，先编辑高亮段落。"
   },
+  "groundingDiagnosis": {
+    "primaryDriver": "主要问题",
+    "drivers": {
+      "concrete_grounding": { "label": "缺乏具体支撑", "action": "补充具体的事例、可核实的证据与细节。" },
+      "authorship_trace": { "label": "作者痕迹不足", "action": "展示你的思考过程与草稿轨迹。" },
+      "llm_patterning": { "label": "AI 写作模式", "action": "调整结构与措辞，避免套路化。" },
+      "language_texture": { "label": "语言质感", "action": "删减空泛内容，加入具体含义。" }
+    },
+    "buckets": {
+      "concrete_grounding": "具体支撑",
+      "authorship_trace": "作者痕迹",
+      "llm_patterning": "AI 写作模式",
+      "language_texture": "语言质感"
+    },
+    "tentative": "文本较短 — 诊断仅供参考"
+  },
   "whatToFixFirst": {
     "kicker": "修订计划",
     "title": "优先修复内容",

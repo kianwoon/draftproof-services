@@ -25,6 +25,22 @@ export const report = {
     "confidenceNote": "DraftProof reports writing signals, not a verdict. Use this as a repair plan before submission.",
     "editDraftHint": "Edit highlighted sections before you re-scan."
   },
+  "groundingDiagnosis": {
+    "primaryDriver": "Primary driver",
+    "drivers": {
+      "concrete_grounding": { "label": "Grounding gap", "action": "Add concrete anchors, named evidence, and specifics." },
+      "authorship_trace": { "label": "Authorship trace", "action": "Show your decision trail and draft process." },
+      "llm_patterning": { "label": "LLM patterning", "action": "Vary your structure and phrasing." },
+      "language_texture": { "label": "Language texture", "action": "Cut padding and add concrete meaning." }
+    },
+    "buckets": {
+      "concrete_grounding": "Concrete grounding",
+      "authorship_trace": "Authorship",
+      "llm_patterning": "LLM patterning",
+      "language_texture": "Language texture"
+    },
+    "tentative": "limited text — diagnosis tentative"
+  },
   "whatToFixFirst": {
     "kicker": "Repair Plan",
     "title": "What to fix first",

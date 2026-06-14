@@ -25,6 +25,7 @@ from detect.repair_units import build_repair_units_v2
 from detect.rewrite_targets import build_problem_inventory, build_rewrite_target_profile
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text, estimate_external_detector_likelihood, estimate_external_detector_segment_fraction
 from detect.external_grouped_scoring import estimate_external_grouped_score
+from detect.grounding_diagnosis import diagnose_grounding_gap
 from detect.transformation import (
     TRANSFORMATION_SIGNAL_METADATA,
     classify_transformation_from_scan,
@@ -1494,11 +1495,22 @@ class ReportBuilder:
             legacy_likelihood=legacy_likelihood,
         )
 
+        # Additive grounding diagnosis: re-groups the SAME components into a
+        # 4-bucket profile and names the primary thing to fix. Additive only --
+        # does NOT affect tier, ai_likelihood_score, or any gate (see grounding_diagnosis).
+        grounding_diagnosis = diagnose_grounding_gap(
+            ai_components=ai_components,
+            writing_components=writing_components,
+            transformation_features=transformation.features,
+            scored_sentence_count=len(_pred_sentences) if _pred_sentences else None,
+        )
+
         ai_risk_badge = {
             # AI Generation (Phase 1)
             "tier": layer3.tier.value,
             "ai_likelihood_score": round(layer3.ai_likelihood_score * 100, 2),
             "external_detector_estimate": external_detector_estimate,
+            "grounding_diagnosis": grounding_diagnosis,
             "authorship_rating": layer3.authorship_rating,
             "authorship_rating_label": layer3.authorship_rating.get("label"),
             "authorship_rating_code": layer3.authorship_rating.get("code"),

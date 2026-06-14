@@ -1467,6 +1467,20 @@ function aiLikelihoodBands(badge) {
   return { draftproof, external };
 }
 
+// Mirror of render.GROUNDING_DIAGNOSIS_LEAD_ENABLED — keep both in sync. When ON, the report
+// leads with the primary grounding-diagnosis DRIVER (what to fix) instead of the vague risk %.
+// Driver label/action strings live in i18n report.groundingDiagnosis.drivers.* (en + zh), kept
+// in sync with detect.grounding_diagnosis.DRIVER_LABELS.
+const GROUNDING_DIAGNOSIS_LEAD_ENABLED = true;
+
+const GROUNDING_DIAGNOSIS_BUCKETS = ['concrete_grounding', 'authorship_trace', 'llm_patterning', 'language_texture'];
+
+// Accessor for the additive 4-bucket grounding diagnosis on the badge (or null).
+function groundingDiagnosis(badge) {
+  const diag = (badge || {}).grounding_diagnosis;
+  return diag && typeof diag === 'object' ? diag : null;
+}
+
 const REWRITE_VERDICT_TONES = {
   high: { color: '#b91c1c', bg: '#fef2f2' },
   elevated: { color: '#c2410c', bg: '#fff7ed' },
@@ -1508,6 +1522,12 @@ function buildRepairSummary({
   const primarySignalLabel = primarySignal
     ? signalLabel(primarySignal.key, primarySignal.label, t)
     : '';
+  // Grounding-diagnosis driver: when ON, lead the MAIN RISK with the specific driver
+  // (e.g. "grounding gap") instead of the vague generic risk label.
+  const diag = groundingDiagnosis(report?.ai_risk_badge);
+  const driverKey = GROUNDING_DIAGNOSIS_LEAD_ENABLED && diag?.primary_driver ? diag.primary_driver : null;
+  const driverLabel = driverKey ? t(`report.groundingDiagnosis.drivers.${driverKey}.label`) : '';
+  const driverAction = driverKey ? t(`report.groundingDiagnosis.drivers.${driverKey}.action`) : '';
   const statusText = firstNonEmpty(
     status,
     pattern?.label,
@@ -1515,15 +1535,18 @@ function buildRepairSummary({
     t('report.repairSummary.statusFallback')
   );
   const mainRisk = firstNonEmpty(
+    driverLabel,
     primarySignalLabel,
     transformationSummary?.summary,
     t('report.repairSummary.mainRiskFallback')
   );
   const nextAction = highlightedCount > 0
     ? t('report.repairSummary.nextActionHighlighted', { count: highlightedCount })
-    : authorshipEvidence?.thin_signals?.[0]?.action
-      ? authorshipEvidence.thin_signals[0].action
-      : t('report.repairSummary.nextActionFallback');
+    : firstNonEmpty(
+        driverAction,
+        authorshipEvidence?.thin_signals?.[0]?.action,
+        t('report.repairSummary.nextActionFallback')
+      );
 
   return {
     status: statusText,
@@ -1653,4 +1676,7 @@ export {
   buildRepairSummary,
   buildFixFirstItems,
   EXTERNAL_ESTIMATE_DISPLAY_ENABLED,
+  groundingDiagnosis,
+  GROUNDING_DIAGNOSIS_LEAD_ENABLED,
+  GROUNDING_DIAGNOSIS_BUCKETS,
 };

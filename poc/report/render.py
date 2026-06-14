@@ -345,6 +345,50 @@ _EXTERNAL_DEMOTED_NOTE = (
 )
 
 
+# Grounding-diagnosis lead: when ON, lead the AI Likelihood block with the primary
+# DRIVER (what to fix) and demote the raw % below. The diagnosis is always computed
+# in report.py; this flag only controls presentation. KEEP label strings in sync with
+# detect.grounding_diagnosis.DRIVER_LABELS and the frontend i18n keys
+# report.groundingDiagnosis.* (draftproof-frontend/src/i18n/en/report.js + zh/report.js).
+GROUNDING_DIAGNOSIS_LEAD_ENABLED = True
+
+_DIAG_BUCKET_LABELS = {
+    "concrete_grounding": "Concrete grounding",
+    "authorship_trace": "Authorship",
+    "llm_patterning": "LLM patterning",
+    "language_texture": "Language texture",
+}
+
+
+def _grounding_diagnosis_lead(badge: dict) -> list[str]:
+    """Lead lines for AI Likelihood: primary driver + 4-bucket breakdown.
+
+    Returns [] when the diagnosis is absent or has no actionable driver (so the
+    caller falls back to the plain DraftProof % headline).
+    """
+    diag = (badge or {}).get("grounding_diagnosis") or {}
+    driver = diag.get("primary_driver")
+    if not driver:
+        return []
+    label = diag.get("primary_driver_label") or ""
+    action = diag.get("primary_driver_action") or ""
+    lead = f"- **Primary driver: {label}"
+    if action:
+        lead += f" — {action}"
+    lead += "**"
+    if diag.get("caveat"):
+        lead += f" _({diag['caveat']})_"
+    buckets = diag.get("buckets") or {}
+    parts = [
+        f"{_DIAG_BUCKET_LABELS.get(k, k)} {round(buckets[k]['score'])}"
+        for k in _DIAG_BUCKET_LABELS if k in buckets
+    ]
+    lines = [lead]
+    if parts:
+        lines.append("- " + " · ".join(parts))
+    return lines
+
+
 def _render_ai_likelihood_headline(badge: dict | None) -> str:
     bands = _ai_likelihood_bands(badge)
     dp = bands["draftproof"]
@@ -352,7 +396,13 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
         return ""
     badge = badge or {}
     out = ["## AI Likelihood", ""]
-    out.append(f"- **DraftProof grounding signal: {dp['score']}% — {dp['tier']}** — improves as you ground the content (the signal to act on)")
+    lead = _grounding_diagnosis_lead(badge) if GROUNDING_DIAGNOSIS_LEAD_ENABLED else []
+    if lead:
+        out.extend(lead)
+        out.append("")
+        out.append(f"- _Detail — DraftProof grounding signal: {dp['score']}% ({dp['tier']})_")
+    else:
+        out.append(f"- **DraftProof grounding signal: {dp['score']}% — {dp['tier']}** — improves as you ground the content (the signal to act on)")
     ext = bands["external"]
     if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and ext:
         out.append(f"- **Turnitin / external (estimated): ~{ext['score']}% — {ext['label']}**")
