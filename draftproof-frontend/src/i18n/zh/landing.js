@@ -328,6 +328,28 @@ export const landing = {
       "id": "findings",
       "label": "检测结果",
       "summary": "段落详情"
+    },
+    {
+      "id": "criticalThinking",
+      "label": "批判性思维",
+      "summary": "深化你的思考"
+    }
+  ],
+  // allow-hardcode: static sample-report UI copy (illustrative reflective questions
+  // shown on the landing page), anchored to the fixed sample essay above — never
+  // compared against any user document, not a scoring/matching oracle.
+  "sampleCriticalQuestions": [
+    {
+      "quote": "好莱坞已成为历史上最具影响力的文化输出之一。",
+      "question": "有哪些具体的影片、数据或来源能证明这一点——你所说的又是在哪个时间段内？"
+    },
+    {
+      "quote": "美国的电影、音乐、时尚和社交媒体潮流在全球范围内被广泛消费。",
+      "question": "有哪个来自你自己阅读或观察的例子，能支撑“在全球范围内被消费”，而不只是一个笼统印象？"
+    },
+    {
+      "quote": "美国拥有强大的文化影响力。",
+      "question": "是什么推理让你把这种影响力称为“强大”？你是否权衡过任何反例？"
     }
   ],
   "findingsSampleId": "S004–S006",

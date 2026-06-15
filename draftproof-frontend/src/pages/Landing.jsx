@@ -676,6 +676,7 @@ function SampleReportPreview() {
   const sampleReportNotes = t('landing.sampleReportNotes', { returnObjects: true });
   const sampleScoreSignals = t('landing.sampleScoreSignals', { returnObjects: true });
   const sampleActionItems = t('landing.sampleActionItems', { returnObjects: true });
+  const sampleCriticalQuestions = t('landing.sampleCriticalQuestions', { returnObjects: true });
   const previewTabs = t('landing.reportPreviewTabs', { returnObjects: true });
   const previewTabIds = useMemo(() => previewTabs.map((tab) => tab.id), [previewTabs]);
   const currentTab = previewTabs.find((tab) => tab.id === activeSection) || previewTabs[0];
@@ -871,6 +872,24 @@ function SampleReportPreview() {
                 <p>{t('landing.findingsSampleRewriteHint')}</p>
               </div>
             </div>
+          </div>
+        )}
+
+        {activeSection === 'criticalThinking' && (
+          <div className="sample-section-card">
+            <div className="sample-section-card-head">
+              <span>{t('report.criticalThinking.title')}</span>
+              <h3>{t('report.criticalThinking.questionsTitle')}</h3>
+              <p>{t('report.criticalThinking.questionsIntro')}</p>
+            </div>
+            <ol className="critical-thinking-questions">
+              {sampleCriticalQuestions.map((item) => (
+                <li className="critical-thinking-question" key={item.question}>
+                  <span className="critical-thinking-q-quote">{`“${item.quote}”`}</span>
+                  <span className="critical-thinking-q-text">{item.question}</span>
+                </li>
+              ))}
+            </ol>
           </div>
         )}
       </div>

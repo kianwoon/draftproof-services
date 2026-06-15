@@ -328,6 +328,28 @@ export const landing = {
       "id": "findings",
       "label": "Findings",
       "summary": "Paragraph detail"
+    },
+    {
+      "id": "criticalThinking",
+      "label": "Critical Thinking",
+      "summary": "Sharpen your thinking"
+    }
+  ],
+  // allow-hardcode: static sample-report UI copy (illustrative reflective questions
+  // shown on the landing page), anchored to the fixed sample essay above — never
+  // compared against any user document, not a scoring/matching oracle.
+  "sampleCriticalQuestions": [
+    {
+      "quote": "Hollywood has become one of the most powerful cultural exports in history.",
+      "question": "Which specific films, figures, or sources show this — and over what time period are you claiming it?"
+    },
+    {
+      "quote": "American movies, music, fashion, and social media trends are consumed globally.",
+      "question": "What example from your own reading or observation backs \"consumed globally\" rather than a general impression?"
+    },
+    {
+      "quote": "the United States has a strong cultural influence.",
+      "question": "What reasoning led you to call this influence \"strong\", and did you weigh any counter-examples?"
     }
   ],
   "findingsSampleId": "S004–S006",
