@@ -422,6 +422,35 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
     return "\n".join(out)
 
 
+def _render_critical_thinking_questions(badge: dict | None) -> str:
+    """Render the Critical Thinking reflective questions section (PDF parity with the
+    web report). Empty string when there are no questions, so the section is omitted."""
+    ctc = (badge or {}).get("critical_thinking_control") or {}
+    questions = ctc.get("questions") or []
+    rows = [q for q in questions if isinstance(q, dict) and str(q.get("question") or "").strip()]
+    if not rows:
+        return ""
+    # allow-hardcode: section heading + intro are presentation copy (mirrors the
+    # frontend i18n report.criticalThinking.*), not a detect/scoring word-list.
+    out = ["## Questions to Sharpen Your Thinking", ""]
+    out.append(
+        "These are about your own draft. Use them to push your thinking further as you "
+        "revise — the answers are yours to write."
+    )
+    out.append("")
+    for i, q in enumerate(rows, 1):
+        quote = str(q.get("anchor_quote") or "").strip()
+        question = str(q.get("question") or "").strip()
+        if quote:
+            out.append(f"**{i}.** _“{quote}”_")
+            out.append("")
+            out.append(question)
+        else:
+            out.append(f"**{i}.** {question}")
+        out.append("")
+    return "\n".join(out)
+
+
 def _signal_chart_rows(features: dict, badge: dict | None = None) -> list[dict]:
     rows_by_key = {row["key"]: row for row in _transformation_signals(features)}
     ai_components = (badge or {}).get("ai_components") or {}
@@ -1383,6 +1412,12 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"![{_abt_label}](https://img.shields.io/badge/DraftProof_AI-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.0f}%`")
         if _rating_label:
             lines.append(f"**Authorship Rating:** {_rating_label}")
+        # Dual headline: surface the Turnitin / external estimate on page 1 alongside
+        # the DraftProof score (mirrors the web report's lead), not only deep in the
+        # AI Likelihood section.
+        _hdr_ext = _ai_likelihood_bands(_ab).get("external")
+        if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and _hdr_ext:
+            lines.append(f"**Turnitin / external (estimated):** ~{_hdr_ext['score']}% — {_hdr_ext['label']}")
         lines.append("")
         lines.append(f"> {_TURNITIN_AI_REFERENCE_NOTE}")
 
@@ -1458,6 +1493,13 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         if sev_parts:
             lines.append(f"| **Breakdown** | {' / '.join(sev_parts)} |")
         lines.append("")
+
+    # ── CRITICAL THINKING QUESTIONS ───────────────────────────────
+    _ct_questions = _render_critical_thinking_questions(report.ai_risk_badge)
+    if _ct_questions:
+        lines.append('<div style="page-break-before: always;"></div>')
+        lines.append("")
+        lines.append(_ct_questions)
 
     # ── 2. FINDINGS BY SEVERITY ───────────────────────────────────
     lines.append("---")

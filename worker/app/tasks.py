@@ -1797,9 +1797,25 @@ def scan_document(self, job_id: str, text: str) -> dict:
                         api_key=(settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or settings.CEREBRAS_API_KEY or None),
                         base_url=(settings.LLM_BASE_URL or None),
                     )
-                    if questions is not None:
-                        ctc["questions"] = questions.get("questions") or []
+                    if questions is not None and questions.get("questions"):
+                        ctc["questions"] = questions.get("questions")
                         ctc["questions_model"] = questions.get("model")
+                        # The emailed/R2 PDF renders from the DraftReport OBJECT (not
+                        # results_json) and was already rendered above. Mirror the questions
+                        # onto the object and re-render so the PDF includes the Critical
+                        # Thinking section. Keeps paragraph_explanations (already on the object).
+                        _dr = result.get("report")
+                        _dr_badge = getattr(_dr, "ai_risk_badge", None)
+                        _dr_ctc = _dr_badge.get("critical_thinking_control") if isinstance(_dr_badge, dict) else None
+                        if isinstance(_dr_ctc, dict):
+                            _dr_ctc["questions"] = questions.get("questions")
+                            from poc.report.render import render_report
+                            from poc.report.pdf import render_pdf
+                            md_text = render_report(_dr, verbose=True)
+                            _q_pdf = os.path.join(tmpdir, "draftproof_questions.pdf")
+                            render_pdf(md_text, _q_pdf)
+                            with open(_q_pdf, "rb") as f:
+                                pdf_bytes = f.read()
             except Exception:
                 logger.warning("Critical Thinking questions skipped for %s", job_id, exc_info=True)
 
