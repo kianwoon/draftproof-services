@@ -1,16 +1,16 @@
-"""Stage 1 scanner-fix guarantees: the V6 report-aligned scan must surface the graded detector's
+"""Scanner-fix guarantees: the V6 report-aligned scan must surface the graded detector's
 predictability findings AND carry the token-level detail (spans) needed to act on them.
 
 Regression anchor for the misalignment we found: the structural scanner flagged the LEAST
 predictable sentence hardest (a comma list) and missed the MOST predictable one. With the report
-blended in, the scan must cover the graded findings and (in predictability-primary mode) must not
-let a comma list outrank the graded predictability score.
+blended in, the scan must cover the graded findings. (The former `DRAFTPROOF_V6_SCANNER_PREDICTABILITY`
+switch was removed when scan.py's content-word detectors were dropped: grounding coverage is now
+unconditional and no longer needs a flag to outrank a comma-list inflation.)
 """
 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -63,29 +63,12 @@ def test_predictability_findings_carry_token_spans():
     assert "top10_ratio" in detail
 
 
-def test_predictability_primary_demotes_structural_overweight(monkeypatch):
-    report = _report()
-    document = _document(report)
-
-    monkeypatch.setenv("DRAFTPROOF_V6_SCANNER_PREDICTABILITY", "")
-    structural = {f.sentence_id: f.severity for f in findings_for_paragraph(scan_text_with_report(document, report), "p005")}
-
-    monkeypatch.setenv("DRAFTPROOF_V6_SCANNER_PREDICTABILITY", "1")
-    predictability = {f.sentence_id: f.severity for f in findings_for_paragraph(scan_text_with_report(document, report), "p005")}
-
-    # The packed-list sentence (s023) is over-weighted by the structural heuristic; under
-    # predictability-primary its severity must fall to the graded score, not the comma-list inflation.
-    assert structural["s023"] > predictability["s023"], (structural["s023"], predictability["s023"])
-    # And no predictability-primary severity should exceed ~50 (all p005 sentences are "review" tier).
-    assert max(predictability.values()) <= 60.0, predictability
-
-
-def test_default_mode_is_unchanged_enrichment_only(monkeypatch):
-    # Default (flag off): severities keep the legacy structural max() behaviour; enrichment is the
-    # only addition. s023 keeps its structural severity (~71).
-    monkeypatch.setenv("DRAFTPROOF_V6_SCANNER_PREDICTABILITY", "")
+def test_predictability_enrichment_present_unconditionally():
+    # The former DRAFTPROOF_V6_SCANNER_PREDICTABILITY switch is gone; grounding/predictability
+    # enrichment now rides on every report-blended finding without a flag. The graded predictability
+    # detail (token spans) must be attached to the flagged sentence's evidence.
     report = _report()
     scan = scan_text_with_report(_document(report), report)
     by_id = {f.sentence_id: f for f in findings_for_paragraph(scan, "p005")}
-    assert by_id["s023"].severity > 60.0
-    assert (by_id["s023"].evidence or {}).get("predictability")  # enrichment present even in default mode
+    assert "s023" in by_id, list(by_id)
+    assert (by_id["s023"].evidence or {}).get("predictability")  # enrichment present unconditionally
