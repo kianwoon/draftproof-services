@@ -89,3 +89,33 @@ def test_grounding_finding_drives_targeting_without_env_switch(monkeypatch):
     pid = scan.paragraphs[0].id
     tags = {t for f in findings_for_paragraph(scan, pid) for t in f.tags}
     assert any("specificity" in t or "genericity" in t for t in tags)
+
+
+def test_review_only_predictability_does_not_drive_targeting():
+    text = "The framework adapts to the situation and supports the people who depend on it daily."
+    report = _grounding_report(
+        text, actionability="review_only", title="high_predictability", category="predictability"
+    )
+    scan = scan_text_with_report(text, report)
+    pid = scan.paragraphs[0].id
+    # No structural finding (sentence is not a packed list / overload), and the only report signal
+    # is review_only predictability -> paragraph must NOT be flagged for rewrite.
+    assert findings_for_paragraph(scan, pid) == []
+
+def test_mixed_segment_still_drives_when_a_mitigable_signal_present():
+    text = "The framework adapts to the situation and supports the people who depend on it daily."
+    report = {
+        "scan_intelligence": {"document": {"paragraphs": [{"paragraph_id": "p001"}]}},
+        "sentence_map": {"s1": {"paragraph_id": "p001", "text": text}},
+        "highlight_segments": [
+            {"sentence_id": "s1", "signals": [
+                {"title": "high_predictability", "category": "predictability",
+                 "score": 0.8, "actionability": "review_only", "finding_id": "f1"},
+                {"title": "low_specificity", "category": "genericity",
+                 "score": 0.7, "actionability": "auto_fixable", "finding_id": "f2"},
+            ]},
+        ],
+    }
+    scan = scan_text_with_report(text, report)
+    pid = scan.paragraphs[0].id
+    assert findings_for_paragraph(scan, pid) != []

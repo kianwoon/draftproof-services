@@ -242,11 +242,19 @@ def _report_findings(report: dict[str, Any], paragraphs: list[Paragraph]) -> lis
         if not tags:
             continue
         finding_ids = _dedupe(entry["finding_ids"])[:8]
+        actionability = _dedupe(entry["actionability"])
+        # A segment whose ONLY actionability is review-level (e.g. high/medium predictability the
+        # detector marks "review_only") must not be the sole reason a paragraph is rewritten --
+        # predictability is un-mitigable by rewrite. It still rides along as annotation when a
+        # mitigable signal is present on the same sentence; alone, it does not drive targeting.
+        mitigable = [a for a in actionability if a and a != "review_only"]
+        if actionability and not mitigable:
+            continue
         evidence: dict[str, Any] = {
             "text": sentence.text,
             "source": "scan_report",
             "finding_ids": finding_ids,
-            "actionability": _dedupe(entry["actionability"])[:6],
+            "actionability": actionability[:6],
             "word_count": word_count(sentence.text),
         }
         detail = _predictability_detail(entry["predictability"], finding_ids, protected_by_finding)
