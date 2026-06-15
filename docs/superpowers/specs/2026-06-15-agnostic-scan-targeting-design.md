@@ -90,81 +90,96 @@ agnostic signal must be **derived from the content**, not matched against a fixe
 
 ## Design
 
-**Principle: content-derived signals drive targeting; the hardcoded regex layer is demoted to
-advisory annotation. The regex is not deleted — it rides along as shape-evidence (aligns with the
-project rule "guards/signals ANNOTATE, never drive").**
+**Principle: content-derived signals drive targeting; the hardcoded content-word detectors are
+removed. scan.py keeps only its structural-agnostic components. Un-mitigable signals
+(predictability/top-k) annotate but never drive — using the report's existing `actionability`
+label. No flag: the agnostic behavior is the only behavior.**
 
-Behavior change is gated behind a new default-off flag `DRAFTPROOF_V6_AGNOSTIC_TARGETING` and
-validated with the deterministic harness before any default flip.
+**No feature flag.** The change is unconditional. A permanent on/off switch does not make the
+function agnostic — it hides a non-agnostic one behind a toggle, and becomes another never-flipped
+lever. The hardcoded content-word detectors are **removed**, not demoted behind a flag. The
+deterministic harness is a **development-time validation gate**, not a runtime switch: if the
+agnostic version regresses, the agnostic logic is fixed until it holds — it is never flagged off.
 
-### Change 1 — targeting severity honors `actionability` (the core change)
+### First, bucket scan.py's own risk components by agnosticism
 
-In `scan.py`, when the agnostic-targeting mode is on, the severity used **for targeting**:
-- **excludes** signals labeled `review_only` (this removes un-mitigable predictability/top-k from
-  the driver's seat — using the label the report *already* computed),
-- is driven by the `auto_fixable` / mitigable grounding signals.
+scan.py's `_risk` / `_tags` mix two kinds of component. Only the second kind is removed.
 
-The excluded signals remain present in the finding's `tags`/`evidence` (annotation), so nothing is
-hidden from the user — they just stop **driving** which paragraph is rewritten.
+| Already agnostic (structural — **keep**) | Hardcoded content-word (non-agnostic — **remove**) |
+|---|---|
+| `_list_pressure` (comma/separator density) | `_predictable_start` / `_predictable_start_pressure` (opener word + pronoun/modal list) |
+| `_abstract_pressure` (nominalization morphology) | `_context_anchor_gap` (connective + demonstrative list) |
+| `_named_anchor_count` (proper-noun count) | `_author_anchor_gap` (`important/challenge/concern` + evidence markers) |
+| `_repeated_frame_findings` (n-gram frame repetition) | `_broad_claim` (`always/never/the real/the main/...`) |
+| sentence `word_count` overload | `_transition_stack` / `_semantic_bridge_gap` (connective lists) |
+| | `_unsupported_claim_gap` (`should/need to/important/serious`) |
+| | `_citation_anchor` reporting-verb list (keep only the structural `et al. (\d{4})` form) |
 
-This decouples the two things `_predictability_primary()` currently conflates:
-- "demote the secondary layer so the content signal drives" — KEEP,
-- "rank by raw predictability" — DROP (predictability is un-mitigable; see
-  `project_v6_score_floor`, `project_mitigation_ceiling`).
+### Change 1 — targeting is driven by content-derived grounding signals
 
-### Change 2 — demote structural-regex findings to advisory in the merge
+The severity used **for targeting** is computed from the detector's content-derived grounding
+signals (`generic_assertion_risk`, `citation_grounding_risk`, lived-detail), which already flow in
+via `scan_text_with_report`. These are domain-vocabulary-free structural estimators
+(`detect/layer3_scoring.py`) that cope with any topic.
 
-When the flag is on, structural-only findings (sentence not flagged by the report) are demoted to
-`_ADVISORY_SEVERITY` so they annotate but do not out-rank the agnostic grounding signal. This is
-the existing `_merge_findings` demotion path, generalized from `_predictability_primary()` to the
-new flag and made independent of the predictability-headline behavior.
+### Change 2 — targeting honors `actionability`; remove the hardcoded content-word detectors
 
-### Change 3 — re-scan passes lean on the agnostic estimators
+- Targeting severity **excludes** signals the report already labels `review_only` (this keeps
+  un-mitigable predictability/top-k out of the driver's seat — using the label the report already
+  computed at `report.py:285–315`). They remain in `tags`/`evidence` as annotation; they just stop
+  deciding which paragraph is rewritten.
+- The hardcoded content-word detectors in the right column above are **deleted** from `_risk` /
+  `_tags`. The remaining `_risk` keeps only the structural-agnostic components (left column), so
+  scan.py's intrinsic shape score no longer matches arbitrary vocabulary.
+- The conflated `_predictability_primary()` switch is removed; "content signal drives" becomes the
+  unconditional behavior, and "rank by raw predictability" is dropped (predictability is
+  un-mitigable; see `project_v6_score_floor`, `project_mitigation_ceiling`).
 
-For `scan_text_preserve_blocks` re-scans (no report), targeting should not fall back to letting the
-regex drive. The residual path already calls `estimate_generic_assertion_risk` /
-`estimate_lived_detail_risk` (`direct_rewrite.py:96`); ensure those agnostic estimators — not the
-regex shape tags — are what select the residual re-fix target when the flag is on.
+### Change 3 — re-scan passes use the agnostic estimators
 
-### What stays hardcoded, and why (honest scope)
+`scan_text_preserve_blocks` re-scans carry no detector report. Residual targeting uses the agnostic
+`estimate_generic_assertion_risk` / `estimate_lived_detail_risk` (already called at
+`direct_rewrite.py:96`) plus scan.py's surviving structural-agnostic components — never the deleted
+content-word regexes.
+
+### What is intentionally not touched
 
 - `_report_signal_severity` tier→score map (`scan.py:352`) — a numeric calibration scale, not a
-  content list. Out of scope.
-- The grounding estimators' structural patterns (`detect/layer3_scoring.py`) — these *are*
-  enumerated regexes, but they are **domain-vocabulary-free structural classes** and already meet
-  the project's agnostic standard. Not touched.
-- scan.py's regex lists — **kept in the code as advisory annotation**, no longer driving. Deleting
-  them is a separate, later decision once the flag has proven out.
+  content list.
+- The detector's grounding estimators (`detect/layer3_scoring.py`) — already domain-agnostic by the
+  project's standard; they are the replacement, not a target.
 
-So the precise, non-inflated claim: this makes **targeting** domain-agnostic by routing it through
-structural grounding signals; it does **not** make the system "list-free."
+**Precise claim:** targeting becomes domain-agnostic (driven by structural grounding signals), and
+the non-agnostic content-word detectors are removed from scan.py. scan.py's surviving components
+and the detector's estimators are still *enumerated structural patterns* — domain-vocabulary-free,
+which is the project's agnostic bar, not "list-free."
 
 ---
 
 ## Risks & validation
 
-- **Under-targeting risk:** demoting the regex could leave nothing driving on documents where the
-  detector is quiet (few report findings). The audit memo (`project_detector_hardcode_audit`)
-  warns de-overfitting a ratio-scored detect layer can also *over*-flag. **Both directions must be
-  measured.**
-- **Validation gate:** `DRAFTPROOF_V6_DETERMINISTIC=1 python poc/_measure_baseline.py 4` (N≥4 —
-  single runs are noise per `project_v6_measurement_variance`). Compare `final_risk` mean
-  flag-off vs flag-on. Ship the default flip only on no-regression (ideally improvement).
-- **Kill switch:** `DRAFTPROOF_V6_AGNOSTIC_TARGETING` default off → zero production impact until
-  measured and deliberately enabled, no redeploy needed to revert.
+- **Under-targeting risk:** removing the content-word detectors could leave nothing driving on
+  documents where the detector is quiet (few report findings). The audit memo
+  (`project_detector_hardcode_audit`) warns a ratio-scored detect layer can also *over*-flag.
+  **Both directions must be measured and resolved in the code — not toggled off.**
+- **Validation gate (development-time):** `DRAFTPROOF_V6_DETERMINISTIC=1 python poc/_measure_baseline.py 4`
+  (N≥4 — single runs are noise per `project_v6_measurement_variance`). Compare `final_risk` mean of
+  the current `main` against the branch. If the agnostic version regresses, fix the agnostic logic
+  (e.g. tune how grounding severity maps to targeting) until `final_risk` is ≤ baseline. Do not
+  merge a regression; do not add a flag to dodge it.
 
 ## Success criteria
 
-1. With the flag on, paragraph targeting is decided by content-derived grounding signals;
-   hardcoded content-word regex no longer changes *which* paragraph is selected.
-2. Un-mitigable predictability/top-k never drives targeting (only annotates).
-3. `_measure_baseline.py 4` shows `final_risk` flag-on ≤ flag-off (no regression).
-4. Existing V6 tests pass; new tests cover: actionability-aware targeting, structural demotion,
-   and the no-report re-scan path.
+1. Paragraph targeting is decided by content-derived grounding signals; no hardcoded content-word
+   regex influences *which* paragraph is selected. No env flag exists for this behavior.
+2. The content-word detectors (right column above) are removed from `scan.py`'s `_risk`/`_tags`.
+3. Un-mitigable predictability/top-k never drives targeting (only annotates).
+4. `_measure_baseline.py 4` shows branch `final_risk` ≤ `main` (no regression).
+5. Existing V6 tests pass; new tests cover: actionability-aware targeting, content-word-detector
+   removal, and the no-report re-scan path.
 
 ## Out of scope
 
 - `rewrite_compiler/operators.py` (legacy, not in production).
-- Deleting scan.py's regex lists (later decision).
 - Adding any NLP/POS dependency (none exists in `poc/`; not introducing one).
-- Touching the detector's own estimators.
+- Re-tuning the detector's own estimators beyond what targeting needs.
