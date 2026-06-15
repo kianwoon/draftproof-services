@@ -232,30 +232,24 @@ def send_email(payload: dict, *, settings) -> bool:
         )
         return False
 
-    # success=true does NOT guarantee delivery. Cloudflare returns success while
-    # reporting the per-recipient outcome in result.{delivered,queued,permanent_bounces}.
-    # A recipient that permanently bounced (e.g. Microsoft/hotmail rejecting the mail)
-    # would otherwise look like a clean send and vanish silently. Treat a recipient
-    # that is neither delivered nor queued as a FAILURE, and surface the breakdown.
+    # success=true means Cloudflare ACCEPTED the message. The per-recipient
+    # result.{delivered,queued,permanent_bounces} arrays are often EMPTY on a normal
+    # accept (delivery is reported asynchronously), so empty arrays are NOT a failure.
+    # Only an explicit permanent_bounce for this recipient is a real failure.
     result = body.get("result") or {}
     recipient = payload.get("to")
     delivered = result.get("delivered") or []
     queued = result.get("queued") or []
     bounces = result.get("permanent_bounces") or []
-    if recipient and recipient not in delivered and recipient not in queued:
+    if recipient and recipient in bounces:
         logger.warning(
-            "Cloudflare accepted but did NOT deliver to %s: delivered=%s queued=%s permanent_bounces=%s",
-            recipient, delivered, queued, bounces,
+            "Cloudflare permanently bounced %s (delivered=%s queued=%s)",
+            recipient, delivered, queued,
         )
         return False
-    if bounces:
-        logger.warning(
-            "Cloudflare email had permanent bounces: %s (delivered=%s queued=%s)",
-            bounces, delivered, queued,
-        )
     logger.info(
-        "Cloudflare email accepted for %s: delivered=%s queued=%s",
-        recipient, bool(delivered), bool(queued),
+        "Cloudflare email accepted for %s: delivered=%s queued=%s permanent_bounces=%s",
+        recipient, delivered, queued, bounces,
     )
     return True
 
