@@ -8,6 +8,7 @@ export default function SignalHighlights({
   submittedContent, selectedParagraph, selectedParagraphId, highlightedParagraphs,
   paragraphSeverityBar, selectedReaderSummary,
   selectedMainIssue, selectedWhyFlagged, selectedRecommendation, selectedRewriteHint,
+  selectedCriticalThinking,
   showSubmittedEditEntry, onSelectParagraph, onPreviewParagraph, onAdjacent,
   onEditParagraph, onCopyGuidance, renderSignalGauge,
 }) {
@@ -169,6 +170,16 @@ export default function SignalHighlights({
                             <div className="issue-action">
                               <span className="issue-action-label">{t('report.submitted.recommendation')}</span>
                               <p>{selectedRecommendation}</p>
+                            </div>
+                          )}
+                          {selectedCriticalThinking && (
+                            <div className="issue-action issue-action-thinking">
+                              <span className="issue-action-label">{t('report.submitted.criticalThinking')}</span>
+                              <p>
+                                <strong>{t(`report.criticalThinking.dimensions.${selectedCriticalThinking.dimension}.label`)}</strong>
+                                {' — '}
+                                {t(`report.criticalThinking.dimensions.${selectedCriticalThinking.dimension}.action`)}
+                              </p>
                             </div>
                           )}
 

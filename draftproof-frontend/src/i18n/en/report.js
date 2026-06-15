@@ -438,6 +438,7 @@ export const report = {
     "whyFlagged": "What the reader may notice",
     "alsoDetected": "Also detected",
     "recommendation": "How to improve this paragraph",
+    "criticalThinking": "Critical thinking",
     "rewriteHint": "Rewrite hint",
     "noSignal": "No highlighted signal",
     "mapReady": "Content map ready",

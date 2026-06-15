@@ -63,6 +63,72 @@ DIMENSION_SIGNALS = {
 # first the lead is always one of the 4 anchorable grounding/judgement dimensions.
 LEAD_INELIGIBLE_DIMENSIONS = frozenset({"ai_dependency"})
 
+# allow-hardcode: machine finding-type / signal-category identifiers routed to a
+# dimension code — signal routing, NOT a content/text matcher (mirrors
+# detect.base._SIGNAL_CATEGORY_MAP). No document text is ever compared.
+#
+# PRIMARY: map a finding's precise ``finding_type`` (the report-level Finding.title)
+# to a control dimension. This is finer than signal_category, which collapses
+# citation gaps and surface grammar/spelling into one "writing_quality" bucket --
+# mapping the whole bucket to evidence_grounding would mislabel a grammar-flagged
+# paragraph as "connect this claim to a source". Surface writing types
+# (grammar_issue / fragment_sentence / spelling_issue / punctuation_issue) are
+# intentionally UNMAPPED -> they are not a critical-thinking gap and get no tag.
+FINDING_TYPE_TO_DIMENSION = {
+    # specific_context — vague / broad / template, lacking concrete specifics
+    "generic_phrase": "specific_context",
+    "generic_policy_claim": "specific_context",
+    "broad_education_claim": "specific_context",
+    "template_personal_reflection": "specific_context",
+    "low_specificity": "specific_context",
+    "formulaic_conclusion": "specific_context",
+    # evidence_grounding — citation / source gaps
+    "uncited_claim": "evidence_grounding",
+    "missing_citation": "evidence_grounding",
+    "broken_citation": "evidence_grounding",
+    "weak_source_grounding": "evidence_grounding",
+    # student_judgement — AI-likeness / low authorship trace
+    "high_ai_generation_likelihood": "student_judgement",
+    "medium_ai_generation_likelihood": "student_judgement",
+    "low_ai_generation_likelihood": "student_judgement",
+    "similarity_overlap": "student_judgement",
+    "semantic_uniformity": "student_judgement",
+    "discourse_regularity": "student_judgement",
+    "semantic_drift": "student_judgement",
+    # ai_dependency — stylometry (mapped but LEAD-INELIGIBLE below)
+    "high_predictability": "ai_dependency",
+    "medium_predictability": "ai_dependency",
+    "low_predictability": "ai_dependency",
+    "review_predictability": "ai_dependency",
+    "high_topk_predictability": "ai_dependency",
+    "style_shift": "ai_dependency",
+    "low_burstiness": "ai_dependency",
+    "repetitive_sentence_structure": "ai_dependency",
+}
+
+# FALLBACK for finding types not in the precise map above. Deliberately OMITS
+# "writing_quality" (the ambiguous citation+grammar bucket) so an unmapped surface
+# issue is never mislabeled; the precise citation types above already cover the
+# legitimate writing_quality -> evidence_grounding case. reasoning_trail is absent
+# everywhere here: it is a cross-paragraph structural signal, document-level only.
+# predictability -> ai_dependency stays LEAD-INELIGIBLE (no per-paragraph
+# "too AI-dependent" false accusation).
+SIGNAL_CATEGORY_TO_DIMENSION = {
+    "genericity": "specific_context",
+    "authorship_risk": "student_judgement",
+    "predictability": "ai_dependency",
+}
+
+
+def _dimension_for_finding(finding: dict[str, Any]) -> str | None:
+    """Precise finding_type mapping first; coarse signal_category fallback (never
+    for the ambiguous writing_quality bucket)."""
+    finding_type = str((finding or {}).get("finding_type") or "")
+    dimension = FINDING_TYPE_TO_DIMENSION.get(finding_type)
+    if dimension:
+        return dimension
+    return SIGNAL_CATEGORY_TO_DIMENSION.get(str(finding.get("signal_category") or ""))
+
 # allow-hardcode: presentation strings, NOT a scoring/matching oracle. These map
 # a dimension CODE -> (user-facing label, coaching action); they are never
 # compared against document text. Mirrors the approved DRIVER_LABELS convention
@@ -257,3 +323,51 @@ _NOTE = (
     "the weakest one to work on. Higher = stronger human control. Does not affect "
     "tier, ai_likelihood, or any gate."
 )
+
+
+def score_critical_thinking_per_paragraph(
+    findings_by_paragraph: dict[str, list[dict[str, Any]]] | None,
+) -> list[dict[str, Any]]:
+    """Tag each flagged paragraph with its weakest LEAD-ELIGIBLE control dimension.
+
+    Deterministic and additive. ``findings_by_paragraph`` maps a paragraph_id to a
+    list of that paragraph's flagged findings, each a dict with ``finding_type``
+    (the precise detector type), ``signal_category`` (coarse fallback), and an
+    optional numeric ``score``. For each paragraph we accumulate finding weight per
+    dimension via ``_dimension_for_finding`` and emit the most-flagged lead-eligible
+    one (ai_dependency is excluded so a paragraph is never falsely headlined
+    "too AI-dependent"; surface grammar/spelling findings map to nothing). Returns
+    one row per tagged paragraph:
+    ``{paragraph_id, dimension, label, action, weight}`` (paragraphs with no
+    lead-eligible flagged dimension are omitted).
+    """
+    out: list[dict[str, Any]] = []
+    for pid, findings in (findings_by_paragraph or {}).items():
+        if not pid or not findings:
+            continue
+        weights: dict[str, float] = {}
+        for finding in findings:
+            dimension = _dimension_for_finding(finding)
+            if not dimension:
+                continue
+            raw = (finding or {}).get("score")
+            weight = float(raw) if isinstance(raw, (int, float)) else 1.0
+            weights[dimension] = weights.get(dimension, 0.0) + max(0.0, weight)
+
+        eligible = {
+            d: w for d, w in weights.items()
+            if d not in LEAD_INELIGIBLE_DIMENSIONS and w > 0
+        }
+        if not eligible:
+            continue
+        dimension = max(eligible, key=lambda d: eligible[d])
+        label, action = DIMENSION_LABELS[dimension]
+        out.append({
+            "paragraph_id": str(pid),
+            "dimension": dimension,
+            "label": label,
+            "action": action,
+            "weight": round(eligible[dimension], 2),
+        })
+    out.sort(key=lambda row: row["paragraph_id"])
+    return out

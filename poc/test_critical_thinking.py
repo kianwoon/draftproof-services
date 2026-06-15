@@ -9,10 +9,13 @@ from detect.critical_thinking import (
     DIMENSION_LABELS,
     DIMENSION_SIGNALS,
     DIMENSION_WEIGHTS,
+    FINDING_TYPE_TO_DIMENSION,
     LEAD_INELIGIBLE_DIMENSIONS,
     MODEL_VERSION,
+    SIGNAL_CATEGORY_TO_DIMENSION,
     _band,
     score_critical_thinking,
+    score_critical_thinking_per_paragraph,
 )
 
 
@@ -170,6 +173,93 @@ def test_missing_grounding_no_crash():
     c = score_critical_thinking()
     assert c["score"] is None
     assert c["model"] == MODEL_VERSION
+
+
+def test_per_paragraph_precise_finding_type_mapping():
+    fbp = {
+        "p001": [{"finding_type": "generic_phrase", "score": 70}],
+        "p002": [{"finding_type": "high_ai_generation_likelihood", "score": 50}],
+        "p003": [{"finding_type": "uncited_claim", "score": 60}],
+    }
+    rows = {r["paragraph_id"]: r for r in score_critical_thinking_per_paragraph(fbp)}
+    assert rows["p001"]["dimension"] == "specific_context"
+    assert rows["p002"]["dimension"] == "student_judgement"
+    assert rows["p003"]["dimension"] == "evidence_grounding"
+    assert rows["p003"]["action"] == DIMENSION_LABELS["evidence_grounding"][1]
+
+
+def test_per_paragraph_surface_writing_issue_gets_no_tag():
+    # PRECISION FIX: grammar/spelling/punctuation/fragment are signal_category
+    # "writing_quality" but are NOT a critical-thinking gap -> no tag (must NOT be
+    # mislabeled "evidence_grounding — connect this claim to a source").
+    fbp = {"p001": [
+        {"finding_type": "grammar_issue", "signal_category": "writing_quality", "score": 80},
+        {"finding_type": "fragment_sentence", "signal_category": "writing_quality", "score": 60},
+    ]}
+    assert score_critical_thinking_per_paragraph(fbp) == []
+
+
+def test_per_paragraph_citation_vs_grammar_split_within_writing_quality():
+    # Same coarse bucket (writing_quality), different finding_type -> different fate:
+    # uncited_claim tags evidence_grounding; grammar_issue contributes nothing.
+    fbp = {"p001": [
+        {"finding_type": "grammar_issue", "signal_category": "writing_quality", "score": 90},
+        {"finding_type": "uncited_claim", "signal_category": "writing_quality", "score": 40},
+    ]}
+    rows = score_critical_thinking_per_paragraph(fbp)
+    assert len(rows) == 1 and rows[0]["dimension"] == "evidence_grounding"
+
+
+def test_per_paragraph_ai_dependency_never_leads():
+    # A paragraph flagged ONLY on predictability -> ai_dependency, lead-ineligible
+    # -> omitted (no false "too AI-dependent" tag).
+    fbp = {"p001": [{"finding_type": "high_predictability", "score": 90}]}
+    assert score_critical_thinking_per_paragraph(fbp) == []
+
+
+def test_per_paragraph_signal_category_fallback_excludes_writing_quality():
+    # Coarse fallback still works for the unambiguous categories...
+    assert score_critical_thinking_per_paragraph(
+        {"p001": [{"signal_category": "genericity", "score": 30}]}
+    )[0]["dimension"] == "specific_context"
+    # ...but NOT for writing_quality (ambiguous) -> no tag without a finding_type.
+    assert score_critical_thinking_per_paragraph(
+        {"p001": [{"signal_category": "writing_quality", "score": 80}]}
+    ) == []
+
+
+def test_per_paragraph_most_flagged_eligible_dimension_wins():
+    fbp = {"p001": [
+        {"finding_type": "generic_phrase", "score": 30},
+        {"finding_type": "uncited_claim", "score": 80},
+        {"finding_type": "high_predictability", "score": 100},  # ai_dependency: ignored for lead
+    ]}
+    rows = score_critical_thinking_per_paragraph(fbp)
+    assert len(rows) == 1 and rows[0]["dimension"] == "evidence_grounding"
+
+
+def test_per_paragraph_empty_and_unknown():
+    assert score_critical_thinking_per_paragraph({}) == []
+    assert score_critical_thinking_per_paragraph({"p001": []}) == []
+    assert score_critical_thinking_per_paragraph({"p001": [{"finding_type": "mystery"}]}) == []
+
+
+def test_per_paragraph_deterministic_and_sorted():
+    fbp = {
+        "p003": [{"finding_type": "generic_phrase", "score": 40}],
+        "p001": [{"finding_type": "uncited_claim", "score": 40}],
+    }
+    a = score_critical_thinking_per_paragraph(fbp)
+    assert a == score_critical_thinking_per_paragraph(fbp)
+    assert [r["paragraph_id"] for r in a] == ["p001", "p003"]  # sorted by id
+
+
+def test_per_paragraph_crosswalk_excludes_reasoning_trail():
+    # reasoning_trail is document-level only; never a per-paragraph target.
+    assert "reasoning_trail" not in FINDING_TYPE_TO_DIMENSION.values()
+    assert "reasoning_trail" not in SIGNAL_CATEGORY_TO_DIMENSION.values()
+    # writing_quality must NOT be a coarse fallback (ambiguous citation+grammar).
+    assert "writing_quality" not in SIGNAL_CATEGORY_TO_DIMENSION
 
 
 def test_dimension_tables_consistent():

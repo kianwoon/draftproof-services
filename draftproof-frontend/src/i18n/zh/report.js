@@ -436,6 +436,7 @@ export const report = {
     "whyFlagged": "读者可能会注意到什么",
     "alsoDetected": "还检测到",
     "recommendation": "如何改善这个段落",
+    "criticalThinking": "批判性思维",
     "rewriteHint": "改写提示",
     "noSignal": "没有高亮信号",
     "mapReady": "内容地图已就绪",

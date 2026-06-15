@@ -1044,6 +1044,12 @@ export default function Report() {
     ''
   );
   const selectedRewriteHint = selectedParagraphGuidance.rewrite_hint || '';
+  // Per-paragraph Critical Thinking tag (deterministic; from the scan report).
+  const selectedCriticalThinking = (() => {
+    const rows = badge?.critical_thinking_control?.paragraphs;
+    if (!Array.isArray(rows) || !selectedParagraph?.id) return null;
+    return rows.find((row) => row.paragraph_id === selectedParagraph.id) || null;
+  })();
   const selectedSecondarySignals = Array.isArray(selectedParagraph?.signals)
     ? selectedParagraph.signals.filter((signal) => signal && signal.key !== selectedParagraph.primarySignal?.key)
     : [];
@@ -2229,6 +2235,7 @@ export default function Report() {
             selectedWhyFlagged={selectedWhyFlagged}
             selectedRecommendation={selectedRecommendation}
             selectedRewriteHint={selectedRewriteHint}
+            selectedCriticalThinking={selectedCriticalThinking}
             showSubmittedEditEntry={showSubmittedEditEntry}
             onSelectParagraph={lockAndScrollParagraph}
             onPreviewParagraph={previewParagraph}

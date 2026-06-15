@@ -1932,6 +1932,9 @@ button.paragraph-severity-seg {
 .issue-card-summary { font-size: .9rem; color: #475569; line-height: 1.45; margin: 0 0 .45rem; }
 .issue-action { border: 1px solid #e2e8f0; border-left: 3px solid var(--green-700, #0f766e); border-radius: 6px; padding: .45rem .7rem; margin-bottom: .4rem; background: #f8fafc; }
 .issue-action-label { display: block; font-size: .66rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--green-700, #0f766e); margin-bottom: .25rem; }
+/* Critical-thinking note: violet accent to read as a distinct lens from the teal scan guidance. */
+.issue-action-thinking { border-left-color: #7c3aed; }
+.issue-action-thinking .issue-action-label { color: #7c3aed; }
 .issue-action p, .issue-action ul { margin: 0; font-size: .88rem; color: #334155; line-height: 1.55; }
 .issue-action ul { padding-left: 1.1rem; }
 .issue-more-toggle { appearance: none; border: none; background: none; font: inherit; font-weight: 700; font-size: .82rem; color: var(--green-700, #0f766e); padding: .2rem 0; cursor: pointer; }

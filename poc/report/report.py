@@ -26,7 +26,7 @@ from detect.rewrite_targets import build_problem_inventory, build_rewrite_target
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text, estimate_external_detector_likelihood, estimate_external_detector_segment_fraction
 from detect.external_grouped_scoring import estimate_external_grouped_score
 from detect.grounding_diagnosis import diagnose_grounding_gap
-from detect.critical_thinking import score_critical_thinking
+from detect.critical_thinking import score_critical_thinking, score_critical_thinking_per_paragraph
 from detect.transformation import (
     TRANSFORMATION_SIGNAL_METADATA,
     classify_transformation_from_scan,
@@ -4145,6 +4145,36 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         # byte-identical to before this display fix.
         display_segments = _document_segments(complete=True)
         display_paragraph_rows = _paragraph_map(display_segments)
+
+        # Per-paragraph Critical Thinking tags (deterministic, additive). Map each
+        # paragraph's flagged findings to its weakest lead-eligible control dimension
+        # so the report UI (and, later, the rewrite) can act on the specific thinking
+        # gap. Mutates the additive critical_thinking_control object; never gates
+        # anything. Fail-open: a failure here must not break report serialization.
+        try:
+            _sid_to_pid = {
+                str(seg.get("sentence_id")): str(seg.get("paragraph_id") or "")
+                for seg in segments if seg.get("paragraph_id")
+            }
+            _ct_findings_by_paragraph: Dict[str, list] = {}
+            for _sid, _flist in findings_by_sentence.items():
+                _pid = _sid_to_pid.get(str(_sid))
+                if not _pid:
+                    continue
+                for _f in _flist:
+                    _ct_findings_by_paragraph.setdefault(_pid, []).append({
+                        # Finding.title carries the precise detector finding_type
+                        # (report.py sets title=f.finding_type); signal_category is
+                        # the coarse fallback.
+                        "finding_type": getattr(_f, "title", "") or "",
+                        "signal_category": getattr(_f, "signal_category", "") or "",
+                        "score": _finding_score(_f),
+                    })
+            _ctc = (report.ai_risk_badge or {}).get("critical_thinking_control")
+            if isinstance(_ctc, dict):
+                _ctc["paragraphs"] = score_critical_thinking_per_paragraph(_ct_findings_by_paragraph)
+        except Exception:
+            pass
         authorship_window_profile = build_authorship_window_profile(
             source_text=report.original_text or "",
             segments=segments,
