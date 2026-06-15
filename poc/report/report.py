@@ -1783,6 +1783,11 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             paragraph_by_id.setdefault(pid, []).append(s)
 
     def _content_terms(text: str, limit: int = 12) -> list:
+        # Closed-class function-word stoplist only (NO-HARDCODE): the overfit content-word tail
+        # (another/complex/issue/layer/memory/process/working/elements/handled…) and the
+        # education-role allowlist (learner/student/teacher/educator) were removed -- both were
+        # domain/essay-specific content. Key-term anchors are now extracted structurally:
+        # lowercase, non-stopword, sufficiently long tokens.
         stopwords = {
             "about", "after", "again", "also", "being", "because", "before",
             "between", "could", "does", "every", "from", "have", "into",
@@ -1790,18 +1795,13 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "should", "simply", "some", "than", "that", "their", "them",
             "there", "these", "they", "this", "those", "time", "when",
             "where", "while", "with", "without", "would",
-            "another", "complex", "especially", "explain", "gives", "issue",
-            "layer", "limits", "memory", "multiple", "problem", "process",
-            "working", "information", "elements", "handled", "must",
         }
-        role_terms = {"learner", "learners", "student", "students", "teacher", "teachers", "educator", "educators"}
         text = _re.sub(r"\([^)]*\d{4}[^)]*\)", " ", text or "")
         terms = []
         for word in _re.findall(r"\b[A-Za-z][A-Za-z-]{3,}\b", text):
             lower = word.lower()
-            if word.isupper() or (word[0].isupper() and lower not in role_terms):
+            if word.isupper() or word[0].isupper():   # skip acronyms + proper nouns (structural)
                 continue
-            word = lower if lower in role_terms else word
             if lower not in stopwords and lower not in {t.lower() for t in terms}:
                 terms.append(word)
             if len(terms) >= limit:
