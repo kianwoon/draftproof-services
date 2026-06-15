@@ -73,6 +73,22 @@ def extract_paragraph_diagnoses(report: dict[str, Any] | None) -> dict[str, dict
             diagnoses[paragraph_id] = entry
         entry["critical_thinking_action"] = tag.get("action")
         entry["critical_thinking_dimension"] = tag.get("dimension")
+
+    # Critical Thinking reflective questions matched to their anchored paragraph -- a sharp,
+    # specific target the writer should visibly DEMONSTRATE addressing (showcase). Additive;
+    # only the few anchored paragraphs get questions.
+    for paragraph_id, questions in _paragraph_questions(report).items():
+        entry = diagnoses.get(paragraph_id)
+        if entry is None:
+            entry = {
+                "main_issue": None,
+                "why_flagged": None,
+                "recommendation": None,
+                "rewrite_hint": None,
+                "predictable_phrases": phrases_by_paragraph.get(paragraph_id, []),
+            }
+            diagnoses[paragraph_id] = entry
+        entry["critical_thinking_questions"] = questions
     return diagnoses
 
 
@@ -91,6 +107,60 @@ def _paragraph_critical_thinking(report: dict[str, Any]) -> dict[str, dict[str, 
             action = str(row.get("action") or "").strip()
             if paragraph_id and action:
                 out[paragraph_id] = {"action": action, "dimension": row.get("dimension")}
+    return out
+
+
+def _paragraph_questions(
+    report: dict[str, Any], *, per_paragraph_limit: int = 2
+) -> dict[str, list[str]]:
+    """Match each Critical Thinking reflective question to the paragraph its ``anchor_quote``
+    came from, keyed by paragraph_id. The questions are anchored to verbatim spans of
+    ``scan_intelligence.document.paragraphs`` (their source), so a normalised substring match
+    is reliable. A question whose quote matches no paragraph is skipped (never attach an
+    unanchored question -- precision-first)."""
+    badge = report.get("ai_risk_badge") if isinstance(report, dict) else None
+    ctc = badge.get("critical_thinking_control") if isinstance(badge, dict) else None
+    questions = ctc.get("questions") if isinstance(ctc, dict) else None
+    if not isinstance(questions, list) or not questions:
+        return {}
+
+    def _norm(value: Any) -> str:
+        return " ".join(str(value or "").split()).casefold()
+
+    # paragraph_id -> normalised text. Prefer document.paragraphs (full paragraph text, the
+    # questions' source); fall back to grouping highlight_segments text per paragraph.
+    para_text: dict[str, str] = {}
+    intel = report.get("scan_intelligence")
+    document = intel.get("document") if isinstance(intel, dict) else None
+    rows = document.get("paragraphs") if isinstance(document, dict) else None
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict):
+                pid = str(row.get("paragraph_id") or "").strip()
+                txt = _norm(row.get("text"))
+                if pid and txt:
+                    para_text[pid] = txt
+    if not para_text:
+        for segment in report.get("highlight_segments") or []:
+            if isinstance(segment, dict):
+                pid = str(segment.get("paragraph_id") or "").strip()
+                if pid:
+                    para_text[pid] = (para_text.get(pid, "") + " " + _norm(segment.get("text"))).strip()
+
+    out: dict[str, list[str]] = {}
+    for q in questions:
+        if not isinstance(q, dict):
+            continue
+        question = str(q.get("question") or "").strip()
+        quote = _norm(q.get("anchor_quote"))
+        if not question or not quote:
+            continue
+        paragraph_id = next((pid for pid, text in para_text.items() if quote in text), None)
+        if not paragraph_id:
+            continue
+        bucket = out.setdefault(paragraph_id, [])
+        if question not in bucket and len(bucket) < per_paragraph_limit:
+            bucket.append(question)
     return out
 
 

@@ -400,6 +400,20 @@ def _prompt(
             "visibly do it -- as a reviewable showcase the author can adapt, never as a fabricated "
             "fact. This reinforces (does not replace) the grounding instructions above."
         )
+    # Critical Thinking reflective question(s): the sharp, anchored target for THIS paragraph
+    # (the specific form of the focus above). The writer should visibly demonstrate addressing it.
+    critical_thinking_questions = (diagnosis or {}).get("critical_thinking_questions")
+    if critical_thinking_questions:
+        payload["critical_thinking_questions"] = list(critical_thinking_questions)
+        # allow-hardcode: model coaching guidance (a prompt), not a detect/scoring word-list.
+        payload["instructions"].append(
+            "Reflective question(s) the scan raised about THIS paragraph: "
+            + " | ".join(str(q) for q in critical_thinking_questions)
+            + " Make the rewrite visibly DEMONSTRATE addressing them -- add the comparison, "
+            "specific example, or decision they point to as an ILLUSTRATIVE showcase the author "
+            "will replace with their own (list each added specific in author_review_items). Do "
+            "NOT present invented facts, names, or statistics as real."
+        )
     return "Return JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 

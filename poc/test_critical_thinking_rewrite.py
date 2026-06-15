@@ -76,3 +76,53 @@ def test_context_roundtrip_carries_action():
         assert paragraph_diagnosis("p002")["critical_thinking_action"].startswith("anchor claims")
     # context resets cleanly
     assert paragraph_diagnosis("p002") is None
+
+
+# ── Reflective questions as per-paragraph writer guidance ──────────────────────
+
+def _report_with_questions():
+    rep = _report()
+    rep["scan_intelligence"] = {"document": {"paragraphs": [
+        {"paragraph_id": "p001", "text": "AI can improve learning by providing personalised support to students."},
+        {"paragraph_id": "p002", "text": "There are many benefits and challenges to using AI in school."},
+    ]}}
+    rep["ai_risk_badge"]["critical_thinking_control"]["questions"] = [
+        {"dimension": "evidence_grounding", "anchor_quote": "personalised support",
+         "question": "When did personalised support actually help a specific student?"},
+        {"dimension": "specific_context", "anchor_quote": "benefits and challenges",
+         "question": "Name one concrete benefit and one concrete risk."},
+        {"dimension": "specific_context", "anchor_quote": "a fabricated phrase never in the draft",
+         "question": "ghost question"},  # unanchored -> must be dropped
+    ]
+    return rep
+
+
+def test_extract_matches_questions_to_anchored_paragraph():
+    d = extract_paragraph_diagnoses(_report_with_questions())
+    assert d["p001"]["critical_thinking_questions"] == ["When did personalised support actually help a specific student?"]
+    assert d["p002"]["critical_thinking_questions"] == ["Name one concrete benefit and one concrete risk."]
+    # the unanchored question (quote in no paragraph) is dropped everywhere
+    assert all("ghost question" not in (d[p].get("critical_thinking_questions") or []) for p in d)
+
+
+def test_prompt_includes_critical_thinking_questions():
+    diagnosis = {"critical_thinking_questions": ["Name one concrete benefit and one concrete risk."],
+                 "predictable_phrases": []}
+    out = _prompt("There are many benefits and challenges.", diagnosis, [])
+    assert "Reflective question" in out
+    assert "Name one concrete benefit" in out
+    assert "critical_thinking_questions" in out
+
+
+def test_prompt_omits_questions_when_absent():
+    out = _prompt("Some paragraph text here.", {"predictable_phrases": []}, [])
+    assert "Reflective question" not in out
+    assert "critical_thinking_questions" not in out
+
+
+def test_prompt_questions_present_in_diversified_lane():
+    diagnosis = {"critical_thinking_questions": ["What is the strongest opposing view, and why reject it?"],
+                 "predictable_phrases": []}
+    out = _prompt("Students should use AI responsibly.", diagnosis, [], lane="diversified")
+    assert "Reflective question" in out
+    assert "strongest opposing view" in out
