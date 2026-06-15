@@ -125,6 +125,20 @@ def test_prompt_omits_questions_when_absent():
     assert "critical_thinking_questions" not in out
 
 
+def test_system_prompt_grounds_by_basis_not_first_person_default():
+    from rewrite_v6.direct_rewrite import _SYSTEM
+    # the unconditional first-person mandate is GONE
+    assert "Ground EVERY generic claim in the author's FIRST-PERSON" not in _SYSTEM
+    assert "NEVER trade it away" not in _SYSTEM
+    # basis-driven mode choice present
+    assert "CHOOSE THE GROUNDING MODE THAT FITS" in _SYSTEM
+    assert "HEADLINES" in _SYSTEM
+    assert "attribute and qualify the source" in _SYSTEM
+    # first-person kept as ONE mode, not the default; fabrication explicitly forbidden for second-hand
+    assert "First-person is ONE strong mode" in _SYSTEM
+    assert "invents experience they never had" in _SYSTEM
+
+
 def test_prompt_questions_present_in_diversified_lane():
     diagnosis = {"critical_thinking_questions": ["What is the strongest opposing view, and why reject it?"],
                  "predictable_phrases": []}
