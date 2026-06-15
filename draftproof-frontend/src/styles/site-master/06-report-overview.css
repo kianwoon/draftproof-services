@@ -580,6 +580,177 @@
   line-height: 1.45;
 }
 
+/* Critical Thinking Control — mirrors the .fix-first-card / .score-profile-section
+   card design so the new section matches the rest of the report. */
+.critical-thinking-section {
+  margin: 0 0 1rem;
+  border: 1px solid #d8e1ea;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, .06);
+  overflow: hidden;
+}
+
+.critical-thinking-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.15rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.critical-thinking-kicker {
+  display: block;
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.critical-thinking-head h2 {
+  margin: .3rem 0 0;
+  color: var(--navy-950);
+  font-size: 1.2rem;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.critical-thinking-head p {
+  margin: .4rem 0 0;
+  max-width: 68ch;
+  color: #475569;
+  font-size: .92rem;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.critical-thinking-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex: 0 0 auto;
+  min-width: 96px;
+}
+
+.critical-thinking-stat strong {
+  font-size: 1.55rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.critical-thinking-stat-max {
+  font-size: .85rem;
+  font-weight: 800;
+  opacity: .6;
+}
+
+.critical-thinking-stat span {
+  margin-top: .35rem;
+  color: #64748b;
+  font-size: .68rem;
+  font-weight: 800;
+  text-align: right;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.critical-thinking-body {
+  display: grid;
+  gap: 1.15rem;
+  padding: 1.15rem;
+}
+
+.critical-thinking-bars {
+  display: grid;
+  gap: .7rem;
+}
+
+.critical-thinking-bar-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: .3rem;
+  color: #334155;
+  font-size: .82rem;
+  font-weight: 700;
+}
+
+.critical-thinking-bar-label .is-lead {
+  color: var(--navy-950);
+  font-weight: 850;
+}
+
+.critical-thinking-bar-track {
+  height: 9px;
+  border-radius: 5px;
+  background: #eef2f6;
+  overflow: hidden;
+}
+
+.critical-thinking-bar-fill {
+  height: 100%;
+  border-radius: 5px;
+}
+
+.critical-thinking-subhead {
+  display: block;
+  margin-bottom: .5rem;
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 850;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.critical-thinking-flags {
+  padding-top: 1rem;
+  border-top: 1px solid #eef2f6;
+}
+
+.critical-thinking-flag-row {
+  display: flex;
+  justify-content: space-between;
+  padding: .15rem 0;
+  color: #334155;
+  font-size: .85rem;
+  font-weight: 700;
+}
+
+.critical-thinking-highlights {
+  display: grid;
+  gap: .7rem;
+  padding-top: 1rem;
+  border-top: 1px solid #eef2f6;
+}
+
+.critical-thinking-highlight {
+  padding: .1rem 0 .1rem .7rem;
+  border-left: 3px solid #d97706;
+}
+
+.critical-thinking-highlight-label {
+  color: #b45309;
+  font-size: .68rem;
+  font-weight: 850;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.critical-thinking-highlight-quote {
+  margin: .2rem 0;
+  color: #1f2937;
+  font-style: italic;
+  font-size: .9rem;
+}
+
+.critical-thinking-highlight-fix {
+  margin: 0;
+  color: #475569;
+  font-size: .85rem;
+  font-weight: 650;
+}
+
 .repair-summary-action {
   position: relative;
   overflow: hidden;

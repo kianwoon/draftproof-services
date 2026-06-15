@@ -46,6 +46,7 @@ export const report = {
   "criticalThinking": {
     "title": "批判性思维主导度",
     "leadPrefix": "可改进",
+    "strongHeading": "学生主导充分",
     "scoreLabel": "主导度评分",
     "tentative": "文本较短 — 诊断仅供参考",
     "bands": {

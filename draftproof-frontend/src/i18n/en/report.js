@@ -47,6 +47,7 @@ export const report = {
   "criticalThinking": {
     "title": "Critical Thinking Control",
     "leadPrefix": "Work on",
+    "strongHeading": "Strong student control",
     "scoreLabel": "Control score",
     "tentative": "limited text — diagnosis tentative",
     "bands": {
