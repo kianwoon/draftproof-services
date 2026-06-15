@@ -168,7 +168,7 @@ def _request_options(gateway: Any, target: dict[str, Any]) -> list[str]:
         "rules": [
             "Return 2-4 alternatives for the same single sentence.",
             "Change the clause route around predictable_word_runs; do not just swap one synonym.",
-            "Keep all facts, names, numbers, classroom/source details, and stance.",
+            "Keep all facts, names, numbers, source details, and stance.",
             "Do not split the sentence or make it choppy.",
             "Do not add typos, grammar errors, slang, or fake human mistakes.",
         ],

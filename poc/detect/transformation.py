@@ -126,7 +126,7 @@ TRANSFORMATION_SIGNAL_METADATA: dict[str, dict[str, str]] = {
         "label": "Expansion pattern",
         "description": "Risk that short notes or an outline were expanded into longer prose with limited new evidence.",
         "family": "expansion",
-        "higher_score_means": "The document shows more signs of outline-to-essay expansion.",
+        "higher_score_means": "The document shows more signs of outline-to-prose expansion.",
     },
     "section_style_variance": {
         "label": "Patchwork variance",

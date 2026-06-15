@@ -603,25 +603,15 @@ def _first_main_verb(sentence: str) -> str:
 
 
 def _dropped_content_terms(find: str, replace: str) -> list[str]:
+    # NO-HARDCODE: the baked `droppable` set (generic verbs + academic/business abstract nouns like
+    # situation/process/goal/system/model/issue) was removed. `source_terms` already strips
+    # function-word stop-words and requires >=4 chars; we additionally require >=5 chars so very
+    # short generic tokens are not treated as content loss. No content/domain word list.
     replace_key = str(replace or "").casefold()
-    droppable = {
-        "situation", "process", "goal", "system", "model", "issue",
-        "continue", "continues", "continued", "make", "makes", "made", "raise", "raises", "raised",
-        "include", "includes", "included", "incorporate", "incorporates", "complete", "completes",
-        "demonstrate", "demonstrates", "demonstrated", "prove", "proves", "proved",
-        "deliver", "delivers", "delivered", "help", "helps", "helped", "foster", "fosters",
-        "promote", "promotes", "practice", "practices", "practiced", "practise", "practises",
-        "provide", "provides", "provided", "offer", "offers", "offered", "share", "shares",
-        "shared", "generate", "generates", "generated", "retrieve", "retrieves", "retrieved",
-        "connect", "connects", "connected", "receive", "receives", "received", "improve",
-        "improves", "improved",
-        "further", "absence",
-        "mostly",
-    }
     dropped: list[str] = []
     for term in source_terms(find, limit=48):
         key = term.casefold()
-        if key in droppable or len(key) < 5:
+        if len(key) < 5:
             continue
         if key not in replace_key:
             dropped.append(term)

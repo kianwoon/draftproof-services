@@ -91,28 +91,6 @@ def test_writer_brief_topk_pressure_kill_switch(monkeypatch):
     assert "topk_pressure" not in payload
 
 
-def test_v6_writer_quality_blocks_external_narrator_reporting_chains():
-    source = (
-        "Students are surrounded by information. They learn from teachers, YouTube, TikTok, online courses, "
-        "AI tools, search engines, social media, and peer communities."
-    )
-    candidate = (
-        "The writer observes that students are surrounded by information. "
-        "He notes that they learn from teachers as well as from YouTube and TikTok. "
-        "He adds that online courses and AI tools broaden their options."
-    )
-    paragraph = scan_text(source).paragraphs[0]
-    variants = [
-        Variant(id="source_preserved", text=source, source="source_preserved"),
-        Variant(id="v1", text=candidate, source="llm"),
-    ]
-
-    assert "external_narrator_reporting_chain" in candidate_integrity_blockers(candidate)
-    diagnostics = selection_diagnostics(variants, paragraph)[0]
-    assert "external_narrator_reporting_chain" in diagnostics["blockers"]
-    assert choose_variant(variants, paragraph).source == "source_preserved"
-
-
 def test_v6_integrity_guard_allows_participle_adjective_learning_phrase():
     text = "AI tools can support personalised learning and reduce barriers for students who need extra help."
 
@@ -219,16 +197,6 @@ def test_v6_writer_quality_blocks_multisentence_not_only_inversion():
     assert row["accepted_by_selector"] is False
 
 
-def test_v6_writer_quality_blocks_narrator_route_with_varied_reporting_verbs():
-    candidate = (
-        "The writer sees that students are immersed in a flood of information while still relying on teachers. "
-        "He reads that their learning now includes YouTube, TikTok, online courses and AI tools. "
-        "Finally, he decides that identifying accurate and useful content matters most."
-    )
-
-    assert "external_narrator_reporting_chain" in candidate_integrity_blockers(candidate)
-
-
 def test_v6_writer_quality_blocks_short_fragment_chain():
     text = "Students may learn how to pass. But not always how to think deeply. Solve problems. Or connect ideas across subjects."
 
@@ -284,7 +252,10 @@ def test_v6_writer_quality_blocks_since_subordinate_fragment():
     assert has_fragment_or_trace_sentences(text)
 
 
-def test_v6_writer_quality_blocks_malformed_nonhuman_activity_predicates():
+def test_v6_writer_quality_rejects_telegraphic_predicate_run():
+    # The nonhuman-actor content-word guard was REMOVED (NO-HARDCODE -- it keyed on a baked
+    # tools/apps/platforms noun list). This malformed candidate is still rejected by the STRUCTURAL
+    # malformed_telegraphic_predicate guard, so the source is preserved over broken prose.
     source = (
         "Students learn from teachers, YouTube, TikTok, online courses, AI tools, search engines, social media, and peer communities. "
         "This has created a new kind of learning environment."
@@ -302,10 +273,8 @@ def test_v6_writer_quality_blocks_malformed_nonhuman_activity_predicates():
 
     blockers = candidate_integrity_blockers(candidate)
 
-    assert "malformed_nonhuman_activity_predicate" in blockers
     assert "malformed_telegraphic_predicate" in blockers
     diagnostics = selection_diagnostics(variants, paragraph)[0]
-    assert "malformed_nonhuman_activity_predicate" in diagnostics["blockers"]
     assert "malformed_telegraphic_predicate" in diagnostics["blockers"]
     assert choose_variant(variants, paragraph).source == "source_preserved"
 
@@ -373,18 +342,6 @@ def test_v6_writer_quality_blocks_repeated_subject_and_unintroduced_reliance():
     assert "vague_unintroduced_reliance" in blockers
 
 
-def test_v6_writer_quality_blocks_tool_actor_semantic_role_defects():
-    text = (
-        "AI tools and students belong together as the tools provide help. "
-        "The same tools improve writing and practise skills."
-    )
-
-    blockers = candidate_integrity_blockers(text)
-
-    assert "malformed_tool_actor_relation" in blockers
-    assert "malformed_tool_skill_predicate" in blockers
-
-
 def test_v6_writer_quality_blocks_modal_do_negation():
     text = "Students may do not always acquire the capacity to think deeply."
 
@@ -395,12 +352,6 @@ def test_v6_writer_quality_blocks_dangling_terminal_and_tail():
     text = "The real challenge is knowing what is accurate, useful, ethical, and worth trusting and AI tools."
 
     assert "dangling_terminal_and_tail" in candidate_integrity_blockers(text)
-
-
-def test_v6_writer_quality_allows_students_as_practise_skills_actor():
-    text = "These tools also improve writing and allow students to practise skills."
-
-    assert "malformed_tool_skill_predicate" not in candidate_integrity_blockers(text)
 
 
 def test_v6_writer_quality_blocks_dangling_additive_tail():

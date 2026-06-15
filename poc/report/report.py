@@ -4463,10 +4463,14 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         specificity_guidance.append(
             "concrete actions implied by existing terms: " + ", ".join(domain_terms[:6])
         )
+    # NO-HARDCODE: these describe the SHAPE of allowed concrete additions only -- never a
+    # subject/domain. The domain content comes from the document's own `domain_terms` above, not
+    # from baked examples. (Previously injected "teacher/student interaction details", which biased
+    # every rewrite -- business, legal, science -- toward an education frame.)
     specificity_guidance.extend([
-        "step-by-step process descriptions",
-        "teacher/student interaction details",
-        "technique-specific vocabulary already in text",
+        "step-by-step description of a process already implied by the text",
+        "concrete interactions, actors, or scenarios drawn from the document's own context",
+        "specific terms and vocabulary already present in the text",
     ])
 
     result["rewrite_constraints"] = {

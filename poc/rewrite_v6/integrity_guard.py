@@ -65,14 +65,10 @@ def candidate_integrity_blockers(text: str) -> list[str]:
         blockers.append("stranded_thereby_citation")
     if _planner_language_leakage(visible):
         blockers.append("planner_language_leakage")
-    if _external_narrator_reporting_chain(visible):
-        blockers.append("external_narrator_reporting_chain")
     if _malformed_serial_verb_chain(visible):
         blockers.append("malformed_serial_verb_chain")
     if _malformed_nominal_stack(visible):
         blockers.append("malformed_nominal_stack")
-    if _malformed_nonhuman_activity_predicate(visible):
-        blockers.append("malformed_nonhuman_activity_predicate")
     if _malformed_telegraphic_predicate(visible):
         blockers.append("malformed_telegraphic_predicate")
     if _unnatural_completion_phrase(visible):
@@ -101,10 +97,6 @@ def candidate_integrity_blockers(text: str) -> list[str]:
         blockers.append("capitalized_common_noun_mid_sentence")
     if _vague_unintroduced_reliance(visible):
         blockers.append("vague_unintroduced_reliance")
-    if _malformed_tool_actor_relation(visible):
-        blockers.append("malformed_tool_actor_relation")
-    if _malformed_tool_skill_predicate(visible):
-        blockers.append("malformed_tool_skill_predicate")
     if _demonstrative_agreement_error(visible):
         blockers.append("demonstrative_agreement_error")
     if _semantic_anchor_corruption(visible):
@@ -450,51 +442,6 @@ def _vague_danger_opener(text: str) -> bool:
     )
 
 
-def _external_narrator_reporting_chain(text: str) -> bool:
-    report_verbs = (
-        "adds",
-        "compares",
-        "concludes",
-        "decides",
-        "emphasizes",
-        "explains",
-        "finds",
-        "mentions",
-        "notes",
-        "observes",
-        "points out",
-        "records",
-        "reads",
-        "sees",
-        "states",
-        "struggles",
-        "stresses",
-    )
-    verb_pattern = "|".join(re.escape(verb) for verb in report_verbs)
-    reporting_sentences = re.findall(
-        rf"(?:^|[.!?]\s+|,\s*(?:and\s+)?(?:finally|then|therefore),?\s*)"
-        rf"(?:the\s+writer|the\s+author|he|she|they)\s+(?:{verb_pattern})\s+that\b",
-        text,
-        flags=re.I,
-    )
-    if len(reporting_sentences) >= 2:
-        return True
-    return bool(
-        re.search(
-            rf"(?:^|[.!?]\s+|,\s*(?:and\s+)?(?:finally|then|therefore),?\s*)"
-            rf"(?:the\s+writer|the\s+author)\s+(?:{verb_pattern})\s+that\b",
-            text,
-            flags=re.I,
-        )
-        and re.search(
-            rf"(?:^|[.!?]\s+|,\s*(?:and\s+)?(?:finally|then|therefore),?\s*)"
-            rf"(?:he|she|they)\s+(?:{verb_pattern})\s+that\b",
-            text,
-            flags=re.I,
-        )
-    )
-
-
 def _malformed_serial_verb_chain(text: str) -> bool:
     for sentence in _sentences(text):
         if _has_bare_verb_run(sentence):
@@ -514,17 +461,6 @@ def _malformed_nominal_stack(text: str) -> bool:
             else:
                 run = 0
     return False
-
-
-def _malformed_nonhuman_activity_predicate(text: str) -> bool:
-    nonhuman_learning_actor = (
-        r"(?:tools?|apps?|courses?|platforms?|resources?|engines?|"
-        r"media|communities|websites?|videos?|tutorials?)"
-    )
-    return bool(
-        re.search(rf"\b{nonhuman_learning_actor}(?:\s+(?:and|or)\s+{nonhuman_learning_actor})?\s+are\s+learning\b", text, flags=re.I)
-        or re.search(rf"\b[A-Z][^.!?]{{0,80}}\b{nonhuman_learning_actor}[^.!?]{{0,80}}\s+are\s+learning\b", text, flags=re.I)
-    )
 
 
 def _malformed_telegraphic_predicate(text: str) -> bool:
@@ -684,35 +620,6 @@ def _vague_unintroduced_reliance(text: str) -> bool:
         return False
     before = lowered[:match.start()]
     return not re.search(r"\b(?:rely|relies|reliance|dependent|dependence|depending)\b", before)
-
-
-def _malformed_tool_actor_relation(text: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(?:tools?|systems?|platforms?|software|technology|applications?|programs?|services?)\s+"
-            r"and\s+(?:people|teams?|users?|[a-z][a-z'’-]*(?:ers|ents|ants|ists|ors))\s+belong\s+together\b",
-            text,
-            flags=re.I,
-        )
-    )
-
-
-def _malformed_tool_skill_predicate(text: str) -> bool:
-    tool_subject = r"(?:the\s+same\s+)?(?:tools?|systems?|platforms?|software|technology|applications?|programs?|services?)"
-    for sentence in _sentences(text):
-        if re.search(
-            rf"\b{tool_subject}\s+(?:also\s+)?(?:improve|improves)\s+[a-z][a-z'’-]+\s+and\s+[a-z][a-z'’-]*\s+skills\b",
-            sentence,
-            flags=re.I,
-        ):
-            return True
-        if re.search(
-            rf"\b{tool_subject}\s+(?:also\s+)?(?:improve|improves)[^.!?]{{0,50}}\band\s+[a-z][a-z'’-]*\s+skills\b",
-            sentence,
-            flags=re.I,
-        ) and not re.search(r"\b(?:allow|let|help)\s+(?:people|teams?|users?|[a-z][a-z'’-]*(?:ers|ents|ants|ists|ors))\s+to?\s*[a-z][a-z'’-]*\s+skills\b", sentence, flags=re.I):
-            return True
-    return False
 
 
 def _has_bare_verb_run(sentence: str) -> bool:

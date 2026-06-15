@@ -62,10 +62,10 @@ _PLAYBOOK: list[dict[str, Any]] = [
      "before": "A pile of abstract nouns ('X concerns emerge').",
      "better": "Convert to actor-and-action: who does what, and to whom.",
      "tags": ["abstract_noun_stack"], "pattern": None},
-    {"id": "generic_benefit_risk", "rule": "Replace 'opportunities and risks' with the concrete trade-off.",
-     "before": "A balanced 'X brings benefits and risks' statement.",
-     "better": "State the concrete trade-off for this specific subject -- what is gained, what is lost.",
-     "tags": [], "pattern": r"\b(opportunities and risks|benefits and (risks|challenges|drawbacks)|both .{0,30}\band\b)\b"},
+    # NO-HARDCODE: removed the `generic_benefit_risk` entry -- its trigger keyed on baked benefit/
+    # risk domain phrases ("opportunities and risks", "benefits and challenges/drawbacks"), which
+    # routed any benefit/risk-flavoured paragraph to a pros/cons rewrite shape. The STRUCTURAL
+    # balanced-pair shape it also matched ("both X and Y") is already covered by `over_balanced`.
     {"id": "predictable_connector", "rule": "Avoid overused transitions; use natural continuation.",
      "before": "An over-used transition ('Furthermore', 'Moreover', 'In conclusion').",
      "better": "State the next concrete point directly, without the connector.",

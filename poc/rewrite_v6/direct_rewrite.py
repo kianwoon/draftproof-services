@@ -218,17 +218,19 @@ _SYSTEM = (
     "author sees your changes in a before/after diff, so adding new content to fix the problem is "
     "expected and encouraged -- that is the mitigation. Your goal: lower AI-detection risk by making "
     "the writing specific, concrete, and human -- in the author's PLAIN, everyday voice, NOT an "
-    "elevated polished-essay register (avoid sweeping moral generalisations, clichéd metaphors, and a "
+    "elevated, over-polished, ornamented register (avoid sweeping moral generalisations, clichéd metaphors, and a "
     "smooth balanced cadence) -- while staying in the same subject and tone as the source. Where the "
     "paragraph is generic or lacks a concrete anchor, ADD grounding AS THE "
     "AUTHOR WOULD -- you are the author's proxy. Ground EVERY generic claim in the author's "
     "FIRST-PERSON lived experience -- this is the single strongest way to cut the generic-assertion "
     "signal, so keep it on every grounded claim and NEVER trade it away for a bare figure. Then put "
-    "the CONCRETE particular INSIDE that first-person statement: 'In my classroom, I have watched "
-    "about a third of students ...', 'When I grade essays, I keep finding ...'. The first-person "
-    "frame is the lever; the representative figure / specific scenario / what-exactly-happened rides "
-    "INSIDE it to make it vivid. You need BOTH -- a bare frame ('in my classroom') with no concrete "
-    "particular is weak, and a bare figure with no first-person frame loses the lever. Only where "
+    "the CONCRETE particular INSIDE that first-person statement -- drawn from the AUTHOR'S OWN "
+    "subject and context, NEVER a baked-in topic: 'In my own <setting>, I have repeatedly seen "
+    "<the specific thing happen> ...', 'When <a specific situation in the author's domain> arises, "
+    "I keep finding <the concrete particular> ...'. The first-person frame is the lever; the "
+    "representative figure / specific scenario / what-exactly-happened rides INSIDE it to make it "
+    "vivid. You need BOTH -- a bare frame ('in my <setting>') with no concrete particular is weak, "
+    "and a bare figure with no first-person frame loses the lever. Only where "
     "first person genuinely does not fit the register, ground with a concrete example, a specific "
     "case, or a situational (when / after / if) clause instead. The illustrative specifics (hedged "
     "figures like 'about a third', example scenarios) show the shape of a real anchor; flag each in "
@@ -301,7 +303,8 @@ def _prompt(
             "framing as the primary vehicle: 'In my ..., I have seen ...', 'When I ..., I notice "
             "...'. First-person framing is the strongest generic-assertion reducer -- put it on "
             "EVERY grounded claim and never drop it. Then ride a CONCRETE particular INSIDE that "
-            "frame: 'In my classroom, I have watched about a third of students stumble when ...'. The "
+            "frame: 'In my own <setting>, I have repeatedly seen <the specific thing> happen when "
+            "...' -- drawn from the author's OWN subject, never a baked-in topic. The "
             "frame is the lever; the representative figure / specific scenario / what-exactly-happened "
             "makes it vivid -- you need BOTH (a bare frame is weak; a bare figure loses the lever). "
             "Only where first person truly does not fit, use a specific case ('in cases where ...'), "
@@ -319,7 +322,7 @@ def _prompt(
             "Cut hedging (may, might, can, could, should, often, generally) and generic filler.",
             # allow-hardcode: model coaching guidance (a prompt), not a detect/scoring word-list. The
             # example phrases are illustrations shown to the model, never matched against input.
-            "Write in PLAIN, direct, everyday voice -- not a polished-essay register. Avoid sweeping "
+            "Write in PLAIN, direct, everyday voice -- not an over-polished, ornamented register. Avoid sweeping "
             "moral generalisations ('we must', 'it is essential that', 'society needs to'), clichéd or "
             "figurative openers and metaphors, and an elevated, measured, balanced cadence. State each "
             "concrete point plainly and directly, the way the author would actually say it -- not as a "
@@ -357,8 +360,8 @@ def _prompt(
             "scale when relevant, and use scale_detail only as optional support inside another route.",
             "Do not copy route wording into the paragraph; use the route mode to decide the sentence "
             "shape.",
-            "Vary sentence length deliberately while keeping prose fluent and plain. Avoid polished "
-            "essay cadence, broad moral generalisations, and decorative phrasing.",
+            "Vary sentence length deliberately while keeping prose fluent and plain. Avoid an "
+            "over-polished, ornamented cadence, broad moral generalisations, and decorative phrasing.",
             "Preserve the author's actual argument, source facts, and register. Do not flip emphasis "
             "or drop existing ideas.",
             "Respect length_budget. Add a new sentence only when the claim cannot be grounded by "
@@ -435,8 +438,8 @@ def _has_fabricated_named_entities(candidate: str, source_text: str) -> bool:
     return False
 
 
-# First-person lived experience the proxy added to ground a generic claim (e.g. "in my classroom",
-# "when I began teaching", "I have seen ..."). This is the author-proxy acting AS THE AUTHOR -- a
+# First-person lived experience the proxy added to ground a generic claim (e.g. "in my own work",
+# "when I first handled this", "I have seen ..."). This is the author-proxy acting AS THE AUTHOR -- a
 # legitimate, encouraged grounding scaffold -- but it is the proxy's invention until the author
 # confirms it reflects their real experience, so it rides along as a review flag (annotate, never
 # reject).

@@ -3,7 +3,7 @@ showcase.
 
 Order in the pipeline: rewrite (writer) -> QC (this) -> final scan. The writer rewrites one
 paragraph per LLM call, blind to the others, so it can produce cross-paragraph monocultures
-(e.g. 7/8 paragraphs opening "In my classroom"). This reviewer reads the FULL document, is guided
+(e.g. 7/8 paragraphs opening with the same first-person frame). This reviewer reads the FULL document, is guided
 by the 25 writing-craft guidelines, and corrects substandard sentences. Deterministic detectors
 (residual_patterns) run as a safety net guaranteeing the cross-paragraph patterns are always caught.
 
@@ -45,7 +45,7 @@ WRITING_CRAFT_GUIDELINES: list[str] = [
     "14. Predictable paragraph arc: break the expected order.",
     "15. Generic benefit: attach the benefit to a user/action.",
     "16. Generic risk: attach the risk to a failure mode.",
-    "17. Weak evidence: use a concrete classroom/workflow example.",
+    "17. Weak evidence: ground it in a concrete example from the document's own context.",
     "18. Over-polished wording: use normal human phrasing.",
     "19. Same subject starts: rotate sentence openings.",
     "20. No ownership: add a position, not just information.",
