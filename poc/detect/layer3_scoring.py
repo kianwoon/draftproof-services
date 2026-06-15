@@ -648,23 +648,25 @@ def estimate_external_detector_likelihood(components: dict) -> dict:
 _TURNITIN_TOP10_THRESHOLD = 0.46
 _TURNITIN_REGISTER_THRESHOLD = 1.1
 _REGISTER_NOMINAL = re.compile(r"(tion|sion|ment|ance|ence|ity|ism)s?$", re.I)
-_REGISTER_CONNECTIVES = frozenset({
-    "furthermore", "thereby", "whilst", "hence", "thus", "moreover", "consequently",
-    "nevertheless", "whereas", "inasmuch", "therein", "herein", "notwithstanding",
-})
 _REGISTER_FIRST_PERSON = frozenset({"i", "my", "me", "i'm", "i've", "myself", "mine"})
 
 
 def register_score(text: str) -> float:
-    """Formal-academic register of a sentence (nominalisations + connectives + long words -
-    first-person voice). Higher = more 'generated-essay' sounding."""
+    """Formal-academic register of a sentence, from STRUCTURAL/morphological cues only:
+    nominalisation density (-tion/-ment/-ity… suffixes), mean word length, contraction rate
+    (informality), minus first-person voice. Higher = more 'generated-essay' sounding.
+
+    The curated formal-connective list (_REGISTER_CONNECTIVES: furthermore/whilst/hence…) was
+    removed (NO-HARDCODE -- a hand-picked stylistic subset, not a complete grammatical class).
+    Formality is now carried by nominalisation morphology + long words + low contraction rate.
+    """
     words = re.findall(r"[A-Za-z']+", (text or "").lower())
     n = max(1, len(words))
     nominal = sum(1 for t in words if _REGISTER_NOMINAL.search(t)) / n
-    conn = sum(1 for t in words if t in _REGISTER_CONNECTIVES) / n
     first_person = sum(1 for t in words if t in _REGISTER_FIRST_PERSON) / n
+    contraction = sum(1 for t in words if "'" in t) / n   # informal register marker
     mean_len = sum(len(t) for t in words) / n
-    return nominal * 4 + conn * 6 + max(0.0, mean_len - 4.3) * 0.5 - first_person * 5
+    return nominal * 7 + max(0.0, mean_len - 4.3) * 0.8 - first_person * 5 - contraction * 4
 
 
 def estimate_external_detector_segment_fraction(sentences) -> Optional[dict]:

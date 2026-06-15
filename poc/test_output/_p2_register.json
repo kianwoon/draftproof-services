@@ -1,0 +1,93 @@
+{
+  "signals": {
+    "formulaic_progression": {
+      "ai_mean": 0.0,
+      "human_mean": 0.0,
+      "gap": 0.0,
+      "auc": 0.5,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "balanced_generic_framing": {
+      "ai_mean": 0.0,
+      "human_mean": 0.0,
+      "gap": 0.0,
+      "auc": 0.5,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "repeated_starter": {
+      "ai_mean": 0.0,
+      "human_mean": 0.0,
+      "gap": 0.0,
+      "auc": 0.5,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "signpost_paragraph": {
+      "ai_mean": 0.0,
+      "human_mean": 0.0,
+      "gap": 0.0,
+      "auc": 0.5,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "balanced_hedging": {
+      "ai_mean": 0.0,
+      "human_mean": 0.0,
+      "gap": 0.0,
+      "auc": 0.5,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "formulaic_conclusion": {
+      "ai_mean": 0.0,
+      "human_mean": 0.0,
+      "gap": 0.0,
+      "auc": 0.5,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "generic_assertion": {
+      "ai_mean": 0.7882,
+      "human_mean": 0.6033,
+      "gap": 0.1849,
+      "auc": 0.698,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "lived_detail": {
+      "ai_mean": 0.4294,
+      "human_mean": 0.33,
+      "gap": 0.0994,
+      "auc": 0.6706,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "broad_claim": {
+      "ai_mean": 0.7618,
+      "human_mean": 0.7733,
+      "gap": -0.0116,
+      "auc": 0.4314,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "unsupported_claim": {
+      "ai_mean": 0.8176,
+      "human_mean": 0.7667,
+      "gap": 0.051,
+      "auc": 0.5431,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "register": {
+      "ai_mean": 1.4782,
+      "human_mean": 0.4159,
+      "gap": 1.0622,
+      "auc": 0.9922,
+      "n_ai": 17,
+      "n_human": 15
+    }
+  },
+  "n_cases": 32
+}
