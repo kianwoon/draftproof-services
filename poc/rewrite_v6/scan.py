@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from statistics import mean
 from typing import Any
-
-import os
 
 from .paragraph_normalizer import normalize_paragraph_blocks
 from .text import Paragraph, Sentence, split_paragraphs, split_sentences, word_count
