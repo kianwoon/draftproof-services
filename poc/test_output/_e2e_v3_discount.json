@@ -1,0 +1,247 @@
+{
+  "per_case": {
+    "ai_gptoss_00": {
+      "label": "ai",
+      "ai_likelihood": 37.49,
+      "external_proxy": 29.12,
+      "writing_quality": 56.96,
+      "tier": "medium"
+    },
+    "ai_gptoss_01": {
+      "label": "ai",
+      "ai_likelihood": 33.68,
+      "external_proxy": 25.91,
+      "writing_quality": 58.27,
+      "tier": "medium"
+    },
+    "ai_gptoss_02": {
+      "label": "ai",
+      "ai_likelihood": 33.78,
+      "external_proxy": 29.79,
+      "writing_quality": 56.73,
+      "tier": "medium"
+    },
+    "ai_gptoss_03": {
+      "label": "ai",
+      "ai_likelihood": 32.91,
+      "external_proxy": 20.32,
+      "writing_quality": 56.21,
+      "tier": "medium"
+    },
+    "ai_gptoss_04": {
+      "label": "ai",
+      "ai_likelihood": 37.0,
+      "external_proxy": 23.89,
+      "writing_quality": 61.82,
+      "tier": "medium"
+    },
+    "ai_gptoss_05": {
+      "label": "ai",
+      "ai_likelihood": 29.08,
+      "external_proxy": 20.98,
+      "writing_quality": 47.86,
+      "tier": "low"
+    },
+    "ai_gptoss_06": {
+      "label": "ai",
+      "ai_likelihood": 29.28,
+      "external_proxy": 19.31,
+      "writing_quality": 51.94,
+      "tier": "low"
+    },
+    "ai_gptoss_08": {
+      "label": "ai",
+      "ai_likelihood": 38.1,
+      "external_proxy": 30.71,
+      "writing_quality": 56.31,
+      "tier": "medium"
+    },
+    "ai_gptoss_09": {
+      "label": "ai",
+      "ai_likelihood": 32.63,
+      "external_proxy": 21.18,
+      "writing_quality": 56.41,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_00": {
+      "label": "ai",
+      "ai_likelihood": 37.2,
+      "external_proxy": 30.91,
+      "writing_quality": 65.25,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_01": {
+      "label": "ai",
+      "ai_likelihood": 68.65,
+      "external_proxy": 34.61,
+      "writing_quality": 55.17,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_02": {
+      "label": "ai",
+      "ai_likelihood": 39.04,
+      "external_proxy": 35.92,
+      "writing_quality": 67.95,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_03": {
+      "label": "ai",
+      "ai_likelihood": 68.47,
+      "external_proxy": 34.98,
+      "writing_quality": 54.89,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_04": {
+      "label": "ai",
+      "ai_likelihood": 66.1,
+      "external_proxy": 36.66,
+      "writing_quality": 58.73,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_05": {
+      "label": "ai",
+      "ai_likelihood": 39.17,
+      "external_proxy": 30.96,
+      "writing_quality": 58.57,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_06": {
+      "label": "ai",
+      "ai_likelihood": 39.45,
+      "external_proxy": 32.97,
+      "writing_quality": 63.12,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_07": {
+      "label": "ai",
+      "ai_likelihood": 37.5,
+      "external_proxy": 28.97,
+      "writing_quality": 56.71,
+      "tier": "medium"
+    },
+    "human_bacon_essays_00": {
+      "label": "human",
+      "ai_likelihood": 35.37,
+      "external_proxy": 24.31,
+      "writing_quality": 62.25,
+      "tier": "medium"
+    },
+    "human_bacon_essays_01": {
+      "label": "human",
+      "ai_likelihood": 31.84,
+      "external_proxy": 18.75,
+      "writing_quality": 53.75,
+      "tier": "low"
+    },
+    "human_bacon_essays_02": {
+      "label": "human",
+      "ai_likelihood": 28.34,
+      "external_proxy": 17.4,
+      "writing_quality": 52.22,
+      "tier": "low"
+    },
+    "human_emerson_essays_00": {
+      "label": "human",
+      "ai_likelihood": 43.07,
+      "external_proxy": 25.61,
+      "writing_quality": 51.56,
+      "tier": "medium"
+    },
+    "human_emerson_essays_01": {
+      "label": "human",
+      "ai_likelihood": 21.73,
+      "external_proxy": 24.32,
+      "writing_quality": 53.48,
+      "tier": "low"
+    },
+    "human_emerson_essays_02": {
+      "label": "human",
+      "ai_likelihood": 23.82,
+      "external_proxy": 17.5,
+      "writing_quality": 50.1,
+      "tier": "low"
+    },
+    "human_huxley_lectures_00": {
+      "label": "human",
+      "ai_likelihood": 16.42,
+      "external_proxy": 14.94,
+      "writing_quality": 46.62,
+      "tier": "low"
+    },
+    "human_huxley_lectures_01": {
+      "label": "human",
+      "ai_likelihood": 16.2,
+      "external_proxy": 15.14,
+      "writing_quality": 57.16,
+      "tier": "medium"
+    },
+    "human_huxley_lectures_02": {
+      "label": "human",
+      "ai_likelihood": 23.45,
+      "external_proxy": 18.79,
+      "writing_quality": 46.05,
+      "tier": "low"
+    },
+    "human_james_talks_teachers_00": {
+      "label": "human",
+      "ai_likelihood": 12.08,
+      "external_proxy": 12.65,
+      "writing_quality": 54.17,
+      "tier": "low"
+    },
+    "human_james_talks_teachers_01": {
+      "label": "human",
+      "ai_likelihood": 23.57,
+      "external_proxy": 22.23,
+      "writing_quality": 62.27,
+      "tier": "low"
+    },
+    "human_james_talks_teachers_02": {
+      "label": "human",
+      "ai_likelihood": 27.39,
+      "external_proxy": 26.0,
+      "writing_quality": 62.59,
+      "tier": "low"
+    },
+    "human_mill_on_liberty_00": {
+      "label": "human",
+      "ai_likelihood": 31.82,
+      "external_proxy": 19.57,
+      "writing_quality": 54.62,
+      "tier": "low"
+    },
+    "human_mill_on_liberty_01": {
+      "label": "human",
+      "ai_likelihood": 28.72,
+      "external_proxy": 17.03,
+      "writing_quality": 47.16,
+      "tier": "medium"
+    },
+    "human_mill_on_liberty_02": {
+      "label": "human",
+      "ai_likelihood": 44.51,
+      "external_proxy": 25.66,
+      "writing_quality": 48.92,
+      "tier": "medium"
+    }
+  },
+  "ai_likelihood": {
+    "ai_mean": 41.15,
+    "human_mean": 27.22,
+    "auc": 0.851
+  },
+  "external_proxy": {
+    "ai_mean": 28.66,
+    "human_mean": 19.99,
+    "auc": 0.8784
+  },
+  "writing_quality": {
+    "ai_mean": 57.82,
+    "human_mean": 53.53,
+    "auc": 0.7451
+  },
+  "n": {
+    "ai": 17,
+    "human": 15
+  }
+}

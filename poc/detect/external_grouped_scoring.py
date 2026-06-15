@@ -22,7 +22,14 @@ from typing import Any, Iterable
 # patterns (generic/unanchored claims) and grounding. This is a known-false-positive
 # floor removal — NOT validated against third-party detectors (N=1 Turnitin sample).
 # Additive-only: does not affect tier, ai_likelihood, or any rewrite gate.
-MODEL_VERSION = "external_grouped_v2"
+# v3 (2026-06-15): add a grounding-strength discount (EXTERNAL_GROUNDING_DISCOUNT_ALPHA). A
+# well-grounded document (high author/context/citation strength) is less likely machine-generated,
+# so the proxy is scaled down proportional to grounding strength. Calibrated α=0.30 on the labeled
+# corpus: pulls genuine well-grounded human docs out of the "elevated" band (e.g. a real
+# practitioner's grounded essay 25.9 -> 19.9, "low") while leaking ~1/17 AI docs and barely moving
+# AI-vs-human AUC (0.898 -> 0.878). HYPOTHESIS tuned on a SMALL (32-doc) set — revisit α when the
+# labeled corpus grows; do NOT treat 0.30 as validated.
+MODEL_VERSION = "external_grouped_v3"
 GROUP_WEIGHTS = {
     "probability_shape_risk": 0.15,
     "detector_agreement_risk": 0.25,
@@ -74,6 +81,10 @@ STRONG_GROUNDING_MIN = 65.0
 WEAK_DETECTOR_AVAILABLE_MAX = 1
 LOW_COVERAGE_MIN = 0.45
 HIGH_CAP_SCORE = 49.9
+# Grounding-strength discount (v3): final proxy *= (1 - alpha * grounding_strength/100).
+# alpha=0.30 calibrated on the 32-doc labeled corpus (see MODEL_VERSION note). Single source of
+# truth; set 0.0 to disable. Tunable hypothesis, NOT third-party-validated.
+EXTERNAL_GROUNDING_DISCOUNT_ALPHA = 0.30
 
 
 @dataclass(frozen=True)
@@ -415,6 +426,20 @@ def estimate_external_grouped_score(
     available = probability_available + detector_available + writing_available + grounding_available
     total = probability_total + detector_total + writing_total + grounding_total
     coverage_ratio = available / max(total, 1)
+
+    # v3 grounding-strength discount: reward concrete grounding (a well-grounded doc is less likely
+    # machine-generated). Applied to the base weighted score before the high-band caps.
+    if EXTERNAL_GROUNDING_DISCOUNT_ALPHA > 0.0 and grounding_strength > 0.0:
+        discounted = score * (1.0 - EXTERNAL_GROUNDING_DISCOUNT_ALPHA * grounding_strength / 100.0)
+        caps.append({
+            "code": "grounding_strength_discount",
+            "alpha": EXTERNAL_GROUNDING_DISCOUNT_ALPHA,
+            "grounding_strength": round(grounding_strength, 3),
+            "before": round(score, 3),
+            "after": round(discounted, 3),
+        })
+        score = discounted
+
     if grounding_strength >= STRONG_GROUNDING_MIN and detector_available <= WEAK_DETECTOR_AVAILABLE_MAX and score >= HIGH_BAND_MIN:
         caps.append({
             "code": "strong_grounding_weak_detector_coverage",
