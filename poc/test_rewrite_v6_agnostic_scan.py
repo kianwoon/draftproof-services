@@ -62,3 +62,30 @@ def test_citation_anchor_is_structural_form_not_verb_list():
     # Bare reporting verb with no citation form is NO LONGER a citation tell.
     assert _citation_anchor("The author indicates that the result holds.") is False
     assert _citation_anchor("According to many, the trend continued.") is False
+
+
+import os
+
+def _grounding_report(sentence_text, *, paragraph_id="p001", sentence_id="s1",
+                      actionability="auto_fixable", title="low_specificity", category="genericity"):
+    return {
+        "scan_intelligence": {"document": {"paragraphs": [{"paragraph_id": paragraph_id}]}},
+        "sentence_map": {sentence_id: {"paragraph_id": paragraph_id, "text": sentence_text}},
+        "highlight_segments": [
+            {
+                "sentence_id": sentence_id,
+                "signals": [
+                    {"title": title, "category": category, "score": 0.72,
+                     "actionability": actionability, "finding_id": "f1"}
+                ],
+            }
+        ],
+    }
+
+def test_grounding_finding_drives_targeting_without_env_switch(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_V6_SCANNER_PREDICTABILITY", raising=False)
+    text = "The approach generally improves outcomes for the relevant population over time."
+    scan = scan_text_with_report(text, _grounding_report(text))
+    pid = scan.paragraphs[0].id
+    tags = {t for f in findings_for_paragraph(scan, pid) for t in f.tags}
+    assert any("specificity" in t or "genericity" in t for t in tags)

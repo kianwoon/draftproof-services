@@ -11,21 +11,6 @@ from .paragraph_normalizer import normalize_paragraph_blocks
 from .text import Paragraph, Sentence, split_paragraphs, split_sentences, word_count
 
 
-def _predictability_primary() -> bool:
-    """Whether the graded predictability signal drives severity/targeting (vs structural shape).
-
-    Stage 1 of the scanner fix. Off by default: the token-level predictability detail is always
-    attached to findings (safe enrichment), but making predictability OUTRANK the structural
-    heuristics changes which paragraph is targeted -- a behavior change that only pays off once the
-    planner/selector (Stages 2-3) consume it. Enable with DRAFTPROOF_V6_SCANNER_PREDICTABILITY=1.
-    """
-    return os.environ.get("DRAFTPROOF_V6_SCANNER_PREDICTABILITY", "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-# Severity floor for structural-only findings (not flagged by the graded detector) when
-# predictability is primary -- kept low so they don't drive paragraph targeting.
-_ADVISORY_SEVERITY = 12.0
-
 
 @dataclass(frozen=True)
 class Finding:
@@ -353,40 +338,21 @@ def _report_signal_severity(signal: dict[str, Any]) -> float:
 
 
 def _merge_findings(base: list[Finding], report_findings: list[Finding]) -> list[Finding]:
-    predictability_primary = _predictability_primary()
-    report_ids = {finding.sentence_id for finding in report_findings}
-    merged: dict[str, Finding] = {}
-    for finding in base:
-        # A sentence the graded detector did NOT flag is a structural-only finding. When
-        # predictability is primary, demote it so the structural heuristic can't drive targeting
-        # against the graded signal (it stays present as advisory shape evidence).
-        if predictability_primary and finding.sentence_id not in report_ids:
-            merged[finding.sentence_id] = replace(finding, severity=min(finding.severity, _ADVISORY_SEVERITY))
-        else:
-            merged[finding.sentence_id] = finding
+    merged: dict[str, Finding] = {finding.sentence_id: finding for finding in base}
     for finding in report_findings:
         current = merged.get(finding.sentence_id)
         if current is None:
             merged[finding.sentence_id] = finding
             continue
         report_evidence = finding.evidence if isinstance(finding.evidence, dict) else {}
-        merged_evidence = {
-            **current.evidence,
-            "report_evidence": report_evidence,
-        }
-        # Lift the graded predictability detail to the top level so every finding (structural,
-        # report, or merged) exposes its token spans/protected spans at evidence["predictability"].
+        merged_evidence = {**current.evidence, "report_evidence": report_evidence}
         if report_evidence.get("predictability"):
             merged_evidence["predictability"] = report_evidence["predictability"]
-        # Severity: when predictability is primary the graded score sets the headline (so a sentence
-        # is ranked by how predictable it actually is, not by structural shape like a comma list);
-        # otherwise keep the legacy max() behaviour.
-        severity = finding.severity if predictability_primary else max(current.severity, finding.severity)
         merged[finding.sentence_id] = Finding(
             sentence_id=current.sentence_id,
             paragraph_id=current.paragraph_id,
             tags=_dedupe([*current.tags, *finding.tags]),
-            severity=severity,
+            severity=max(current.severity, finding.severity),
             evidence=merged_evidence,
         )
     return list(merged.values())
