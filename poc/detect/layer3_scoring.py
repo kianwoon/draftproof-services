@@ -356,37 +356,6 @@ def split_paragraphs(text: str) -> list[str]:
     return [re.sub(r"\s+", " ", p).strip() for p in blocks if p.strip()]
 
 
-# Content-agnostic formulaic-progression markers: the generic temporal/contrastive scaffolding AI
-# essays march through. (Minimal de-overfit: dropped the content11 literal "technology has also";
-# widened "another issue"/"this shift" into small agnostic families; kept the rest + denominator so
-# non-overfit documents score exactly as before.)
-FORMULAIC_PROGRESS_MARKERS = [
-    r"\bin the past\b",
-    r"\bnow\b",
-    r"\btoday\b",
-    r"\bthis (?:shift|change|trend)\b",
-    r"\bhowever\b",
-    r"\banother (?:issue|problem|challenge|concern|factor|aspect)\b",
-    r"\bbecause of this\b",
-    r"\bthe goal should\b",
-    r"\bin conclusion\b",
-    r"\boverall\b",
-    r"\bultimately\b",
-]
-
-
-BALANCED_FRAMING_PATTERNS = [
-    r"\bnot only\b.+?\bbut also\b",
-    r"\bboth\b.+?\band\b",
-    r"\beither\b.+?\bor\b",
-    r"\bopportunities and risks\b",
-    r"\bimportant,?\s+not\s+less\s+important\b",
-    r"\bthe goal should not be\b.+?\bthe goal should be\b",
-    r"\bdoes not only\b.+?\bit also\b",
-    r"\bno longer\b.+?\binstead\b",
-]
-
-
 GENERIC_ESSAY_STARTERS = [
     "in the past",
     "now",
@@ -405,33 +374,16 @@ GENERIC_ESSAY_STARTERS = [
 
 
 def estimate_formulaic_progression_risk(text: str) -> float:
-    lower = text.lower()
-    hits = sum(1 for pattern in FORMULAIC_PROGRESS_MARKERS if re.search(pattern, lower))
-    ratio = hits / len(FORMULAIC_PROGRESS_MARKERS)
-
-    if ratio >= 0.65:
-        return 0.85
-    if ratio >= 0.45:
-        return 0.65
-    if ratio >= 0.30:
-        return 0.45
-    if ratio >= 0.15:
-        return 0.25
+    # NO-HARDCODE: AI-cliche phrase list removed; signal disabled. The agnostic
+    # statistical signals (predictability/topk/burstiness/paragraph_uniformity) cover
+    # 'formulaic AI prose'. Stub kept; remove from aggregation in the structural follow-up.
     return 0.0
 
 
 def estimate_balanced_generic_framing_risk(text: str) -> float:
-    lower = text.lower()
-    hits = sum(1 for pattern in BALANCED_FRAMING_PATTERNS if re.search(pattern, lower))
-
-    if hits >= 4:
-        return 0.85
-    if hits == 3:
-        return 0.65
-    if hits == 2:
-        return 0.45
-    if hits == 1:
-        return 0.25
+    # NO-HARDCODE: AI-cliche phrase list removed; signal disabled. The agnostic
+    # statistical signals (predictability/topk/burstiness/paragraph_uniformity) cover
+    # 'formulaic AI prose'. Stub kept; remove from aggregation in the structural follow-up.
     return 0.0
 
 
@@ -534,23 +486,6 @@ def estimate_signpost_paragraph_risk(text: str) -> float:
     return 0.0
 
 
-BALANCED_HEDGING_PATTERNS = [
-    r'\bnot only\b.+?\bbut\s+also\b',
-    r'\bwhile\b.{5,40}?\b(?:important|necessary|essential|crucial|vital)\b.{5,30}?\balso\b',
-    r'\balthough\b.{5,40}?\b(?:important|necessary|essential|crucial|vital)\b',
-    r'\bon\s+the\s+one\s+hand\b.+?\bon\s+the\s+other\b',
-    r'\bit\s+is\s+(?:important|essential|crucial)\s+to\s+note\b',
-    r'\bplays?\s+a\s+(?:vital|crucial|key|important|central)\s+role\b',
-    r'\bthere\s+is\s+no\s+(?:doubt|question|denying)\b',
-    r'\bcannot\s+be\s+(?:overstated|ignored|overlooked|underestimated)\b',
-    r'\bit\s+is\s+worth\s+noting\b',
-    r'\bhas\s+its\s+(?:merits|benefits|strengths)\b.{5,30}?\bbut\b',
-    r'\bdespite\s+(?:these?\s+)?(?:challenges?|concerns?|risks?|issues?)\b',
-    r'\bthe\s+(?:key|main|primary)\s+(?:challenge|issue|concern)\s+is\b',
-    r'\bboth\s+(?:sides?|perspectives?|approaches?|viewpoints?)\b',
-]
-
-
 def estimate_balanced_hedging_risk(text: str) -> float:
     """Higher = text uses many AI-typical balanced/hedging constructions.
 
@@ -559,19 +494,9 @@ def estimate_balanced_hedging_risk(text: str) -> float:
     These create a distinctive even-handed, tempered tone that's uncommon
     in human first-draft writing.
     """
-    lower = text.lower()
-    hits = sum(1 for p in BALANCED_HEDGING_PATTERNS if re.search(p, lower))
-
-    if hits >= 5:
-        return 0.90
-    if hits >= 4:
-        return 0.75
-    if hits == 3:
-        return 0.55
-    if hits == 2:
-        return 0.35
-    if hits == 1:
-        return 0.15
+    # NO-HARDCODE: AI-cliche phrase list removed; signal disabled. The agnostic
+    # statistical signals (predictability/topk/burstiness/paragraph_uniformity) cover
+    # 'formulaic AI prose'. Stub kept; remove from aggregation in the structural follow-up.
     return 0.0
 
 
@@ -840,36 +765,10 @@ def estimate_repeated_sentence_structure_risk(text: str) -> float:
     return 0.0
 
 
-# Content-agnostic formulaic-CONCLUSION shape patterns (NO content/domain literals). A formulaic AI
-# conclusion is recognisable by its SHAPE -- grand-abstract framing, a pivotal-moment metaphor, a
-# prescriptive grand goal, a closing marker -- in ANY subject. (De-overfit: replaces the content11
-# substring list "stands at a turning point" / "in a world full of" / bare adjectives
-# "thoughtful"/"capable"/"responsible", which only flagged that one essay.)
-FORMULAIC_CONCLUSION_PATTERNS = [
-    r"\bin an?\s+(?:world|era|age|time|society|landscape|environment)(?:\s+\w+){0,3}\s+of\b",
-    r"\bstands?\s+at\s+a\s+(?:cross-?roads?|turning\s+point|critical\s+juncture|pivotal\s+moment|defining\s+moment|tipping\s+point)\b",
-    r"\bat\s+a\s+(?:cross-?roads|turning\s+point|critical\s+juncture|pivotal\s+moment)\b",
-    r"\bthe\s+(?:goal|aim|challenge|key|priority|task|focus)\s+(?:should|must|is\s+to|ought|needs\s+to)\b",
-    r"\bit\s+is\s+(?:essential|crucial|vital|imperative|important|necessary)\s+(?:that|to|for)\b",
-    r"\b(?:as|now)\s+we\s+(?:move|look|step|push|head)\s+(?:forward|ahead|into|toward|towards)\b",
-    r"\b(?:in\s+conclusion|to\s+conclude|in\s+summary|to\s+summari[sz]e|to\s+sum\s+up|ultimately|in\s+the\s+end|all\s+in\s+all)\b",
-]
-
-
 def estimate_formulaic_conclusion_risk(text: str) -> float:
-    paragraphs = split_paragraphs(text)
-    if not paragraphs:
-        return 0.0
-    last = paragraphs[-1].lower()
-    hits = sum(1 for pattern in FORMULAIC_CONCLUSION_PATTERNS if re.search(pattern, last))
-    if hits >= 4:
-        return 0.85
-    if hits == 3:
-        return 0.65
-    if hits == 2:
-        return 0.45
-    if hits == 1:
-        return 0.25
+    # NO-HARDCODE: AI-cliche phrase list removed; signal disabled. The agnostic
+    # statistical signals (predictability/topk/burstiness/paragraph_uniformity) cover
+    # 'formulaic AI prose'. Stub kept; remove from aggregation in the structural follow-up.
     return 0.0
 
 
