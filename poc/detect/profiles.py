@@ -28,7 +28,6 @@ class DomainProfile:
     name: str
     phrase_packs: List[str] = field(default_factory=lambda: ["generic_academic"])
     domain_terms: List[str] = field(default_factory=list)
-    claim_indicators: List[str] = field(default_factory=list)
     thresholds: ThresholdConfig = field(default_factory=ThresholdConfig)
     postprocess: PostProcessConfig = field(default_factory=PostProcessConfig)
 
@@ -161,7 +160,6 @@ def _load_external_profile(domain: str) -> Optional[DomainProfile]:
             name=data.get("name", domain),
             phrase_packs=data.get("phrase_packs", ["generic_academic"]),
             domain_terms=data.get("domain_terms", []),
-            claim_indicators=data.get("claim_indicators", []),
             thresholds=ThresholdConfig.from_dict(data.get("thresholds")),
             postprocess=PostProcessConfig.from_dict(data.get("postprocess")),
         )
@@ -176,7 +174,6 @@ _BUILTIN_PROFILES: Dict[str, DomainProfile] = {
         name="default",
         phrase_packs=["generic_academic"],
         domain_terms=[],
-        claim_indicators=[],
         thresholds=ThresholdConfig(),
         postprocess=PostProcessConfig(),
     ),
@@ -184,7 +181,6 @@ _BUILTIN_PROFILES: Dict[str, DomainProfile] = {
         name="education_pedagogy",
         phrase_packs=["generic_academic", "education_pedagogy"],
         domain_terms=[],
-        claim_indicators=["learners", "adult learning", "student engagement", "pedagogy"],
         thresholds=ThresholdConfig(),
         postprocess=PostProcessConfig(
             glossary_overlap=0.35,
@@ -195,7 +191,6 @@ _BUILTIN_PROFILES: Dict[str, DomainProfile] = {
         name="healthcare",
         phrase_packs=["generic_academic", "healthcare"],
         domain_terms=[],
-        claim_indicators=["patient", "clinical", "treatment", "diagnosis"],
         thresholds=ThresholdConfig(),
         postprocess=PostProcessConfig(
             glossary_overlap=0.35,
@@ -206,7 +201,6 @@ _BUILTIN_PROFILES: Dict[str, DomainProfile] = {
         name="legal",
         phrase_packs=["generic_academic", "legal"],
         domain_terms=[],
-        claim_indicators=["plaintiff", "defendant", "court", "statute"],
         thresholds=ThresholdConfig(),
         postprocess=PostProcessConfig(
             glossary_overlap=0.40,
@@ -217,7 +211,6 @@ _BUILTIN_PROFILES: Dict[str, DomainProfile] = {
         name="engineering",
         phrase_packs=["generic_academic", "engineering"],
         domain_terms=[],
-        claim_indicators=["specification", "design", "system", "performance"],
         thresholds=ThresholdConfig(),
         postprocess=PostProcessConfig(
             glossary_overlap=0.40,
@@ -228,7 +221,6 @@ _BUILTIN_PROFILES: Dict[str, DomainProfile] = {
         name="business_tech",
         phrase_packs=["generic_academic", "business_tech"],
         domain_terms=[],
-        claim_indicators=["market", "strategy", "innovation", "stakeholder"],
         thresholds=ThresholdConfig(),
         postprocess=PostProcessConfig(),
     ),
@@ -236,7 +228,6 @@ _BUILTIN_PROFILES: Dict[str, DomainProfile] = {
         name="hair_beauty",
         phrase_packs=["generic_academic", "hair_beauty"],
         domain_terms=[],
-        claim_indicators=["client", "professional standards", "salon", "technique"],
         thresholds=ThresholdConfig(),
         postprocess=PostProcessConfig(
             glossary_overlap=0.35,
