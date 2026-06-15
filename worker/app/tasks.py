@@ -45,6 +45,13 @@ from celery.exceptions import SoftTimeLimitExceeded
 
 logger = logging.getLogger(__name__)
 
+# Critical Thinking reflective questions: default ON in the worker. Set here (a
+# git-pulled path) so it ships via the RELIABLE code-deploy, not only via
+# entrypoint.sh -- the entrypoint flag needs a full image rebuild, whose Koyeb
+# deploy step is fragile (HTTP 400 on the partial-definition PATCH). Overridable by
+# a real Koyeb env value (setdefault won't clobber an explicit DRAFTPROOF_..._=0).
+os.environ.setdefault("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS", "1")
+
 REWRITE_DEBUG_EXPORT_VERSION = "rewrite_controller_debug_passthrough_v3"
 
 
