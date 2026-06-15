@@ -7,7 +7,7 @@ export const scan = {
   "freeThrough": "800 词以内免费",
   "documentText": "文档文本",
   "documentHelp": "从内容草稿、报告或文章中粘贴纯文本。",
-  "pricingNote": "800 词或更少的扫描免费，最多 5 次。积分计费从 801 词开始。",
+  "pricingNote": "800 词或更少的扫描免费，最多 5 次。之后，短文扫描每次需 1 积分。较长的扫描（801 词以上）始终计费。",
   "freeUsage": "已使用 {{used}} / {{limit}} 次免费扫描",
   "freeRemaining_one": "剩余 {{count}} 次免费扫描",
   "freeRemaining_other": "剩余 {{count}} 次免费扫描",

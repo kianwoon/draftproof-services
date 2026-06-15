@@ -55,11 +55,24 @@ def build_scan_report_metadata(text: str) -> dict:
     }
 
 
+def _paid_scan_cost(word_count: int) -> int:
+    """Credit cost when a scan is billed: 1 token per started 1,000 words.
+
+    For a short (<=800 word) doc this is 1 — the rate used once the free quota
+    is spent, so purchased credits can pay for short scans too.
+    """
+    return max(1, -(-word_count // 1000))
+
+
 def _scan_cost(word_count: int) -> int:
-    """Free through 800 words, then 1 token per started 1,000 words."""
+    """Free-eligible rate: 0 through 800 words (consumes a free scan), else billed.
+
+    A short doc only stays free while the user is under FREE_SCAN_LIMIT; once
+    the quota is spent, create_scan re-prices it at _paid_scan_cost.
+    """
     if word_count <= FREE_SCAN_WORD_LIMIT:
         return 0
-    return max(1, -(-word_count // 1000))
+    return _paid_scan_cost(word_count)
 
 
 async def _refund_free_scan(session, job: ScanJob) -> None:
@@ -183,16 +196,17 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
     report_metadata = build_scan_report_metadata(text)
 
     async with async_session() as session:
-        # Reserve tokens based on word count. Short scans are free and should
-        # not require an existing credit account.
+        # Reserve tokens based on word count. Short scans are free for the first
+        # FREE_SCAN_LIMIT; after that they fall back to the normal paid rate so
+        # purchased credits can pay for short docs too.
         cost = _scan_cost(word_count)
 
         # Free scans draw on a durable lifetime counter (users.free_scans_used),
         # NOT a count of scan_jobs rows — those get purged by the report
         # retention cleanup, which would silently refill the quota. The
-        # conditional increment is an atomic compare-and-swap: it succeeds only
-        # while under the limit, which both enforces the cap and closes the
-        # concurrent-submission race (no row returned == limit reached).
+        # conditional increment is an atomic compare-and-swap: it consumes a free
+        # scan only while under the limit (no row returned == quota spent), which
+        # also closes the concurrent-submission race.
         free_counted = False
         if user_id and cost == 0:
             increment = await session.execute(
@@ -203,12 +217,14 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
                 ),
                 {"uid": uuid.UUID(user_id), "limit": FREE_SCAN_LIMIT},
             )
-            if increment.first() is None:
-                raise ValueError(
-                    f"Free scan limit reached ({FREE_SCAN_LIMIT} scans). "
-                    "Please purchase credits to continue scanning."
-                )
-            free_counted = True
+            if increment.first() is not None:
+                free_counted = True
+            else:
+                # Free quota spent — re-price as a paid scan (>=1 credit). The
+                # paid path below then reserves credits or raises "Insufficient
+                # tokens" if the user has none, so the only hard block is a real
+                # lack of credits, never an unusable balance.
+                cost = _paid_scan_cost(word_count)
 
         job = ScanJob(
             id=job_id,

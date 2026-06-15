@@ -7,7 +7,7 @@ export const scan = {
   "freeThrough": "Free through 800 words",
   "documentText": "Document text",
   "documentHelp": "Paste plain text from your paper, report, or content draft.",
-  "pricingNote": "Scans of 800 words or fewer are free — up to 5 times. Credit billing starts at 801 words.",
+  "pricingNote": "Scans of 800 words or fewer are free — up to 5 times. After that, short scans cost 1 credit each. Longer scans (801+ words) are always billed.",
   "freeUsage": "{{used}} of {{limit}} free scans used",
   "freeRemaining_one": "{{count}} free scan remaining",
   "freeRemaining_other": "{{count}} free scans remaining",

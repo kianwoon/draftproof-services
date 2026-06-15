@@ -5,7 +5,7 @@ import { startScanWithText, getScanStatus, buildApiEventUrl, getFreeScanUsage } 
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import CodeTexture from '../components/CodeTexture';
-import { countWords, scanTokensRequired } from '../utils/scanBilling';
+import { countWords, effectiveScanTokens } from '../utils/scanBilling';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
@@ -30,7 +30,9 @@ export default function Scan() {
   const abortRef = useRef(null);
   const eventSourceRef = useRef(null);
   const wordCount = countWords(text);
-  const tokensRequired = scanTokensRequired(wordCount);
+  // Short docs are free while free scans remain, then cost the paid rate, so the
+  // displayed cost and the balance pre-check depend on remaining free usage.
+  const tokensRequired = effectiveScanTokens(wordCount, freeUsage ? freeUsage.remaining : null);
 
   // Cancel in-flight polling on unmount
   useEffect(() => {

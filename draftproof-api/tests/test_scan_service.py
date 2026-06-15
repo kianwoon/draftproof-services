@@ -119,6 +119,35 @@ class RefundCaptureSession:
         return [s for s, _ in self.statements if "free_scans_used = GREATEST" in s]
 
 
+class ShortScanPaidFallbackSession:
+    """Models a short doc whose free quota is spent: the increment UPDATE returns
+    no row, so create_scan re-prices it to the paid path, which then selects the
+    credit account. `account` is the fake acct (or None for 'no credits')."""
+
+    def __init__(self, *, account):
+        self.account = account
+        self.added = []
+        self.committed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def add(self, item):
+        self.added.append(item)
+
+    async def execute(self, statement, params=None):
+        if "UPDATE users SET free_scans_used" in str(statement):
+            return SimpleNamespace(first=lambda: None)  # quota spent
+        # Credit-account SELECT on the paid path.
+        return SimpleNamespace(scalar_one_or_none=lambda: self.account)
+
+    async def commit(self):
+        self.committed = True
+
+
 def _stream_id(at: datetime) -> str:
     return f"{int(at.timestamp() * 1000)}-0"
 
@@ -224,11 +253,12 @@ async def test_free_scan_allowed_increments_and_marks_counted(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_free_scan_blocked_when_counter_at_limit(monkeypatch):
-    """Durable counter at the cap: the conditional increment returns no row, so
-    the scan is rejected and never created or enqueued. This survives the
-    report-retention cleanup that deletes scan_jobs rows."""
-    fake_session = FreeScanCounterSession(under_limit=False)
+async def test_short_scan_charges_one_credit_when_free_exhausted(monkeypatch):
+    """Free quota spent + the user has credits: a short doc re-prices to the paid
+    rate (1 credit), reserves it, and is NOT marked free_scan_counted. This is
+    what lets the 237-credit user actually scan a <=800 word doc."""
+    acct = SimpleNamespace(id="acct-1", balance_tokens=237, reserved_tokens=0)
+    fake_session = ShortScanPaidFallbackSession(account=acct)
     fake_task = FakeScanTask()
 
     monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
@@ -238,14 +268,42 @@ async def test_free_scan_blocked_when_counter_at_limit(monkeypatch):
         SimpleNamespace(scan_document=fake_task),
     )
 
-    with pytest.raises(ValueError, match="Free scan limit reached"):
+    result = await scan_service.create_scan(
+        "paste",
+        user_id="00000000-0000-0000-0000-000000000001",
+        text=words(518),
+    )
+
+    assert result["status"] == "pending"
+    job = next(a for a in fake_session.added if isinstance(a, scan_service.ScanJob))
+    assert job.free_scan_counted is False  # paid, not a free scan
+    assert acct.reserved_tokens == 1  # 1 credit reserved for the <=1000 word doc
+    reservations = [a for a in fake_session.added if isinstance(a, scan_service.CreditReservation)]
+    assert len(reservations) == 1 and reservations[0].tokens_reserved == 1
+    assert len(fake_task.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_short_scan_blocked_when_free_exhausted_and_no_credits(monkeypatch):
+    """Free quota spent + no credit account: now the block is a genuine lack of
+    credits (the 'Buy credits' CTA is finally correct), not an unusable balance."""
+    fake_session = ShortScanPaidFallbackSession(account=None)
+    fake_task = FakeScanTask()
+
+    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
+    monkeypatch.setitem(
+        sys.modules,
+        "app.services.celery_client",
+        SimpleNamespace(scan_document=fake_task),
+    )
+
+    with pytest.raises(ValueError, match="No credit account"):
         await scan_service.create_scan(
             "paste",
             user_id="00000000-0000-0000-0000-000000000001",
-            text=words(300),
+            text=words(518),
         )
 
-    assert fake_session.added == []
     assert len(fake_task.calls) == 0
 
 
