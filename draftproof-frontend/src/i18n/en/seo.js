@@ -1,6 +1,6 @@
 export const seo = {
-  "defaultTitle": "Content Integrity Review Before Submission | DraftProof",
-  "defaultDescription": "Find citation gaps, weak claims, source issues, and AI-like writing patterns before your draft is reviewed.",
+  "defaultTitle": "Essay Integrity & Critical Thinking Check | DraftProof",
+  "defaultDescription": "Find citation gaps, weak claims, source issues, and AI-like writing in your draft — plus reflective questions that keep you in control of the thinking — before it is reviewed.",
   "whyTitle": "Why Human-Written Content Can Look AI-Generated | DraftProof",
   "whyDescription": "See why human-written content can trigger AI-like signals and how DraftProof helps students review evidence, sources, and phrasing before submission.",
   "essayCheckerTitle": "Content Checker for Citations and AI-Like Writing | DraftProof",

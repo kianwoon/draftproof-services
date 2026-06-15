@@ -17,6 +17,8 @@ export const SITE_URL = normalizeSiteUrl(configuredSiteUrl);
 export const DEFAULT_IMAGE = `${SITE_URL}/og-image.png`;
 export const SITE_NAME = 'DraftProof';
 export const SEO_REVIEW_DATE = '2026-06-05';
+// Homepage reviewed separately when the Critical Thinking module was surfaced.
+export const HOME_REVIEW_DATE = '2026-06-16';
 
 export const PAGE_META = {
   '/': {
@@ -24,7 +26,7 @@ export const PAGE_META = {
     descriptionKey: 'seo.defaultDescription',
     canonical: '/',
     schemaType: 'SoftwareApplication',
-    freshness: { type: 'reviewed', date: SEO_REVIEW_DATE },
+    freshness: { type: 'reviewed', date: HOME_REVIEW_DATE },
   },
   '/why': {
     titleKey: 'seo.whyTitle',

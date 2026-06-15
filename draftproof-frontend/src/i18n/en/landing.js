@@ -1,8 +1,8 @@
 export const landing = {
-  "heroPill": "Grounding-first content review for students",
+  "heroPill": "Grounding and critical-thinking review for students",
   "heroTitle": "Show where your content needs stronger evidence before anyone questions it.",
   "heroTitleHighlight": "stronger evidence",
-  "heroLead": "DraftProof finds the citation gaps, weak grounding, and AI-like signals in your draft, then turns them into a focused revision plan you can act on before submission.",
+  "heroLead": "DraftProof finds the citation gaps, weak grounding, and AI-like signals in your draft, turns them into a focused revision plan, and asks the reflective questions that keep you — not the AI — in control of the thinking before submission.",
   "runCheck": "Review my content",
   "viewSample": "View sample report",
   "trustNote": "Not a detector bypass · Not a misconduct verdict · A grounding and integrity review you can act on.",
@@ -222,6 +222,24 @@ export const landing = {
     "Tie the claim to a source, example, method, or author-owned explanation.",
     "Only then revise the sentence so the stronger content remains visible."
   ],
+  "criticalEyebrow": "Critical thinking control",
+  "criticalTitle": "Are you in control of the thinking, or is the AI?",
+  "criticalBody1": "AI hands back one confident, polished answer fast. The risk in education isn't using AI for research or brainstorming — it's quietly handing over the judgement: accepting the first answer without questioning it, comparing alternatives, or checking the evidence.",
+  "criticalBody2": "DraftProof now turns your draft into reflective questions anchored to what you actually wrote — your context, your judgement, your reasoning, and your evidence. They are prompts to sharpen your thinking, not a score or a verdict. The answers are yours to write.",
+  "criticalSignalsLabel": "Questions DraftProof asks about your own draft",
+  // allow-hardcode: static landing-page UI copy (reflective question prompts shown
+  // to the reader), mirroring report.criticalThinking.dimensions — never compared
+  // against document text, not a scoring/matching oracle.
+  "criticalSignals": [
+    "What specific assignment, case, or observation is this claim drawn from?",
+    "Which source or data point could you cite to verify it?",
+    "What reasoning led you to this position — and did you weigh alternatives?",
+    "Where did you challenge the first answer instead of keeping it?",
+    "What here can you explain in your own words, without the AI?"
+  ],
+  "criticalGuardrail1": "Not a score. Not a misconduct verdict.",
+  "criticalGuardrail2": "The questions are about your draft — the answers are yours to write.",
+  "criticalPunch": "Staying in control of the thinking is the real defence, not disguising the text.",
   "studentMisuseEyebrow": "Student misconception",
   "studentMisuseTitle": "\"Write broken English, bad grammar... can get me away?\"",
   "studentMisuseBody1": "Wrong move. Schools didn't add AI checks because good English is suspicious — they added them to see whether you understood the material, questioned the output, checked the evidence, and can explain your reasoning.",

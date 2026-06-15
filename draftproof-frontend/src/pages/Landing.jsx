@@ -356,6 +356,23 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
       ),
     },
     {
+      id: 'critical-thinking',
+      eyebrow: t('landing.criticalEyebrow'),
+      title: t('landing.criticalTitle'),
+      body: [t('landing.criticalBody1'), t('landing.criticalBody2')],
+      renderPanel: () => (
+        <SignalPanel
+          label={t('landing.criticalSignalsLabel')}
+          signals={t('landing.criticalSignals', { returnObjects: true })}
+          guardrails={[
+            t('landing.criticalGuardrail1'),
+            t('landing.criticalGuardrail2'),
+          ]}
+          punch={t('landing.criticalPunch')}
+        />
+      ),
+    },
+    {
       id: 'student-detector-misconception',
       eyebrow: t('landing.studentMisuseEyebrow'),
       title: t('landing.studentMisuseTitle'),

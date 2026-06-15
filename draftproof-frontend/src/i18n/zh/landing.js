@@ -1,8 +1,8 @@
 export const landing = {
-  "heroPill": "面向学生的依据优先内容审阅",
+  "heroPill": "面向学生的依据支撑与批判性思维审阅",
   "heroTitle": "在别人质疑之前，先看清内容哪里需要更强证据。",
   "heroTitleHighlight": "更强证据",
-  "heroLead": "DraftProof 会找出草稿中的引用缺口、薄弱依据和类似 AI 的信号，并把它们转化为提交前可执行的修改计划。",
+  "heroLead": "DraftProof 会找出草稿中的引用缺口、薄弱依据和类似 AI 的信号，把它们转化为可执行的修改计划，并提出深化思考的提问，让你——而不是 AI——在提交前主导思考。",
   "runCheck": "审阅我的内容",
   "viewSample": "查看示例报告",
   "trustNote": "不是检测绕过工具 · 不是学术不端判定 · 是可执行的依据支撑与完整性审阅。",
@@ -222,6 +222,24 @@ export const landing = {
     "把论断连接到来源、例子、方法或作者自己的解释。",
     "最后才修改句子，让更强的内容仍然清楚可见。"
   ],
+  "criticalEyebrow": "批判性思维主导",
+  "criticalTitle": "主导思考的是你，还是 AI？",
+  "criticalBody1": "AI 会很快给出一个自信而工整的答案。教育中的风险不在于用 AI 做研究或头脑风暴，而在于不知不觉把判断交了出去：不加质疑就接受第一个答案，不比较其他可能，也不核对证据。",
+  "criticalBody2": "DraftProof 现在会把你的草稿转化为针对你实际所写内容的深化思考提问——你的情境、你的判断、你的推理、你的证据。这些是帮助你深化思考的提问，不是评分，也不是判定。答案由你自己来写。",
+  "criticalSignalsLabel": "DraftProof 针对你自己草稿提出的问题",
+  // allow-hardcode: static landing-page UI copy (reflective question prompts shown
+  // to the reader), mirroring report.criticalThinking.dimensions — never compared
+  // against document text, not a scoring/matching oracle.
+  "criticalSignals": [
+    "这个论点来自哪一份具体的作业、案例或观察？",
+    "你可以引用哪个来源或数据来核实它？",
+    "是什么推理让你得出这个立场——你是否权衡过其他选择？",
+    "你在哪里质疑了第一个答案，而不是原样保留？",
+    "这里有哪些内容你能脱离 AI、用自己的话解释？"
+  ],
+  "criticalGuardrail1": "不是评分，也不是学术不端判定。",
+  "criticalGuardrail2": "问题针对你的草稿——答案由你自己来写。",
+  "criticalPunch": "真正的防线是主导思考，而不是伪装文字。",
   "studentMisuseEyebrow": "学生常见误解",
   "studentMisuseTitle": "“写烂英文、用坏语法……就能混过去吗？”",
   "studentMisuseBody1": "这是错误方向。学校引入 AI 检查，不是因为流畅英文可疑，而是要看你是否真正理解材料、质疑输出、核查证据，并能解释自己的推理。",
