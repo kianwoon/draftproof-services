@@ -44,17 +44,10 @@ def _paragraph_complexity(para: str) -> Dict[str, float]:
     total = len(all_words)
     vocab_diversity = unique / total if total > 3 else 0
 
-    # Hedging/formal marker density
-    hedging_patterns = [
-        r'\bfurthermore\b', r'\bmoreover\b', r'\badditionally\b',
-        r'\bconsequently\b', r'\bnotably\b', r'\bsignificantly\b',
-        r'\bdemonstrates\b', r'\bunderscores\b', r'\bhighlights\b',
-        r'\bcrucial\b', r'\bvital\b', r'\bessential\b',
-        r'\bit is important\b', r'\bit is worth noting\b',
-        r'\bplays a .+ role\b',
-    ]
-    hedge_count = sum(1 for p in hedging_patterns if re.search(p, para.lower()))
-    hedge_density = min(1.0, hedge_count / max(len(sentences), 1))
+    # NO-HARDCODE: the hedging/formal-marker word list (furthermore/moreover/demonstrates/
+    # crucial/"plays a role"…) was removed -- a baked content/stylistic list. The complexity
+    # signal now rests on the STRUCTURAL metrics (avg_sent_len, vocab_diversity).
+    hedge_density = 0.0
 
     return {
         "avg_sent_len": round(avg_sent_len, 2),

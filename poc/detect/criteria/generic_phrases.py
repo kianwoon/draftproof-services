@@ -14,18 +14,13 @@ from poc.predictability.phrase_packs import get_generic_phrases, get_phrases_for
 
 ALL_PHRASES = get_generic_phrases()
 
-# Low-value transitions — only flag if repeated 3+ times
-LOW_VALUE_TRANSITIONS = frozenset({
-    "therefore", "however", "moreover", "ultimately", "furthermore",
-    "additionally", "consequently", "nevertheless", "nonetheless",
-})
-
-# Research-claim phrases — stronger signal, check for citation context
-RESEARCH_CLAIM_PHRASES = frozenset({
-    "research suggests", "studies show", "evidence indicates",
-    "the literature suggests", "research indicates", "studies indicate",
-    "research shows", "it has been shown", "it is well established",
-})
+# NO-HARDCODE: the curated formal-transition subset (therefore/however/moreover…) and the
+# research-claim phrase list (research suggests/studies show…) were removed. Both are baked
+# content/stylistic lists; "generic phrasing" is captured statistically by the predictability
+# scanner's surprisal/top-k signals. Empty sets keep the criterion's logic intact (it matches
+# nothing here and leans on the statistical criteria).
+LOW_VALUE_TRANSITIONS: frozenset = frozenset()
+RESEARCH_CLAIM_PHRASES: frozenset = frozenset()
 
 # Citation proximity pattern
 _CITE_PATTERN = re.compile(r'\([^)]*\d{4}[^)]*\)|\[\d+\]')

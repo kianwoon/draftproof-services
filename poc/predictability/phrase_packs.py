@@ -15,144 +15,26 @@ from typing import List, Dict, Optional
 # Generic filler phrases — the single source of truth for all detectors.
 # This replaces the old GENERIC_PHRASES in scanner.py and GENERIC_TRANSITIONS/
 # HEDGES/CONCLUSIONS in criteria/generic_phrases.py.
-_GENERIC_FILLER = [
-    # academic filler
-    "it is worth mentioning",
-    "it should be noted that",
-    "in recent years",
-    "has gained significant attention",
-    "has been widely studied",
-    "increasingly important",
-    "a growing body of research",
-    "the literature suggests",
-    "further research is needed",
-    "sheds light on",
-    "paves the way for",
-    "in conclusion",
-    "to summarize",
-    "in summary",
-    "it is important to note",
-    # transitions
-    "furthermore", "in addition", "moreover", "additionally",
-    "consequently", "therefore", "thus", "hence", "accordingly",
-    "nevertheless", "nonetheless", "notwithstanding",
-    "as a result", "in other words", "for example", "for instance",
-    "in particular", "specifically", "notably",
-    # hedges
-    "it can be argued", "it is suggested", "it is widely believed",
-    "research suggests", "studies indicate", "it is generally accepted",
-    "there is evidence", "it has been shown",
-    # conclusions
-    "overall, this demonstrates", "overall, this shows",
-    "this highlights the importance", "this demonstrates the importance",
-    "this underscores", "this emphasizes",
-    "this plays a crucial role", "plays a vital role",
-    "in today's world", "in the modern world",
-    # business / tech filler
-    "plays an important role",
-    "has transformed the way",
-    "in today's fast-paced world",
-    "enhancing efficiency",
-    "reducing costs",
-    "better decision-making",
-    "more accessible",
-    "personalized and engaging",
-    "unlock new opportunities",
-    "drive innovation",
-    "significant impact",
-    "rapidly evolving",
-    "seamless experience",
-    "leveraging cutting-edge technology",
-    "revolutionizing the industry",
-    "game-changing solution",
-    "paradigm shift",
-    "disruptive innovation",
-    "at the forefront of",
-    "stay ahead of the curve",
-    "next-generation",
-    "best-in-class",
-]
+# NO-HARDCODE: the baked generic-filler phrase list (academic/transition/hedge/conclusion/
+# business-tech clichés such as "plays a vital role", "in the modern world", "paradigm shift")
+# was removed. "Generic filler" = low token-level surprisal, which the predictability scanner's
+# statistical signals (surprisal/top-k/burstiness) already measure directly. Consumers
+# (generic_phrases criterion, scanner GENERIC_PHRASES) tolerate the empty list.
+_GENERIC_FILLER: List[str] = []
 
 
+# NO-HARDCODE: the per-domain filler phrase lists (education/hair_beauty/healthcare/legal/
+# engineering domain vocabulary -- "learner-centered approach", "patient-centered care",
+# "client consultation"...) were removed. Domain-specific phrasing is content the detector must
+# NOT bake in; generic/predictable phrasing in any domain is caught statistically by surprisal.
+# Profile names are kept as keys (config identifiers) with empty lists so profile wiring still
+# resolves; get_phrases_for_packs() simply adds nothing domain-specific.
 BUILTIN_PACKS: Dict[str, List[str]] = {
-    # generic_academic and business_tech phrases are now in _GENERIC_FILLER
-    # These domain packs contain ONLY domain-specific filler phrases.
-    "education_pedagogy": [
-        "learner-centered approach",
-        "holistic development",
-        "inclusive classroom",
-        "meaningful learning experience",
-        "differentiated instruction",
-        "student engagement",
-        "critical thinking skills",
-        "lifelong learning",
-        "scaffolding",
-        "formative assessment",
-        "constructivist approach",
-        "zone of proximal development",
-        "active learning strategies",
-        "collaborative learning",
-        "reflective practice",
-        "teaching and learning",
-        "educational outcomes",
-        "pedagogical approach",
-        "learning objectives",
-        "student-centered",
-        "transformative learning",
-    ],
-    "hair_beauty": [
-        "client consultation",
-        "professional standards",
-        "hygiene and safety practices",
-        "practical hands-on skills",
-        "salon environment",
-        "client satisfaction",
-        "industry expectations",
-        "professional development",
-        "creative techniques",
-        "industry best practices",
-        "professional integrity",
-        "client communication",
-        "trend awareness",
-        "health and safety",
-        "professional image",
-    ],
-    "healthcare": [
-        "patient-centered care",
-        "evidence-based practice",
-        "clinical outcomes",
-        "interdisciplinary collaboration",
-        "quality improvement",
-        "patient safety",
-        "best practice guidelines",
-        "holistic patient care",
-        "continuum of care",
-        "patient outcomes",
-    ],
-    "legal": [
-        "it is well established",
-        "the court held that",
-        "it is submitted that",
-        "on the balance of probabilities",
-        "beyond reasonable doubt",
-        "the appropriate standard",
-        "in the circumstances",
-        "having regard to",
-        "it is respectfully submitted",
-        "the weight of authority",
-    ],
-    "engineering": [
-        "optimized for performance",
-        "robust and scalable",
-        "industry-standard practices",
-        "systematic approach",
-        "rigorous testing",
-        "performance metrics",
-        "sustainable design",
-        "innovative solutions",
-        "technical specifications",
-        "continuous improvement",
-    ],
+    "education_pedagogy": [],
+    "hair_beauty": [],
+    "healthcare": [],
+    "legal": [],
+    "engineering": [],
 }
 
 

@@ -48,15 +48,12 @@ def _count_first_person(text: str) -> int:
 
 
 def _count_abstract_nouns(text: str) -> int:
-    abstract = [
-        "importance", "significance", "relevance", "impact", "effect",
-        "approach", "aspect", "concept", "context", "development",
-        "element", "factor", "framework", "nature", "perspective",
-        "principle", "process", "role", "strategy", "structure",
-        "understanding", "utilization", "value",
-    ]
+    # NO-HARDCODE: the baked abstract-noun list (importance/significance/concept/role…) was
+    # removed. Abstract/nominalised nouns are detected MORPHOLOGICALLY via their derivational
+    # suffixes (-tion/-sion/-ment/-ance/-ence/-ity/-ness/-ism), which generalises across topics.
     words = re.findall(r'\b\w+\b', text.lower())
-    return sum(1 for w in words if w in abstract)
+    return sum(1 for w in words
+               if len(w) > 5 and re.search(r'(?:tion|sion|ment|ance|ence|ity|ness|ism)s?$', w))
 
 
 def _split_sentences(text: str) -> List[str]:
@@ -91,25 +88,11 @@ _GENERIC_COMPOUNDS = frozenset({
     "come up", "go on", "make sure", "deal with", "hold on",
 })
 
-# Weak single words that inflate domain_term_count without being true
-# domain terms. Common academic/general vocabulary, not field-specific.
-_WEAK_SINGLE_WORDS = frozenset({
-    "question", "answer", "problem", "issue", "reason", "result",
-    "effect", "example", "fact", "idea", "case", "point", "need",
-    "purpose", "change", "experience", "approach", "method", "process",
-    "important", "especially", "previously", "throughout", "comfortable",
-    "internationally", "references", "importance", "shopping", "psychology",
-    "however", "furthermore", "addition", "conclusion", "introduction",
-    "summary", "background", "different", "following", "understand",
-    "something", "someone", "including", "therefore", "development",
-    "correction", "demonstration", "techniques", "structure",
-    # Generic academic/business vocabulary — not domain-specific grounding
-    "attendants", "communicate", "guidelines", "management",
-    "relationships", "expansion", "retailing", "aggression", "perspective",
-    "consumers", "providers", "organization", "organizations",
-    "performance", "expectations", "satisfaction", "competitive",
-    "strategies", "activities", "customers", "behaviour",
-})
+# NO-HARDCODE: the baked "weak single words" list (generic academic/business vocabulary used to
+# soft-suppress weak domain terms) was removed -- a curated content-word list. Weak/generic terms
+# are better filtered structurally (the _STOP_WORDS function-word stoplist + length/morphology),
+# not by a hand-picked vocabulary. Empty set keeps the filter call sites intact.
+_WEAK_SINGLE_WORDS: frozenset = frozenset()
 
 # Patterns that indicate reference metadata (URL slugs, author names, journal titles)
 # These should NOT count as domain grounding terms.

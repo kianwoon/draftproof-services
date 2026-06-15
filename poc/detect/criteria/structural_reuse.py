@@ -20,38 +20,15 @@ from ._types import CriterionScore
 
 # ── Known AI template skeletons ──────────────────────────────────────
 
-AI_INTRODUCTION_PATTERNS = [
-    r'in (?:the )?(?:modern )?(?:\w+ )?(?:world|context|landscape|era|society)',
-    r'(?:has become|plays a|is (?:now )?(?:an?|the)) (?:increasingly )?(?:important|crucial|vital|essential|significant)',
-    r'(?:this (?:paper|essay|article|review|report)) (?:will |aims to |argues? |discusses? |examines? |explores? )',
-    r'(?:in (?:recent|today\'s|the current) )?(?:years|times|decades)',
-    r'(?:the )?(?:purpose|aim|goal|objective) of (?:this|the)',
-]
-
-AI_CONCLUSION_PATTERNS = [
-    r'in conclusion,?',
-    r'to (?:conclude|sum(?:marize| up))',
-    r'(?:ultimately|overall|in summary),?',
-    r'(?:this (?:paper|essay|review|article)) (?:has )?(?:demonstrated|shown|argued|explored|highlighted)',
-    r'(?:moving forward|in the future)',
-    r'(?:it is (?:clear|evident|apparent)) that',
-]
-
-AI_BODY_PATTERNS = [
-    r'(?:furthermore|moreover|additionally|consequently|subsequently),?',
-    r'(?:it is (?:important|worth noting|essential) to (?:note|consider|understand|highlight))',
-    r'(?:this (?:demonstrates|highlights|underscores|illustrates|emphasizes|shows))',
-    r'(?:plays a (?:crucial|vital|essential|key|significant|pivotal) role)',
-    r'(?:research (?:suggests|indicates|shows|demonstrates|has shown))',
-    r'(?:a (?:growing|significant|considerable) body of (?:evidence|research|literature))',
-]
-
-AI_TRANSITION_PATTERNS = [
-    r'(?:first(?:ly)?|second(?:ly)?|third(?:ly)?|finally|lastly),?',
-    r'(?:another (?:key|important|significant|crucial)) (?:aspect|factor|element|consideration|point)',
-    r'(?:building on (?:this|that|the above|these findings))',
-    r'(?:in (?:addition|contrast|particular|this regard|this context)),?',
-]
+# NO-HARDCODE: the baked AI essay-template phrase lists (intro/conclusion/body/transition
+# skeletons such as "in the modern world", "plays a crucial role", "research suggests") were
+# removed. Reused/templated structure is captured agnostically by the statistical predictability
+# signals + repetitive_structure/paragraph_uniformity criteria. Empty lists keep the criterion's
+# logic intact (pattern hit-counts are 0; it relies on its structural metrics).
+AI_INTRODUCTION_PATTERNS: List[str] = []
+AI_CONCLUSION_PATTERNS: List[str] = []
+AI_BODY_PATTERNS: List[str] = []
+AI_TRANSITION_PATTERNS: List[str] = []
 
 
 def _count_pattern_hits(text: str, patterns: List[str]) -> int:
