@@ -1,0 +1,178 @@
+{
+  "per_case": {
+    "ai_gptoss_00": {
+      "label": "ai",
+      "ai_likelihood": 37.49,
+      "tier": "medium"
+    },
+    "ai_gptoss_01": {
+      "label": "ai",
+      "ai_likelihood": 33.73,
+      "tier": "medium"
+    },
+    "ai_gptoss_02": {
+      "label": "ai",
+      "ai_likelihood": 33.78,
+      "tier": "high"
+    },
+    "ai_gptoss_03": {
+      "label": "ai",
+      "ai_likelihood": 32.95,
+      "tier": "high"
+    },
+    "ai_gptoss_04": {
+      "label": "ai",
+      "ai_likelihood": 40.66,
+      "tier": "medium"
+    },
+    "ai_gptoss_05": {
+      "label": "ai",
+      "ai_likelihood": 31.01,
+      "tier": "medium"
+    },
+    "ai_gptoss_06": {
+      "label": "ai",
+      "ai_likelihood": 32.7,
+      "tier": "medium"
+    },
+    "ai_gptoss_08": {
+      "label": "ai",
+      "ai_likelihood": 41.04,
+      "tier": "medium"
+    },
+    "ai_gptoss_09": {
+      "label": "ai",
+      "ai_likelihood": 32.67,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_00": {
+      "label": "ai",
+      "ai_likelihood": 46.26,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_01": {
+      "label": "ai",
+      "ai_likelihood": 79.08,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_02": {
+      "label": "ai",
+      "ai_likelihood": 45.26,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_03": {
+      "label": "ai",
+      "ai_likelihood": 74.01,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_04": {
+      "label": "ai",
+      "ai_likelihood": 68.14,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_05": {
+      "label": "ai",
+      "ai_likelihood": 43.81,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_06": {
+      "label": "ai",
+      "ai_likelihood": 44.62,
+      "tier": "medium"
+    },
+    "ai_qwen_2_5_7b_instruct_07": {
+      "label": "ai",
+      "ai_likelihood": 47.66,
+      "tier": "medium"
+    },
+    "human_bacon_essays_00": {
+      "label": "human",
+      "ai_likelihood": 38.3,
+      "tier": "medium"
+    },
+    "human_bacon_essays_01": {
+      "label": "human",
+      "ai_likelihood": 31.91,
+      "tier": "medium"
+    },
+    "human_bacon_essays_02": {
+      "label": "human",
+      "ai_likelihood": 28.34,
+      "tier": "low"
+    },
+    "human_emerson_essays_00": {
+      "label": "human",
+      "ai_likelihood": 47.78,
+      "tier": "medium"
+    },
+    "human_emerson_essays_01": {
+      "label": "human",
+      "ai_likelihood": 30.83,
+      "tier": "low"
+    },
+    "human_emerson_essays_02": {
+      "label": "human",
+      "ai_likelihood": 25.92,
+      "tier": "low"
+    },
+    "human_huxley_lectures_00": {
+      "label": "human",
+      "ai_likelihood": 27.16,
+      "tier": "low"
+    },
+    "human_huxley_lectures_01": {
+      "label": "human",
+      "ai_likelihood": 19.0,
+      "tier": "medium"
+    },
+    "human_huxley_lectures_02": {
+      "label": "human",
+      "ai_likelihood": 29.68,
+      "tier": "medium"
+    },
+    "human_james_talks_teachers_00": {
+      "label": "human",
+      "ai_likelihood": 12.08,
+      "tier": "low"
+    },
+    "human_james_talks_teachers_01": {
+      "label": "human",
+      "ai_likelihood": 31.79,
+      "tier": "low"
+    },
+    "human_james_talks_teachers_02": {
+      "label": "human",
+      "ai_likelihood": 27.45,
+      "tier": "medium"
+    },
+    "human_mill_on_liberty_00": {
+      "label": "human",
+      "ai_likelihood": 36.04,
+      "tier": "medium"
+    },
+    "human_mill_on_liberty_01": {
+      "label": "human",
+      "ai_likelihood": 28.72,
+      "tier": "medium"
+    },
+    "human_mill_on_liberty_02": {
+      "label": "human",
+      "ai_likelihood": 49.26,
+      "tier": "high"
+    }
+  },
+  "ai_likelihood": {
+    "ai_mean": 44.99,
+    "human_mean": 30.95,
+    "auc": 0.8314
+  },
+  "tier": {
+    "ai_mean_rank": 0,
+    "human_mean_rank": 0,
+    "auc": 0.5
+  },
+  "n": {
+    "ai": 17,
+    "human": 15
+  }
+}

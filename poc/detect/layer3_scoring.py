@@ -488,22 +488,6 @@ def estimate_paragraph_uniformity_risk(text: str) -> float:
     return 0.0
 
 
-# Signpost/bridge paragraphs: very short (1-2 sentence) paragraphs that
-# merely announce or transition to the next topic. AI essays over-use these.
-SIGNPOST_ANNOUNCE_PATTERNS = [
-    r"^(?:this|another|one|the|a)\s+(?:key|main|major|important|critical|significant|biggest)",
-    r"^(?:there are|there is|this (?:brings|raises|highlights|shows|demonstrates))",
-    r"^(?:let(?:'s|\s+us)\s+(?:now|consider|examine|look|turn|explore))",
-    r"^(?:moving (?:on|forward|beyond)|having (?:established|discussed|explored))",
-    r"^(?:it is (?:also|important|clear|worth|essential)|it (?:should|must|also))",
-    r"^(?:beyond|above|alongside|in addition to)\s",
-    r"^(?:we (?:can|must|should|now|also|first|then))",
-    r"^(?:the (?:next|following|second|third|final|last))",
-    r"^(?:what (?:this|these|it))",
-    r"^(?:to (?:understand|address|tackle|solve|appreciate|fully))",
-]
-
-
 def estimate_signpost_paragraph_risk(text: str) -> float:
     """Higher = text has many short signpost/bridge paragraphs.
 
@@ -532,21 +516,11 @@ def estimate_signpost_paragraph_risk(text: str) -> float:
         word_count = len(p.split())
         sent_count = len([s for s in re.split(r'[.!?]+', p) if s.strip()])
 
-        # Signpost = short paragraph (≤ 2 sentences, ≤ 40% of median length)
-        if sent_count <= 2 and word_count < median_len * 0.45:
-            # Check if it reads like an announcement/transition
-            first_sentence = re.split(r'[.!?]+', p)[0].strip().lower()
-            is_announce = any(
-                re.search(pattern, first_sentence)
-                for pattern in SIGNPOST_ANNOUNCE_PATTERNS
-            )
-            if is_announce:
-                signpost_count += 1
-                continue
-            # Even without explicit announcement pattern, a cluster of
-            # very short paragraphs between long ones is suspicious
-            if word_count < median_len * 0.25:
-                signpost_count += 1
+        # Signpost = a short "bridge" paragraph between long ones: <=2 sentences and well
+        # below the median paragraph length. Purely STRUCTURAL (length/sentence-count) -- no
+        # announcement-phrase list. AI essays over-produce these short transition paragraphs.
+        if sent_count <= 2 and word_count < median_len * 0.35:
+            signpost_count += 1
 
     ratio = signpost_count / len(paragraphs)
     if ratio >= 0.40:
