@@ -772,8 +772,7 @@ CONCRETE_DETAIL_PATTERNS = [
     r"\b[A-Z][A-Za-z]+(?:\s+et\s+al\.)?\s*\(\d{4}\)",  # citation: Name (2020)
     r"\([A-Z][A-Za-z]+(?:\s+et\s+al\.)?,\s*\d{4}\)",   # citation: (Name, 2020)
     r"['\"“”‘’][^'\"“”‘’]+?['\"“”‘’]",  # quoted span
-    r"\bI(?:'ve|'d| have| had)?\s+(?:saw|see|seen|notice|noticed|find|found|observe|observed|watch|watched|taught|experienced|tried|tested|measured|recall|remember|struggled|learned)\b",  # first-hand experience
-    r"\bwe(?:'ve| have| had)?\s+(?:find|found|observe|observed|measured|tested|tried|notice|noticed|seen|watched)\b",  # first-hand (plural)
+    r"\b(?:I|we)(?:'ve|'d| have| had)?\s+[a-z]{2,}(?:ed|es|s)?\b",  # first-person + verb (structural; no verb enumeration)
     r"\bin my (?:own\s+)?[a-z]+\b",                    # first-hand framing: "in my classroom/experience/practice"
 ]
 NAMED_ENTITY_DETAIL_PATTERN = CONCRETE_DETAIL_PATTERNS[2]
