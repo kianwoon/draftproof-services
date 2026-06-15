@@ -986,35 +986,32 @@ def estimate_generic_assertion_risk(text: str) -> float:
     return 0.25
 
 
+# Closed-class structural cues for lived detail -- no content words. First-person framing
+# (pronouns) and situational/temporal/conditional clauses (subordinating conjunctions).
+_LIVED_FIRST_PERSON_RE = re.compile(r"\b(?:i|we|my|our|us|me)\b", re.I)
+_SITUATIONAL_CLAUSE_RE = re.compile(r"\b(?:when|whenever|after|before|during|once|while|if)\b", re.I)
+
+
 def estimate_lived_detail_risk(text: str, domain_patterns: Optional[list[str]] = None) -> float:
     sentences = split_sentences(text)
     if not sentences:
         return 0.70
 
-    # Content-agnostic lived-detail signals (NO hardcoded domain vocabulary, per project rule).
-    # Sentences are lowercased before matching, so patterns are lowercase. Lived detail = the
-    # author's first-hand experience + concrete specifics, in ANY subject -- not domain keywords.
-    base_patterns = [
-        r"\b\d+\b",                                            # numbers / quantities
-        r"\b(?:during|when|after|before|once|while)\b",        # temporal grounding
-        r"\bin my\b",                                          # first-hand framing ("in my class/clinic/...")
-        r"\bi(?:'ve|'d| have| had)?\s+(?:saw|see|seen|notice|noticed|observed|watched|found|tried|tested|taught|experienced|measured|recall|remember|ask|asked|use|used|treat|demonstrate|encourage|gave|struggled|learned|worry|think|would)\b",
-        r"\bwe(?:'ve| have)?\s+(?:observed|found|noticed|measured|tested|tried|saw|seen)\b",
-        r"\bmy (?:judgement|judgment|current|own)\b",
-        r"\bthe (?:part|issue|point) (?:i|we)\b",
-        r"\bwhat (?:i|we) (?:would|need|want)\b",
-        r"\b(?:said|told|reported|recalled)\b",                # attribution / quotation
-        r"\b(?:for example|for instance|such as|in particular|specifically)\b",  # exemplification
-        r"\b(?:case|example|incident|episode)\b",              # concrete instance
-        r"\bfeedback\b", r"\btesting\b",                       # process specifics
-    ]
-
-    patterns = base_patterns + (domain_patterns or [])
+    # Agnostic lived-detail: a sentence shows lived detail via a STRUCTURAL grounding cue --
+    # a hard verifiable specific (number / alphanumeric code / multi-word proper noun /
+    # citation / quote, via _sentence_has_hard_concrete), first-person authorial framing
+    # (closed-class pronouns), or a situational/temporal/conditional clause (closed-class
+    # subordinators) -- plus any content-DERIVED domain anchors. No hardcoded content words.
+    extra = [re.compile(p, re.I) for p in (domain_patterns or [])]
 
     detail_hits = 0
     for sentence in sentences:
-        lower = sentence.lower()
-        if any(re.search(pattern, lower) for pattern in patterns):
+        if (
+            _sentence_has_hard_concrete(sentence)
+            or _LIVED_FIRST_PERSON_RE.search(sentence)
+            or _SITUATIONAL_CLAUSE_RE.search(sentence)
+            or any(p.search(sentence) for p in extra)
+        ):
             detail_hits += 1
 
     ratio = detail_hits / len(sentences)

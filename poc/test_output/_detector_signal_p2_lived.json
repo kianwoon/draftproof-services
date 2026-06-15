@@ -1,0 +1,93 @@
+{
+  "signals": {
+    "formulaic_progression": {
+      "ai_mean": 0.1088,
+      "human_mean": 0.0,
+      "gap": 0.1088,
+      "auc": 0.6471,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "balanced_generic_framing": {
+      "ai_mean": 0.0853,
+      "human_mean": 0.1167,
+      "gap": -0.0314,
+      "auc": 0.4275,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "repeated_starter": {
+      "ai_mean": 0.1971,
+      "human_mean": 0.0,
+      "gap": 0.1971,
+      "auc": 0.7059,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "signpost_paragraph": {
+      "ai_mean": 0.0,
+      "human_mean": 0.0,
+      "gap": 0.0,
+      "auc": 0.5,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "balanced_hedging": {
+      "ai_mean": 0.0206,
+      "human_mean": 0.0,
+      "gap": 0.0206,
+      "auc": 0.5294,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "formulaic_conclusion": {
+      "ai_mean": 0.1265,
+      "human_mean": 0.0,
+      "gap": 0.1265,
+      "auc": 0.7059,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "generic_assertion": {
+      "ai_mean": 0.8088,
+      "human_mean": 0.7333,
+      "gap": 0.0755,
+      "auc": 0.5941,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "lived_detail": {
+      "ai_mean": 0.4294,
+      "human_mean": 0.33,
+      "gap": 0.0994,
+      "auc": 0.6706,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "broad_claim": {
+      "ai_mean": 0.7853,
+      "human_mean": 0.73,
+      "gap": 0.0553,
+      "auc": 0.5431,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "unsupported_claim": {
+      "ai_mean": 0.8647,
+      "human_mean": 0.8467,
+      "gap": 0.018,
+      "auc": 0.5039,
+      "n_ai": 17,
+      "n_human": 15
+    },
+    "register": {
+      "ai_mean": 0.9219,
+      "human_mean": 0.228,
+      "gap": 0.6939,
+      "auc": 0.9922,
+      "n_ai": 17,
+      "n_human": 15
+    }
+  },
+  "n_cases": 32
+}
