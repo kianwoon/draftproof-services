@@ -7,6 +7,9 @@ from detect.critical_thinking_llm import (
     ALLOWED_LABELS,
     assess_critical_thinking,
     critical_thinking_llm_enabled,
+    critical_thinking_questions_enabled,
+    generate_reflective_questions,
+    _weak_dimensions,
 )
 
 _REPORT = {
@@ -102,3 +105,74 @@ def test_empty_results_when_all_invalid(monkeypatch):
     bad = json.dumps({"paragraphs": [{"paragraph_id": "ghost", "alternative_comparison": 10}], "highlights": []})
     # no valid paragraph dims and no highlights -> None
     assert assess_critical_thinking(_REPORT, gateway=_FakeGateway(bad)) is None
+
+
+# ── Reflective questions ──────────────────────────────────────────────────────
+
+_REPORT_Q = {
+    "scan_intelligence": {"document": {"paragraphs": [
+        {"paragraph_id": "p001", "text": "AI can improve learning by providing personalised support."},
+        {"paragraph_id": "p002", "text": "There are many benefits and challenges to using AI in school."},
+    ]}},
+    "ai_risk_badge": {"critical_thinking_control": {"dimensions": {
+        "specific_context": {"control": 17.5},
+        "student_judgement": {"control": 36.0},
+        "evidence_grounding": {"control": 65.0},
+        "ai_dependency": {"control": 100.0},   # lead-ineligible -> excluded from steering
+        "reasoning_trail": {"control": 84.0},
+    }}},
+}
+
+_GOOD_Q = json.dumps({"questions": [
+    {"dimension": "specific_context",
+     "anchor_quote": "AI can improve learning by providing personalised support.",
+     "question": "When did personalised support actually help you?"},
+    {"dimension": "evidence_grounding",
+     "anchor_quote": "There are many benefits and challenges",  # substring of p002 -> anchored
+     "question": "Name one concrete benefit and one concrete risk."},
+    {"dimension": "specific_context",
+     "anchor_quote": "a fabricated sentence never written in the draft",  # NOT in corpus -> dropped
+     "question": "ghost question"},
+    {"dimension": "mystery_dim",
+     "anchor_quote": "AI can improve learning",  # anchored; invalid dim -> normalized to ""
+     "question": "What do you mean by improve?"},
+]})
+
+
+def test_questions_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS", raising=False)
+    assert critical_thinking_questions_enabled() is False
+    assert generate_reflective_questions(_REPORT_Q, gateway=_FakeGateway(_GOOD_Q)) is None
+
+
+def test_questions_parse_and_anchor_guard(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS", "1")
+    out = generate_reflective_questions(_REPORT_Q, gateway=_FakeGateway(_GOOD_Q))
+    assert out is not None
+    qs = out["questions"]
+    # fabricated-quote question dropped; 3 anchored survive
+    assert len(qs) == 3
+    assert all(q["anchor_quote"] for q in qs) and all(q["question"] for q in qs)
+    # invalid dimension normalized to ""
+    assert qs[2]["dimension"] == ""
+    # no fabricated quote survived
+    assert not any("fabricated" in q["anchor_quote"] for q in qs)
+
+
+def test_questions_fail_open_bad_json(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS", "1")
+    assert generate_reflective_questions(_REPORT_Q, gateway=_FakeGateway("not json <<<")) is None
+
+
+def test_questions_none_without_weak_dimensions(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS", "1")
+    rep = {"scan_intelligence": _REPORT_Q["scan_intelligence"], "ai_risk_badge": {}}
+    assert generate_reflective_questions(rep, gateway=_FakeGateway(_GOOD_Q)) is None
+
+
+def test_weak_dimensions_excludes_ai_dependency_and_sorts():
+    weak = _weak_dimensions(_REPORT_Q)
+    codes = [c for c, _l, _a in weak]
+    assert "ai_dependency" not in codes            # lead-ineligible never steers
+    assert codes[0] == "specific_context"          # weakest (control 17.5) first
+    assert codes == ["specific_context", "student_judgement", "evidence_grounding"]

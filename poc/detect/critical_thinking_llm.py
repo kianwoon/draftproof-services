@@ -321,3 +321,182 @@ def _int_env(name: str, default: int) -> int:
         return max(1, int(os.environ.get(name, default)))
     except (TypeError, ValueError):
         return default
+
+
+# allow-hardcode: everything below is an LLM PROMPT (model coaching instructions),
+# not a detect/scoring/allow word-list. The strings are sent to the model; no
+# document text is ever matched against them. The only matching done here is the
+# anchoring guard, which checks the model's quote against the user's OWN draft.
+
+# ── Reflective questions (the score -> questions reframe) ──────────────────────
+# Replaces the unhelpful Critical Thinking SCORE with anchored reflective questions
+# that keep the STUDENT in control of their thinking. Steered by the scan's weakest
+# dimensions, anchored to the student's actual claims. Question-variance is harmless
+# (unlike the scoring layer), so the LLM is the right tool here. Fail-open.
+
+QUESTIONS_MODEL_VERSION = "critical_thinking_questions_v1"
+
+
+def critical_thinking_questions_enabled() -> bool:
+    """Kill switch, DEFAULT OFF. DRAFTPROOF_CRITICAL_THINKING_QUESTIONS=1 enables.
+    Off until question QUALITY is validated on real reports."""
+    return os.environ.get("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _dimension_tables():
+    try:
+        from detect.critical_thinking import DIMENSION_LABELS, LEAD_INELIGIBLE_DIMENSIONS
+    except ModuleNotFoundError:
+        from poc.detect.critical_thinking import DIMENSION_LABELS, LEAD_INELIGIBLE_DIMENSIONS
+    return DIMENSION_LABELS, LEAD_INELIGIBLE_DIMENSIONS
+
+
+def _weak_dimensions(report_json: dict[str, Any], limit: int = 3) -> list[tuple[str, str, str]]:
+    """The scan's weakest LEAD-ELIGIBLE dimensions (lowest control first) -> (code, label, action)."""
+    badge = report_json.get("ai_risk_badge") if isinstance(report_json, dict) else None
+    ctc = badge.get("critical_thinking_control") if isinstance(badge, dict) else None
+    dims = ctc.get("dimensions") if isinstance(ctc, dict) else None
+    if not isinstance(dims, dict):
+        return []
+    labels, ineligible = _dimension_tables()
+    rows: list[tuple[float, str, str, str]] = []
+    for code, info in dims.items():
+        if code in ineligible or not isinstance(info, dict):
+            continue
+        control = info.get("control")
+        if not isinstance(control, (int, float)):
+            continue
+        label, action = labels.get(code, (code, ""))
+        rows.append((float(control), code, label, action))
+    rows.sort(key=lambda r: r[0])  # weakest (lowest control) first
+    return [(code, label, action) for _c, code, label, action in rows[:limit]]
+
+
+def generate_reflective_questions(
+    report_json: dict[str, Any],
+    *,
+    gateway: Any | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, Any] | None:
+    """Return {questions:[{dimension, anchor_quote, question}], ...} or None (fail-open).
+
+    Anchored, dimension-steered reflective questions. None on disable / no paragraphs /
+    no weak dimension / no key / any failure.
+    """
+    if not critical_thinking_questions_enabled():
+        return None
+    try:
+        rows = _document_paragraphs(report_json)
+        if not rows:
+            return None
+        weak = _weak_dimensions(report_json)
+        if not weak:
+            return None
+        rows = _bounded(rows)
+        model = model or _model_from_env()
+        if gateway is None:
+            gateway = _build_gateway(model=model, api_key=api_key, base_url=base_url)
+            if gateway is None:
+                return None
+        response = gateway.chat(
+            _questions_prompt(rows, weak),
+            system=_QUESTIONS_SYSTEM,
+            temperature=_questions_temperature(),
+            max_tokens=_int_env("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS_MAX_TOKENS", 2000),
+            response_format={"type": "json_object"},
+            app_label="CriticalThinkingQuestions",
+        )
+        parsed = _parse_json(getattr(response, "raw_content", "") or getattr(response, "content", "") or "")
+        questions = _normalize_questions(parsed, rows)
+        if not questions:
+            return None
+        return {
+            "schema_version": QUESTIONS_MODEL_VERSION,
+            "model": getattr(gateway, "model", model),
+            "generated_at": int(time.time()),
+            "questions": questions,
+        }
+    except Exception:
+        return None
+
+
+_QUESTIONS_SYSTEM = (
+    "You help a student stay in control of their OWN thinking. You ask sharp, specific reflective "
+    "questions about THEIR draft -- never generic ones, and never the answers. Reason about meaning; "
+    "quote their wording verbatim. Return valid JSON only. Do not invent facts or sources, and do not "
+    "make claims about whether the student used AI."
+)
+
+
+def _questions_prompt(rows: list[dict[str, Any]], weak: list[tuple[str, str, str]]) -> str:
+    weak_desc = "\n".join(f"- {code} ({label}): the draft is weak here -- {action}" for code, label, action in weak)
+    codes = [code for code, _l, _a in weak]
+    return (
+        "The scan found this student's draft weakest on the dimensions below. For EACH weak dimension, "
+        "find a SPECIFIC claim in their text and ask ONE pointed reflective question that makes the "
+        "student think harder about it, so they revise it themselves.\n\n"
+        f"Weakest dimensions to probe:\n{weak_desc}\n\n"
+        "Rules:\n"
+        "- 3-5 questions total. Anchor EVERY question to a verbatim quote copied from the paragraphs.\n"
+        "- Ask about THEIR actual claim, not the topic in general. The question should be specific "
+        "enough that it could ONLY be asked of this draft.\n"
+        "- Do NOT answer the question or tell them what to write. Do NOT invent facts. Avoid generic "
+        "questions (e.g. bare 'what is the counter-argument?') with no anchor to their specific claim.\n\n"
+        'Return JSON: {"questions":[{"dimension":"<one of the codes>","anchor_quote":"verbatim phrase '
+        'from their draft","question":"the reflective question"}]}\n\n'
+        f"Dimension codes to use: {codes}\n"
+        f"Input paragraphs JSON:\n{json.dumps({'paragraphs': rows}, ensure_ascii=False, default=str)}"
+    )
+
+
+def _normalize_questions(parsed: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not isinstance(parsed, dict):
+        return []
+    import re
+
+    def _norm(s: Any) -> str:
+        return re.sub(r"\s+", " ", str(s or "").lower()).strip()
+
+    corpus = _norm(" ".join(r.get("text") or "" for r in rows))
+    valid_dims = set(_dimension_tables()[0])
+    cap = _int_env("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS_MAX", 5)
+    out: list[dict[str, Any]] = []
+    for row in parsed.get("questions") or []:
+        if not isinstance(row, dict):
+            continue
+        quote = _clip(row.get("anchor_quote"), 200)
+        question = _clip(row.get("question"), 300)
+        if not quote or not question:
+            continue
+        # Anchoring guard: the quote must actually appear in the draft (no fabricated
+        # quotes; precision-first -- keep only genuinely anchored questions).
+        if _norm(quote) not in corpus:
+            continue
+        dim = str(row.get("dimension") or "").strip()
+        out.append({
+            "dimension": dim if dim in valid_dims else "",
+            "anchor_quote": quote,
+            "question": question,
+        })
+        if len(out) >= cap:
+            break
+    return out
+
+
+def _questions_temperature() -> float:
+    try:
+        from rewrite_v6.llm_config import deterministic_mode
+    except ModuleNotFoundError:
+        try:
+            from poc.rewrite_v6.llm_config import deterministic_mode
+        except ModuleNotFoundError:
+            deterministic_mode = lambda: False  # noqa: E731
+    if deterministic_mode():
+        return 0.0
+    raw = os.environ.get("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS_TEMPERATURE")
+    try:
+        return max(0.0, min(1.0, float(raw))) if raw else 0.4
+    except (TypeError, ValueError):
+        return 0.4

@@ -751,6 +751,56 @@
   font-weight: 650;
 }
 
+/* Reflective questions list (replaces the score). */
+.critical-thinking-questions {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: ctq;
+}
+
+.critical-thinking-question {
+  counter-increment: ctq;
+  position: relative;
+  padding: 0 0 0 2rem;
+}
+
+.critical-thinking-question::before {
+  content: counter(ctq);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1.4rem;
+  height: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #ede9fe;
+  color: #6d28d9;
+  font-size: .78rem;
+  font-weight: 850;
+}
+
+.critical-thinking-q-quote {
+  display: block;
+  margin-bottom: .25rem;
+  color: #6d28d9;
+  font-style: italic;
+  font-size: .86rem;
+  line-height: 1.45;
+}
+
+.critical-thinking-q-text {
+  display: block;
+  color: #1f2937;
+  font-size: .96rem;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
 .repair-summary-action {
   position: relative;
   overflow: hidden;

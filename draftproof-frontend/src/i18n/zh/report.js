@@ -44,7 +44,9 @@ export const report = {
   // allow-hardcode: i18n UI 文案（按编码索引的等级标签与指导语），非评分/匹配逻辑，
   // 与上方 groundingDiagnosis 同类，绝不与文档正文比对。
   "criticalThinking": {
-    "title": "批判性思维主导度",
+    "title": "批判性思维",
+    "questionsTitle": "深化思考的提问",
+    "questionsIntro": "这些问题针对你自己的草稿。修改时用它们推进你的思考——答案由你自己来写。",
     "leadPrefix": "可改进",
     "strongHeading": "学生主导充分",
     "scoreLabel": "主导度评分",

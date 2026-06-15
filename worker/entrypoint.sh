@@ -24,6 +24,10 @@ export DRAFTPROOF_TOPK_GROUNDING_GATE="${DRAFTPROOF_TOPK_GROUNDING_GATE:-1}"
 export DRAFTPROOF_V6_BRACKET_GROUNDING="${DRAFTPROOF_V6_BRACKET_GROUNDING:-1}"
 export DRAFTPROOF_V6_GRAMMAR_MODEL="${DRAFTPROOF_V6_GRAMMAR_MODEL:-qwen/qwen-2.5-7b-instruct}"
 export DRAFTPROOF_V6_GRAMMAR_BASE_URL="${DRAFTPROOF_V6_GRAMMAR_BASE_URL:-https://openrouter.ai/api/v1}"
+# Critical Thinking reflective questions ON in production (code default OFF). The report's
+# Critical Thinking section shows anchored questions instead of the score. Needs an LLM key
+# (OPENROUTER/CEREBRAS); fail-open without one. Set =0 on Koyeb to disable.
+export DRAFTPROOF_CRITICAL_THINKING_QUESTIONS="${DRAFTPROOF_CRITICAL_THINKING_QUESTIONS:-1}"
 
 echo "[entrypoint] ============================================"
 echo "[entrypoint] DraftProof Worker Startup"

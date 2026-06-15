@@ -1778,6 +1778,24 @@ def scan_document(self, job_id: str, text: str) -> dict:
             except Exception:
                 logger.warning("Critical Thinking LLM enrichment skipped for %s", job_id, exc_info=True)
 
+            # Reflective questions (kill-switch DRAFTPROOF_CRITICAL_THINKING_QUESTIONS, DEFAULT
+            # OFF). Anchored, dimension-steered questions that replace the score as the user-facing
+            # surface. Fail-open: never blocks or alters the scan.
+            try:
+                from poc.detect.critical_thinking_llm import generate_reflective_questions
+                ctc = (results_json.get("ai_risk_badge") or {}).get("critical_thinking_control")
+                if isinstance(ctc, dict):
+                    questions = generate_reflective_questions(
+                        results_json,
+                        api_key=(settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or settings.CEREBRAS_API_KEY or None),
+                        base_url=(settings.LLM_BASE_URL or None),
+                    )
+                    if questions is not None:
+                        ctc["questions"] = questions.get("questions") or []
+                        ctc["questions_model"] = questions.get("model")
+            except Exception:
+                logger.warning("Critical Thinking questions skipped for %s", job_id, exc_info=True)
+
             report_progress(97, "Uploading report files")
             urls = upload_report_files(job_id, md_text, pdf_bytes, results_json, paragraph_explanations)
 

@@ -45,7 +45,9 @@ export const report = {
   // not a scoring/matching oracle — same category as groundingDiagnosis above.
   // Never compared against document text.
   "criticalThinking": {
-    "title": "Critical Thinking Control",
+    "title": "Critical Thinking",
+    "questionsTitle": "Questions to sharpen your thinking",
+    "questionsIntro": "These are about your own draft. Use them to push your thinking further as you revise — the answers are yours to write.",
     "leadPrefix": "Work on",
     "strongHeading": "Strong student control",
     "scoreLabel": "Control score",
