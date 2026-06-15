@@ -48,25 +48,27 @@ def test_extract_no_badge_is_safe():
     assert extract_paragraph_diagnoses(None) == {}
 
 
-def test_prompt_includes_critical_thinking_focus():
+def test_prompt_includes_critical_thinking_insight():
     diagnosis = {"critical_thinking_action": "connect each claim to a source",
                  "predictable_phrases": []}
     out = _prompt("AI can improve learning by providing personalised support.", diagnosis, [])
-    assert "CRITICAL-THINKING FOCUS" in out
+    assert "CRITICAL-THINKING INSIGHT" in out
     assert "connect each claim to a source" in out
     assert "critical_thinking_focus" in out
+    # insight, not a task to fabricate the missing evidence
+    assert "do NOT fabricate" in out
 
 
 def test_prompt_omits_focus_when_absent():
     out = _prompt("Some paragraph text here.", {"predictable_phrases": []}, [])
-    assert "CRITICAL-THINKING FOCUS" not in out
+    assert "CRITICAL-THINKING INSIGHT" not in out
 
 
 def test_prompt_focus_present_in_diversified_lane():
     diagnosis = {"critical_thinking_action": "take a position and justify why you chose it",
                  "predictable_phrases": []}
     out = _prompt("Students should use AI responsibly.", diagnosis, [], lane="diversified")
-    assert "CRITICAL-THINKING FOCUS" in out
+    assert "CRITICAL-THINKING INSIGHT" in out
     assert "take a position and justify" in out
 
 
@@ -105,18 +107,21 @@ def test_extract_matches_questions_to_anchored_paragraph():
     assert all("ghost question" not in (d[p].get("critical_thinking_questions") or []) for p in d)
 
 
-def test_prompt_includes_critical_thinking_questions():
+def test_prompt_includes_critical_thinking_questions_as_insight():
     diagnosis = {"critical_thinking_questions": ["Name one concrete benefit and one concrete risk."],
                  "predictable_phrases": []}
     out = _prompt("There are many benefits and challenges.", diagnosis, [])
-    assert "Reflective question" in out
+    assert "INSIGHT into what is thin" in out
     assert "Name one concrete benefit" in out
     assert "critical_thinking_questions" in out
+    # the override: questions are NOT answered by inventing evidence
+    assert "Do NOT invent" in out
+    assert "does NOT apply" in out  # general "add an illustrative anchor" is overridden
 
 
 def test_prompt_omits_questions_when_absent():
     out = _prompt("Some paragraph text here.", {"predictable_phrases": []}, [])
-    assert "Reflective question" not in out
+    assert "INSIGHT into what is thin" not in out
     assert "critical_thinking_questions" not in out
 
 
@@ -124,5 +129,5 @@ def test_prompt_questions_present_in_diversified_lane():
     diagnosis = {"critical_thinking_questions": ["What is the strongest opposing view, and why reject it?"],
                  "predictable_phrases": []}
     out = _prompt("Students should use AI responsibly.", diagnosis, [], lane="diversified")
-    assert "Reflective question" in out
+    assert "INSIGHT into what is thin" in out
     assert "strongest opposing view" in out

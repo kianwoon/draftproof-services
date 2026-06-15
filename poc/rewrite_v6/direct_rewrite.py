@@ -388,31 +388,38 @@ def _prompt(
             "Where you add concrete grounding, prioritise these author-owned gaps: "
             + "; ".join(grounding) + "."
         )
-    # Critical Thinking Control focus: the specific thinking gap the scan flagged for THIS
-    # paragraph. Reinforces the existing grounding instructions with a per-paragraph target.
+    # Critical Thinking INSIGHT: the thinking gap the scan found for THIS paragraph. It is
+    # diagnostic intelligence to help the writer UNDERSTAND the weakness -- NOT a task to
+    # complete by fabricating the missing source/evidence.
     critical_thinking_action = (diagnosis or {}).get("critical_thinking_action")
     if critical_thinking_action:
         payload["critical_thinking_focus"] = str(critical_thinking_action)
         # allow-hardcode: model coaching guidance (a prompt), not a detect/scoring word-list.
         payload["instructions"].append(
-            "CRITICAL-THINKING FOCUS for this paragraph: " + str(critical_thinking_action)
-            + " The scan flagged this as the specific thinking gap here, so make the rewrite "
-            "visibly do it -- as a reviewable showcase the author can adapt, never as a fabricated "
-            "fact. This reinforces (does not replace) the grounding instructions above."
+            "CRITICAL-THINKING INSIGHT for this paragraph -- the thinking gap the scan found: "
+            + str(critical_thinking_action)
+            + " Use this to UNDERSTAND what is weak and rewrite more intelligently; do NOT fabricate "
+            "a source, statistic, example, or experience to fill the gap. Ground only from the "
+            "author's real material, and leave a genuine gap honest for the author to fill."
         )
-    # Critical Thinking reflective question(s): the sharp, anchored target for THIS paragraph
-    # (the specific form of the focus above). The writer should visibly demonstrate addressing it.
+    # Critical Thinking reflective question(s): INSIGHT into what is thin in THIS paragraph's
+    # thinking. The writer uses them to understand the weakness -- it must NOT "answer" them by
+    # inventing the missing evidence (that is what produced "when I sat in a briefing").
     critical_thinking_questions = (diagnosis or {}).get("critical_thinking_questions")
     if critical_thinking_questions:
         payload["critical_thinking_questions"] = list(critical_thinking_questions)
         # allow-hardcode: model coaching guidance (a prompt), not a detect/scoring word-list.
         payload["instructions"].append(
-            "Reflective question(s) the scan raised about THIS paragraph: "
+            "The scan raised these question(s) about THIS paragraph: "
             + " | ".join(str(q) for q in critical_thinking_questions)
-            + " Make the rewrite visibly DEMONSTRATE addressing them -- add the comparison, "
-            "specific example, or decision they point to as an ILLUSTRATIVE showcase the author "
-            "will replace with their own (list each added specific in author_review_items). Do "
-            "NOT present invented facts, names, or statistics as real."
+            + " Treat them as INSIGHT into what is thin in the thinking (a missing source, "
+            "comparison, or line of reasoning) -- use them to understand the weakness, NOT as "
+            "prompts to answer. Do NOT invent a source, statistic, study, example, or personal "
+            "experience to 'answer' a question: that fabricates the very evidence the question is "
+            "asking the AUTHOR to supply. For the specific claim a question targets, the general "
+            "'add an illustrative anchor' guidance above does NOT apply -- instead ground only from "
+            "what the author actually wrote, make the existing reasoning explicit, and leave the "
+            "gap honestly thin for the author to fill with their own evidence."
         )
     return "Return JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
