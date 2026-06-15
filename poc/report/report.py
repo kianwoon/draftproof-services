@@ -3330,17 +3330,17 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             r"\b[A-Z][A-Za-z'’.-]*"
             r"(?:\s+(?:(?:of|for|and|&|the|in|at)\s+)?(?:[A-Z][A-Za-z'’.-]*|I{2,3}|IV|V))*"
         )
-        stop_entities = {
-            "Today", "In", "This", "That", "The", "A", "An", "Many", "Students",
-            "Teachers", "Learners", "However", "Therefore", "Education",
-            "Access", "Another", "Assessment", "Because", "Because of", "But",
-            "But the", "In the", "Knowledge", "Not", "Now", "Schools",
-            "Technology", "They", "Used", "When",
-        }
+        # NO-HARDCODE: entity filtering is purely STRUCTURAL -- no baked vocabulary. A capitalised
+        # token is kept as a named entity only if it is genuinely proper-noun-shaped: a single token
+        # must be mixed-case (e.g. "iPhone") or acronym-like (e.g. "NASA"); a plain capitalised common
+        # word (sentence-opener, generic noun) fails that gate. Leading determiners/prepositions are
+        # stripped and trailing function words rejected. The previous `stop_entities` set and a
+        # `{teacher,student,learner}` guard baked domain/common words; both were redundant with these
+        # structural gates (verified: anchor output is byte-identical without them).
         for match in _re.finditer(entity_pattern, text):
             entity = match.group(0).strip()
             entity = _re.sub(r"^(?:At|By|In|For|With|From|This|The)\s+", "", entity).strip()
-            if entity in stop_entities or len(entity) < 3:
+            if len(entity) < 3:
                 continue
             words = entity.split()
             if len(words) == 1:
@@ -3350,8 +3350,6 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 if not (is_mixed_case or is_acronym_like):
                     continue
             if words and words[-1].lower() in {"of", "for", "and", "the", "in", "at"}:
-                continue
-            if len(words) == 1 and entity.lower() in {"teacher", "student", "learner"}:
                 continue
             _unique_preserve(anchors, entity, "name_or_entity", "proper noun or named entity", 78)
 
@@ -3513,19 +3511,18 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         return keys[:12]
 
     def _section_role(heading: str, index: int, total: int) -> str:
-        lower = (heading or "").lower()
-        if "intro" in lower:
-            return "context_and_thesis"
-        if "lost" in lower or "challenge" in lower:
-            return "problem_and_causal_explanation"
-        if "show" in lower or "demonstrat" in lower:
-            return "instructional_design_and_support"
-        if "adjustment" in lower or "classroom" in lower:
-            return "reasonable_adjustment_and_constraints"
-        if "standard" in lower or "access" in lower:
-            return "standards_access_and_author_judgement"
-        if "conclusion" in lower or index == total:
-            return "synthesis_and_closure"
+        # NO-HARDCODE: purely STRUCTURAL (positional) role -- no heading vocabulary, no
+        # domain/subject words. The previous version branched on a baked heading->role keyword
+        # ladder ("lost"/"challenge"/"show"/"demonstrat"/"adjustment"/"classroom"/"standard"/
+        # "access") overfit to one education essay; a business/science/legal doc fell through to
+        # "development" for everything. `role` is descriptive handoff metadata -- no downstream
+        # logic branches on its value -- so a position-based role is both agnostic and sufficient.
+        if total <= 1:
+            return "document_body"
+        if index <= 1:
+            return "opening_context"
+        if index >= total:
+            return "closing_synthesis"
         return "development"
 
     def _anchor_register_from_inventory(preservation_inventory: Dict[str, Any]) -> Dict[str, Any]:
