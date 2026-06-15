@@ -14,6 +14,7 @@ import {
 import RewriteNoticeDialog from './report/RewriteNoticeDialog';
 import SignalHighlights from './report/SignalHighlights';
 import FixFirstChecklist from './report/FixFirstChecklist';
+import CriticalThinkingControl from './report/CriticalThinkingControl';
 import ReportHero from './report/ReportHero';
 import useTextareaCaretOverlay from './report/useTextareaCaretOverlay';
 import { buildTrackedDiff, trackedDiffToPlainText, trackedDiffToHtml } from './report/trackedDiff';
@@ -2210,6 +2211,8 @@ export default function Report() {
             kicker={t('report.whatToFixFirst.kicker')}
           />
         )}
+
+        <CriticalThinkingControl badge={badge} t={t} />
 
         {rewriteCompletionBand}
 

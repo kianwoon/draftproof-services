@@ -1481,6 +1481,22 @@ function groundingDiagnosis(badge) {
   return diag && typeof diag === 'object' ? diag : null;
 }
 
+// Critical Thinking Control diagnosis (additive, non-gating). Returns null when
+// absent or when the score abstained (insufficient_data) so the section hides.
+// Display flag mirrors the GROUNDING_DIAGNOSIS_LEAD_ENABLED convention: the
+// section runs on every scan and could not be E2E-verified pre-deploy, so this
+// toggle hides it without a code change if the live render is wrong.
+const CRITICAL_THINKING_CONTROL_ENABLED = true;
+const CRITICAL_THINKING_DIMENSIONS = [
+  'specific_context', 'student_judgement', 'reasoning_trail', 'ai_dependency', 'evidence_grounding',
+];
+
+function criticalThinkingControl(badge) {
+  const ctc = (badge || {}).critical_thinking_control;
+  if (!ctc || typeof ctc !== 'object') return null;
+  return typeof ctc.score === 'number' ? ctc : null;
+}
+
 const REWRITE_VERDICT_TONES = {
   high: { color: '#b91c1c', bg: '#fef2f2' },
   elevated: { color: '#c2410c', bg: '#fff7ed' },
@@ -1679,4 +1695,7 @@ export {
   groundingDiagnosis,
   GROUNDING_DIAGNOSIS_LEAD_ENABLED,
   GROUNDING_DIAGNOSIS_BUCKETS,
+  criticalThinkingControl,
+  CRITICAL_THINKING_DIMENSIONS,
+  CRITICAL_THINKING_CONTROL_ENABLED,
 };

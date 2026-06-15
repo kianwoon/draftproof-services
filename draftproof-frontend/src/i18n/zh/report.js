@@ -41,6 +41,43 @@ export const report = {
     },
     "tentative": "文本较短 — 诊断仅供参考"
   },
+  // allow-hardcode: i18n UI 文案（按编码索引的等级标签与指导语），非评分/匹配逻辑，
+  // 与上方 groundingDiagnosis 同类，绝不与文档正文比对。
+  "criticalThinking": {
+    "title": "批判性思维主导度",
+    "leadPrefix": "可改进",
+    "scoreLabel": "主导度评分",
+    "tentative": "文本较短 — 诊断仅供参考",
+    "bands": {
+      "strong_control": "学生主导充分",
+      "acceptable_control": "主导度尚可",
+      "weak_control": "主导度偏弱",
+      "high_dependency": "高度依赖 AI 风险",
+      "very_high_dependency": "极高依赖 AI 风险",
+      "insufficient_data": "文本不足，无法评估"
+    },
+    "dimensions": {
+      "specific_context": { "label": "具体情境", "action": "将论点锚定到真实的作业、案例、事例或观察。" },
+      "student_judgement": { "label": "学生判断", "action": "表明立场并说明你为何作出该选择。" },
+      "reasoning_trail": { "label": "推理脉络", "action": "展示你如何从证据推导到结论。" },
+      "ai_dependency": { "label": "AI 依赖", "action": "质疑第一个答案，而不是原样保留。" },
+      "evidence_grounding": { "label": "证据支撑", "action": "为每个论点连接来源、事例或数据。" }
+    },
+    "reviewFlagsTitle": "复核标记（不计入评分）",
+    "llmDimensions": {
+      "alternative_comparison": "多方比较",
+      "reflection": "反思 / 自主性"
+    },
+    // allow-hardcode: i18n UI 文案 — 按 LLM 输出枚举编码索引的展示标签，绝不与正文比对。
+    "highlightLabels": {
+      "single_path_answer": "单一路径答案",
+      "no_judgement": "缺乏判断",
+      "no_reflection": "缺乏反思",
+      "broad_claim": "论点空泛",
+      "missing_evidence": "缺少证据",
+      "over_polished_closure": "结尾过于套路"
+    }
+  },
   "whatToFixFirst": {
     "kicker": "修订计划",
     "title": "优先修复内容",

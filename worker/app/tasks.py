@@ -1758,6 +1758,26 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 else:
                     logger.warning("Paragraph explanation generation failed for %s", job_id, exc_info=True)
 
+            # Phase-2 LLM enrichment for Critical Thinking Control (kill-switch, DEFAULT OFF
+            # via DRAFTPROOF_CRITICAL_THINKING_LLM). Adds the alternative_comparison +
+            # reflection dimensions and agnostic per-sentence highlights to the additive
+            # critical_thinking_control diagnosis. Fail-open: never blocks or alters the scan.
+            try:
+                from poc.detect.critical_thinking_llm import assess_critical_thinking
+                ctc = (results_json.get("ai_risk_badge") or {}).get("critical_thinking_control")
+                if isinstance(ctc, dict):
+                    enrichment = assess_critical_thinking(
+                        results_json,
+                        api_key=(settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or settings.CEREBRAS_API_KEY or None),
+                        base_url=(settings.LLM_BASE_URL or None),
+                    )
+                    if enrichment is not None:
+                        ctc["llm_dimensions"] = enrichment.get("llm_dimensions")
+                        ctc["highlights"] = enrichment.get("highlights") or []
+                        ctc["llm_model"] = enrichment.get("model")
+            except Exception:
+                logger.warning("Critical Thinking LLM enrichment skipped for %s", job_id, exc_info=True)
+
             report_progress(97, "Uploading report files")
             urls = upload_report_files(job_id, md_text, pdf_bytes, results_json, paragraph_explanations)
 

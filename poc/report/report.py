@@ -26,6 +26,7 @@ from detect.rewrite_targets import build_problem_inventory, build_rewrite_target
 from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text, estimate_external_detector_likelihood, estimate_external_detector_segment_fraction
 from detect.external_grouped_scoring import estimate_external_grouped_score
 from detect.grounding_diagnosis import diagnose_grounding_gap
+from detect.critical_thinking import score_critical_thinking
 from detect.transformation import (
     TRANSFORMATION_SIGNAL_METADATA,
     classify_transformation_from_scan,
@@ -1505,12 +1506,23 @@ class ReportBuilder:
             scored_sentence_count=len(_pred_sentences) if _pred_sentences else None,
         )
 
+        # Additive Critical Thinking Control diagnosis: re-groups the SAME
+        # grounding signals into student-control dimensions and names the weakest
+        # one to work on. Additive only -- does NOT affect tier, ai_likelihood,
+        # or any gate (see detect.critical_thinking). The 2 LLM-judged dimensions
+        # (alternative_comparison/reflection) attach separately in Phase 2.
+        critical_thinking_control = score_critical_thinking(
+            grounding_diagnosis=grounding_diagnosis,
+            scored_sentence_count=len(_pred_sentences) if _pred_sentences else None,
+        )
+
         ai_risk_badge = {
             # AI Generation (Phase 1)
             "tier": layer3.tier.value,
             "ai_likelihood_score": round(layer3.ai_likelihood_score * 100, 2),
             "external_detector_estimate": external_detector_estimate,
             "grounding_diagnosis": grounding_diagnosis,
+            "critical_thinking_control": critical_thinking_control,
             "authorship_rating": layer3.authorship_rating,
             "authorship_rating_label": layer3.authorship_rating.get("label"),
             "authorship_rating_code": layer3.authorship_rating.get("code"),

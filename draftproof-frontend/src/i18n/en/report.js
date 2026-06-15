@@ -41,6 +41,45 @@ export const report = {
     },
     "tentative": "limited text — diagnosis tentative"
   },
+  // allow-hardcode: i18n UI copy (band labels + coaching strings keyed by code),
+  // not a scoring/matching oracle — same category as groundingDiagnosis above.
+  // Never compared against document text.
+  "criticalThinking": {
+    "title": "Critical Thinking Control",
+    "leadPrefix": "Work on",
+    "scoreLabel": "Control score",
+    "tentative": "limited text — diagnosis tentative",
+    "bands": {
+      "strong_control": "Strong student control",
+      "acceptable_control": "Acceptable control",
+      "weak_control": "Weak control",
+      "high_dependency": "High dependency risk",
+      "very_high_dependency": "Very high dependency risk",
+      "insufficient_data": "Not enough text to assess"
+    },
+    "dimensions": {
+      "specific_context": { "label": "Specific context", "action": "Anchor claims to a real assignment, case, example, or observation." },
+      "student_judgement": { "label": "Student judgement", "action": "Take a position and justify why you chose it." },
+      "reasoning_trail": { "label": "Reasoning trail", "action": "Show how you moved from evidence to conclusion." },
+      "ai_dependency": { "label": "AI dependency", "action": "Challenge the first answer instead of keeping it as-is." },
+      "evidence_grounding": { "label": "Evidence grounding", "action": "Connect each claim to a source, example, or data point." }
+    },
+    "reviewFlagsTitle": "Review flags (not part of the score)",
+    "llmDimensions": {
+      "alternative_comparison": "Alternative comparison",
+      "reflection": "Reflection / ownership"
+    },
+    // allow-hardcode: i18n UI copy — display labels keyed by the LLM output-enum
+    // code (ALLOWED_LABELS in critical_thinking_llm.py), never matched against text.
+    "highlightLabels": {
+      "single_path_answer": "Single-path answer",
+      "no_judgement": "No judgement",
+      "no_reflection": "No reflection",
+      "broad_claim": "Broad claim",
+      "missing_evidence": "Missing evidence",
+      "over_polished_closure": "Over-polished closure"
+    }
+  },
   "whatToFixFirst": {
     "kicker": "Repair Plan",
     "title": "What to fix first",
