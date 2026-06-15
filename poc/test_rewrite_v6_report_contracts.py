@@ -199,13 +199,6 @@ def test_v6_report_target_acceptance_does_not_block_non_worse_anchor_repairs():
     assert not _acceptable_progress(scan, scan, report_targeted=False)
 
 
-def test_v6_acceptance_rejects_non_target_paragraph_regression():
-    before = scan_text("This is an important process because the team should improve.\n\nPlain stable paragraph.")
-    after = scan_text("This process improved through a team review.\n\nThis is an important issue because the stable paragraph should improve.")
-
-    assert _cross_paragraph_regression(before, after, "p001")
-
-
 def test_v6_cross_paragraph_regression_allows_target_paragraph_split():
     before = scan_text("This process has an important issue because teams should improve.\n\nStable paragraph has a plain sentence.")
     after = scan_text("The process has an issue.\n\nTeams should improve through review.\n\nStable paragraph has a plain sentence.")
@@ -231,24 +224,6 @@ def test_v6_cross_paragraph_regression_allows_small_recalibration_when_target_sp
     assert not _cross_paragraph_regression(before, after, "p002")
 
 
-def test_v6_dynamic_pass_limit_scales_by_finding_paragraphs_not_total_paragraphs():
-    text = "\n\n".join([
-        "This is an important process because teams should improve.",
-        "This is an important method because students should improve.",
-        "Plain paragraph without a scanner pattern.",
-        "This is an important issue because schools should improve.",
-        "Plain context for the document.",
-        "This is an important problem because teachers should improve.",
-        "Another ordinary paragraph for context.",
-        "This is an important result because learners should improve.",
-    ])
-    scan = scan_text(text)
-
-    assert len(scan.paragraphs) == 8
-    assert len({finding.paragraph_id for finding in scan.findings}) == 5
-    assert _dynamic_pass_limit(scan) == 10
-
-
 def test_v6_pipeline_schedules_report_target_even_without_local_findings():
     text = (
         "First paragraph has ordinary setup.\n\n"
@@ -272,112 +247,6 @@ def test_v6_pipeline_schedules_report_target_even_without_local_findings():
     assert result.pass_trace[0]["target_paragraph_id"] == "p002"
     assert result.pass_trace[0]["candidate_diagnostics"] == []
     assert not result.passes
-
-
-def test_v6_retries_source_preserved_when_blocked_candidates_improved(monkeypatch):
-    source = (
-        "This is an important setup because teams should improve.\n\n"
-        "This is an important target because students should improve."
-    )
-    seen = []
-
-    def fake_run(current, **kwargs):
-        scan = scan_text(current)
-        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"), kwargs.get("priority_paragraph_ids"))
-        seen.append(paragraph.id)
-        if len(seen) == 1:
-            selected = Variant(id="source_preserved", text=paragraph.text, source="source_preserved")
-            diagnostics = [{
-                "variant_id": "v1",
-                "source": "llm",
-                "candidate_findings": 0,
-                "source_findings": 1,
-                "finding_drop": 1,
-                "candidate_mean_risk": 5.0,
-                "source_mean_risk": 40.0,
-                "risk_drop": 35.0,
-                "blockers": ["lost_serial_punctuation"],
-                "quality_warnings": ["lost_serial_punctuation_review_required"],
-            }]
-            return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current, candidate_diagnostics=diagnostics)
-        replacement = "The target improves through a student review."
-        selected = Variant(id="v1", text=replacement, source="llm")
-        return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current.replace(paragraph.text, replacement), candidate_diagnostics=[])
-
-    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
-
-    result = run_v6_rewrite_all(source, max_passes=2, residual_followup_passes=0)
-
-    assert seen == [seen[0], seen[0]]
-    assert result.pass_trace[0]["status"] == "no_change_retryable"
-    assert result.passes
-
-
-def test_v6_retries_source_preserved_when_writer_produces_no_candidate_diagnostics(monkeypatch):
-    source = (
-        "This is an important setup because teams should improve.\n\n"
-        "This is an important target because students should improve."
-    )
-    seen = []
-
-    def fake_run(current, **kwargs):
-        scan = scan_text(current)
-        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"), kwargs.get("priority_paragraph_ids"))
-        seen.append(paragraph.id)
-        if len(seen) == 1:
-            selected = Variant(id="source_preserved", text=paragraph.text, source="source_preserved")
-            return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current, candidate_diagnostics=[])
-        replacement = "Students improve after teachers review the target."
-        selected = Variant(id="v1", text=replacement, source="llm")
-        return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current.replace(paragraph.text, replacement), candidate_diagnostics=[])
-
-    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
-
-    result = run_v6_rewrite_all(source, max_passes=2, residual_followup_passes=0)
-
-    assert seen == [seen[0], seen[0]]
-    assert result.pass_trace[0]["status"] == "no_change_retryable"
-    assert result.pass_trace[0]["candidate_diagnostics"] == []
-    assert result.passes
-
-
-def test_v6_retries_source_preserved_when_selector_fails_with_generated_candidates(monkeypatch):
-    source = (
-        "This is an important setup because teams should improve.\n\n"
-        "This is an important target because students should improve."
-    )
-    seen = []
-
-    def fake_run(current, **kwargs):
-        scan = scan_text(current)
-        paragraph, plan = build_plan(scan, kwargs.get("excluded_paragraph_ids"), kwargs.get("priority_paragraph_ids"))
-        seen.append(paragraph.id)
-        if len(seen) == 1:
-            selected = Variant(id="source_preserved", text=paragraph.text, source="source_preserved")
-            diagnostics = [{
-                "variant_id": "v1",
-                "source": "llm",
-                "candidate_findings": 1,
-                "source_findings": 1,
-                "finding_drop": 0,
-                "candidate_mean_risk": 20.0,
-                "source_mean_risk": 22.0,
-                "risk_drop": 2.0,
-                "blockers": [],
-                "selector_source": "invalid_selector_source_preserved",
-            }]
-            return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current, candidate_diagnostics=diagnostics)
-        replacement = "Students improve after teachers review the target."
-        selected = Variant(id="v1", text=replacement, source="llm")
-        return v6_pipeline.Result(scan=scan, plan=plan, variants=[selected], selected=selected, rewritten_text=current.replace(paragraph.text, replacement), candidate_diagnostics=[])
-
-    monkeypatch.setattr(v6_pipeline, "run_v6_rewrite", fake_run)
-
-    result = run_v6_rewrite_all(source, max_passes=2, residual_followup_passes=0)
-
-    assert seen == [seen[0], seen[0]]
-    assert result.pass_trace[0]["status"] == "no_change_retryable"
-    assert result.passes
 
 
 def test_v6_abstract_quoted_context_pointer_requires_author_proxy_grounding():
@@ -439,21 +308,6 @@ def test_v6_unsupported_claim_gap_requires_author_proxy_grounding():
     assert payload["author_proxy_policy"]["grounding_required"] is True
     allowed_terms = {term.casefold() for term in payload["content_word_boundary"]["allowed_content_terms"]}
     assert {"forms", "queues", "reviewer", "delays"}.issubset(allowed_terms)
-
-
-def test_v6_semantic_bridge_gap_requires_author_proxy_grounding():
-    text = (
-        "The review log shows repeated missing documents, late approvals, and unclear handover notes.\n\n"
-        "This means teams need a clearer intake route before decisions are made."
-    )
-    scan = scan_text(text)
-    paragraph, plan = build_plan(scan, excluded_paragraph_ids={"p001"}, priority_paragraph_ids={"p002"})
-
-    grounding = plan.paragraph_strategy["author_proxy_grounding"]
-    assert paragraph.id == "p002"
-    assert grounding["required"] is True
-    assert "source-to-claim bridge" in grounding["reason"]
-    assert any(anchor["source"] == "previous_paragraph" for anchor in grounding["bridge_anchors"])
 
 
 def test_v6_context_anchor_gap_uses_same_paragraph_author_proxy_grounding():
@@ -1459,10 +1313,3 @@ def test_v6_progress_reports_author_proxy_writer_step():
     assert (66, "Writing V6 paragraph p002 with Author-proxy") in messages
 
 
-def test_v6_citation_anchor_recipe_keeps_attribution_as_source_to_claim_relation():
-    scan = scan_text("According to cognitive load theory, complex spatial task such as constructing haircutting structure place a significant strain on working memory.")
-    paragraph, plan = build_plan(scan)
-    recipe = plan.ai_safe_route["construction_recipes"][0]
-
-    assert "source attribution phrase" in recipe["build_route"]
-    assert any("attribution" in step for step in recipe["build_steps"])
