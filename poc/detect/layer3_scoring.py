@@ -356,21 +356,10 @@ def split_paragraphs(text: str) -> list[str]:
     return [re.sub(r"\s+", " ", p).strip() for p in blocks if p.strip()]
 
 
-GENERIC_ESSAY_STARTERS = [
-    "in the past",
-    "now",
-    "today",
-    "however",
-    "another issue",
-    "because of this",
-    "this shift",
-    "technology has also",
-    "the real challenge",
-    "the goal should",
-    "in other words",
-    "in conclusion",
-    "ultimately",
-]
+# Generic essay-opener phrases removed (NO-HARDCODE; these were overfit content phrases such as
+# "technology has also" / "the real challenge"). "Generic" openers are captured by token-level
+# predictability, not a baked phrase list. Consumers tolerate the empty list (they iterate it).
+GENERIC_ESSAY_STARTERS: list[str] = []
 
 
 def estimate_formulaic_progression_risk(text: str) -> float:
@@ -900,31 +889,30 @@ def estimate_lived_detail_risk(text: str, domain_patterns: Optional[list[str]] =
     return 0.80
 
 
+# Hedging = closed-class modal adverbs + STRUCTURAL support markers (citations, quotes).
+# Lexical content hedges ("some researchers/scholars", "cited", "noted") removed (NO-HARDCODE).
 HEDGING_PATTERNS = [
     r"\bmay\b", r"\bmight\b", r"\bcould\b", r"\bperhaps\b", r"\bpossibly\b",
-    r"\bit seems\b", r"\bit appears\b", r"\bsome (?:researchers|scholars|experts|studies)\b",
-    r"\baccording to\b", r"\bcited\b", r"\bnoted\b",
-    r"\(.*\d{4}.*\)",  # citations like (Smith, 2020)
-    r'["""]',  # direct quotes
+    r"\bit seems\b", r"\bit appears\b",
+    r"\(.*\d{4}.*\)",  # citation (Smith, 2020) -- structural support
+    r'["""]',          # direct quote -- structural support
 ]
 
+# Assertion = closed-class copulas + modal/auxiliary verbs only. Lexical content verbs
+# (creates/makes/provides/requires/enables/forces/threatens) removed (NO-HARDCODE).
 ASSERTION_VERB_PATTERNS = [
-    r"\bis\b", r"\bare\b", r"\bwas\b", r"\bhas\b", r"\bhave\b",
+    r"\bis\b", r"\bare\b", r"\bwas\b", r"\bwere\b", r"\bbe\b", r"\bbeen\b",
+    r"\bhas\b", r"\bhave\b", r"\bhad\b",
     r"\bwill\b", r"\bcan\b", r"\bshould\b", r"\bmust\b", r"\bneeds?\b",
-    r"\bcreates?\b", r"\bmakes?\b", r"\bprovides?\b", r"\brequires?\b",
-    r"\benables?\b", r"\bforces?\b", r"\bthreatens?\b",
 ]
 
-# Content-agnostic "author-owned context" signals (NO hardcoded domain vocabulary, per project
-# rule). Matched case-insensitively. The author's own first-hand framing + concrete specifics in
-# any subject -- never a named institution or a domain's jargon.
+# "Author-owned context": STRUCTURAL first-hand framing + concrete specifics only -- no
+# content-verb lists. Closed-class first-person pronouns + alphanumeric codes + discourse markers.
 AUTHOR_OWNED_CONTEXT_PATTERNS = [
-    r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",                 # alphanumeric codes
+    r"\b[A-Z]{2,}[A-Z0-9]*\d+[A-Z0-9]*\b",                 # alphanumeric codes (structural)
     r"\bin my\b",                                          # first-hand framing
-    r"\bI (?:see|saw|ask|asked|demonstrate|want|encourage|usually|notice|use|used|treat|observed|tried|taught|gave|found)\b",
-    r"\bwe (?:observed|found|noticed|measured|tested|tried)\b",
-    r"\bmy (?:current|own|judgement|judgment)\b",
-    r"\b(?:for example|for instance|such as|in particular)\b",
+    r"\b(?:I|we|my|our)\b",                                # first-person pronouns (closed class)
+    r"\b(?:for example|for instance|such as|in particular)\b",  # exemplification (discourse)
 ]
 
 
