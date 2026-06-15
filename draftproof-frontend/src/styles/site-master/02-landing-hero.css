@@ -775,7 +775,7 @@
 
 .sample-preview-tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0;
   padding: 10px;
   border-bottom: 1px solid #dbe4ea;
