@@ -31,12 +31,12 @@ _ROUTES: dict[str, dict[str, str]] = {
     },
     "source_use": {
         "purpose": "ground the claim in how evidence, sources, examples, or submitted material are used",
-        "use_when": "the paragraph mentions information, evidence, claims, learning material, reports, or comparison",
+        "use_when": "the paragraph mentions information, evidence, claims, source material, reports, or comparison",
         "avoid": "do not invent citations, source names, study titles, or research findings",
     },
     "actor_interaction": {
         "purpose": "make the claim concrete through the relationship between local actors and objects",
-        "use_when": "the paragraph contains people, roles, users, learners, teams, institutions, tools, or workflows",
+        "use_when": "the paragraph contains people, roles, users, teams, institutions, tools, or workflows",
         "avoid": "do not invent named people; use roles or source-provided actors",
     },
     "condition_trigger": {
