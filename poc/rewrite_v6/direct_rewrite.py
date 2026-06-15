@@ -388,6 +388,18 @@ def _prompt(
             "Where you add concrete grounding, prioritise these author-owned gaps: "
             + "; ".join(grounding) + "."
         )
+    # Critical Thinking Control focus: the specific thinking gap the scan flagged for THIS
+    # paragraph. Reinforces the existing grounding instructions with a per-paragraph target.
+    critical_thinking_action = (diagnosis or {}).get("critical_thinking_action")
+    if critical_thinking_action:
+        payload["critical_thinking_focus"] = str(critical_thinking_action)
+        # allow-hardcode: model coaching guidance (a prompt), not a detect/scoring word-list.
+        payload["instructions"].append(
+            "CRITICAL-THINKING FOCUS for this paragraph: " + str(critical_thinking_action)
+            + " The scan flagged this as the specific thinking gap here, so make the rewrite "
+            "visibly do it -- as a reviewable showcase the author can adapt, never as a fabricated "
+            "fact. This reinforces (does not replace) the grounding instructions above."
+        )
     return "Return JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 

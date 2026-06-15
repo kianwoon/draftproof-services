@@ -56,7 +56,42 @@ def extract_paragraph_diagnoses(report: dict[str, Any] | None) -> dict[str, dict
                 "rewrite_hint": None,
                 "predictable_phrases": phrases,
             }
+
+    # Critical Thinking Control per-paragraph tag (deterministic, additive): the specific
+    # thinking gap the scan flagged for this paragraph + the action to take. Carried through so
+    # the writer can target it. A paragraph with ONLY a CT tag still gets a diagnosis entry.
+    for paragraph_id, tag in _paragraph_critical_thinking(report).items():
+        entry = diagnoses.get(paragraph_id)
+        if entry is None:
+            entry = {
+                "main_issue": None,
+                "why_flagged": None,
+                "recommendation": None,
+                "rewrite_hint": None,
+                "predictable_phrases": phrases_by_paragraph.get(paragraph_id, []),
+            }
+            diagnoses[paragraph_id] = entry
+        entry["critical_thinking_action"] = tag.get("action")
+        entry["critical_thinking_dimension"] = tag.get("dimension")
     return diagnoses
+
+
+def _paragraph_critical_thinking(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Per-paragraph Critical Thinking tags from ai_risk_badge.critical_thinking_control.paragraphs,
+    keyed by paragraph_id. Each value carries the dimension code + its coaching ``action``."""
+    badge = report.get("ai_risk_badge") if isinstance(report, dict) else None
+    ctc = badge.get("critical_thinking_control") if isinstance(badge, dict) else None
+    rows = ctc.get("paragraphs") if isinstance(ctc, dict) else None
+    out: dict[str, dict[str, Any]] = {}
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            paragraph_id = str(row.get("paragraph_id") or "").strip()
+            action = str(row.get("action") or "").strip()
+            if paragraph_id and action:
+                out[paragraph_id] = {"action": action, "dimension": row.get("dimension")}
+    return out
 
 
 def _paragraph_predictable_phrases(
