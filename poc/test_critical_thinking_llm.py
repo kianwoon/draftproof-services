@@ -10,6 +10,7 @@ from detect.critical_thinking_llm import (
     critical_thinking_questions_enabled,
     generate_reflective_questions,
     _weak_dimensions,
+    _questions_prompt,
 )
 
 _REPORT = {
@@ -168,6 +169,23 @@ def test_questions_none_without_weak_dimensions(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS", "1")
     rep = {"scan_intelligence": _REPORT_Q["scan_intelligence"], "ai_risk_badge": {}}
     assert generate_reflective_questions(rep, gateway=_FakeGateway(_GOOD_Q)) is None
+
+
+def test_questions_prompt_is_context_aware():
+    weak = [("specific_context", "Specific context",
+             "anchor claims to a real assignment, case, example, or observation")]
+    rows = [{"paragraph_id": "p001",
+             "text": "We've all seen the headlines about a 3.3% adoption rate."}]
+    p = _questions_prompt(rows, weak)
+    # the biasing personal-anecdote ACTION must NOT be injected as steering
+    assert "anchor claims to a real assignment" not in p
+    # context-awareness instruction present
+    assert "HOW each claim is grounded" in p
+    assert "headlines" in p.lower()
+    assert "do not ask for a personal" in p.lower()
+    # contract intact
+    assert "specific_context" in p
+    assert "anchor_quote" in p
 
 
 def test_weak_dimensions_excludes_ai_dependency_and_sorts():

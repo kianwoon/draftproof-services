@@ -422,28 +422,48 @@ def generate_reflective_questions(
         return None
 
 
+# allow-hardcode: LLM system prompt (model coaching), not a detect/scoring/allow word-list.
 _QUESTIONS_SYSTEM = (
     "You help a student stay in control of their OWN thinking. You ask sharp, specific reflective "
-    "questions about THEIR draft -- never generic ones, and never the answers. Reason about meaning; "
-    "quote their wording verbatim. Return valid JSON only. Do not invent facts or sources, and do not "
-    "make claims about whether the student used AI."
+    "questions about THEIR draft -- never generic ones, and never the answers. FIRST understand HOW "
+    "each claim is grounded (a cited source, common knowledge / headlines, the author's own "
+    "first-hand experience, or a hypothesis) and ask a question that FITS that basis; never assume the "
+    "student has a personal source. Reason about meaning; quote their wording verbatim. Return valid "
+    "JSON only. Do not invent facts or sources, and do not make claims about whether the student used AI."
 )
 
 
 def _questions_prompt(rows: list[dict[str, Any]], weak: list[tuple[str, str, str]]) -> str:
-    weak_desc = "\n".join(f"- {code} ({label}): the draft is weak here -- {action}" for code, label, action in weak)
+    # allow-hardcode: LLM prompt (model coaching), not a detect/scoring/allow word-list. The dimension
+    # ACTION is intentionally NOT injected here -- its "anchor to a real assignment / observation"
+    # phrasing biased every question toward demanding a personal source even when the claim is sourced
+    # from headlines. Steer by the weak dimension name only; let the model read the claim's basis.
+    weak_desc = "\n".join(f"- {code} ({label})" for code, label, _action in weak)
     codes = [code for code, _l, _a in weak]
     return (
-        "The scan found this student's draft weakest on the dimensions below. For EACH weak dimension, "
-        "find a SPECIFIC claim in their text and ask ONE pointed reflective question that makes the "
-        "student think harder about it, so they revise it themselves.\n\n"
-        f"Weakest dimensions to probe:\n{weak_desc}\n\n"
+        "The scan found this student's draft weakest on the dimensions below (areas where the thinking "
+        "is thin). For EACH, find a SPECIFIC claim in their text and ask ONE pointed reflective question "
+        "that makes the student think harder, so they revise it themselves.\n\n"
+        f"Weakest dimensions:\n{weak_desc}\n\n"
+        "FIRST read HOW each claim is grounded, THEN ask a question that fits that basis:\n"
+        "- A claim presented as headlines / common knowledge / second-hand, or simply unsourced: ask "
+        "whether they have VERIFIED it (traced it to the primary source/report) and what their OWN "
+        "analysis or judgement adds beyond restating it. Do NOT ask for a personal assignment, case "
+        "study, or observation -- the draft gives no sign one exists, and demanding it just invites them "
+        "to make one up.\n"
+        "- A claim that already signals the author's first-hand involvement: then 'from your own "
+        "experience...' is fair.\n"
+        "- A claim stated as a conclusion without its reasoning: ask how they got from the evidence to "
+        "that conclusion.\n\n"
         "Rules:\n"
-        "- 3-5 questions total. Anchor EVERY question to a verbatim quote copied from the paragraphs.\n"
+        "- 3-5 questions total. Anchor EVERY question to a verbatim quote copied from the paragraphs, "
+        "but the question must engage the paragraph's overall POINT/argument -- do not nitpick the one "
+        "sentence.\n"
         "- Ask about THEIR actual claim, not the topic in general. The question should be specific "
         "enough that it could ONLY be asked of this draft.\n"
-        "- Do NOT answer the question or tell them what to write. Do NOT invent facts. Avoid generic "
-        "questions (e.g. bare 'what is the counter-argument?') with no anchor to their specific claim.\n\n"
+        "- Do NOT answer the question or tell them what to write. Do NOT invent facts, and do NOT assume "
+        "the student has a personal source. Avoid generic questions (e.g. bare 'what is the "
+        "counter-argument?') with no anchor to their specific claim.\n\n"
         'Return JSON: {"questions":[{"dimension":"<one of the codes>","anchor_quote":"verbatim phrase '
         'from their draft","question":"the reflective question"}]}\n\n'
         f"Dimension codes to use: {codes}\n"
