@@ -52,3 +52,13 @@ def test_repeated_frame_structural_finding_survives():
     text = " ".join(sentences)
     scan = scan_text(text)
     assert "repeated_sentence_frame" in _all_tags(scan)
+
+
+from poc.rewrite_v6.scan import _citation_anchor
+
+def test_citation_anchor_is_structural_form_not_verb_list():
+    # Structural citation FORM still recognized.
+    assert _citation_anchor("Smith et al. (2019) reported a measurable shift.") is True
+    # Bare reporting verb with no citation form is NO LONGER a citation tell.
+    assert _citation_anchor("The author indicates that the result holds.") is False
+    assert _citation_anchor("According to many, the trend continued.") is False

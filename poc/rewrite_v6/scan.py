@@ -495,25 +495,6 @@ def _abstract_risk_pressure(sentence: Sentence) -> float:
     return pressure * 34.0
 
 
-def _predictable_start_pressure(sentence: Sentence) -> float:
-    if not _predictable_start(sentence.text):
-        return 0.0
-    list_pressure = _list_pressure(sentence.text)
-    abstract_pressure = _abstract_pressure(sentence.text)
-    if sentence.word_count <= 6 and list_pressure == 0 and re.match(
-        r"^(it|this|that|they|these|those|he|she)\s+(may|might|can|could|should|would|will)\b",
-        sentence.text.strip(),
-        flags=re.I,
-    ):
-        return 6.0
-    if sentence.word_count <= 5 and list_pressure == 0 and abstract_pressure <= 0.22:
-        return 6.0
-    if sentence.word_count <= 9 and list_pressure == 0 and abstract_pressure <= 0.25:
-        return 8.0
-    if sentence.word_count <= 12 and list_pressure == 0 and abstract_pressure <= 0.18:
-        return 10.0
-    return 18.0
-
 
 def _list_pressure(text: str) -> float:
     visible = _without_parentheticals(str(text or ""))
@@ -544,60 +525,12 @@ def _abstract_pressure(text: str) -> float:
     return min(1.0, signals / max(5, len(words)))
 
 
-def _predictable_start(text: str) -> bool:
-    lowered = str(text or "").strip().casefold()
-    starts = ("today", "now", "in ", "this ", "that ", "there ", "it ", "they ", "overall")
-    return lowered.startswith(starts)
-
-
-def _context_anchor_gap(sentence: Sentence) -> bool:
-    lowered = re.sub(
-        r"^(hence|next|lastly|finally|however|therefore|moreover|furthermore|overall),?\s+",
-        "",
-        sentence.text.strip().casefold(),
-    )
-    return sentence.word_count >= 8 and lowered.startswith(("this ", "that ", "it ", "they ", "these ", "those "))
-
-
-def _author_anchor_gap(sentence: Sentence) -> bool:
-    lowered = sentence.text.casefold()
-    if re.search(r"\b(i|my|we|our)\b", lowered):
-        return False
-    evaluative_markers = ("important", "challenge", "concern")
-    evidence_markers = ("this shows", "that shows", "shows that", "this demonstrates", "that demonstrates", "demonstrates that")
-    return sentence.word_count >= 14 and (
-        any(marker in lowered for marker in evaluative_markers)
-        or any(marker in lowered for marker in evidence_markers)
-    )
-
 
 def _citation_anchor(text: str) -> bool:
-    return bool(
-        re.search(r"\baccording to\b|\b\w+\s+et al\.\s*\(\d{4}\)\s+(states|indicates|argues|notes|describes)\b", text, flags=re.I)
-    )
+    # Structural citation FORM only (author + year, or parenthetical year) -- agnostic to the
+    # reporting verb / phrasing. No hardcoded verb vocabulary.
+    return bool(re.search(r"\b\w+\s+et al\.\s*\(\d{4}\)", text)) or _parenthetical_citation(text)
 
-
-def _broad_claim(text: str) -> bool:
-    lowered = text.casefold()
-    return any(marker in lowered for marker in ("always", "never", "no longer", "the real", "the main", "the most", "one of the"))
-
-
-def _transition_stack(text: str) -> bool:
-    lowered = text.strip().casefold()
-    markers = ("however", "additionally", "therefore", "moreover", "furthermore", "in addition", "as a result")
-    return sum(1 for marker in markers if marker in lowered) >= 2 or lowered.startswith(markers)
-
-
-def _semantic_bridge_gap(sentence: Sentence) -> bool:
-    lowered = sentence.text.casefold()
-    return sentence.word_count >= 10 and any(marker in lowered for marker in ("therefore", "as a result", "this means", "this shows"))
-
-
-def _unsupported_claim_gap(sentence: Sentence) -> bool:
-    lowered = sentence.text.casefold()
-    if _citation_anchor(sentence.text):
-        return False
-    return sentence.word_count >= 10 and any(marker in lowered for marker in ("should", "need to", "needs to", "important", "serious"))
 
 
 def _paraphrase_smoothing(sentence: Sentence) -> bool:
