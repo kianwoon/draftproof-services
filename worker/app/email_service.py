@@ -231,6 +231,32 @@ def send_email(payload: dict, *, settings) -> bool:
             body.get("errors"),
         )
         return False
+
+    # success=true does NOT guarantee delivery. Cloudflare returns success while
+    # reporting the per-recipient outcome in result.{delivered,queued,permanent_bounces}.
+    # A recipient that permanently bounced (e.g. Microsoft/hotmail rejecting the mail)
+    # would otherwise look like a clean send and vanish silently. Treat a recipient
+    # that is neither delivered nor queued as a FAILURE, and surface the breakdown.
+    result = body.get("result") or {}
+    recipient = payload.get("to")
+    delivered = result.get("delivered") or []
+    queued = result.get("queued") or []
+    bounces = result.get("permanent_bounces") or []
+    if recipient and recipient not in delivered and recipient not in queued:
+        logger.warning(
+            "Cloudflare accepted but did NOT deliver to %s: delivered=%s queued=%s permanent_bounces=%s",
+            recipient, delivered, queued, bounces,
+        )
+        return False
+    if bounces:
+        logger.warning(
+            "Cloudflare email had permanent bounces: %s (delivered=%s queued=%s)",
+            bounces, delivered, queued,
+        )
+    logger.info(
+        "Cloudflare email accepted for %s: delivered=%s queued=%s",
+        recipient, bool(delivered), bool(queued),
+    )
     return True
 
 
@@ -246,10 +272,10 @@ def send_rewrite_completion_email(
     if not settings.REWRITE_COMPLETION_EMAIL_ENABLED:
         return False
     if not recipient_email:
-        logger.info("Skipping rewrite completion email for %s: missing recipient", rewrite_id)
+        logger.warning("Skipping rewrite completion email for %s: missing recipient", rewrite_id)
         return False
     if not str(final_text or "").strip():
-        logger.info("Skipping rewrite completion email for %s: missing final text", rewrite_id)
+        logger.warning("Skipping rewrite completion email for %s: missing final text", rewrite_id)
         return False
 
     try:
@@ -283,10 +309,10 @@ def send_scan_completion_email(
     if not settings.SCAN_COMPLETION_EMAIL_ENABLED:
         return False
     if not recipient_email:
-        logger.info("Skipping scan completion email for %s: missing recipient", scan_id)
+        logger.warning("Skipping scan completion email for %s: missing recipient", scan_id)
         return False
     if not pdf_bytes:
-        logger.info("Skipping scan completion email for %s: missing PDF", scan_id)
+        logger.warning("Skipping scan completion email for %s: missing PDF", scan_id)
         return False
 
     try:
