@@ -65,16 +65,25 @@ def measure(limit: int | None) -> dict:
         hu = [r for r in rows if r[1] == "human"][: limit // 2]
         rows = ai + hu
 
-    out = {"per_case": {}, "ai_likelihood": {}, "tier": {}}
-    ai_scores, hu_scores, ai_tier, hu_tier = [], [], [], []
+    # Track the three SHIPPED scores: DraftProof ai_likelihood, the external-detector proxy
+    # (external_grouped_v2, which the de-hardcoded writing-pattern signals feed), and writing
+    # quality. Each is "higher = more AI"; report AI-vs-human separation (AUC) for all three.
+    metrics = {"ai_likelihood": ([], []), "external_proxy": ([], []), "writing_quality": ([], [])}
+    out = {"per_case": {}}
     for cid, label, text in rows:
         rep = scan_text(runner, text)
         badge = rep.get("ai_risk_badge") or {}
-        score = float(badge.get("ai_likelihood_score") or 0.0)
+        ext = badge.get("external_detector_estimate") or {}
+        rating = badge.get("authorship_rating") or {}
+        vals = {
+            "ai_likelihood": float(badge.get("ai_likelihood_score") or 0.0),
+            "external_proxy": float(ext.get("score") or 0.0),
+            "writing_quality": float(rating.get("writing_quality_score") or 0.0),
+        }
         tier = str(rep.get("overall_tier") or badge.get("tier") or "").lower()
-        out["per_case"][cid] = {"label": label, "ai_likelihood": round(score, 2), "tier": tier}
-        (ai_scores if label == "ai" else hu_scores).append(score)
-        (ai_tier if label == "ai" else hu_tier).append(_TIER_RANK.get(tier, 0))
+        out["per_case"][cid] = {"label": label, **{k: round(v, 2) for k, v in vals.items()}, "tier": tier}
+        for k, v in vals.items():
+            metrics[k][0 if label == "ai" else 1].append(v)
 
     def auc(a, h):
         if not a or not h:
@@ -82,17 +91,13 @@ def measure(limit: int | None) -> dict:
         wins = sum(1 for x in a for y in h if x > y) + 0.5 * sum(1 for x in a for y in h if x == y)
         return round(wins / (len(a) * len(h)), 4)
 
-    out["ai_likelihood"] = {
-        "ai_mean": round(statistics.mean(ai_scores), 2) if ai_scores else None,
-        "human_mean": round(statistics.mean(hu_scores), 2) if hu_scores else None,
-        "auc": auc(ai_scores, hu_scores),
-    }
-    out["tier"] = {
-        "ai_mean_rank": round(statistics.mean(ai_tier), 3) if ai_tier else None,
-        "human_mean_rank": round(statistics.mean(hu_tier), 3) if hu_tier else None,
-        "auc": auc(ai_tier, hu_tier),
-    }
-    out["n"] = {"ai": len(ai_scores), "human": len(hu_scores)}
+    for k, (ai_v, hu_v) in metrics.items():
+        out[k] = {
+            "ai_mean": round(statistics.mean(ai_v), 2) if ai_v else None,
+            "human_mean": round(statistics.mean(hu_v), 2) if hu_v else None,
+            "auc": auc(ai_v, hu_v),
+        }
+    out["n"] = {"ai": len(metrics["ai_likelihood"][0]), "human": len(metrics["ai_likelihood"][1])}
     return out
 
 
@@ -106,10 +111,8 @@ def main() -> None:
     t0 = time.time()
     res = measure(args.limit)
     print(f"n: {res['n']}   ({time.time()-t0:.0f}s)")
-    print(f"ai_likelihood: AI {res['ai_likelihood']['ai_mean']} vs human "
-          f"{res['ai_likelihood']['human_mean']}  AUC {res['ai_likelihood']['auc']}")
-    print(f"tier rank:     AI {res['tier']['ai_mean_rank']} vs human "
-          f"{res['tier']['human_mean_rank']}  AUC {res['tier']['auc']}")
+    for k in ("ai_likelihood", "external_proxy", "writing_quality"):
+        print(f"{k:<16} AI {res[k]['ai_mean']} vs human {res[k]['human_mean']}  AUC {res[k]['auc']}")
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -118,12 +121,14 @@ def main() -> None:
 
     if args.compare:
         base = json.loads(Path(args.compare).read_text())
-        da = res["ai_likelihood"]["auc"] - base["ai_likelihood"]["auc"]
-        dt = res["tier"]["auc"] - base["tier"]["auc"]
-        print(f"\nvs {Path(args.compare).name}:")
-        print(f"  ai_likelihood AUC delta: {da:+.4f}")
-        print(f"  tier AUC delta:          {dt:+.4f}")
-        print("  RESULT:", "REGRESSION" if (da <= -0.05 or dt <= -0.05) else "holds")
+        print(f"\nvs {Path(args.compare).name} (AUC delta; <= -0.05 = REGRESSION):")
+        worst = 0.0
+        for k in ("ai_likelihood", "external_proxy", "writing_quality"):
+            if k in base:
+                d = res[k]["auc"] - base[k]["auc"]
+                worst = min(worst, d)
+                print(f"  {k:<16} {d:+.4f}" + ("  REGRESSION" if d <= -0.05 else ""))
+        print("  RESULT:", "REGRESSION" if worst <= -0.05 else "holds")
 
 
 if __name__ == "__main__":
