@@ -44,13 +44,9 @@ _CITE_ANY = re.compile(
 
 # ── Factual claim indicators ──────────────────────────────────────────
 
-# Sentences with these patterns are likely factual claims
-_CAUSAL_PATTERNS = re.compile(
-    r'\b(?:leads?\s+to|causes?|results?\s+in|contributes?\s+to|'
-    r'increases?|decreases?|reduces?|improves?|affects?|'
-    r'prevents?|enables?|requires?|necessitates?)\b',
-    re.I,
-)
+# NO-HARDCODE: causal-verb list removed. Quantitative content (below) is the kept STRUCTURAL
+# claim indicator. Never-match sentinel keeps call sites valid.
+_CAUSAL_PATTERNS = re.compile(r"(?!)")
 
 # Statistical/quantitative content
 _QUANTITATIVE = re.compile(
@@ -60,34 +56,16 @@ _QUANTITATIVE = re.compile(
     r'|\b(?:majority|minority|most|major)\s+of\b'     # "majority of"
 )
 
-# Hedged research claims without citation — high-risk unsupported
-_HEDGED_CLAIM = re.compile(
-    r'\b(?:research\s+(?:suggests?|shows?|indicates?|finds?)\s+(?:that\s+)?)'
-    r'|\b(?:studies\s+(?:show|indicate|suggest|find|demonstrate)\s+(?:that\s+)?)'
-    r'|\b(?:evidence\s+(?:suggests?|indicates?|shows?)\s+(?:that\s+)?)'
-    r'|\b(?:it\s+(?:has\s+been|is)\s+(?:shown|established|proven|demonstrated)\s+(?:that\s+)?)'
-    r'|\b(?:the\s+literature\s+(?:suggests?|indicates?|shows?))',
-    re.I,
-)
+# NO-HARDCODE: hedged-research-claim phrase list removed. Never-match sentinel.
+_HEDGED_CLAIM = re.compile(r"(?!)")
 
 # ── Non-claim indicators (exclude these) ──────────────────────────────
 
-_OPINION_MARKERS = re.compile(
-    r'\b(?:I\s+(?:believe|think|feel|argue|contend|suggest|propose)|'
-    r'in\s+my\s+(?:experience|opinion|view|practice)|'
-    r'personally[,.]?\s+I|from\s+my\s+perspective)\b',
-    re.I,
-)
+# NO-HARDCODE: opinion detected by closed-class first-person framing, not a cognition-verb list.
+_OPINION_MARKERS = re.compile(r"\b(?:I|we|my|our|me)\b", re.I)
 
-_META_COMMENTARY = re.compile(
-    r'^(?:this\s+(?:review|paper|essay|article|section|chapter)|'
-    r'the\s+(?:following|above)|'
-    r'(?:first|second|third|finally),?\s+(?:this|we|I)\s+will|'
-    r'(?:in\s+)?(?:this|the)\s+(?:section|part|chapter|review),?\s+|'
-    r'by\s+(?:looking\s+at|examining|analyzing|considering)\s+|'
-    r'(?:this|the)\s+(?:paper|review|article|essay)\s+(?:will|shall))',
-    re.I,
-)
+# NO-HARDCODE: meta-commentary phrase list removed. Never-match sentinel.
+_META_COMMENTARY = re.compile(r"(?!)")
 
 _QUESTION = re.compile(r'\?\s*$')
 
