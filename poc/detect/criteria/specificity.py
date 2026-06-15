@@ -115,19 +115,12 @@ _REFERENCE_METADATA_PATTERNS = [
     r"^proinsight",                  # source-name fragments
 ]
 
-# Known author/publisher/location patterns — not domain grounding
-_REFERENCE_NAME_TERMS = frozenset({
-    "edward elgar", "javier sese", "altera blog",
-    "haidilao-inc", "proinsight",
-    "melero-polo", "jurong point",
-    "alterainstitute", "travelandleisure",
-})
-
-# Generic noun phrases that look domain-ish but aren't conceptual terms
-_WEAK_DOMAIN_TERMS = frozenset({
-    "service business", "the handbook", "use secret lights around",
-    "in psychology", "journal of retailing",
-})
+# NO-HARDCODE: these were SPECIFIC author/publisher/location names + noun phrases lifted from
+# particular test documents (edward elgar / jurong point / journal of retailing…) -- the most
+# overfit form of hardcode. Removed. Reference metadata is excluded structurally via
+# _REFERENCE_METADATA_PATTERNS (URL/slug regex); arbitrary proper-noun blocklists are gone.
+_REFERENCE_NAME_TERMS: frozenset = frozenset()
+_WEAK_DOMAIN_TERMS: frozenset = frozenset()
 
 
 def _auto_extract_domain_terms(text: str, min_freq: int = 1) -> List[str]:

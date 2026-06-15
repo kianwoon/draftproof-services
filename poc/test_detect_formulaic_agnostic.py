@@ -1,15 +1,22 @@
-"""Formulaic-conclusion / -progression detection must be CONTENT-AGNOSTIC: it flags the formulaic
-SHAPE in ANY subject, never a specific essay's literal phrases (de-overfit from content11)."""
+"""The standalone formulaic-conclusion / -progression detectors are INTENTIONALLY DISABLED
+(NO-HARDCODE): they relied on baked phrase lists (FORMULAIC_CONCLUSION_PATTERNS /
+FORMULAIC_PROGRESS_MARKERS / GENERIC_ESSAY_STARTERS), which were overfit. "Formulaic AI prose"
+is low-surprisal and is now caught by the agnostic statistical predictability signals
+(predictability/top-k/burstiness/paragraph_uniformity) -- validated by the labeled-corpus
+end-to-end gate (calibration/measure_end_to_end.py), not by these standalone functions, which
+now return 0.0."""
 from poc.detect.layer3_scoring import (
     estimate_formulaic_conclusion_risk as concl,
     estimate_formulaic_progression_risk as prog,
 )
 
 
-def test_conclusion_flags_formulaic_shape_cross_domain():
+def test_conclusion_detector_disabled_no_hardcoded_phrases():
+    # Formulaic-shaped close: previously flagged by the hardcoded phrase list; the detector is
+    # now disabled (the statistical layer carries this signal). Must not fire on baked phrases.
     cooking = ("The kitchen stands at a turning point. In an age of fast food, the goal should be to "
                "cook with care. Ultimately, it is essential that we slow down.")
-    assert concl(cooking) >= 0.65
+    assert concl(cooking) == 0.0
 
 
 def test_conclusion_ignores_specific_grounded_close():
@@ -22,10 +29,11 @@ def test_conclusion_not_triggered_by_bare_adjectives():
     assert concl("She is thoughtful, capable, and responsible in her daily work at the shop.") == 0.0
 
 
-def test_progression_flags_generic_scaffolding_cross_domain():
+def test_progression_detector_disabled_no_hardcoded_phrases():
+    # Generic scaffolding: previously flagged by FORMULAIC_PROGRESS_MARKERS; detector now disabled.
     march = ("In the past, farms were small. Today, they are industrial. However, this shift created "
              "problems. Another issue is runoff. Overall, the goal should be balance.")
-    assert prog(march) >= 0.65
+    assert prog(march) == 0.0
 
 
 def test_progression_low_for_varied_specific_prose():
