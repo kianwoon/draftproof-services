@@ -87,14 +87,14 @@ FINDING_TYPE_TO_DIMENSION = {
     "missing_citation": "evidence_grounding",
     "broken_citation": "evidence_grounding",
     "weak_source_grounding": "evidence_grounding",
-    # student_judgement — AI-likeness / low authorship trace
-    "high_ai_generation_likelihood": "student_judgement",
-    "medium_ai_generation_likelihood": "student_judgement",
-    "low_ai_generation_likelihood": "student_judgement",
-    "similarity_overlap": "student_judgement",
-    "semantic_uniformity": "student_judgement",
-    "discourse_regularity": "student_judgement",
-    "semantic_drift": "student_judgement",
+    # NOTE: authorship_risk finding types (semantic_drift, similarity_overlap,
+    # semantic_uniformity, discourse_regularity, *_ai_generation_likelihood) are
+    # DELIBERATELY NOT mapped to student_judgement. They are AI-LIKENESS / detector
+    # signals, not evidence the writer failed to take a position -- mapping them
+    # would re-introduce the AI-detection-vs-thinking conflation we removed from
+    # ai_dependency (it would coach "take a position" off a coherence signal).
+    # student_judgement therefore has NO per-paragraph source; it stays
+    # document-level only (like reasoning_trail).
     # ai_dependency — stylometry (mapped but LEAD-INELIGIBLE below)
     "high_predictability": "ai_dependency",
     "medium_predictability": "ai_dependency",
@@ -106,16 +106,18 @@ FINDING_TYPE_TO_DIMENSION = {
     "repetitive_sentence_structure": "ai_dependency",
 }
 
-# FALLBACK for finding types not in the precise map above. Deliberately OMITS
-# "writing_quality" (the ambiguous citation+grammar bucket) so an unmapped surface
-# issue is never mislabeled; the precise citation types above already cover the
-# legitimate writing_quality -> evidence_grounding case. reasoning_trail is absent
-# everywhere here: it is a cross-paragraph structural signal, document-level only.
+# FALLBACK for finding types not in the precise map above. Deliberately OMITS:
+#   - "writing_quality" (ambiguous citation+grammar bucket) so an unmapped surface
+#     issue is never mislabeled; the precise citation types already cover the
+#     legitimate writing_quality -> evidence_grounding case.
+#   - "authorship_risk" -> would coach student_judgement off AI-likeness signals
+#     (the conflation removed above). student_judgement + reasoning_trail have NO
+#     per-paragraph source; they are document-level only.
 # predictability -> ai_dependency stays LEAD-INELIGIBLE (no per-paragraph
-# "too AI-dependent" false accusation).
+# "too AI-dependent" false accusation), so per-paragraph tags are only ever
+# specific_context or evidence_grounding -- the two genuinely anchorable gaps.
 SIGNAL_CATEGORY_TO_DIMENSION = {
     "genericity": "specific_context",
-    "authorship_risk": "student_judgement",
     "predictability": "ai_dependency",
 }
 

@@ -178,14 +178,23 @@ def test_missing_grounding_no_crash():
 def test_per_paragraph_precise_finding_type_mapping():
     fbp = {
         "p001": [{"finding_type": "generic_phrase", "score": 70}],
-        "p002": [{"finding_type": "high_ai_generation_likelihood", "score": 50}],
         "p003": [{"finding_type": "uncited_claim", "score": 60}],
     }
     rows = {r["paragraph_id"]: r for r in score_critical_thinking_per_paragraph(fbp)}
     assert rows["p001"]["dimension"] == "specific_context"
-    assert rows["p002"]["dimension"] == "student_judgement"
     assert rows["p003"]["dimension"] == "evidence_grounding"
     assert rows["p003"]["action"] == DIMENSION_LABELS["evidence_grounding"][1]
+
+
+def test_per_paragraph_authorship_risk_never_tags_student_judgement():
+    # AI-likeness findings (semantic_drift etc.) are NOT evidence of missing
+    # judgement -> they must produce NO per-paragraph tag (same conflation guard
+    # as ai_dependency). student_judgement has no per-paragraph source.
+    for ft in ("semantic_drift", "similarity_overlap", "semantic_uniformity",
+               "discourse_regularity", "high_ai_generation_likelihood"):
+        assert score_critical_thinking_per_paragraph({"p001": [{"finding_type": ft, "score": 90}]}) == []
+    assert "student_judgement" not in FINDING_TYPE_TO_DIMENSION.values()
+    assert "student_judgement" not in SIGNAL_CATEGORY_TO_DIMENSION.values()
 
 
 def test_per_paragraph_surface_writing_issue_gets_no_tag():
