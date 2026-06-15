@@ -102,44 +102,14 @@ class PredictabilityDetector(BaseDetector):
         the subtype is added to metadata so the rewrite module knows the
         real issue.
         """
-        s = sentence.lower().strip()
-
-        # Concluding/summary sentences
-        conclusion_markers = [
-            "in conclusion", "to summarize", "to sum up", "in summary",
-            "overall,", "ultimately,", "perhaps", "should embrace",
-            "it is clear that", "it is evident that",
-        ]
-        if any(m in s for m in conclusion_markers):
-            return "formulaic_conclusion"
-
-        # Template personal reflections
-        personal_markers = [
-            "i believe that", "i think that", "in my opinion",
-            "i feel that", "personally,", "from my perspective",
-            "a teacher's role should", "a student should",
-        ]
-        if any(m in s for m in personal_markers):
-            return "template_personal_reflection"
-
-        # Generic policy/action claims
-        policy_markers = [
-            "should embrace these tools", "guide students on how to",
-            "use them properly", "important to note that",
-            "needs to be addressed", "must be taken into account",
-        ]
-        if any(m in s for m in policy_markers):
-            return "generic_policy_claim"
-
-        # Broad education/academic claims
-        edu_markers = [
-            "plays an important role in", "has transformed the way",
-            "increasingly important in today's", "rapidly evolving",
-            "has gained significant attention",
-        ]
-        if any(m in s for m in edu_markers):
-            return "broad_education_claim"
-
+        # Subtype is metadata for the rewrite module (does not drive the scan score). The old
+        # phrase-marker lists (conclusion/personal/policy/edu) were hardcoded, overfit content
+        # phrases -- removed (NO-HARDCODE). Classify STRUCTURALLY instead: first-person framing
+        # vs plain statistically-predictable prose. The rewrite module already handles the
+        # "statistical_predictability" default.
+        s = sentence.strip()
+        if re.search(r"\b(?:I|we|my|our|me)\b", s, flags=re.I):
+            return "first_person_reflection"
         return "statistical_predictability"
 
     def _ensure_scanner(self):
