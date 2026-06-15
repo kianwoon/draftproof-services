@@ -112,27 +112,39 @@ jobs:
       - name: Deploy to Koyeb via GHCR image
         env:
           KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
-          # Full volume UUID for /app/hf_cache — always included to prevent accidental detach
-          HF_VOLUME_ID: "eeb30e19-e3dc-4665-84bf-25c6a2ef6c85"
         run: |
+          set -o pipefail
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           IMAGE="ghcr.io/kianwoon/draftproof-worker:sha-${SHORT_SHA}"
           echo "Deploying ${IMAGE} to Koyeb..."
-          # Always include volumes in the PATCH — Koyeb shallow-merges definition,
-          # so omitting volumes would silently detach the HF model cache volume.
-          # Volume requires full UUID, path, scopes, and replica_index.
+          # Koyeb PATCH /v1/services does NOT shallow-merge: a partial definition is
+          # rejected as bad_request (and would also drop the env vars, scaling, regions,
+          # volumes, etc.). The definition lives on the DEPLOYMENT, not the service. So:
+          # fetch the active deployment's FULL definition and change ONLY docker.image
+          # (the runbook recovery pattern). This preserves all 69 env vars, the HF volume,
+          # scaling, regions, and the registry secret -- no hardcoded partial payload.
+          ADID=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            "https://app.koyeb.com/v1/services/${SERVICE_ID}" | jq -r '.service.active_deployment_id')
+          if [ -z "$ADID" ] || [ "$ADID" = "null" ]; then
+            echo "ERROR: could not read active_deployment_id"; exit 1
+          fi
+          DEF=$(curl -sf -H "Authorization: Bearer ${KOYEB_TOKEN}" \
+            "https://app.koyeb.com/v1/deployments/${ADID}" | jq -c '.deployment.definition')
+          if [ -z "$DEF" ] || [ "$DEF" = "null" ]; then
+            echo "ERROR: could not read active deployment definition"; exit 1
+          fi
+          NEW_DEF=$(echo "$DEF" | jq -c --arg img "$IMAGE" '.docker.image = $img')
           RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
             "https://app.koyeb.com/v1/services/${SERVICE_ID}" \
             -H "Authorization: Bearer ${KOYEB_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"definition\":{\"docker\":{\"image\":\"${IMAGE}\",\"image_registry_secret\":\"e3888d3f\"},\"volumes\":[{\"id\":\"${HF_VOLUME_ID}\",\"path\":\"/app/hf_cache\",\"replica_index\":0,\"scopes\":[\"region:was\"]}]}}")
-
+            -d "{\"definition\":${NEW_DEF}}")
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
           echo "HTTP ${HTTP_CODE}"
           if [ "$HTTP_CODE" -ge 400 ]; then
             echo "ERROR: Koyeb deploy failed"
-            echo "$BODY" | jq '.' >&2
+            echo "$BODY" | jq '.' >&2 || echo "$BODY" >&2
             exit 1
           fi
-          echo "Koyeb deploy triggered successfully (volume eeb30e19 → /app/hf_cache preserved)"
+          echo "Koyeb deploy triggered (full definition preserved: env, volumes, scaling, regions)."
