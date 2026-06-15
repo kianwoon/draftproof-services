@@ -465,26 +465,12 @@ def _tags(sentence: Sentence) -> list[str]:
     tags: list[str] = []
     if _list_pressure(text) >= 0.22:
         tags.append("packed_list")
-    if _predictable_start_pressure(sentence) >= 12.0:
-        tags.append("predictable_start")
     if _abstract_risk_pressure(sentence) >= 12.0:
         tags.append("abstract_density")
     if sentence.word_count >= 22:
         tags.append("sentence_overload")
-    if _context_anchor_gap(sentence):
-        tags.append("context_anchor_gap")
-    if _author_anchor_gap(sentence):
-        tags.append("author_anchor_gap")
     if _citation_anchor(text):
         tags.append("citation_anchor")
-    if _broad_claim(text):
-        tags.append("broad_claim")
-    if _transition_stack(text):
-        tags.append("transition_stack")
-    if _semantic_bridge_gap(sentence):
-        tags.append("semantic_bridge_gap")
-    if _unsupported_claim_gap(sentence):
-        tags.append("unsupported_claim_gap")
     if _paraphrase_smoothing(sentence):
         tags.append("paraphrase_smoothing")
     return tags
@@ -494,14 +480,7 @@ def _risk(sentence: Sentence) -> float:
     return (
         _list_pressure(sentence.text) * 36.0
         + _abstract_risk_pressure(sentence)
-        + _predictable_start_pressure(sentence)
-        + (8.0 if _context_anchor_gap(sentence) else 0.0)
-        + (8.0 if _author_anchor_gap(sentence) else 0.0)
         + (6.0 if _citation_anchor(sentence.text) else 0.0)
-        + (6.0 if _broad_claim(sentence.text) else 0.0)
-        + (6.0 if _transition_stack(sentence.text) else 0.0)
-        + (6.0 if _semantic_bridge_gap(sentence) else 0.0)
-        + (8.0 if _unsupported_claim_gap(sentence) else 0.0)
         + (6.0 if _paraphrase_smoothing(sentence) else 0.0)
         + min(12.0, max(0, sentence.word_count - 18) * 0.8)
     )
