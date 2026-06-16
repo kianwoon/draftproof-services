@@ -81,7 +81,12 @@ export default function Reports() {
     return () => ac.abort();
   }, [page, t]);
 
-  if (loading) {
+  // Full-page spinner only on the very first load (no data yet). On subsequent
+  // page changes we keep the layout mounted and show an in-place busy state so
+  // navigating pagination never flashes/unmounts the whole page.
+  const initialLoading = loading && scans.length === 0;
+
+  if (initialLoading) {
     return (
       <main className="app-page reports-page-shell">
         <div className="container">
@@ -143,7 +148,10 @@ export default function Reports() {
           </div>
         ) : (
           <>
-            <div className="reports-table-wrap">
+            <div
+              className={`reports-table-wrap${loading ? ' is-paginating' : ''}`}
+              aria-busy={loading}
+            >
               <table className="reports-table">
                 <colgroup>
                   <col className="reports-col-report" />
@@ -246,7 +254,7 @@ export default function Reports() {
           <div className="pagination">
             <button
               className="btn btn-secondary btn-small"
-              disabled={page === 1}
+              disabled={page === 1 || loading}
               onClick={() => setPage(p => p - 1)}
             >
               {t('common.previous')}
@@ -275,6 +283,7 @@ export default function Reports() {
                     <button
                       key={p}
                       className={`pagination-btn${p === page ? ' active' : ''}`}
+                      disabled={loading}
                       onClick={() => setPage(p)}
                     >
                       {p}
@@ -285,7 +294,7 @@ export default function Reports() {
             </span>
             <button
               className="btn btn-secondary btn-small"
-              disabled={page === totalPages}
+              disabled={page === totalPages || loading}
               onClick={() => setPage(p => p + 1)}
             >
               {t('common.next')}

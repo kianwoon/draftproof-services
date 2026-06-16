@@ -793,6 +793,14 @@
   border-top: 3px solid var(--green);
 }
 
+/* In-place busy state while paginating: keep the table mounted, just dim it
+   so navigating pages never flashes/unmounts the whole page. */
+.reports-table-wrap.is-paginating {
+  opacity: .55;
+  transition: opacity .15s ease;
+  pointer-events: none;
+}
+
 .history-table-wrap {
   max-width: 100%;
   margin: 0 auto;
