@@ -501,13 +501,20 @@ _FIRST_PERSON_EXPERIENCE = re.compile(
 )
 
 
+def _normalize_apostrophes(text: str) -> str:
+    """Smart quotes (U+2019/U+2018/U+02BC) -> ASCII ' so the contraction arms of
+    _FIRST_PERSON_EXPERIENCE match. Real prod fabrication used a curly apostrophe ("I'’ve watched") and
+    escaped the regex; normalise before matching."""
+    return re.sub(r"[’‘ʼ′]", "'", str(text or ""))
+
+
 def _has_added_first_person_experience(candidate: str, source_text: str) -> bool:
     """True if the candidate grounds a claim in first-person authorial experience that is NOT already
     in the source -- the proxy writing in the author's voice. Encouraged, but surfaced so the author
     confirms it matches their real experience before submitting."""
-    if _FIRST_PERSON_EXPERIENCE.search(" ".join(str(source_text or "").split())):
+    if _FIRST_PERSON_EXPERIENCE.search(" ".join(_normalize_apostrophes(source_text).split())):
         return False  # source is already first-person; nothing newly attributed
-    return bool(_FIRST_PERSON_EXPERIENCE.search(str(candidate or "")))
+    return bool(_FIRST_PERSON_EXPERIENCE.search(_normalize_apostrophes(candidate)))
 
 
 _FABRICATION_PENALTY_DEFAULT = 25.0

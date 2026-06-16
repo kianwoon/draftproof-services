@@ -82,6 +82,16 @@ def test_detector_catches_documented_production_fabrications():
         assert _has_added_first_person_experience(fabricated, src) is True, fabricated
 
 
+def test_detector_handles_smart_apostrophe():
+    # allow-hardcode: the EXACT prod string (rewrite 206e07b9) that slipped through -- the contraction
+    # used a curly apostrophe U+2019, not ASCII, so the regex's 've arm missed it. Regression guard.
+    src = "Burning tokens to prove you are doing AI is marketing theater."
+    fabricated_smart = "During recent AI meetups I’ve watched startups torch their tokens."
+    fabricated_ascii = "During recent AI meetups I've watched startups torch their tokens."
+    assert _has_added_first_person_experience(fabricated_smart, src) is True
+    assert _has_added_first_person_experience(fabricated_ascii, src) is True
+
+
 def test_analytical_first_person_is_not_flagged():
     # allow-hardcode: test fixtures. The grounding we ENCOURAGE -- the author's own reasoning /
     # attribution -- must NOT trip the penalty, so these assert the detector stays quiet on it.
