@@ -19,6 +19,8 @@ export const SITE_NAME = 'DraftProof';
 export const SEO_REVIEW_DATE = '2026-06-05';
 // Homepage reviewed separately when the Critical Thinking module was surfaced.
 export const HOME_REVIEW_DATE = '2026-06-16';
+// Content-checker + FAQ copy extended to surface the Critical Thinking module.
+export const CRITICAL_THINKING_REVIEW_DATE = '2026-06-17';
 
 export const PAGE_META = {
   '/': {
@@ -40,7 +42,7 @@ export const PAGE_META = {
     descriptionKey: 'seo.essayCheckerDescription',
     canonical: '/content-checker',
     schemaType: 'WebPage',
-    freshness: { type: 'reviewed', date: SEO_REVIEW_DATE },
+    freshness: { type: 'reviewed', date: CRITICAL_THINKING_REVIEW_DATE },
   },
   '/pricing': {
     titleKey: 'seo.pricingTitle',
@@ -54,7 +56,7 @@ export const PAGE_META = {
     descriptionKey: 'seo.faqDescription',
     canonical: '/faq',
     schemaType: 'WebPage',
-    freshness: { type: 'reviewed', date: SEO_REVIEW_DATE },
+    freshness: { type: 'reviewed', date: CRITICAL_THINKING_REVIEW_DATE },
   },
   '/privacy': {
     titleKey: 'seo.privacyTitle',
