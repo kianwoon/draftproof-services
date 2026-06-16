@@ -1,8 +1,23 @@
+import { useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
 import { getLocaleFromPathname, localizePath } from '../localeRouting';
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlight(text, query) {
+  if (!query) return text;
+  const parts = String(text).split(new RegExp(`(${escapeRegExp(query)})`, 'ig'));
+  return parts.map((part, index) => (
+    part.toLowerCase() === query.toLowerCase()
+      ? <mark key={index}>{part}</mark>
+      : part
+  ));
+}
 
 export default function FAQ() {
   const { t } = useTranslation();
@@ -12,6 +27,31 @@ export default function FAQ() {
   const groups = t('faqPage.groups', { returnObjects: true });
   const totalQuestions = groups.reduce((count, group) => count + group.items.length, 0);
   const featuredGroups = groups.slice(0, 3);
+
+  const [query, setQuery] = useState('');
+  const term = query.trim();
+  const searching = term.length > 0;
+
+  const filteredGroups = useMemo(() => {
+    if (!searching) return groups;
+    const needle = term.toLowerCase();
+    return groups
+      .map((group) => {
+        // Include the category label so natural searches like "privacy" or
+        // "billing" surface the whole group even when no Q/A repeats the word.
+        const groupText = `${group.kicker} ${group.title}`.toLowerCase();
+        return {
+          ...group,
+          items: group.items.filter((item) => (
+            `${groupText} ${item.q} ${item.a}`.toLowerCase().includes(needle)
+          )),
+        };
+      })
+      .filter((group) => group.items.length > 0);
+  }, [groups, searching, term]);
+
+  const matchCount = filteredGroups.reduce((count, group) => count + group.items.length, 0);
+  const navGroups = searching ? filteredGroups : groups;
 
   return (
     <main className="faq-shell">
@@ -44,6 +84,40 @@ export default function FAQ() {
           ))}
         </section>
 
+        <section className="faq-search" aria-label={t('faqPage.searchLabel')}>
+          <label className="faq-search-field">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path
+                d="M9 3a6 6 0 1 0 3.7 10.7l3.3 3.3 1.4-1.4-3.3-3.3A6 6 0 0 0 9 3Zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"
+                fill="currentColor"
+              />
+            </svg>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('faqPage.searchPlaceholder')}
+              aria-label={t('faqPage.searchLabel')}
+              autoComplete="off"
+            />
+            {searching && (
+              <button
+                type="button"
+                className="faq-search-clear"
+                onClick={() => setQuery('')}
+                aria-label={t('faqPage.searchClear')}
+              >
+                &times;
+              </button>
+            )}
+          </label>
+          <p className="faq-search-status" role="status" aria-live="polite">
+            {searching
+              ? t('faqPage.searchSummary', { matches: matchCount, total: totalQuestions })
+              : ''}
+          </p>
+        </section>
+
         <section className="faq-intro">
           <div>
             <h2>{t('faqPage.helpTitle')}</h2>
@@ -57,7 +131,7 @@ export default function FAQ() {
 
         <div className="faq-layout">
           <aside className="faq-nav" aria-label={t('faqPage.navLabel')}>
-            {groups.map((group) => (
+            {navGroups.map((group) => (
               <a key={group.id} href={`#${group.id}`}>
                 <span>{group.kicker}</span>
                 {group.title}
@@ -66,7 +140,7 @@ export default function FAQ() {
           </aside>
 
           <div className="faq-groups">
-            {groups.map((group, groupIndex) => (
+            {filteredGroups.map((group, groupIndex) => (
               <section className="faq-group" id={group.id} key={group.id}>
                 <div className="faq-group-head">
                   <div>
@@ -77,14 +151,24 @@ export default function FAQ() {
                 </div>
                 <div className="faq-question-list">
                   {group.items.map((item) => (
-                    <details className="faq-question" key={item.q}>
-                      <summary>{item.q}</summary>
-                      <p>{item.a}</p>
+                    <details className="faq-question" key={item.q} open={searching || undefined}>
+                      <summary>{highlight(item.q, term)}</summary>
+                      <p>{highlight(item.a, term)}</p>
                     </details>
                   ))}
                 </div>
               </section>
             ))}
+
+            {searching && filteredGroups.length === 0 && (
+              <div className="faq-empty">
+                <strong>{t('faqPage.searchNoResults', { query: term })}</strong>
+                <p>{t('faqPage.searchNoResultsHint')}</p>
+                <button type="button" className="btn btn-secondary" onClick={() => setQuery('')}>
+                  {t('faqPage.searchClear')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

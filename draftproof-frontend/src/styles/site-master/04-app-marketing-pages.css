@@ -1284,6 +1284,111 @@
   background: #ecfdf5;
 }
 
+.faq-search {
+  margin-bottom: 1.1rem;
+}
+
+.faq-search-field {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .35rem .5rem .35rem .9rem;
+  border: 1px solid #dbe4ea;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .05);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.faq-search-field:focus-within {
+  border-color: rgba(15, 118, 110, .45);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, .12);
+}
+
+.faq-search-field svg {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  color: #0f766e;
+}
+
+.faq-search-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: .65rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--navy-950);
+  font-size: .96rem;
+  font-weight: 600;
+}
+
+.faq-search-field input:focus {
+  outline: none;
+}
+
+.faq-search-field input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.faq-search-clear {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.faq-search-clear:hover {
+  border-color: rgba(15, 118, 110, .28);
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.faq-search-status {
+  min-height: 1.1rem;
+  margin: .55rem .25rem 0;
+  color: #0f766e;
+  font-size: .82rem;
+  font-weight: 850;
+}
+
+.faq-question mark {
+  padding: 0 .1em;
+  border-radius: 4px;
+  background: rgba(15, 118, 110, .16);
+  color: inherit;
+}
+
+.faq-empty {
+  display: grid;
+  justify-items: start;
+  gap: .55rem;
+  padding: 1.6rem;
+  border: .5px dashed rgba(15, 118, 110, .35);
+  border-radius: 16px;
+  background: rgba(236, 253, 245, .5);
+}
+
+.faq-empty strong {
+  color: var(--navy-950);
+  font-size: 1.02rem;
+}
+
+.faq-empty p {
+  margin: 0;
+  color: #475569;
+  font-size: .92rem;
+}
+
 .faq-intro {
   display: flex;
   align-items: center;
