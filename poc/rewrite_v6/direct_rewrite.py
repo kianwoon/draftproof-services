@@ -250,13 +250,17 @@ _DIVERSIFIED_SYSTEM = (
     "You produce a SUGGESTED rewrite of a flagged paragraph for the author to review and edit. The "
     "author sees your changes in a before/after diff. Your goal is to lower AI-detection risk by "
     "making the writing specific, concrete, author-owned, and plain-spoken while preserving the "
-    "source argument. Author-proxy is the spine: every broad claim you ground must use an author-owned "
-    "vantage, a concrete particular, and a clear claim purpose. Route diversity means changing the "
-    "shape of that author-proxy beat -- observed process, local constraint, decision moment, source "
-    "use, actor interaction, condition trigger, or risk consequence -- not replacing author-proxy with "
-    "detached examples. For reflective prose, first-person observation remains valid and often "
-    "strongest. For formal prose, use local actor/source/condition/risk framing without forcing first "
-    "person. Figures or scale details are optional support inside an author-proxy beat; they must not "
+    "source argument. Ground each broad claim in the shape that fits ITS BASIS -- match the grounding to "
+    "how the author actually knows the claim. A claim the draft signals as FIRST-HAND (the author saw, "
+    "tried, taught, or managed it) may use first-person observation. A claim drawn from REPORTS, "
+    "HEADLINES, or COMMON KNOWLEDGE must instead ATTRIBUTE and qualify the source, make the author's own "
+    "reasoning explicit, or use a condition / consequence / actor frame -- NEVER invent first-hand "
+    "experience the author never had. Route diversity means changing the shape of that grounding beat -- "
+    "observed process, local constraint, decision moment, source use, actor interaction, condition "
+    "trigger, or risk consequence -- not replacing it with detached examples. First-person observation "
+    "is ONE mode, valid only when the draft genuinely signals first-hand involvement; for reported or "
+    "formal prose, use local actor / source / condition / risk framing without forcing first person. "
+    "Figures or scale details are optional support inside an author-proxy beat; they must not "
     "be the paragraph spine. List added scenarios, observations, bridge wording, or figures in "
     "author_review_items. Do not present a specific named real institution, real person, citation, "
     "external fact, or exact statistic as verified unless it already appears in the source. "
@@ -479,8 +483,18 @@ def _has_fabricated_named_entities(candidate: str, source_text: str) -> bool:
 # legitimate, encouraged grounding scaffold -- but it is the proxy's invention until the author
 # confirms it reflects their real experience, so it rides along as a review flag (annotate, never
 # reject).
+# Structural (NOT content-word) tells that the rewrite introduced a first-hand personal anecdote:
+#   - "in my <noun>"                     -> 'in my consulting work'
+#   - "of mine"                          -> 'a client of mine', 'a colleague of mine'
+#   - "a/an <noun> ... I <verb>"         -> 'a firm I helped', 'a rollout I tracked' (relative clause
+#                                           naming an indefinite entity the author personally acted on)
+#   - "when I ..." / "I <experiential verb>"  -> 'when I reviewed', 'I saw'
+# Agnostic by construction: no topic vocabulary, only first-person-anecdote syntax. Analytical first
+# person ("I argue", "I read this as") is intentionally NOT matched -- that grounding is encouraged.
 _FIRST_PERSON_EXPERIENCE = re.compile(
     r"\b(?:in my (?:own\s+)?[a-z]+"
+    r"|of mine\b"
+    r"|an?\s+\w+(?:\s+\w+){0,2}\s+I\s+\w+"
     r"|when I\b"
     r"|I(?:'ve|'d| have| had)?\s+(?:saw|see|seen|noticed|found|observed|watched|taught|experienced|tried|tested|recall|remember|struggled|learned|began|started))\b",
     re.I,
@@ -494,6 +508,27 @@ def _has_added_first_person_experience(candidate: str, source_text: str) -> bool
     if _FIRST_PERSON_EXPERIENCE.search(" ".join(str(source_text or "").split())):
         return False  # source is already first-person; nothing newly attributed
     return bool(_FIRST_PERSON_EXPERIENCE.search(str(candidate or "")))
+
+
+_FABRICATION_PENALTY_DEFAULT = 25.0
+
+
+def _fabrication_penalty() -> float:
+    """Score penalty added to a candidate that grounds a claim in first-person experience NOT present in
+    the source (see `_has_added_first_person_experience`). The lowest-`_document_ai_risk` selector would
+    otherwise re-reward a fabricated persona over an honest attribution candidate, because fabricated
+    first-person lowers the risk score. Soft, not a disqualify: if EVERY candidate fabricates the
+    least-bad still ships (never falls back to source_preserved). Tunable via
+    DRAFTPROOF_V6_FABRICATION_PENALTY (set 0 to disable)."""
+    raw = os.environ.get("DRAFTPROOF_V6_FABRICATION_PENALTY", "").strip()
+    if raw:
+        try:
+            value = float(raw)
+            if value >= 0:
+                return value
+        except ValueError:
+            pass
+    return _FABRICATION_PENALTY_DEFAULT
 
 
 def _ungrounded_claims(candidate: str, *, min_words: int = 5) -> list[str]:
@@ -799,12 +834,22 @@ def run_direct_rewrite_all(
                 lane=lane,
             )
             score = _document_ai_risk(processed.rewritten_text)
+            # Backstop: a candidate that adds first-person experience absent from the source has its
+            # risk score penalised so the lowest-score selector cannot pick a fabricated persona over an
+            # honest attribution candidate. Basis-gated inside the detector (no penalty for genuinely
+            # first-hand drafts). Soft penalty -> least-bad still ships if every candidate fabricates.
+            if _has_added_first_person_experience(processed.rewritten_text, text):
+                score += _fabrication_penalty()
             scored_docs.append((score, attempt, lane, processed))
             run_index += 1
     best_score, best_attempt, best_lane, full_doc_rewritten = _choose_scored_lane(scored_docs)
     from dataclasses import replace
     selector_trace = [
-        _lane_selector_trace(score, attempt, lane, selected=(attempt == best_attempt and lane == best_lane))
+        _lane_selector_trace(
+            score, attempt, lane,
+            selected=(attempt == best_attempt and lane == best_lane),
+            fabrication_penalty_applied=_has_added_first_person_experience(_doc.rewritten_text, text),
+        )
         for score, attempt, lane, _doc in scored_docs
     ]
     full_doc_rewritten = replace(
@@ -864,7 +909,9 @@ def _choose_scored_lane(scored_docs: list[tuple[float, int, str, Any]]) -> tuple
     return best
 
 
-def _lane_selector_trace(score: float, attempt: int, lane: str, *, selected: bool) -> dict[str, Any]:
+def _lane_selector_trace(
+    score: float, attempt: int, lane: str, *, selected: bool, fabrication_penalty_applied: bool = False
+) -> dict[str, Any]:
     return {
         "selected_source": "author_proxy_lane_selector",
         "status": "selected" if selected else "not_selected",
@@ -872,6 +919,7 @@ def _lane_selector_trace(score: float, attempt: int, lane: str, *, selected: boo
         "lane": lane,
         "score": round(score, 3) if score != float("inf") else score,
         "selected": selected,
+        "fabrication_penalty_applied": fabrication_penalty_applied,
     }
 
 

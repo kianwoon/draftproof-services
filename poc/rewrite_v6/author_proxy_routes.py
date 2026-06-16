@@ -73,10 +73,15 @@ def select_author_proxy_routes(
     tags = {str(tag).casefold() for tag in (finding_tags or [])}
     selected: list[str] = []
 
-    if _FIRST_PERSON.search(text) or _authorship_grounding_present(authorship_targets):
+    # observed_process is the FIRST-PERSON mode. Reserve it for a genuine first-person / first-hand
+    # signal in the source (or explicit authorship grounding); never inject it on generic action verbs.
+    # For every other claim the non-first-person modes below carry the grounding, so the writer is not
+    # nudged to invent experience the author never had.
+    first_hand = bool(_FIRST_PERSON.search(text) or _authorship_grounding_present(authorship_targets))
+    if first_hand:
         selected.append("observed_process")
     if _ACTION_MARKERS.search(text) or tags & {"author_anchor_gap", "context_anchor_gap", "low_specificity"}:
-        selected.extend(["observed_process", "decision_moment"])
+        selected.extend(["decision_moment", "actor_interaction"])
     if _SOURCE_MARKERS.search(text) or "source_grounding" in tags:
         selected.append("source_use")
     if _RISK_MARKERS.search(text) or "broad_claim" in tags:
@@ -91,7 +96,11 @@ def select_author_proxy_routes(
 
     non_numeric = [mode for mode in selected if mode != "scale_detail"][:4]
     if len(non_numeric) < 3:
-        for fallback in ("observed_process", "actor_interaction", "condition_trigger", "source_use", "local_constraint"):
+        # first-person (observed_process) only backfills when the source is genuinely first-hand.
+        fallbacks = ("actor_interaction", "condition_trigger", "source_use", "local_constraint")
+        if first_hand:
+            fallbacks = ("observed_process", *fallbacks)
+        for fallback in fallbacks:
             if fallback not in non_numeric:
                 non_numeric.append(fallback)
             if len(non_numeric) >= 3:
