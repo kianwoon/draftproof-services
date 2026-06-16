@@ -793,11 +793,10 @@
   border-top: 3px solid var(--green);
 }
 
-/* In-place busy state while paginating: keep the table mounted, just dim it
-   so navigating pages never flashes/unmounts the whole page. */
+/* In-place busy state while paginating: keep the existing rows fully visible
+   and stable (no opacity pulse — that read as a flash/reload). We only block
+   interaction with stale rows; the new page swaps in instantly on arrival. */
 .reports-table-wrap.is-paginating {
-  opacity: .55;
-  transition: opacity .15s ease;
   pointer-events: none;
 }
 
