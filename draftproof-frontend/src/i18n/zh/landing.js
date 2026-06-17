@@ -1,8 +1,8 @@
 export const landing = {
   "heroPill": "面向学生的依据支撑与批判性思维审阅",
-  "heroTitle": "在别人质疑之前，先看清内容哪里需要更强证据。",
-  "heroTitleHighlight": "更强证据",
-  "heroLead": "DraftProof 会找出草稿中的引用缺口、薄弱依据和类似 AI 的信号，把它们转化为可执行的修改计划，并提出深化思考的提问，让你——而不是 AI——在提交前主导思考。",
+  "heroTitle": "确保草稿里的思考，依然属于你。",
+  "heroTitleHighlight": "依然属于你",
+  "heroLead": "DraftProof 会指出你还无法支撑的论断，以及读起来像机器写的段落，再追问你真正想表达什么——让你在提交前用自己的证据和推理，为每一个观点立稳依据。",
   "runCheck": "审阅我的内容",
   "viewSample": "查看示例报告",
   "trustNote": "不是检测绕过工具 · 不是学术不端判定 · 是可执行的依据支撑与完整性审阅。",

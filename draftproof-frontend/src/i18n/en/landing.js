@@ -1,8 +1,8 @@
 export const landing = {
   "heroPill": "Grounding and critical-thinking review for students",
-  "heroTitle": "Show where your content needs stronger evidence before anyone questions it.",
-  "heroTitleHighlight": "stronger evidence",
-  "heroLead": "DraftProof finds the citation gaps, weak grounding, and AI-like signals in your draft, turns them into a focused revision plan, and asks the reflective questions that keep you — not the AI — in control of the thinking before submission.",
+  "heroTitle": "Make sure the thinking in your draft is still yours.",
+  "heroTitleHighlight": "still yours",
+  "heroLead": "DraftProof points to the claims you can’t yet back up and the passages that sound machine-written, then asks what you actually meant — so you ground every point with your own evidence and reasoning before submission.",
   "runCheck": "Review my content",
   "viewSample": "View sample report",
   "trustNote": "Not a detector bypass · Not a misconduct verdict · A grounding and integrity review you can act on.",
