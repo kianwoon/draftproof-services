@@ -153,42 +153,46 @@ def test_low_coverage_flag():
     assert r["low_coverage"] is True
 
 
-def test_floor_to_document_tier_prevents_low_on_high_report():
-    # The real bug: a high-tier report with low axes read as "Low submission risk".
-    # Flooring to document_tier='high' must raise it to high with a flagged-findings reason.
+def test_green_report_with_low_axes_stays_low():
+    # The reported bug: a GREEN / "Low Risk" / "Good" report must NOT read "High".
+    # All axes low + GREEN detector -> overall low, no floor.
     ct = _ct(score=85, dims={"student_judgement": _dim(85), "reasoning_trail": _dim(85),
                              "evidence_grounding": _dim(85)})
     r = score_submission_risk(ai_tier="GREEN", critical_thinking_control=ct,
-                              axis_scores={"citation": "clear"}, document_tier="high")
-    assert r["overall"]["level"] == "high"
-    assert r["overall"]["floored"] is True
-    assert r["overall"]["main_reason_code"] == "flagged_findings"
-    assert r["overall"]["risk"] >= 62
-
-
-def test_floor_does_not_lower_a_higher_computed_level():
-    # When the blend is already >= the tier floor, keep the computed level + reason.
-    ct = _ct(score=10)  # ownership risk 90 -> high
-    r = score_submission_risk(ai_tier="RED", critical_thinking_control=ct,
-                              axis_scores={"citation": "attention"}, document_tier="medium")
-    assert r["overall"]["level"] == "high"
-    assert r["overall"]["floored"] is False
-    assert r["overall"]["main_reason_code"] != "flagged_findings"
-
-
-def test_clean_tier_does_not_floor():
-    ct = _ct(score=95, dims={"student_judgement": _dim(95)})
-    r = score_submission_risk(ai_tier="GREEN", critical_thinking_control=ct,
-                              axis_scores={"citation": "clear"}, document_tier="clean")
+                              axis_scores={"citation": "clear"})
     assert r["overall"]["level"] == "low"
     assert r["overall"]["floored"] is False
 
 
-def test_floor_applies_even_with_no_axis_data():
-    r = score_submission_risk(ai_tier=None, critical_thinking_control=_ct(score=None),
-                              document_tier="high")
+def test_floor_to_red_detector_tier():
+    # A RED detector (headline "Critical Risk") with otherwise-low axes must not
+    # read "low": floor to the detector/badge tier and attribute to text_pattern.
+    ct = _ct(score=90, dims={"student_judgement": _dim(90), "reasoning_trail": _dim(90),
+                             "evidence_grounding": _dim(90)})
+    r = score_submission_risk(ai_tier="RED", critical_thinking_control=ct,
+                              axis_scores={"citation": "clear"})
     assert r["overall"]["level"] == "high"
-    assert r["overall"]["main_reason_code"] == "flagged_findings"
+    assert r["overall"]["floored"] is True
+    assert r["overall"]["main_reason_code"] == "text_pattern"
+
+
+def test_amber_floors_to_medium():
+    ct = _ct(score=90, dims={"student_judgement": _dim(90)})
+    r = score_submission_risk(ai_tier="AMBER", critical_thinking_control=ct,
+                              axis_scores={"citation": "clear"})
+    assert r["overall"]["level"] == "medium"
+    assert r["overall"]["floored"] is True
+
+
+def test_ownership_can_raise_above_green_detector_without_floor():
+    # Fluent (GREEN) but ungrounded -> ownership lifts it above the GREEN floor
+    # (low) to medium; that's the intended reframe, not a detector floor.
+    ct = _ct(score=10)  # ownership risk 90 (weighted 0.5 -> overall ~52 = medium)
+    r = score_submission_risk(ai_tier="GREEN", critical_thinking_control=ct,
+                              axis_scores={"citation": "clear"})
+    assert r["overall"]["level"] == "medium"
+    assert r["overall"]["floored"] is False
+    assert r["overall"]["main_reason_code"] == "ownership"
 
 
 def test_shape_and_weights_exposed():

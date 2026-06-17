@@ -1528,7 +1528,6 @@ class ReportBuilder:
             ai_tier=layer3.tier.value,
             critical_thinking_control=critical_thinking_control,
             axis_scores=axis_scores,
-            document_tier=adjusted_tier.value,
             scored_sentence_count=len(_pred_sentences) if _pred_sentences else None,
         )
 

@@ -46,21 +46,18 @@ LOW_RISK_MAX = 34.0      # risk < 34  -> low
 MEDIUM_RISK_MAX = 62.0   # 34 <= risk < 62 -> medium ; >= 62 -> high
 
 # Severity ranking for the categorical levels, and the minimum risk value that
-# represents each level (used when flooring to the document tier).
+# represents each level (used when flooring to the detector/badge tier).
 _LEVEL_RANK = {"low": 0, "medium": 1, "high": 2}
 _LEVEL_FLOOR_RISK = {"low": 0.0, "medium": LOW_RISK_MAX, "high": MEDIUM_RISK_MAX}
 
-# Submission risk must never UNDERSTATE the document's own overall tier — a
-# "high"-tier report (many flagged sections) reading as "Low submission risk"
-# is contradictory. Floor the overall level to the document tier. The report
-# Tier enum is critical/high/medium/low/clean (poc/report/report.py).
-TIER_FLOOR_LEVEL = {
-    "critical": "high",
-    "high": "high",
-    "medium": "medium",
-    "low": "low",
-    "clean": "low",
-}
+# Submission risk is floored to the DETECTOR/BADGE tier — the same tier the
+# report surfaces as its headline "RISK TIER" (report_service prefers the AI
+# badge tier over the internal findings tier). This keeps the band consistent
+# with the rest of the page: a GREEN / "Low Risk" / "Unlikely AI" report must
+# not read "High submission risk". The floor level is the text_pattern axis
+# level (GREEN->low, AMBER->medium, ORANGE/RED->high). We deliberately do NOT
+# floor to the internal overall_tier — it can be inflated by review-only signals
+# (e.g. semantic_drift) that the product suppresses from the headline.
 
 # Representative 0-100 risk value for each categorical detector tier. The
 # text-pattern axis intentionally rides on the calibrated badge tier (not raw
@@ -109,14 +106,11 @@ OVERALL_LABELS = {
 # allow-hardcode: presentation strings (plain-language "main reason" per axis),
 # NOT a scoring/matching oracle — never compared against document text. Keyed by
 # axis code; the frontend localizes via report.submissionRisk.reasons.*.
-# `flagged_findings` is used when the level is floored up to the document tier
-# (the risk comes from flagged sections, not a single axis).
 AXIS_REASONS = {
     "ownership": "weak ownership of the thinking — thin judgement, reasoning, or grounding",
     "citation": "claims that are not clearly tied to a source",
     "defence_readiness": "hard to defend as your own work in an interview",
     "text_pattern": "AI-like text patterns that may trigger a detector",
-    "flagged_findings": "flagged sections that need review before submission",
 }
 
 POLICY_NOTE = "Unknown — self-declare (your AI use, course policy, and group contribution)"
@@ -188,15 +182,13 @@ def score_submission_risk(
     ai_tier: str | None = None,
     critical_thinking_control: dict[str, Any] | None = None,
     axis_scores: dict[str, str] | None = None,
-    document_tier: str | None = None,
     scored_sentence_count: int | None = None,
 ) -> dict[str, Any]:
     """Return the additive Submission-risk diagnosis. Pure function over signals
     that are already computed upstream; never gates anything.
 
-    ``document_tier`` (the report overall_tier: critical/high/medium/low/clean)
-    floors the overall level so submission risk never reads lower than the
-    document's own tier."""
+    The overall level is floored to the detector/badge tier (derived from
+    ``ai_tier``) so it stays consistent with the report's headline RISK TIER."""
     ct = critical_thinking_control or {}
     axes_in = axis_scores or {}
 
@@ -271,29 +263,7 @@ def score_submission_risk(
         and scored_sentence_count < LOW_COVERAGE_MIN_SENTENCES
     )
 
-    # Floor the overall level to the document's own tier so submission risk never
-    # reads lower than the report tier (a "high"-tier report can't say "Low").
-    tier_floor = TIER_FLOOR_LEVEL.get(str(document_tier or "").lower())
-
     if not contributions:
-        # No axis data. If the document tier still signals risk, reflect it rather
-        # than abstaining to "unknown" on a tiered report.
-        if tier_floor and _LEVEL_RANK[tier_floor] > 0:
-            return {
-                "overall": {
-                    "level": tier_floor,
-                    "label": OVERALL_LABELS[tier_floor],
-                    "risk": _LEVEL_FLOOR_RISK[tier_floor],
-                    "main_reason": AXIS_REASONS["flagged_findings"],
-                    "main_reason_code": "flagged_findings",
-                    "floored": True,
-                },
-                "axes": axes,
-                "weights": dict(LAYER_WEIGHTS),
-                "model": MODEL_VERSION,
-                "low_coverage": low_coverage,
-                "note": _NOTE,
-            }
         return {
             "overall": {
                 "level": "unknown",
@@ -314,20 +284,23 @@ def score_submission_risk(
     overall_risk = sum(w * r for w, r in contributions.values()) / weight_sum
     overall_level = _level_from_risk(overall_risk)
 
+    # Floor to the detector/badge tier (the text_pattern axis level = the report's
+    # headline RISK TIER) so the band never reads lower than the displayed tier.
+    floor_level = text_axis["level"]
     floored = False
-    if tier_floor and _LEVEL_RANK[tier_floor] > _LEVEL_RANK[overall_level]:
-        overall_level = tier_floor
-        overall_risk = max(overall_risk, _LEVEL_FLOOR_RISK[tier_floor])
+    if floor_level in _LEVEL_RANK and _LEVEL_RANK[floor_level] > _LEVEL_RANK[overall_level]:
+        overall_level = floor_level
+        overall_risk = max(overall_risk, _LEVEL_FLOOR_RISK[floor_level])
         floored = True
 
-    # main_reason: when floored up to the document tier the risk comes from flagged
-    # sections (not a single axis); otherwise the largest weighted contributor
-    # (the academic layer attributes to its worse of citation / defence-readiness).
+    # main_reason: when floored up to the detector tier the driver is the text
+    # pattern; otherwise the largest weighted contributor (the academic layer
+    # attributes to its worse of citation / defence-readiness).
     nag = overall_level != "low"
     if not nag:
         reason_axis = ""
     elif floored:
-        reason_axis = "flagged_findings"
+        reason_axis = "text_pattern"
     else:
         reason_axis = _dominant_reason_axis(contributions, cit_risk, def_risk)
     main_reason = AXIS_REASONS.get(reason_axis, "")

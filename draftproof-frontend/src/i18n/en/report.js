@@ -41,8 +41,7 @@ export const report = {
       "ownership": "weak ownership of the thinking — thin judgement, reasoning, or grounding",
       "citation": "claims that are not clearly tied to a source",
       "defence_readiness": "hard to defend as your own work in an interview",
-      "text_pattern": "AI-like text patterns that may trigger a detector",
-      "flagged_findings": "flagged sections that need review before submission"
+      "text_pattern": "AI-like text patterns that may trigger a detector"
     }
   },
   "repairSummary": {
