@@ -565,7 +565,7 @@ export const report = {
     },
     "verdictFix": "The main writing issue to fix is the {{driver}}.",
     "draftproof": "DraftProof (conservative)",
-    "draftproofNote": "Improves as you ground your content — the signal to act on",
+    "draftproofNote": "Conservative AI-style estimate — mostly writing fluency that grounding won't fully move. The grounding fix above is the real thing to act on.",
     "external": "Turnitin / external (estimated)",
     "externalBand": {
       "low": "unlikely to be flagged",

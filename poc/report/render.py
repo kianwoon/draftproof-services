@@ -436,9 +436,9 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
     if lead:
         out.extend(lead)
         out.append("")
-        out.append(f"- _Detail — DraftProof grounding signal: {dp['score']}% ({dp['tier']})_")
+        out.append(f"- _Detail — DraftProof AI-style estimate (conservative): {dp['score']}% ({dp['tier']})_")
     else:
-        out.append(f"- **DraftProof grounding signal: {dp['score']}% — {dp['tier']}** — improves as you ground the content (the signal to act on)")
+        out.append(f"- **DraftProof AI-style estimate (conservative): {dp['score']}% — {dp['tier']}** — mostly writing fluency that grounding won't fully move; the grounding fix above is what to act on")
     ext = bands["external"]
     if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and ext:
         out.append(f"- **Turnitin / external (estimated): ~{ext['score']}% — {ext['label']}**")

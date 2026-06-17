@@ -560,7 +560,7 @@ export const report = {
     },
     "verdictFix": "首要的写作问题是{{driver}}。",
     "draftproof": "DraftProof（保守估计）",
-    "draftproofNote": "随着内容更有据可依而改善——这是应当着力的指标",
+    "draftproofNote": "保守的 AI 风格估计——主要反映写作流畅度，加强支撑也无法完全改变它。上方的支撑修复才是真正应当着力之处。",
     "external": "Turnitin / 外部检测器（估计）",
     "externalBand": {
       "low": "不太可能被标记",
