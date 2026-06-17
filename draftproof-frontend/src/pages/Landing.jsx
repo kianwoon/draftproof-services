@@ -38,7 +38,7 @@ export default function Landing() {
             <p className="lead">{t('landing.heroLead')}</p>
 
             <div className="hero-actions" id="check">
-              <Link to="/signin?next=/scan" className="btn btn-ghost">{t('landing.runCheck')}</Link>
+              <Link to="/signin?next=/scan" className="btn btn-primary">{t('landing.runCheck')}</Link>
               <a href="#report" className="btn btn-ghost">{t('landing.viewSample')}</a>
             </div>
 
