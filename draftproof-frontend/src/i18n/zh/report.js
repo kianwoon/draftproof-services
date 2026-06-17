@@ -40,7 +40,8 @@ export const report = {
       "ownership": "对思考的归属薄弱 — 判断、推理或依据不足",
       "citation": "论断未清晰对应到来源",
       "defence_readiness": "在面谈中难以作为自己的作品来辩护",
-      "text_pattern": "类似 AI 的文本模式，可能触发检测器"
+      "text_pattern": "类似 AI 的文本模式，可能触发检测器",
+      "flagged_findings": "有被标记的段落需在提交前审阅"
     }
   },
   "repairSummary": {

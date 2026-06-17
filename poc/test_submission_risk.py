@@ -153,6 +153,44 @@ def test_low_coverage_flag():
     assert r["low_coverage"] is True
 
 
+def test_floor_to_document_tier_prevents_low_on_high_report():
+    # The real bug: a high-tier report with low axes read as "Low submission risk".
+    # Flooring to document_tier='high' must raise it to high with a flagged-findings reason.
+    ct = _ct(score=85, dims={"student_judgement": _dim(85), "reasoning_trail": _dim(85),
+                             "evidence_grounding": _dim(85)})
+    r = score_submission_risk(ai_tier="GREEN", critical_thinking_control=ct,
+                              axis_scores={"citation": "clear"}, document_tier="high")
+    assert r["overall"]["level"] == "high"
+    assert r["overall"]["floored"] is True
+    assert r["overall"]["main_reason_code"] == "flagged_findings"
+    assert r["overall"]["risk"] >= 62
+
+
+def test_floor_does_not_lower_a_higher_computed_level():
+    # When the blend is already >= the tier floor, keep the computed level + reason.
+    ct = _ct(score=10)  # ownership risk 90 -> high
+    r = score_submission_risk(ai_tier="RED", critical_thinking_control=ct,
+                              axis_scores={"citation": "attention"}, document_tier="medium")
+    assert r["overall"]["level"] == "high"
+    assert r["overall"]["floored"] is False
+    assert r["overall"]["main_reason_code"] != "flagged_findings"
+
+
+def test_clean_tier_does_not_floor():
+    ct = _ct(score=95, dims={"student_judgement": _dim(95)})
+    r = score_submission_risk(ai_tier="GREEN", critical_thinking_control=ct,
+                              axis_scores={"citation": "clear"}, document_tier="clean")
+    assert r["overall"]["level"] == "low"
+    assert r["overall"]["floored"] is False
+
+
+def test_floor_applies_even_with_no_axis_data():
+    r = score_submission_risk(ai_tier=None, critical_thinking_control=_ct(score=None),
+                              document_tier="high")
+    assert r["overall"]["level"] == "high"
+    assert r["overall"]["main_reason_code"] == "flagged_findings"
+
+
 def test_shape_and_weights_exposed():
     r = score_submission_risk(ai_tier="AMBER", critical_thinking_control=_ct(score=50))
     assert r["model"] == MODEL_VERSION

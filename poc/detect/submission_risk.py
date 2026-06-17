@@ -45,6 +45,23 @@ LAYER_WEIGHTS = {
 LOW_RISK_MAX = 34.0      # risk < 34  -> low
 MEDIUM_RISK_MAX = 62.0   # 34 <= risk < 62 -> medium ; >= 62 -> high
 
+# Severity ranking for the categorical levels, and the minimum risk value that
+# represents each level (used when flooring to the document tier).
+_LEVEL_RANK = {"low": 0, "medium": 1, "high": 2}
+_LEVEL_FLOOR_RISK = {"low": 0.0, "medium": LOW_RISK_MAX, "high": MEDIUM_RISK_MAX}
+
+# Submission risk must never UNDERSTATE the document's own overall tier — a
+# "high"-tier report (many flagged sections) reading as "Low submission risk"
+# is contradictory. Floor the overall level to the document tier. The report
+# Tier enum is critical/high/medium/low/clean (poc/report/report.py).
+TIER_FLOOR_LEVEL = {
+    "critical": "high",
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "clean": "low",
+}
+
 # Representative 0-100 risk value for each categorical detector tier. The
 # text-pattern axis intentionally rides on the calibrated badge tier (not raw
 # topk), so it reflects what an external detector would actually flag.
@@ -89,12 +106,17 @@ OVERALL_LABELS = {
     "unknown": "Not enough text to assess",
 }
 
-# Plain-language "main reason" per axis when it is the dominant contributor.
+# allow-hardcode: presentation strings (plain-language "main reason" per axis),
+# NOT a scoring/matching oracle — never compared against document text. Keyed by
+# axis code; the frontend localizes via report.submissionRisk.reasons.*.
+# `flagged_findings` is used when the level is floored up to the document tier
+# (the risk comes from flagged sections, not a single axis).
 AXIS_REASONS = {
     "ownership": "weak ownership of the thinking — thin judgement, reasoning, or grounding",
     "citation": "claims that are not clearly tied to a source",
     "defence_readiness": "hard to defend as your own work in an interview",
     "text_pattern": "AI-like text patterns that may trigger a detector",
+    "flagged_findings": "flagged sections that need review before submission",
 }
 
 POLICY_NOTE = "Unknown — self-declare (your AI use, course policy, and group contribution)"
@@ -166,10 +188,15 @@ def score_submission_risk(
     ai_tier: str | None = None,
     critical_thinking_control: dict[str, Any] | None = None,
     axis_scores: dict[str, str] | None = None,
+    document_tier: str | None = None,
     scored_sentence_count: int | None = None,
 ) -> dict[str, Any]:
     """Return the additive Submission-risk diagnosis. Pure function over signals
-    that are already computed upstream; never gates anything."""
+    that are already computed upstream; never gates anything.
+
+    ``document_tier`` (the report overall_tier: critical/high/medium/low/clean)
+    floors the overall level so submission risk never reads lower than the
+    document's own tier."""
     ct = critical_thinking_control or {}
     axes_in = axis_scores or {}
 
@@ -244,13 +271,37 @@ def score_submission_risk(
         and scored_sentence_count < LOW_COVERAGE_MIN_SENTENCES
     )
 
+    # Floor the overall level to the document's own tier so submission risk never
+    # reads lower than the report tier (a "high"-tier report can't say "Low").
+    tier_floor = TIER_FLOOR_LEVEL.get(str(document_tier or "").lower())
+
     if not contributions:
+        # No axis data. If the document tier still signals risk, reflect it rather
+        # than abstaining to "unknown" on a tiered report.
+        if tier_floor and _LEVEL_RANK[tier_floor] > 0:
+            return {
+                "overall": {
+                    "level": tier_floor,
+                    "label": OVERALL_LABELS[tier_floor],
+                    "risk": _LEVEL_FLOOR_RISK[tier_floor],
+                    "main_reason": AXIS_REASONS["flagged_findings"],
+                    "main_reason_code": "flagged_findings",
+                    "floored": True,
+                },
+                "axes": axes,
+                "weights": dict(LAYER_WEIGHTS),
+                "model": MODEL_VERSION,
+                "low_coverage": low_coverage,
+                "note": _NOTE,
+            }
         return {
             "overall": {
                 "level": "unknown",
                 "label": OVERALL_LABELS["unknown"],
                 "risk": None,
                 "main_reason": "",
+                "main_reason_code": "",
+                "floored": False,
             },
             "axes": axes,
             "weights": dict(LAYER_WEIGHTS),
@@ -263,11 +314,23 @@ def score_submission_risk(
     overall_risk = sum(w * r for w, r in contributions.values()) / weight_sum
     overall_level = _level_from_risk(overall_risk)
 
-    # main_reason: the axis with the largest weighted contribution to overall.
-    # academic layer attributes to its worse of citation / defence-readiness.
-    reason_axis = _dominant_reason_axis(contributions, cit_risk, def_risk)
+    floored = False
+    if tier_floor and _LEVEL_RANK[tier_floor] > _LEVEL_RANK[overall_level]:
+        overall_level = tier_floor
+        overall_risk = max(overall_risk, _LEVEL_FLOOR_RISK[tier_floor])
+        floored = True
+
+    # main_reason: when floored up to the document tier the risk comes from flagged
+    # sections (not a single axis); otherwise the largest weighted contributor
+    # (the academic layer attributes to its worse of citation / defence-readiness).
     nag = overall_level != "low"
-    main_reason = AXIS_REASONS.get(reason_axis, "") if nag else ""
+    if not nag:
+        reason_axis = ""
+    elif floored:
+        reason_axis = "flagged_findings"
+    else:
+        reason_axis = _dominant_reason_axis(contributions, cit_risk, def_risk)
+    main_reason = AXIS_REASONS.get(reason_axis, "")
 
     return {
         "overall": {
@@ -277,7 +340,8 @@ def score_submission_risk(
             # English prose for PDF/logs; *_code lets the frontend localize (mirrors
             # grounding_diagnosis.primary_driver).
             "main_reason": main_reason,
-            "main_reason_code": reason_axis if nag else "",
+            "main_reason_code": reason_axis,
+            "floored": floored,
         },
         "axes": axes,
         "weights": dict(LAYER_WEIGHTS),
