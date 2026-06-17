@@ -1591,19 +1591,33 @@ export default function Report() {
             .sort((a, b) => (driverBuckets[b]?.score || 0) - (driverBuckets[a]?.score || 0)),
         ].filter((k) => driverBuckets[k])
       : [];
+    // Scoped detector-signal verdict (NOT an overall verdict — the Submission-risk
+    // band leads that). Derived from badge tier + external band + grounding driver.
+    const tierKey = String(dp.tier || '').toLowerCase();
+    const signalPhrase = t(`report.aiLikelihood.verdictSignal.${tierKey}`, { defaultValue: t('report.aiLikelihood.title') });
+    const flagPhrase = (EXTERNAL_ESTIMATE_DISPLAY_ENABLED && ext)
+      ? t(`report.aiLikelihood.verdictFlag.${ext.band}`, { defaultValue: '' }) : '';
+    const driverLabelText = driver ? t(`report.groundingDiagnosis.drivers.${driver.primary_driver}.label`) : '';
+    const verdictLine = `${signalPhrase}${flagPhrase ? ` — ${flagPhrase}` : ''}.`
+      + (driverLabelText ? ` ${t('report.aiLikelihood.verdictFix', { driver: driverLabelText })}` : '');
     return (
       <div className="ai-likelihood-block">
         <div className="ai-likelihood-caption">{t('report.aiLikelihood.title')}</div>
+        <div className="ai-likelihood-verdict" style={{ fontWeight: 600, fontSize: '15px', margin: '2px 0 14px', lineHeight: 1.45 }}>{verdictLine}</div>
         {driver && (
           <div className="ai-likelihood-driver" style={{ marginBottom: '12px' }}>
             <div className="ai-likelihood-driver-label" style={{ fontWeight: 500 }}>
-              {t('report.groundingDiagnosis.primaryDriver')}: {t(`report.groundingDiagnosis.drivers.${driver.primary_driver}.label`)}
+              {t('report.aiLikelihood.mainFixLabel')}: {t(`report.groundingDiagnosis.drivers.${driver.primary_driver}.label`)}
             </div>
             <div className="ai-likelihood-driver-action" style={{ color: 'var(--color-text-secondary, #64748b)' }}>
               {t(`report.groundingDiagnosis.drivers.${driver.primary_driver}.action`)}
               {driver.caveat ? ` (${t('report.groundingDiagnosis.tentative')})` : ''}
             </div>
-            <div className="ai-likelihood-bars" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+            <div className="ai-likelihood-bars-heading" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--color-text-secondary, #64748b)', textTransform: 'uppercase', letterSpacing: '.04em', margin: '12px 0 6px' }}>
+              <span>{t('report.groundingDiagnosis.bucketsHeading')}</span>
+              <span>{t('report.groundingDiagnosis.lowerIsBetter')}</span>
+            </div>
+            <div className="ai-likelihood-bars" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {orderedDriverKeys.map((k) => {
                 const score = Math.round(driverBuckets[k].score || 0);
                 const isDriver = k === driver.primary_driver;
@@ -1802,12 +1816,19 @@ export default function Report() {
           <div>
             <span className="transformation-kicker">{t('report.transformation.kicker')}</span>
             <h2>{hasRewriteSignalComparison ? t('report.transformation.originalVsRewritten') : transformationLabel(transformation, t) || t('report.transformation.patternAnalysis')}</h2>
+            {!hasRewriteSignalComparison && t(`report.transformation.subtitles.${transformation.code}`, { defaultValue: '' }) && (
+              <p className="transformation-subtitle" style={{ margin: '4px 0 0', color: 'var(--color-text-secondary, #64748b)', fontSize: '14px', maxWidth: '52ch' }}>
+                {t(`report.transformation.subtitles.${transformation.code}`)}
+              </p>
+            )}
           </div>
         </div>
         {(showTransformationConfidence || hasRewriteSignalComparison) && (
           <div className="transformation-meta-row">
             {showTransformationConfidence && (
-              <span className="transformation-pill">{t('report.transformation.confidence', { value: confidenceLabel(transformation.confidence, t) })}</span>
+              <span className="transformation-pill" title={t('report.transformation.confidenceTooltip')}>
+                {t(`report.transformation.confidenceBadge.${transformation.confidence}`, { defaultValue: t('report.transformation.confidence', { value: confidenceLabel(transformation.confidence, t) }) })}
+              </span>
             )}
             {hasRewriteSignalComparison && (
               <span className="transformation-pill">{t('report.transformation.rewriteComparison')}</span>
@@ -1831,7 +1852,10 @@ export default function Report() {
             ))}
           </div>
         )}
-        <p className="transformation-reference-note">{t('report.transformation.turnitinReferenceNote')}</p>
+        <details className="transformation-reference-details">
+          <summary>{t('report.transformation.turnitinReferenceSummary')}</summary>
+          <p className="transformation-reference-note">{t('report.transformation.turnitinReferenceNote')}</p>
+        </details>
       </div>
     </section>
   ) : null;

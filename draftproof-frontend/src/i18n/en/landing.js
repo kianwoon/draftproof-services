@@ -371,7 +371,7 @@ export const landing = {
   "lowConfidence": "Low Confidence",
   "notVerdict": "Not a Verdict",
   "aiSignal": "AI Signal",
-  "lowAiSignal": "Low AI Signal",
+  "lowAiSignal": "Low AI-writing signal",
   "calibratedTopk": "41% calibrated top-k · below 20% reference",
   "originalScan": "Original Scan",
   "originalScanScore": "18%",

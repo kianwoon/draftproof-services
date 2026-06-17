@@ -50,7 +50,7 @@ _LABELS = {
     "ai_cleaned_human_writing": "AI-cleaned human writing pattern",
     "ai_paraphrased": "AI-paraphrased source pattern",
     "ai_expanded": "AI-expanded outline pattern",
-    "ai_stitched_patchwork": "AI-stitched / patchwork pattern",
+    "ai_stitched_patchwork": "Patchwork flow detected",
     "ai_cited_weakly_grounded": "AI-cited but weakly grounded pattern",
     "human_uncertain": "Human / uncertain pattern",
 }

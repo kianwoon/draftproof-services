@@ -63,12 +63,16 @@ export const report = {
       "llm_patterning": { "label": "LLM patterning", "action": "Vary your structure and phrasing." },
       "language_texture": { "label": "Language texture", "action": "Cut padding and add concrete meaning." }
     },
+    // allow-hardcode: i18n bar labels keyed by bucket code (presentation), never
+    // matched against document text. KEEP IN SYNC with render.py _DIAG_BUCKET_LABELS.
     "buckets": {
-      "concrete_grounding": "Concrete grounding",
-      "authorship_trace": "Authorship",
-      "llm_patterning": "LLM patterning",
-      "language_texture": "Language texture"
+      "concrete_grounding": "Grounding gap",
+      "authorship_trace": "Authorship uncertainty",
+      "llm_patterning": "AI-like patterning",
+      "language_texture": "Generic language texture"
     },
+    "bucketsHeading": "Risk contributors",
+    "lowerIsBetter": "Lower is better",
     "tentative": "limited text — diagnosis tentative"
   },
   // allow-hardcode: i18n UI copy (band labels + coaching strings keyed by code),
@@ -203,21 +207,34 @@ export const report = {
     "mainDrivers": "Main drivers: {{drivers}}.",
     "rewrittenContributionEstimate": "Rewritten contribution estimate from the completed rewrite scan.",
     "noSinglePattern": "No single transformation pattern dominates",
+    "turnitinReferenceSummary": "Why a low external estimate may show as ~%",
     "turnitinReferenceNote": "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage because low-range results are less reliable.",
+    // allow-hardcode: i18n display labels for transformation pattern CODES
+    // (presentation), never matched against document text. KEEP IN SYNC with
+    // poc/detect/transformation.py _LABELS.
     "labels": {
       "fully_ai_written": "Fully AI-written pattern",
       "ai_cleaned_human_writing": "AI-cleaned human writing pattern",
       "ai_paraphrased": "AI-paraphrased source pattern",
       "ai_expanded": "AI-expanded outline pattern",
-      "ai_stitched_patchwork": "AI-stitched / patchwork pattern",
+      "ai_stitched_patchwork": "Patchwork flow detected",
       "ai_cited_weakly_grounded": "AI-cited but weakly grounded pattern",
       "human_uncertain": "Human / uncertain pattern"
+    },
+    "subtitles": {
+      "ai_stitched_patchwork": "Some sections may feel joined from separate points. Add clearer bridges and source anchors."
     },
     "confidenceLevels": {
       "low": "Low",
       "moderate": "Moderate",
       "high": "High"
     },
+    "confidenceBadge": {
+      "low": "Low confidence — review, not verdict",
+      "moderate": "Moderate confidence",
+      "high": "High confidence"
+    },
+    "confidenceTooltip": "This signal is weak. Treat it as a writing-quality clue, not an authorship judgement.",
     "evidence": {
       "no_single_transformation_pattern_dominates": "no single transformation pattern dominates",
       "human_anchor_reduced_ai_certainty": "human anchor reduced AI certainty"
@@ -530,7 +547,23 @@ export const report = {
   },
   "ok": "OK",
   "aiLikelihood": {
-    "title": "AI Likelihood",
+    "title": "AI-writing signal",
+    "mainFixLabel": "Main thing to fix",
+    // allow-hardcode: scoped-verdict presentation phrases keyed by tier/band code
+    // (display only, never matched against text). KEEP IN SYNC with render.py
+    // _SIGNAL_PHRASE / _FLAG_PHRASE.
+    "verdictSignal": {
+      "green": "Low AI-writing signal",
+      "amber": "Moderate AI-writing signal",
+      "orange": "Elevated AI-writing signal",
+      "red": "Elevated AI-writing signal"
+    },
+    "verdictFlag": {
+      "low": "unlikely to be flagged by external detectors",
+      "elevated": "may draw external-detector attention",
+      "high": "likely to be flagged by external detectors"
+    },
+    "verdictFix": "The main writing issue to fix is the {{driver}}.",
     "draftproof": "DraftProof (conservative)",
     "draftproofNote": "Improves as you ground your content — the signal to act on",
     "external": "Turnitin / external (estimated)",

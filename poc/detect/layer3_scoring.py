@@ -263,8 +263,8 @@ def derive_authorship_rating(
             "recommended_action": "Do not treat this as an AI concern; review only citation, quotation, or writing-quality findings if present.",
         },
         "unlikely_ai": {
-            "label": "Unlikely AI",
-            "short_label": "Unlikely AI",
+            "label": "Low AI-writing signal",
+            "short_label": "Low AI signal",
             "risk_level": "low",
             "summary": "Low AI-style signal strength with some normal review signals.",
             "recommended_action": "Review only the highlighted sentences or weak source/detail findings.",

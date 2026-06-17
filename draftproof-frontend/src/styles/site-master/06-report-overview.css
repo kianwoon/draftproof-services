@@ -1826,9 +1826,25 @@ button.fix-first-item:focus-visible {
 }
 
 .transformation-reference-note {
-  margin: 1rem 0 0;
+  margin: .5rem 0 0;
   color: #64748b;
   font-size: .82rem;
   font-weight: 650;
   line-height: 1.55;
+}
+
+/* Turnitin reference folded into a low-weight disclosure (was a full-width footer). */
+.transformation-reference-details {
+  margin: 1rem 0 0;
+}
+.transformation-reference-details > summary {
+  cursor: pointer;
+  color: #64748b;
+  font-size: .78rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  list-style: revert;
+}
+.transformation-reference-details > summary:hover {
+  color: #334155;
 }

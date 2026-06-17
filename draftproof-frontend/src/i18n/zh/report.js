@@ -62,12 +62,16 @@ export const report = {
       "llm_patterning": { "label": "AI 写作模式", "action": "调整结构与措辞，避免套路化。" },
       "language_texture": { "label": "语言质感", "action": "删减空泛内容，加入具体含义。" }
     },
+    // allow-hardcode: i18n 柱状标签（按 bucket code，展示用），从不与文档文本比对。
+    // 与 render.py _DIAG_BUCKET_LABELS 保持同步。
     "buckets": {
-      "concrete_grounding": "具体支撑",
-      "authorship_trace": "作者痕迹",
-      "llm_patterning": "AI 写作模式",
-      "language_texture": "语言质感"
+      "concrete_grounding": "支撑缺口",
+      "authorship_trace": "作者归属不确定",
+      "llm_patterning": "类似 AI 的模式",
+      "language_texture": "笼统的语言质感"
     },
+    "bucketsHeading": "风险来源",
+    "lowerIsBetter": "越低越好",
     "tentative": "文本较短 — 诊断仅供参考"
   },
   // allow-hardcode: i18n UI 文案（按编码索引的等级标签与指导语），非评分/匹配逻辑，
@@ -200,21 +204,33 @@ export const report = {
     "mainDrivers": "主要驱动因素：{{drivers}}。",
     "rewrittenContributionEstimate": "来自已完成改写扫描的改写贡献估计。",
     "noSinglePattern": "没有单一转换模式占主导",
+    "turnitinReferenceSummary": "为什么较低的外部估计会显示为 ~%",
     "turnitinReferenceNote": "Turnitin 参考：低于 20% 的 AI 分数可能显示为 *%，而不是精确百分比，因为低分区间结果可靠性较低。",
+    // allow-hardcode: 转换模式 CODE 的 i18n 展示标签，从不与文档文本比对。
+    // 与 poc/detect/transformation.py _LABELS 保持同步。
     "labels": {
       "fully_ai_written": "完全 AI 写作模式",
       "ai_cleaned_human_writing": "AI 润色人类写作模式",
       "ai_paraphrased": "AI 转述来源模式",
       "ai_expanded": "AI 扩展提纲模式",
-      "ai_stitched_patchwork": "AI 拼接 / 拼贴模式",
+      "ai_stitched_patchwork": "检测到拼接式行文",
       "ai_cited_weakly_grounded": "AI 引用但依据薄弱模式",
       "human_uncertain": "人类 / 不确定模式"
+    },
+    "subtitles": {
+      "ai_stitched_patchwork": "部分段落像是由不同要点拼接而成。请补充衔接与来源锚点。"
     },
     "confidenceLevels": {
       "low": "低",
       "moderate": "中等",
       "high": "高"
     },
+    "confidenceBadge": {
+      "low": "低置信度 — 供审阅，非判定",
+      "moderate": "中等置信度",
+      "high": "高置信度"
+    },
+    "confidenceTooltip": "该信号较弱。请将其视为写作质量线索，而非作者归属判定。",
     "evidence": {
       "no_single_transformation_pattern_dominates": "没有单一转换模式占主导",
       "human_anchor_reduced_ai_certainty": "人类锚点降低了 AI 确定性"
@@ -527,7 +543,22 @@ export const report = {
   },
   "ok": "确定",
   "aiLikelihood": {
-    "title": "AI 可能性",
+    "title": "AI 写作信号",
+    "mainFixLabel": "首先要修复的",
+    // allow-hardcode: 按 tier/band code 的范围化判读展示短语（仅展示，不与文本比对）。
+    // 与 render.py _SIGNAL_PHRASE / _FLAG_PHRASE 保持同步。
+    "verdictSignal": {
+      "green": "AI 写作信号低",
+      "amber": "AI 写作信号中等",
+      "orange": "AI 写作信号偏高",
+      "red": "AI 写作信号偏高"
+    },
+    "verdictFlag": {
+      "low": "外部检测器不太可能标记",
+      "elevated": "可能引起外部检测器注意",
+      "high": "外部检测器很可能标记"
+    },
+    "verdictFix": "首要的写作问题是{{driver}}。",
     "draftproof": "DraftProof（保守估计）",
     "draftproofNote": "随着内容更有据可依而改善——这是应当着力的指标",
     "external": "Turnitin / 外部检测器（估计）",

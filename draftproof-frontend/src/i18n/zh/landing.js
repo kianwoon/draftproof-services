@@ -371,7 +371,7 @@ export const landing = {
   "lowConfidence": "低置信度",
   "notVerdict": "不是判定",
   "aiSignal": "AI 信号",
-  "lowAiSignal": "低 AI 信号",
+  "lowAiSignal": "AI 写作信号低",
   "calibratedTopk": "41% 校准 top-k · 低于 20% 参考线",
   "originalScan": "原始扫描",
   "originalScanScore": "18%",

@@ -352,11 +352,14 @@ _EXTERNAL_DEMOTED_NOTE = (
 # report.groundingDiagnosis.* (draftproof-frontend/src/i18n/en/report.js + zh/report.js).
 GROUNDING_DIAGNOSIS_LEAD_ENABLED = True
 
+# allow-hardcode: presentation labels for the 4 grounding-diagnosis buckets keyed
+# by bucket CODE — display strings for the PDF, never matched against document text.
+# KEEP IN SYNC with frontend i18n report.groundingDiagnosis.buckets.*.
 _DIAG_BUCKET_LABELS = {
-    "concrete_grounding": "Concrete grounding",
-    "authorship_trace": "Authorship",
-    "llm_patterning": "LLM patterning",
-    "language_texture": "Language texture",
+    "concrete_grounding": "Grounding gap",
+    "authorship_trace": "Authorship uncertainty",
+    "llm_patterning": "AI-like patterning",
+    "language_texture": "Generic language texture",
 }
 
 
@@ -372,7 +375,7 @@ def _grounding_diagnosis_lead(badge: dict) -> list[str]:
         return []
     label = diag.get("primary_driver_label") or ""
     action = diag.get("primary_driver_action") or ""
-    lead = f"- **Primary driver: {label}"
+    lead = f"- **Main thing to fix: {label}"
     if action:
         lead += f" — {action}"
     lead += "**"
@@ -385,8 +388,38 @@ def _grounding_diagnosis_lead(badge: dict) -> list[str]:
     ]
     lines = [lead]
     if parts:
-        lines.append("- " + " · ".join(parts))
+        # "Risk contributors (lower is better)" — make bar direction explicit.
+        lines.append("- _Risk contributors (lower is better):_ " + " · ".join(parts))
     return lines
+
+
+# allow-hardcode: presentation phrases for the scoped AI-writing-signal verdict,
+# keyed by badge tier / external band CODE. Display strings, never matched against
+# document text. KEEP IN SYNC with frontend i18n report.aiLikelihood.verdict*.
+_SIGNAL_PHRASE = {"GREEN": "Low AI-writing signal", "AMBER": "Moderate AI-writing signal",
+                  "ORANGE": "Elevated AI-writing signal", "RED": "Elevated AI-writing signal"}
+_FLAG_PHRASE = {"low": "unlikely to be flagged by external detectors",
+                "elevated": "may draw external-detector attention",
+                "high": "likely to be flagged by external detectors"}
+
+
+def _ai_signal_verdict(badge: dict) -> str:
+    """One-line scoped read of the external-detector / AI-writing dimension. NOT an
+    overall verdict (the Submission-risk band leads that)."""
+    bands = _ai_likelihood_bands(badge)
+    dp = bands.get("draftproof") or {}
+    signal = _SIGNAL_PHRASE.get(str(dp.get("tier") or "").upper(), "AI-writing signal")
+    ext = bands.get("external") or {}
+    flag = _FLAG_PHRASE.get(str(ext.get("band") or "").lower(), "") if EXTERNAL_ESTIMATE_DISPLAY_ENABLED else ""
+    diag = (badge or {}).get("grounding_diagnosis") or {}
+    driver = diag.get("primary_driver_label") or ""
+    verdict = signal
+    if flag:
+        verdict += f" — {flag}"
+    verdict += "."
+    if driver:
+        verdict += f" The main writing issue to fix is the {driver}."
+    return verdict
 
 
 def _render_ai_likelihood_headline(badge: dict | None) -> str:
@@ -395,7 +428,10 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
     if not dp:
         return ""
     badge = badge or {}
-    out = ["## AI Likelihood", ""]
+    out = ["## AI-writing signal", ""]
+    # Scoped verdict leads (not a competing overall verdict).
+    out.append(f"**{_ai_signal_verdict(badge)}**")
+    out.append("")
     lead = _grounding_diagnosis_lead(badge) if GROUNDING_DIAGNOSIS_LEAD_ENABLED else []
     if lead:
         out.extend(lead)
