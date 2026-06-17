@@ -4,6 +4,7 @@ import {
   formatMetricPercent,
 } from './reportHelpers';
 import EditPencilIcon from './EditPencilIcon';
+import SubmissionRiskBand from './SubmissionRiskBand';
 
 export default function ReportHero({
   t,
@@ -25,6 +26,7 @@ export default function ReportHero({
   repairActionLabel,
   repairActionHint,
   onRepairAction,
+  submissionRiskView = null,
   isRewrittenView = false,
   onDownloadRewrittenPdf,
 }) {
@@ -105,6 +107,8 @@ export default function ReportHero({
             )}
           </div>
         </div>
+
+        {submissionRiskView && <SubmissionRiskBand t={t} sr={submissionRiskView} />}
 
         {repairSummary && (
           <div className="report-hero-repair" aria-label={t('report.repairSummary.ariaLabel')}>

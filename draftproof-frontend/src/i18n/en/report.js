@@ -14,6 +14,36 @@ export const report = {
   "overview": "Report overview",
   "originalScanSummary": "Original scan summary",
   "originalScanBaseline": "Original scan baseline",
+  // allow-hardcode: i18n UI copy (axis/level labels + reason strings keyed by code),
+  // not a scoring/matching oracle. Never compared against document text. KEEP IN SYNC
+  // with detect.submission_risk presentation maps + zh/report.js.
+  "submissionRisk": {
+    "ariaLabel": "Submission risk",
+    "kicker": "Submission risk",
+    "mainReasonPrefix": "Main reason:",
+    "selfDeclare": "Unknown — self-declare",
+    "externalTrigger": "AI-likelihood ~{{score}}% — external trigger, not a verdict",
+    "note": "This is about whether you can stand behind this as your own work — not whether it looks AI-written. Declaration, course policy, and group contribution aren't in the text; only you can declare those.",
+    "levels": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "unknown": "Unknown"
+    },
+    "axes": {
+      "text_pattern": "Text-pattern risk",
+      "ownership": "Ownership risk",
+      "citation": "Citation risk",
+      "defence_readiness": "Defence-readiness risk",
+      "policy_declaration": "Policy / declaration risk"
+    },
+    "reasons": {
+      "ownership": "weak ownership of the thinking — thin judgement, reasoning, or grounding",
+      "citation": "claims that are not clearly tied to a source",
+      "defence_readiness": "hard to defend as your own work in an interview",
+      "text_pattern": "AI-like text patterns that may trigger a detector"
+    }
+  },
   "repairSummary": {
     "ariaLabel": "Repair summary",
     "kicker": "Repair Summary",

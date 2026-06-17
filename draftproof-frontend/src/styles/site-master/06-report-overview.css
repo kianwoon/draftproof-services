@@ -198,6 +198,95 @@
 }
 
 /* Merged repair plan (absorbed from the former standalone Repair Summary card) */
+/* Submission-risk band — leads the report hero with the 3-layer view. */
+.submission-risk-band {
+  width: 100%;
+  margin-top: .7rem;
+  padding-top: .8rem;
+  border-top: 1px solid rgba(13, 27, 42, .08);
+}
+
+.submission-risk-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .5rem .8rem;
+}
+
+.submission-risk-kicker {
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.submission-risk-level {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -.02em;
+}
+.submission-risk-level.is-low { color: #15803d; }
+.submission-risk-level.is-medium { color: #b45309; }
+.submission-risk-level.is-high { color: #b91c1c; }
+.submission-risk-level.is-unknown { color: #475569; }
+
+.submission-risk-reason {
+  flex-basis: 100%;
+  margin: .1rem 0 0;
+  color: #334155;
+  font-size: .9rem;
+}
+
+.submission-risk-axes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: .55rem;
+  margin-top: .8rem;
+}
+
+.submission-risk-axis {
+  display: flex;
+  flex-direction: column;
+  gap: .15rem;
+  padding: .55rem .7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(13, 27, 42, .10);
+  background: #f8fafc;
+  border-left: 3px solid #cbd5e1;
+}
+.submission-risk-axis.is-low { border-left-color: #16a34a; }
+.submission-risk-axis.is-medium { border-left-color: #d97706; }
+.submission-risk-axis.is-high { border-left-color: #dc2626; }
+.submission-risk-axis.is-unknown { border-left-color: #94a3b8; }
+
+.submission-risk-axis > span {
+  color: #64748b;
+  font-size: .7rem;
+  font-weight: 750;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+.submission-risk-axis > strong {
+  color: #0f172a;
+  font-size: .98rem;
+  font-weight: 750;
+}
+.submission-risk-axis > em {
+  color: #64748b;
+  font-size: .72rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.submission-risk-note {
+  margin: .7rem 0 0;
+  color: #64748b;
+  font-size: .78rem;
+  line-height: 1.5;
+}
+
 .report-hero-repair {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 34%);

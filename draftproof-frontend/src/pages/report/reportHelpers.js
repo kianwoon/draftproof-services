@@ -1497,6 +1497,22 @@ function criticalThinkingControl(badge) {
   return typeof ctc.score === 'number' ? ctc : null;
 }
 
+// Additive Submission-risk view (3-layer: text-pattern / ownership / academic).
+// Returns null when the diagnosis abstained (overall.level === 'unknown') so the
+// report falls back to leading with the AI-likelihood headline. The axis ORDER is
+// fixed for display; policy_declaration is always 'unknown — self-declare'.
+const SUBMISSION_RISK_AXES = [
+  'text_pattern', 'ownership', 'citation', 'defence_readiness', 'policy_declaration',
+];
+
+function submissionRisk(badge) {
+  const sr = (badge || {}).submission_risk;
+  if (!sr || typeof sr !== 'object') return null;
+  const level = sr.overall && sr.overall.level;
+  if (!level || level === 'unknown') return null;
+  return sr;
+}
+
 const REWRITE_VERDICT_TONES = {
   high: { color: '#b91c1c', bg: '#fef2f2' },
   elevated: { color: '#c2410c', bg: '#fff7ed' },
@@ -1698,4 +1714,6 @@ export {
   criticalThinkingControl,
   CRITICAL_THINKING_DIMENSIONS,
   CRITICAL_THINKING_CONTROL_ENABLED,
+  submissionRisk,
+  SUBMISSION_RISK_AXES,
 };

@@ -27,6 +27,7 @@ from detect.layer3_scoring import Layer3Scorer, build_layer3_input_from_text, es
 from detect.external_grouped_scoring import estimate_external_grouped_score
 from detect.grounding_diagnosis import diagnose_grounding_gap
 from detect.critical_thinking import score_critical_thinking, score_critical_thinking_per_paragraph
+from detect.submission_risk import score_submission_risk
 from detect.transformation import (
     TRANSFORMATION_SIGNAL_METADATA,
     classify_transformation_from_scan,
@@ -1516,6 +1517,20 @@ class ReportBuilder:
             scored_sentence_count=len(_pred_sentences) if _pred_sentences else None,
         )
 
+        # Additive Submission-risk view: re-groups the SAME signals into a 3-layer
+        # breakdown (text-pattern / ownership / academic) and leads with whether the
+        # work is defensible as the student's own -- demoting the AI-likelihood % to
+        # one axis. Additive only -- does NOT affect tier, ai_likelihood, the external
+        # estimate, or any gate (see detect.submission_risk). Declaration/policy stay
+        # 'unknown -- self-declare' (text cannot reveal them).
+        submission_risk = score_submission_risk(
+            ai_likelihood_score=round(layer3.ai_likelihood_score * 100, 2),
+            ai_tier=layer3.tier.value,
+            critical_thinking_control=critical_thinking_control,
+            axis_scores=axis_scores,
+            scored_sentence_count=len(_pred_sentences) if _pred_sentences else None,
+        )
+
         ai_risk_badge = {
             # AI Generation (Phase 1)
             "tier": layer3.tier.value,
@@ -1523,6 +1538,7 @@ class ReportBuilder:
             "external_detector_estimate": external_detector_estimate,
             "grounding_diagnosis": grounding_diagnosis,
             "critical_thinking_control": critical_thinking_control,
+            "submission_risk": submission_risk,
             "authorship_rating": layer3.authorship_rating,
             "authorship_rating_label": layer3.authorship_rating.get("label"),
             "authorship_rating_code": layer3.authorship_rating.get("code"),

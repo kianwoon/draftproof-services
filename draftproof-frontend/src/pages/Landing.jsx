@@ -3,7 +3,22 @@ import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
+import SubmissionRiskBand from './report/SubmissionRiskBand';
 import { getLocaleFromPathname, localizePath } from '../localeRouting';
+
+// Representative Submission-risk shape for the marketing sample report. Mirrors the
+// real ai_risk_badge.submission_risk object; values are an illustrative example, not
+// a scoring oracle (the band's labels come from i18n report.submissionRisk.*).
+const SAMPLE_SUBMISSION_RISK = {
+  overall: { level: 'high', main_reason_code: 'ownership' },
+  axes: {
+    text_pattern: { level: 'medium', display_score: 41 },
+    ownership: { level: 'high' },
+    citation: { level: 'medium' },
+    defence_readiness: { level: 'high' },
+    policy_declaration: { level: 'unknown' },
+  },
+};
 
 export default function Landing() {
   const { t } = useTranslation();
@@ -728,6 +743,7 @@ function SampleReportPreview() {
       <div className="sample-preview-panel" role="tabpanel" aria-label={currentTab?.label}>
         {activeSection === 'aiSignal' && (
           <>
+            <SubmissionRiskBand t={t} sr={SAMPLE_SUBMISSION_RISK} />
             <div className="sample-report-pattern">
               <div className="sample-report-pattern-main">
                 <div className="sample-transformation-icon" aria-hidden="true">

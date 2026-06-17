@@ -14,6 +14,35 @@ export const report = {
   "overview": "报告概览",
   "originalScanSummary": "原始扫描摘要",
   "originalScanBaseline": "原始扫描基线",
+  // allow-hardcode: i18n UI 文案（按 code 索引的轴/等级/原因），非评分/匹配逻辑，
+  // 从不与文档文本比对。与 detect.submission_risk 展示映射 + en/report.js 保持同步。
+  "submissionRisk": {
+    "ariaLabel": "提交风险",
+    "kicker": "提交风险",
+    "mainReasonPrefix": "主要原因：",
+    "selfDeclare": "未知 — 需自行声明",
+    "externalTrigger": "AI 可能性 ~{{score}}% — 外部触发信号，并非判定",
+    "note": "这关乎你能否把它作为自己的作品站得住脚 — 而不是它看起来是否像 AI 所写。AI 使用声明、课程政策和小组分工都不在文本中，只有你才能声明。",
+    "levels": {
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "unknown": "未知"
+    },
+    "axes": {
+      "text_pattern": "文本模式风险",
+      "ownership": "归属风险",
+      "citation": "引用风险",
+      "defence_readiness": "答辩准备风险",
+      "policy_declaration": "政策 / 声明风险"
+    },
+    "reasons": {
+      "ownership": "对思考的归属薄弱 — 判断、推理或依据不足",
+      "citation": "论断未清晰对应到来源",
+      "defence_readiness": "在面谈中难以作为自己的作品来辩护",
+      "text_pattern": "类似 AI 的文本模式，可能触发检测器"
+    }
+  },
   "repairSummary": {
     "ariaLabel": "修订摘要",
     "kicker": "修订摘要",

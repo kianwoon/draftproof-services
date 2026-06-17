@@ -68,6 +68,7 @@ import {
   isReviewOnlyRewriteMessage,
   buildRewriteEventsUrl,
   aiLikelihoodBands,
+  submissionRisk,
   rewriteDetectorVerdict,
   buildRepairSummary,
   groundingDiagnosis,
@@ -909,6 +910,9 @@ export default function Report() {
   const heroFindingsCount = rewrittenHeroView
     ? (rewriteResultSummary?.rewritten_findings ?? issues.length)
     : issues.length;
+  // Additive Submission-risk view for the hero (null when the diagnosis abstained,
+  // or when an older report predates the field — the hero then leads as before).
+  const heroSubmissionRisk = submissionRisk(rewrittenHeroView ? rewrittenBadge : originalComparisonBadge);
   const calibratedAuthorshipRisk = clampPercent(authorshipFeatures.calibrated_ai_risk);
   const topkPatternScore = clampPercent(originalComparisonBadge.ai_components?.topk_pattern_raw ?? originalComparisonBadge.ai_components?.topk_pattern);
   const topkCalibratedRisk = clampPercent(originalComparisonBadge.ai_components?.topk_calibrated_risk);
@@ -2138,6 +2142,7 @@ export default function Report() {
           tier={heroTier}
           issuesCount={heroFindingsCount}
           writingScore={heroWritingScore}
+          submissionRiskView={heroSubmissionRisk}
           isRewrittenView={rewrittenHeroView}
           onDownloadRewrittenPdf={handleDownloadRewrittenPdf}
           canStartRewrite={canStartRewrite}

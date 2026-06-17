@@ -422,6 +422,51 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
     return "\n".join(out)
 
 
+_SUBMISSION_RISK_WHY = (
+    "Submission risk is about whether you can stand behind this as your own work -- not "
+    "whether it looks AI-written. Universities now allow AI use when it's declared, accurate, "
+    "and cited; the offence is work you can't account for. The text-pattern axis is the external "
+    "detector trigger (a heads-up, not a verdict). Declaration, course policy, group contribution, "
+    "and oral-defence readiness aren't in the text -- only you can declare those."
+)
+
+# allow-hardcode: presentation level labels (machine level -> display), not a
+# detect/scoring word-list. Mirrors frontend i18n report.submissionRisk.levels.*.
+_SR_LEVEL_LABELS = {"low": "Low", "medium": "Medium", "high": "High", "unknown": "Unknown"}
+_SR_AXIS_ORDER = ["text_pattern", "ownership", "citation", "defence_readiness", "policy_declaration"]
+
+
+def _render_submission_risk_headline(badge: dict | None) -> str:
+    """Lead the report with the 3-layer Submission-risk view. Returns "" when the
+    diagnosis abstained (unknown), so the AI Likelihood section still leads as before."""
+    sr = (badge or {}).get("submission_risk") or {}
+    overall = sr.get("overall") or {}
+    level = overall.get("level")
+    if not level or level == "unknown":
+        return ""
+    axes = sr.get("axes") or {}
+    out = ["## Submission Risk", ""]
+    headline = overall.get("label") or f"{_SR_LEVEL_LABELS.get(level, level)} submission risk"
+    out.append(f"- **{headline}**")
+    if overall.get("main_reason"):
+        out.append(f"  - Main reason: {overall['main_reason']}")
+    out.append("")
+    for key in _SR_AXIS_ORDER:
+        ax = axes.get(key) or {}
+        label = ax.get("label") or key
+        if key == "policy_declaration":
+            out.append(f"- {label}: Unknown — self-declare")
+            continue
+        row = f"- {label}: {_SR_LEVEL_LABELS.get(ax.get('level'), 'Unknown')}"
+        if key == "text_pattern" and isinstance(ax.get("display_score"), (int, float)):
+            row += f" (AI-likelihood ~{round(ax['display_score'])}% — external trigger, not a verdict)"
+        out.append(row)
+    out.append("")
+    out.append(_SUBMISSION_RISK_WHY)
+    out.append("")
+    return "\n".join(out)
+
+
 def _render_critical_thinking_questions(badge: dict | None) -> str:
     """Render the Critical Thinking reflective questions section (PDF parity with the
     web report). Empty string when there are no questions, so the section is omitted."""
@@ -1446,7 +1491,12 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
                 lines.append(">")
         lines.append("")
 
-    # ── AI LIKELIHOOD HEADLINE ─────────────────────────────────────
+    # ── SUBMISSION RISK HEADLINE (leads; demotes AI-likelihood below) ──
+    _submission = _render_submission_risk_headline(report.ai_risk_badge)
+    if _submission:
+        lines.append(_submission)
+
+    # ── AI LIKELIHOOD (text-pattern axis + external trigger detail) ────
     _headline = _render_ai_likelihood_headline(report.ai_risk_badge)
     if _headline:
         lines.append(_headline)
