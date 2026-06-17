@@ -1,6 +1,6 @@
 export const seo = {
-  "defaultTitle": "论文完整性与批判性思维检查 | DraftProof",
-  "defaultDescription": "提交前用 DraftProof 检查引用缺口、来源支撑薄弱、相似度风险和类似 AI 的写作，并用深化思考的提问，让你主导思考。",
+  "defaultTitle": "让草稿里的思考依然属于你 | DraftProof",
+  "defaultDescription": "找出草稿中你还无法支撑的论断、读起来像 AI 的段落，以及来源缺口，并用深化思考的提问，让你——而不是 AI——在提交前主导思考。",
   "whyTitle": "为什么人类亲自写的内容也可能看起来像 AI 生成 | DraftProof",
   "whyDescription": "了解人类亲自写的内容为什么也可能触发类似 AI 的信号，以及 DraftProof 如何帮助学生在提交前审阅证据、来源和表达。",
   "essayCheckerTitle": "内容引用、来源与 AI 风格写作检查 | DraftProof",

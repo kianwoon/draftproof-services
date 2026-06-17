@@ -14,7 +14,9 @@ const configuredSiteUrl =
   || 'https://draftproof.app';
 
 export const SITE_URL = normalizeSiteUrl(configuredSiteUrl);
-export const DEFAULT_IMAGE = `${SITE_URL}/og-image.png`;
+// ?v bumped whenever og-image.png is regenerated so social scrapers (which
+// cache by URL) re-fetch the updated card instead of serving a stale image.
+export const DEFAULT_IMAGE = `${SITE_URL}/og-image.png?v=2`;
 export const SITE_NAME = 'DraftProof';
 export const SEO_REVIEW_DATE = '2026-06-05';
 // Homepage reviewed separately when the Critical Thinking module was surfaced.
