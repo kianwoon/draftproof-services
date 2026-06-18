@@ -1543,29 +1543,32 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     lines.append(f"# DraftProof — Integrity Report")
     lines.append("")
 
-    # Header badge: prefer AI Risk badge, else fallback to finding tier
-    _shield_colors = {"GREEN": "green", "AMBER": "yellow", "ORANGE": "orange", "RED": "red"}
+    # Header: mirror the web report's LEAD -- Submission risk + the two policy scores.
+    # The raw AI-likelihood %, Turnitin estimate, and authorship rating are NOT surfaced
+    # here (the page removed them); the AI-writing-signal section below carries detail.
     if report.ai_risk_badge:
         _ab = report.ai_risk_badge
-        _abt = _ab.get("tier", "")
-        _abs = _display_ai_score(_ab.get("ai_likelihood_score")) or 0.0
-        _rating = _display_authorship_rating_from_badge(_ab, data.get("document_context", {}), data)
-        _rating_label = _rating.get("label") or _ab.get("authorship_rating_label")
-        _sc = _shield_colors.get(_abt, "lightgrey")
-        _abt_label = _BADGE_TIER_LABELS.get(_abt, _abt)
-        lines.append(f"![{_abt_label}](https://img.shields.io/badge/DraftProof_AI-{_abt_label.replace(' ', '_')}-{_sc}) &nbsp; Score `{_abs:.0f}%`")
-        if _rating_label:
-            lines.append(f"**Authorship Rating:** {_rating_label}")
-        # Dual headline: surface the Turnitin / external estimate on page 1 alongside
-        # the DraftProof score (mirrors the web report's lead), not only deep in the
-        # AI Likelihood section.
-        _hdr_ext = _ai_likelihood_bands(_ab).get("external")
-        if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and _hdr_ext:
-            lines.append(f"**Turnitin / external (estimated):** ~{_hdr_ext['score']}% — {_hdr_ext['label']}")
-        lines.append("")
-        lines.append(f"> {_TURNITIN_AI_REFERENCE_NOTE}")
 
-        # Writing Quality badge beside AI badge
+        _sr = (_ab.get("submission_risk") or {}).get("overall") or {}
+        if _sr.get("level") and _sr["level"] != "unknown":
+            _hl = f"**Submission risk: {_SR_LEVEL_LABELS.get(_sr['level'], _sr['level'])}**"
+            if _sr.get("main_reason"):
+                _hl += f" — {_sr['main_reason']}"
+            lines.append(_hl)
+            lines.append("")
+
+        _pr = _ab.get("policy_risk") or {}
+        _pa, _prr = _pr.get("ai_allowed") or {}, _pr.get("ai_restricted") or {}
+        if _pa.get("level") and _pa["level"] != "unknown":
+            lines.append("**Policy risk — how this draft may read under your school's AI policy**")
+            lines.append("")
+            lines.append(f"- If AI is allowed (with declaration): **{_POLICY_LEVEL.get(_pa['level'], _pa['level'])}** ({round(_pa.get('score') or 0)})")
+            lines.append(f"- If AI is not allowed: **{_POLICY_LEVEL.get(_prr.get('level'), _prr.get('level'))}** ({round(_prr.get('score') or 0)})")
+            lines.append("")
+            lines.append(f"_{_POLICY_DISCLAIMER}_")
+            lines.append("")
+
+        # Writing Quality badge (matches the web hero's Writing Score).
         wq_tier_header = _ab.get("writing_quality_tier", "")
         wq_score_header = _ab.get("writing_quality_score", 0)
         _wq_labels = {"LOW": "Clean", "LIGHT_REVIEW": "Light+Review", "REVIEW": "Review", "HIGH_REVIEW": "Heavy+Review"}

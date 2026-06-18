@@ -129,6 +129,12 @@ def build_rewrite_completion_email(
     return payload
 
 
+# allow-hardcode: presentation level labels (machine level -> display), not a
+# scoring/matching oracle. Mirror render.py / the web report.
+_SR_LEVEL_LABELS = {"low": "Low", "medium": "Medium", "high": "High", "unknown": "Unknown"}
+_POLICY_LEVEL = {"low": "Low", "moderate": "Moderate", "high": "High", "severe": "Severe", "unknown": "Unknown"}
+
+
 def build_scan_completion_email(
     *,
     recipient_email: str,
@@ -139,35 +145,35 @@ def build_scan_completion_email(
     external_estimate: dict | None = None,
     writing_score: float | int | None = None,
     finding_count: int | None = None,
+    submission_risk: dict | None = None,
+    policy_risk: dict | None = None,
     pdf_bytes: bytes | None = None,
     pdf_filename: str | None = None,
     settings,
 ) -> dict:
+    # Mirror the web report's LEAD: Submission risk + the two policy scores. The raw
+    # AI-likelihood %, Turnitin estimate, and authorship rating are no longer surfaced
+    # (ai_score / external_estimate / authorship_rating_label kept in the signature for
+    # backward compatibility but intentionally not rendered).
     details = [f"Scan ID: {scan_id}"]
-    report_outcome = authorship_rating_label or _scan_report_outcome_label(tier)
-    if report_outcome:
-        details.append(f"Report outcome: {report_outcome}")
-    formatted_ai_score = _format_display_ai_score(ai_score)
-    if formatted_ai_score is not None:
-        details.append(f"AI likelihood score: {formatted_ai_score}%")
-    if not EXTERNAL_ESTIMATE_DISPLAY_ENABLED:
+    sr = (submission_risk or {}).get("overall") or {}
+    if sr.get("level") and sr["level"] != "unknown":
+        line = f"Submission risk: {_SR_LEVEL_LABELS.get(sr['level'], sr['level'])}"
+        if sr.get("main_reason"):
+            line += f" — {sr['main_reason']}"
+        details.append(line)
+    pr = policy_risk or {}
+    pa, prr = pr.get("ai_allowed") or {}, pr.get("ai_restricted") or {}
+    if pa.get("level") and pa["level"] != "unknown":
         details.append(
-            "Note: third-party AI detectors (Turnitin, GPTZero) over-flag fluent writing — including "
-            "genuine human writing — so we don't surface a predicted score. Your safeguard is "
-            "grounding the content, finishing it in your own words, and keeping your drafts as "
-            "authorship evidence."
+            f"If AI is allowed (with declaration): {_POLICY_LEVEL.get(pa['level'], pa['level'])} ({round(pa.get('score') or 0)})"
         )
-    elif external_estimate:
-        ext_score = _metric_percent(external_estimate.get("score"))
-        if ext_score is not None:
-            band = str(external_estimate.get("band") or "").strip().lower()
-            band_label = _EXTERNAL_BAND_LABELS.get(band, "")
-            parenthetical = f" ({band_label})" if band_label else ""
-            details.append(f"Turnitin / external estimate: ~{round(ext_score)}%{parenthetical}")
-            details.append(
-                "  (Strict detectors over-flag fluent writing — a risk heads-up, not a target; "
-                "ground the content and finish in your own words.)"
-            )
+        details.append(
+            f"If AI is not allowed: {_POLICY_LEVEL.get(prr.get('level'), prr.get('level'))} ({round(prr.get('score') or 0)})"
+        )
+        details.append(
+            "These scores do not prove AI use; they estimate how the draft may read under different school policies."
+        )
     formatted_writing_score = _format_score(writing_score)
     if formatted_writing_score is not None:
         details.append(f"Writing score: {formatted_writing_score}%")
@@ -297,6 +303,8 @@ def send_scan_completion_email(
     external_estimate: dict | None = None,
     writing_score: float | int | None = None,
     finding_count: int | None = None,
+    submission_risk: dict | None = None,
+    policy_risk: dict | None = None,
     pdf_bytes: bytes | None = None,
     settings,
 ) -> bool:
@@ -319,6 +327,8 @@ def send_scan_completion_email(
             external_estimate=external_estimate,
             writing_score=writing_score,
             finding_count=finding_count,
+            submission_risk=submission_risk,
+            policy_risk=policy_risk,
             pdf_bytes=pdf_bytes,
             settings=settings,
         )
