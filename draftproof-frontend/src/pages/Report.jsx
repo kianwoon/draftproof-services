@@ -1639,13 +1639,7 @@ export default function Report() {
           </div>
         )}
         {policyRisk(variantBadge) ? (
-          <>
-            <PolicyRiskView t={t} pr={policyRisk(variantBadge)} />
-            <div className="ai-likelihood-detector-detail">
-              {t('report.aiLikelihood.draftproof')}: {dp.score}% ({dp.tier})
-              {EXTERNAL_ESTIMATE_DISPLAY_ENABLED && ext ? ` · ${t('report.aiLikelihood.external')}: ~${ext.score}%` : ''}
-            </div>
-          </>
+          <PolicyRiskView t={t} pr={policyRisk(variantBadge)} />
         ) : (
           <div className="ai-likelihood-pair">
             <div className="ai-likelihood-metric">
@@ -1669,10 +1663,14 @@ export default function Report() {
             )}
           </div>
         )}
-        {ratingLabel && (
-          <div className="ai-likelihood-meta">{ratingLabel}</div>
+        {!policyRisk(variantBadge) && (
+          <>
+            {ratingLabel && (
+              <div className="ai-likelihood-meta">{ratingLabel}</div>
+            )}
+            <div className="ai-likelihood-why">{EXTERNAL_ESTIMATE_DISPLAY_ENABLED ? t('report.aiLikelihood.whyDiffer') : t('report.aiLikelihood.externalDemoted')}</div>
+          </>
         )}
-        <div className="ai-likelihood-why">{EXTERNAL_ESTIMATE_DISPLAY_ENABLED ? t('report.aiLikelihood.whyDiffer') : t('report.aiLikelihood.externalDemoted')}</div>
       </div>
     );
   };

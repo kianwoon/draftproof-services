@@ -492,21 +492,19 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
         out.extend(lead)
         out.append("")
     # Two policy-interpreted scores replace the raw DraftProof/external two-number block.
+    # When shown, the raw detector %, the authorship rating, and the detector disclaimer
+    # are dropped -- they contradicted the policy scores (page⇄PDF parity).
     policy = _render_policy_risk(badge)
     ext = bands["external"]
     if policy:
         out.extend(policy)
-        # Raw detector numbers demoted to a single transparency detail line.
-        raw = f"- _Detector detail — DraftProof AI-style estimate (conservative): {dp['score']}% ({dp['tier']})"
-        if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and ext:
-            raw += f" · external ~{ext['score']}% ({ext['label']})"
-        raw += "_"
-        out.append(raw)
-    else:
-        # Fallback (older reports without policy_risk): keep the prior two-number block.
-        out.append(f"- **DraftProof AI-style estimate (conservative): {dp['score']}% — {dp['tier']}**")
-        if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and ext:
-            out.append(f"- **Turnitin / external (estimated): ~{ext['score']}% — {ext['label']}**")
+        out.append("")
+        return "\n".join(out)
+
+    # Fallback (older reports without policy_risk): two-number block + meta + disclaimer.
+    out.append(f"- **DraftProof AI-style estimate (conservative): {dp['score']}% — {dp['tier']}**")
+    if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and ext:
+        out.append(f"- **Turnitin / external (estimated): ~{ext['score']}% — {ext['label']}**")
     out.append("")
     tc = badge.get("transformation_classification") or {}
     meta = []
