@@ -20,6 +20,7 @@ export default function PolicyRiskView({ t, pr }) {
         <p className="policy-risk-sub">{t('report.policyRisk.subheading')}</p>
       </div>
 
+      <div className="policy-risk-rows">
       {ROWS.map((row) => {
         const p = pr[row.key] || {};
         const isConfirmed = confirmed[row.key];
@@ -63,6 +64,7 @@ export default function PolicyRiskView({ t, pr }) {
           </div>
         );
       })}
+      </div>
 
       <p className="policy-risk-disclaimer">{t('report.policyRisk.disclaimer')}</p>
     </div>
