@@ -20,6 +20,7 @@ export const landing = {
   "useCasesHeading": "More than a score — guidance for your exact situation",
   "useCasesTabsLabel": "Use case sections",
   "useCasesNext": "Show next use case",
+  // allow-hardcode: i18n display copy (carousel slide text shown to users) — not a scoring/matching oracle.
   "useCases": [
     {
       "id": "score-vs-coaching",
@@ -27,11 +28,19 @@ export const landing = {
       "tag": "The problem with checkers",
       "title": "A percentage doesn't tell you what to fix.",
       "body": "Turnitin and free AI checkers hand back one number and leave you to guess. DraftProof shows the exact claims and passages at risk — and how to ground them.",
+      // allow-hardcode: i18n display copy (carousel slide points/guardrails/punch shown to users) — not a scoring/matching oracle.
       "points": [
-        "Pinpoints the weak claims, not just a verdict",
+        "Pinpoints the exact claims and passages at risk",
+        "Explains why each passage reads as machine-written",
         "Shows a before/after you edit with your own content",
-        "Honest: we tell you when a detector could still flag it"
-      ]
+        "Turns the score into specific, fixable steps",
+        "Honest: tells you when a detector could still flag it"
+      ],
+      "guardrails": [
+        "Not a score to game. Not a misconduct verdict.",
+        "A number says you're flagged — DraftProof says why, and what to fix."
+      ],
+      "punch": "A checker hands you a verdict; DraftProof hands you a revision you can act on."
     },
     {
       "id": "ai-allowed",
@@ -39,11 +48,19 @@ export const landing = {
       "tag": "AI-assisted, done right",
       "title": "Prove your AI-assisted work is grounded and yours.",
       "body": "Where AI is permitted, the bar is quality and control. DraftProof weighs grounding, judgment and specificity — and treats surface AI-wording lightly.",
+      // allow-hardcode: i18n display copy (carousel slide points/guardrails/punch shown to users) — not a scoring/matching oracle.
       "points": [
-        "Rewards evidence, reasoning and your own framing",
-        "Surface AI patterns weigh light — using AI is fine",
-        "Lenient bands tuned for permitted AI use"
-      ]
+        "Rewards real evidence, reasoning and your own framing",
+        "Checks each claim is anchored to a source or example",
+        "Surface AI wording weighs light — using AI is fine",
+        "Flags generic, unsupported assertions to ground",
+        "Lenient bands tuned for permitted, declared AI use"
+      ],
+      "guardrails": [
+        "Not a score to game. Not a misconduct verdict.",
+        "Where AI is allowed, the bar is quality and control — not whether you used it."
+      ],
+      "punch": "Acceptable AI-assisted work is grounded, specific, and still yours."
     },
     {
       "id": "ai-banned",
@@ -51,11 +68,19 @@ export const landing = {
       "tag": "Prove the thinking is yours",
       "title": "Show the work is authored by you, not a model.",
       "body": "Where AI is prohibited, DraftProof weighs authorship voice and surface AI-text more, and flags passages that read machine-written — so you can rewrite them in your own voice. Never a bypass, never an accusation.",
+      // allow-hardcode: i18n display copy (carousel slide points/guardrails/punch shown to users) — not a scoring/matching oracle.
       "points": [
-        "Surfaces passages that don't sound like you",
+        "Surfaces passages that don't sound like your voice",
+        "Weighs authorship voice and surface AI-text more",
+        "Shows where to rewrite in your own words and reasoning",
         "Stricter bands — built for a no-AI policy",
-        "Confirm-yourself, never a 'you used AI' verdict"
-      ]
+        "Confirm-yourself factors you control, never assumed"
+      ],
+      "guardrails": [
+        "Not a score to game. Not an accusation that you used AI.",
+        "We can't prove how you wrote it — only you can, by owning the thinking."
+      ],
+      "punch": "Authoring the thinking yourself is the real defence, not disguising the text."
     }
   ],
   "quickSummary": "DraftProof Quick Summary",

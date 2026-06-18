@@ -499,8 +499,8 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
         <SignalPanel
           label={uc.eyebrow}
           signals={Array.isArray(uc.points) ? uc.points : []}
-          guardrails={[]}
-          punch={uc.tag}
+          guardrails={Array.isArray(uc.guardrails) ? uc.guardrails : []}
+          punch={uc.punch || uc.tag}
         />
       ),
     })),
