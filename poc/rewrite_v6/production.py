@@ -13,12 +13,20 @@ try:
     from report.render_rewrite import render_rewrite_report
     from rewrite_v2.pipeline import _extract_original_text, _sentence_comparison
     from rewrite_v3.pipeline import _scan_report
+    from detect.grounding_diagnosis import diagnose_grounding_gap
+    from detect.critical_thinking import score_critical_thinking
+    from detect.submission_risk import score_submission_risk
+    from detect.policy_risk import score_policy_risk
 except ModuleNotFoundError:
     from poc.detect.document_structure import normalize_submitted_text
     from poc.report.pdf import render_pdf
     from poc.report.render_rewrite import render_rewrite_report
     from poc.rewrite_v2.pipeline import _extract_original_text, _sentence_comparison
     from poc.rewrite_v3.pipeline import _scan_report
+    from poc.detect.grounding_diagnosis import diagnose_grounding_gap
+    from poc.detect.critical_thinking import score_critical_thinking
+    from poc.detect.submission_risk import score_submission_risk
+    from poc.detect.policy_risk import score_policy_risk
 
 from .pipeline import _planner_model, _writer_model, run_v6_rewrite_all
 from .direct_rewrite import direct_rewrite_enabled, run_direct_rewrite_all
@@ -498,13 +506,48 @@ def _findings_by_paragraph(scan: dict[str, Any]) -> dict[str, int]:
     return counts
 
 
+def _enrich_badge_diagnoses(scan_report: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Add the additive composer chain (grounding_diagnosis -> critical_thinking ->
+    submission_risk -> policy_risk) to a rewrite scan report's badge, mirroring the scan
+    pipeline (report.py). Without this the legacy rewrite re-scan produces a "lite" badge,
+    so the rewritten column falls back to the raw detector framing instead of the policy
+    scores the submitted content shows. Additive only; never changes ai_likelihood/tier."""
+    if not isinstance(scan_report, dict):
+        return scan_report
+    badge = scan_report.get("ai_risk_badge")
+    if not isinstance(badge, dict) or badge.get("policy_risk"):
+        return scan_report
+    try:
+        tc = badge.get("transformation_classification") or {}
+        gd = diagnose_grounding_gap(
+            ai_components=badge.get("ai_components") or {},
+            writing_components=badge.get("writing_components") or {},
+            transformation_features=tc.get("features") if isinstance(tc, dict) else None,
+            scored_sentence_count=None,
+        )
+        ctc = score_critical_thinking(grounding_diagnosis=gd, scored_sentence_count=None)
+        badge["grounding_diagnosis"] = gd
+        badge["critical_thinking_control"] = ctc
+        badge["submission_risk"] = score_submission_risk(
+            ai_likelihood_score=badge.get("ai_likelihood_score"),
+            ai_tier=badge.get("tier"),
+            critical_thinking_control=ctc,
+            axis_scores=scan_report.get("axis_scores"),
+            scored_sentence_count=None,
+        )
+        badge["policy_risk"] = score_policy_risk(grounding_diagnosis=gd, critical_thinking_control=ctc)
+    except Exception:
+        pass
+    return scan_report
+
+
 def _scan_report_for_summary(text: str, *, provided: dict[str, Any] | None, fallback_scan: dict[str, Any]) -> dict[str, Any]:
     if _has_full_report_shape(provided):
-        return dict(provided or {})
+        return _enrich_badge_diagnoses(dict(provided or {}))
     try:
         report = _scan_report(text)
         if _has_full_report_shape(report):
-            return report
+            return _enrich_badge_diagnoses(report)
     except Exception:
         pass
     return _scan_report_shape(fallback_scan)
