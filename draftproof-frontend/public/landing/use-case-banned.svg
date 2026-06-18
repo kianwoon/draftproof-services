@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" role="img">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset="1" stop-color="#e1f5ee"/></linearGradient>
+    <filter id="s" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#0d1b2a" flood-opacity=".16"/></filter>
+  </defs>
+  <rect width="800" height="500" rx="34" fill="url(#bg)"/>
+  <!-- the draft, signed in your own hand -->
+  <g filter="url(#s)">
+    <rect x="86" y="78" width="412" height="344" rx="24" fill="#fff"/>
+    <rect x="122" y="120" width="180" height="18" rx="9" fill="#0d1b2a" opacity=".2"/>
+    <rect x="122" y="168" width="326" height="12" rx="6" fill="#0d1b2a" opacity=".13"/>
+    <rect x="122" y="198" width="288" height="12" rx="6" fill="#0d1b2a" opacity=".13"/>
+    <rect x="122" y="228" width="312" height="12" rx="6" fill="#0d1b2a" opacity=".13"/>
+    <rect x="122" y="258" width="258" height="12" rx="6" fill="#0d1b2a" opacity=".13"/>
+    <!-- a handwritten signature: the author's own voice -->
+    <path d="M128 340c20-34 32-34 38-14s14 26 30-2 26-22 40 2 24 6 40-12" fill="none" stroke="#0f6e56" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M126 366h150" stroke="#0d1b2a" stroke-width="6" stroke-linecap="round" opacity=".12"/>
+  </g>
+  <!-- authorship shield: proven by you, not a verdict -->
+  <g filter="url(#s)">
+    <path d="M628 132l78 30v74c0 58-40 92-78 110-38-18-78-52-78-110v-74z" fill="#fff"/>
+    <path d="M628 168l44 17v44c0 33-23 53-44 64-21-11-44-31-44-64v-44z" fill="#e1f5ee"/>
+    <circle cx="628" cy="248" r="24" fill="#3ba876"/>
+    <path d="M615 248l9 9 18-22" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- the signature reaching the shield -->
+  <path d="M498 332c44-2 70-26 84-66" fill="none" stroke="#0f6e56" stroke-width="6" stroke-linecap="round"/>
+</svg>

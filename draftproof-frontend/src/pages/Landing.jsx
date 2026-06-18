@@ -389,6 +389,13 @@ function toneClass(tone, allowed = ['positive', 'warning', 'neutral']) {
   return allowed.includes(tone) ? `is-${tone}` : 'is-neutral';
 }
 
+// Use-case slide artwork (asset paths, not translatable copy): id -> illustration.
+const USE_CASE_IMAGES = {
+  'score-vs-coaching': '/landing/use-case-score.svg',
+  'ai-allowed': '/landing/use-case-allowed.svg',
+  'ai-banned': '/landing/use-case-banned.svg',
+};
+
 function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals, useCases }) {
   const { t } = useTranslation();
   const slides = useMemo(() => ([
@@ -494,6 +501,7 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
       id: `use-case-${uc.id}`,
       eyebrow: uc.eyebrow,
       title: uc.title,
+      imageSrc: USE_CASE_IMAGES[uc.id],
       body: Array.isArray(uc.body) ? uc.body : [uc.body],
       renderPanel: () => (
         <SignalPanel
