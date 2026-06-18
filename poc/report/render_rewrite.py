@@ -12,6 +12,9 @@ from .render import _EXTERNAL_BAND_LABELS, EXTERNAL_ESTIMATE_DISPLAY_ENABLED
 
 
 _TIER_ORDER = ["critical", "high", "medium", "low"]
+# allow-hardcode: presentation level labels for the two policy scores (machine level
+# -> display), not a scoring/matching oracle. Mirrors render.py / the web report.
+_POLICY_LEVEL = {"low": "Low", "moderate": "Moderate", "high": "High", "severe": "Severe", "unknown": "Unknown"}
 _TURNITIN_AI_REFERENCE_THRESHOLD = 20
 _TURNITIN_AI_REFERENCE_NOTE = (
     "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage "
@@ -280,7 +283,17 @@ def _outcome_stamp_html(summary: dict, result_label: str, rewritten_scan: dict) 
         if author_review_required or external_review_required
         else stamp["label"]
     ) or result_label
-    scan_score = f"{ai_score}%" if ai_score is not None else "-"
+    # Lead with the policy levels (mirror the web report), not the bare AI-likelihood %.
+    # Fall back to the AI score for older reports whose badge lacks policy_risk.
+    _pol = (_badge(rewritten_scan).get("policy_risk") or {}) if isinstance(_badge(rewritten_scan), dict) else {}
+    _pa, _pr2 = _pol.get("ai_allowed") or {}, _pol.get("ai_restricted") or {}
+    if _pa.get("level") and _pa["level"] != "unknown":
+        scan_score = (
+            f'Allowed {_POLICY_LEVEL.get(_pa["level"], _pa["level"])} '
+            f'· Restricted {_POLICY_LEVEL.get(_pr2.get("level"), _pr2.get("level"))}'
+        )
+    else:
+        scan_score = f"{ai_score}%" if ai_score is not None else "-"
     human = contribution.get("human")
     ai = contribution.get("ai")
     summary_text = contribution.get("summary") or summary.get("outcome") or result_label
@@ -761,6 +774,18 @@ def render_rewrite_report(
         lines.append("")
         lines.append("| Metric | Original | Final Output | Change |")
         lines.append("|--------|----------|--------------|--------|")
+        # Policy scores lead the comparison (mirror the web report): the SAME draft under
+        # two school policies, original vs rewritten. Reads from the enriched badge.
+        def _policy_cell(b, key):
+            p = ((b.get("policy_risk") or {}) if isinstance(b, dict) else {}).get(key) or {}
+            lvl = p.get("level")
+            if not lvl or lvl == "unknown":
+                return None
+            return f"{_POLICY_LEVEL.get(lvl, lvl)} ({round(p.get('score') or 0)})"
+        for _pk, _pl in (("ai_allowed", "If AI is allowed (declared)"), ("ai_restricted", "If AI is not allowed")):
+            _oc, _nc = _policy_cell(orig_badge, _pk), _policy_cell(new_badge, _pk)
+            if _oc or _nc:
+                lines.append(f"| **{_pl}** | {_oc or '-'} | {_nc or '-'} | - |")
         lines.append(
             f"| **AI Likelihood** | `{_display_ai_score(orig_ai):.0f}%` | "
             f"`{_display_ai_score(new_ai):.0f}%` | `{_display_ai_score(ai_delta):+.0f}%` |"
