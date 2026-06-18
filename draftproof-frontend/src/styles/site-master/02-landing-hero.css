@@ -243,8 +243,60 @@
   line-height: 1.06;
 }
 
-.landing-hero h1 span {
+/* Rotating hero headline: all variants share one grid cell so the box auto-sizes
+   to the tallest headline (no layout shift as it cycles); inactive ones fade out. */
+.landing-hero h1.hero-rotating-title {
+  display: grid;
+}
+
+.hero-rotating-title .hero-headline {
+  grid-area: 1 / 1;
+  margin: 0;
+  color: #fff;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 520ms ease, transform 520ms ease;
+  pointer-events: none;
+}
+
+.hero-rotating-title .hero-headline.is-active {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.hero-rotating-title .hero-headline .hero-hl {
   color: var(--green);
+}
+
+.hero-headline-dots {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 20px;
+  padding: 0;
+}
+
+.hero-headline-dots button {
+  width: 22px;
+  height: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .22);
+  cursor: pointer;
+  transition: background 240ms ease, width 240ms ease;
+}
+
+.hero-headline-dots button.is-active {
+  width: 34px;
+  background: var(--green);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-rotating-title .hero-headline {
+    transition: none;
+    transform: none;
+  }
 }
 
 .landing-hero .lead {

@@ -44,9 +44,12 @@ export default function Landing() {
   const anchorCards = t('landing.anchorCards', { returnObjects: true });
   const anchorWorkflow = t('landing.anchorWorkflow', { returnObjects: true });
   const heroReviewSteps = t('landing.heroReviewSteps', { returnObjects: true });
-  const heroTitle = t('landing.heroTitle');
-  const heroTitleHighlight = t('landing.heroTitleHighlight');
-  const [heroTitleBefore, heroTitleAfter = ''] = heroTitle.split(heroTitleHighlight);
+  const heroTitlesRaw = t('landing.heroTitles', { returnObjects: true });
+  const heroTitles = Array.isArray(heroTitlesRaw) && heroTitlesRaw.length
+    ? heroTitlesRaw
+    : [{ text: t('landing.heroTitle'), highlight: t('landing.heroTitleHighlight') }];
+  const heroTitleCarousel = useLandingCarousel(heroTitles.length, 4500);
+  const useCases = t('landing.useCases', { returnObjects: true });
 
   return (
     <main className="landing-page">
@@ -55,9 +58,44 @@ export default function Landing() {
         <div className="section-inner landing-hero-grid">
           <div className="hero-copy">
             <p className="brand-pill">{t('landing.heroPill')}</p>
-            <h1>
-              {heroTitleBefore}<span>{heroTitleHighlight}</span>{heroTitleAfter}
+            <h1
+              className="hero-rotating-title"
+              onMouseEnter={heroTitleCarousel.pause}
+              onMouseLeave={heroTitleCarousel.resume}
+            >
+              {heroTitles.map((item, index) => {
+                const text = String(item?.text ?? '');
+                const hl = String(item?.highlight ?? '');
+                const at = hl ? text.indexOf(hl) : -1;
+                const before = at >= 0 ? text.slice(0, at) : text;
+                const after = at >= 0 ? text.slice(at + hl.length) : '';
+                const isActive = heroTitleCarousel.activeSlide === index;
+                return (
+                  <span
+                    key={text || index}
+                    className={`hero-headline${isActive ? ' is-active' : ''}`}
+                    aria-hidden={isActive ? undefined : 'true'}
+                  >
+                    {before}{at >= 0 ? <span className="hero-hl">{hl}</span> : null}{after}
+                  </span>
+                );
+              })}
             </h1>
+            {heroTitles.length > 1 ? (
+              <div className="hero-headline-dots" role="tablist" aria-label={t('landing.heroTitlesLabel')}>
+                {heroTitles.map((item, index) => (
+                  <button
+                    type="button"
+                    key={`dot-${item?.text ?? index}`}
+                    role="tab"
+                    aria-selected={heroTitleCarousel.activeSlide === index}
+                    aria-label={String(item?.highlight ?? item?.text ?? index)}
+                    className={heroTitleCarousel.activeSlide === index ? 'is-active' : ''}
+                    onClick={() => heroTitleCarousel.goToSlide(index)}
+                  />
+                ))}
+              </div>
+            ) : null}
             <p className="lead">{t('landing.heroLead')}</p>
 
             <div className="hero-actions" id="check">
@@ -88,6 +126,8 @@ export default function Landing() {
           <span>{t('landing.contentAwareRewrite')}</span>
         </div>
       </section>
+
+      <UseCaseCarousel slides={useCases} />
 
       <ContentRiskCarousel
         anchorCards={anchorCards}
@@ -348,6 +388,56 @@ function HeroReviewVisual({ step }) {
 
 function toneClass(tone, allowed = ['positive', 'warning', 'neutral']) {
   return allowed.includes(tone) ? `is-${tone}` : 'is-neutral';
+}
+
+function UseCaseCarousel({ slides }) {
+  const { t } = useTranslation();
+  const list = Array.isArray(slides) ? slides : [];
+  const carousel = useLandingCarousel(list.length, 6000);
+  if (list.length === 0) return null;
+
+  return (
+    <section
+      className="landing-section use-case-carousel-section"
+      aria-label={t('landing.useCasesLabel')}
+      onMouseEnter={carousel.pause}
+      onMouseLeave={carousel.resume}
+      onFocusCapture={carousel.pause}
+      onBlurCapture={carousel.resume}
+    >
+      <div className="section-inner use-case-head">
+        <p className="use-case-eyebrow">{t('landing.useCasesEyebrow')}</p>
+        <h2>{t('landing.useCasesHeading')}</h2>
+      </div>
+      <div className="use-case-track section-inner" style={{ '--active-slide': carousel.activeSlide }}>
+        {list.map((slide, index) => (
+          <article
+            key={slide.id}
+            className={`use-case-slide${carousel.activeSlide === index ? ' is-active' : ''}`}
+            aria-hidden={carousel.activeSlide !== index}
+            inert={carousel.activeSlide !== index ? '' : undefined}
+          >
+            <span className="use-case-tag">{slide.tag}</span>
+            <h3>{slide.title}</h3>
+            <p className="use-case-body">{slide.body}</p>
+            <ul className="use-case-points">
+              {(Array.isArray(slide.points) ? slide.points : []).map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+          </article>
+        ))}
+      </div>
+      <LandingCarouselControls
+        activeSlide={carousel.activeSlide}
+        dotsLabel={t('landing.useCasesTabsLabel')}
+        nextLabel={t('landing.useCasesNext')}
+        onNext={carousel.goToNextSlide}
+        onSelect={carousel.goToSlide}
+        slides={list}
+      />
+    </section>
+  );
 }
 
 function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals }) {

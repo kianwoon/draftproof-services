@@ -2,10 +2,62 @@ export const landing = {
   "heroPill": "Grounding and critical-thinking review for students",
   "heroTitle": "Make sure the thinking in your draft is still yours.",
   "heroTitleHighlight": "still yours",
+  "heroTitlesLabel": "Rotating headline messages",
+  "heroTitles": [
+    { "text": "Make sure the thinking in your draft is still yours.", "highlight": "still yours" },
+    { "text": "Catch the claims you can't back up before your professor does.", "highlight": "before your professor does" },
+    { "text": "Read your draft under your school's rules, not a generic score.", "highlight": "not a generic score" },
+    { "text": "Ground every point with your own evidence and voice.", "highlight": "your own evidence and voice" }
+  ],
   "heroLead": "DraftProof points to the claims you can’t yet back up and the passages that sound machine-written, then asks what you actually meant — so you ground every point with your own evidence and reasoning before submission.",
   "runCheck": "Review my content",
   "viewSample": "View sample report",
   "trustNote": "Not a detector bypass · Not a misconduct verdict · A grounding and integrity review you can act on.",
+  // allow-hardcode: i18n display copy for the landing use-case carousel — UI text rendered to users,
+  // never compared against document content or used as a scoring/matching oracle (same category as heroReviewSteps/anchorCards).
+  "useCasesLabel": "How DraftProof helps in your situation",
+  "useCasesEyebrow": "Built around how your school actually treats AI",
+  "useCasesHeading": "More than a score — guidance for your exact situation",
+  "useCasesTabsLabel": "Use case sections",
+  "useCasesNext": "Show next use case",
+  "useCases": [
+    {
+      "id": "score-vs-coaching",
+      "eyebrow": "A score isn't help",
+      "tag": "The problem with checkers",
+      "title": "A percentage doesn't tell you what to fix.",
+      "body": "Turnitin and free AI checkers hand back one number and leave you to guess. DraftProof shows the exact claims and passages at risk — and how to ground them.",
+      "points": [
+        "Pinpoints the weak claims, not just a verdict",
+        "Shows a before/after you edit with your own content",
+        "Honest: we tell you when a detector could still flag it"
+      ]
+    },
+    {
+      "id": "ai-allowed",
+      "eyebrow": "If your school allows AI",
+      "tag": "AI-assisted, done right",
+      "title": "Prove your AI-assisted work is grounded and yours.",
+      "body": "Where AI is permitted, the bar is quality and control. DraftProof weighs grounding, judgment and specificity — and treats surface AI-wording lightly.",
+      "points": [
+        "Rewards evidence, reasoning and your own framing",
+        "Surface AI patterns weigh light — using AI is fine",
+        "Lenient bands tuned for permitted AI use"
+      ]
+    },
+    {
+      "id": "ai-banned",
+      "eyebrow": "If your school bans AI",
+      "tag": "Prove the thinking is yours",
+      "title": "Show the work is authored by you, not a model.",
+      "body": "Where AI is prohibited, DraftProof weighs authorship voice and surface AI-text more, and flags passages that read machine-written — so you can rewrite them in your own voice. Never a bypass, never an accusation.",
+      "points": [
+        "Surfaces passages that don't sound like you",
+        "Stricter bands — built for a no-AI policy",
+        "Confirm-yourself, never a 'you used AI' verdict"
+      ]
+    }
+  ],
   "quickSummary": "DraftProof Quick Summary",
   "livePreview": "Live preview",
   "preSubmissionReview": "Content pre-submission review",

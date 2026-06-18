@@ -2,10 +2,62 @@ export const landing = {
   "heroPill": "面向学生的依据支撑与批判性思维审阅",
   "heroTitle": "确保草稿里的思考，依然属于你。",
   "heroTitleHighlight": "依然属于你",
+  "heroTitlesLabel": "轮播标题信息",
+  "heroTitles": [
+    { "text": "确保草稿里的思考，依然属于你。", "highlight": "依然属于你" },
+    { "text": "在导师之前，先抓出你还无法支撑的论断。", "highlight": "你还无法支撑的论断" },
+    { "text": "按你学校的规则来读你的草稿，而不是一个笼统的分数。", "highlight": "而不是一个笼统的分数" },
+    { "text": "用你自己的证据和声音，为每个观点立稳依据。", "highlight": "你自己的证据和声音" }
+  ],
   "heroLead": "DraftProof 会指出你还无法支撑的论断，以及读起来像机器写的段落，再追问你真正想表达什么——让你在提交前用自己的证据和推理，为每一个观点立稳依据。",
   "runCheck": "审阅我的内容",
   "viewSample": "查看示例报告",
   "trustNote": "不是检测绕过工具 · 不是学术不端判定 · 是可执行的依据支撑与完整性审阅。",
+  // allow-hardcode: i18n 展示文案，用于落地页用例轮播——仅作为界面文本呈现给用户，
+  // 绝不与文档内容比对、也不作为评分/匹配判定（与上方 heroReviewSteps/anchorCards 同类）。
+  "useCasesLabel": "DraftProof 如何针对你的情况提供帮助",
+  "useCasesEyebrow": "围绕你学校对 AI 的真实态度而设计",
+  "useCasesHeading": "不只是一个分数——针对你具体情况的指导",
+  "useCasesTabsLabel": "用例分区",
+  "useCasesNext": "显示下一个用例",
+  "useCases": [
+    {
+      "id": "score-vs-coaching",
+      "eyebrow": "分数不等于帮助",
+      "tag": "检测工具的问题",
+      "title": "一个百分比并不会告诉你该改什么。",
+      "body": "Turnitin 和免费 AI 检测器只丢回一个数字，剩下的让你自己猜。DraftProof 会指出存在风险的具体论断与段落——以及如何为它们立稳依据。",
+      "points": [
+        "精确定位薄弱论断，而非只给一个判定",
+        "提供可由你用自己内容修改的前后对照",
+        "诚实：会告诉你哪些地方检测器仍可能标记"
+      ]
+    },
+    {
+      "id": "ai-allowed",
+      "eyebrow": "如果你的学校允许使用 AI",
+      "tag": "正确地借助 AI",
+      "title": "证明你借助 AI 完成的作业有依据、且属于你。",
+      "body": "在允许使用 AI 的情况下，标准是质量与掌控力。DraftProof 更看重依据、判断与具体性——对表层的 AI 用词则从轻处理。",
+      "points": [
+        "看重证据、推理与你自己的表述框架",
+        "表层 AI 特征权重从轻——使用 AI 本身没问题",
+        "为允许使用 AI 而调校的宽松分档"
+      ]
+    },
+    {
+      "id": "ai-banned",
+      "eyebrow": "如果你的学校禁止使用 AI",
+      "tag": "证明思考出自你",
+      "title": "证明作业由你撰写，而非模型。",
+      "body": "在禁止使用 AI 的情况下，DraftProof 更看重作者声音与表层 AI 文本，并标记读起来像机器写的段落——让你用自己的声音重写。绝不绕过检测，也绝不做出指控。",
+      "points": [
+        "标出读起来不像你的段落",
+        "更严格的分档——为零 AI 政策而设",
+        "由你自行确认，绝不下'你用了 AI'的判定"
+      ]
+    }
+  ],
   "quickSummary": "DraftProof 快速摘要",
   "livePreview": "实时预览",
   "preSubmissionReview": "内容提交前审阅",
