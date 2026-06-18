@@ -17,6 +17,15 @@ SCAN_BADGE_KEYS = (
     # Retained so the rewritten scan's dual headline can show the Turnitin/external
     # estimate (a rewrite does NOT beat perplexity detectors — users must see this).
     "external_detector_estimate",
+    # Additive composer outputs (mirror the scan badge in report.py). WITHOUT these the
+    # compaction strips them before storage, so the worker-rendered rewrite PDF falls back
+    # to the raw AI-score framing while the page (API read-time enriched) shows policy
+    # scores — the PDF/page divergence. Keep in sync with poc/rewrite_v6/production.py
+    # ::_enrich_badge_diagnoses and draftproof-api/app/policy_enrich.py.
+    "policy_risk",
+    "submission_risk",
+    "grounding_diagnosis",
+    "critical_thinking_control",
 )
 
 TRANSFORMATION_KEYS = (

@@ -40,3 +40,35 @@ def test_compaction_keeps_core_badge_fields():
     assert badge["ai_likelihood_score"] == 42.0
     assert badge["authorship_rating_label"] == "Possible AI-Assisted"
     assert badge["tier"] == "AMBER"
+
+
+def test_compaction_retains_policy_and_submission_risk():
+    # Regression: these additive composer outputs were NOT in the keep-list, so
+    # compaction stripped them before storage. The page survived via API read-time
+    # re-enrichment, but the worker-rendered rewrite PDF fell back to the raw AI-score
+    # framing -> page/PDF divergence. The PDF must show the same policy scores as the page.
+    scan = {
+        "ai_risk_badge": {
+            "ai_likelihood_score": 35.0,
+            "tier": "acceptable",
+            "policy_risk": {
+                "ai_allowed": {"score": 63, "level": "high"},
+                "ai_restricted": {"score": 57, "level": "high"},
+            },
+            "submission_risk": {"overall": {"level": "high"}},
+            "grounding_diagnosis": {"buckets": {}},
+            "critical_thinking_control": {"dimensions": {}},
+        }
+    }
+    badge = compact_rewrite_scan_summary(scan)["ai_risk_badge"]
+    assert badge["policy_risk"]["ai_allowed"]["score"] == 63
+    assert badge["policy_risk"]["ai_restricted"]["level"] == "high"
+    assert badge["submission_risk"]["overall"]["level"] == "high"
+    assert "grounding_diagnosis" in badge
+    assert "critical_thinking_control" in badge
+
+
+def test_policy_composer_fields_in_keep_list():
+    # Lock the contract: PDF + page both read these off the stored badge.
+    for key in ("policy_risk", "submission_risk", "grounding_diagnosis", "critical_thinking_control"):
+        assert key in SCAN_BADGE_KEYS
