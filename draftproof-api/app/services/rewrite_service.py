@@ -464,12 +464,20 @@ async def get_rewrite(rewrite_id: str, user_id: str | None = None) -> dict | Non
 
 
 async def get_rewrite_report(rewrite_id: str, user_id: str) -> dict | None:
-    """Fetch rewrite report JSON from R2."""
+    """Fetch rewrite report JSON from R2, enriching the detect-scan badges with the
+    policy/submission scores at read-time so the rewritten column matches the submitted
+    content even when the stored badge predates the worker enrichment."""
     job_info = await get_rewrite(rewrite_id, user_id)
     if not job_info or job_info["status"] != "completed":
         return None
 
-    return await _fetch_rewrite_report_json(job_info["scan_id"])
+    report = await _fetch_rewrite_report_json(job_info["scan_id"])
+    try:
+        from app.policy_enrich import enrich_rewrite_report
+        report = enrich_rewrite_report(report)
+    except Exception:
+        logger.warning("Read-time policy enrichment failed for rewrite %s", rewrite_id, exc_info=True)
+    return report
 
 
 async def regenerate_rewrite_report_assets(rewrite_id: str, user_id: str) -> dict | None:
