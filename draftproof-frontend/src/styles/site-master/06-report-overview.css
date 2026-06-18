@@ -321,16 +321,29 @@
 }
 .policy-risk-mode { color: #334155; font-size: .88rem; font-weight: 700; }
 .policy-risk-level {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1;
+}
+.policy-risk-score {
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.2rem;
+  font-size: 2.1rem;
   font-weight: 700;
+  letter-spacing: -.02em;
+}
+.policy-risk-band-label {
+  margin-top: .2rem;
+  font-size: .74rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
 }
 .policy-risk-level.is-low { color: #15803d; }
 .policy-risk-level.is-moderate { color: #b45309; }
 .policy-risk-level.is-high { color: #b91c1c; }
 .policy-risk-level.is-severe { color: #7f1d1d; }
 .policy-risk-level.is-unknown { color: #475569; }
-.policy-risk-level > em { font-style: normal; font-size: .82rem; color: #64748b; font-weight: 600; }
 
 .policy-risk-issue { margin: .4rem 0 0; color: #334155; font-size: .86rem; }
 .policy-risk-fix { margin: .2rem 0 0; color: #64748b; font-size: .84rem; }

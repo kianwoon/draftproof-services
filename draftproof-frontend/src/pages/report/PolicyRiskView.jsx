@@ -32,8 +32,10 @@ export default function PolicyRiskView({ t, pr }) {
             <div className="policy-risk-row-head">
               <span className="policy-risk-mode">{t(`report.policyRisk.${row.labelKey}`)}</span>
               <strong className={`policy-risk-level is-${level}`}>
-                {t(`report.policyRisk.levels.${level}`, { defaultValue: level })}
-                {score != null ? <em> · {score}</em> : null}
+                {score != null && <span className="policy-risk-score">{score}</span>}
+                <span className="policy-risk-band-label">
+                  {t(`report.policyRisk.levels.${level}`, { defaultValue: level })}
+                </span>
               </strong>
             </div>
             {p.main_issue && (
