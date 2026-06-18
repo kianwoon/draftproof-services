@@ -322,16 +322,21 @@
 
 .policy-risk-row-head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
+  flex-wrap: nowrap;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: .4rem;
+  gap: .6rem;
 }
-.policy-risk-mode { color: #334155; font-size: .88rem; font-weight: 700; }
+/* Label takes the remaining width and wraps internally so the score block stays
+   pinned to the upper-right of the card regardless of label length (a long
+   "If AI is allowed (with declaration)" must not push the score onto its own line). */
+.policy-risk-mode { flex: 1 1 auto; min-width: 0; color: #334155; font-size: .88rem; font-weight: 700; }
 .policy-risk-level {
+  flex: 0 0 auto;
   display: inline-flex;
   flex-direction: column;
   align-items: flex-end;
+  text-align: right;
   line-height: 1;
 }
 .policy-risk-score {
