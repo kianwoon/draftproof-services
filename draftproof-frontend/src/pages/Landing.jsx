@@ -409,24 +409,28 @@ function UseCaseCarousel({ slides }) {
         <p className="use-case-eyebrow">{t('landing.useCasesEyebrow')}</p>
         <h2>{t('landing.useCasesHeading')}</h2>
       </div>
-      <div className="use-case-track section-inner" style={{ '--active-slide': carousel.activeSlide }}>
-        {list.map((slide, index) => (
-          <article
-            key={slide.id}
-            className={`use-case-slide${carousel.activeSlide === index ? ' is-active' : ''}`}
-            aria-hidden={carousel.activeSlide !== index}
-            inert={carousel.activeSlide !== index ? '' : undefined}
-          >
-            <span className="use-case-tag">{slide.tag}</span>
-            <h3>{slide.title}</h3>
-            <p className="use-case-body">{slide.body}</p>
-            <ul className="use-case-points">
-              {(Array.isArray(slide.points) ? slide.points : []).map((point) => (
-                <li key={point}>{point}</li>
-              ))}
-            </ul>
-          </article>
-        ))}
+      <div className="use-case-shell section-inner">
+        <div className="use-case-track" style={{ '--active-slide': carousel.activeSlide }}>
+          {list.map((slide, index) => (
+            <article
+              key={slide.id}
+              className={`use-case-slide${carousel.activeSlide === index ? ' is-active' : ''}`}
+              aria-hidden={carousel.activeSlide !== index}
+              inert={carousel.activeSlide !== index ? '' : undefined}
+            >
+              <div className="use-case-inner">
+                <span className="use-case-tag">{slide.tag}</span>
+                <h3>{slide.title}</h3>
+                <p className="use-case-body">{slide.body}</p>
+                <ul className="use-case-points">
+                  {(Array.isArray(slide.points) ? slide.points : []).map((point) => (
+                    <li key={point}>{point}</li>
+                  ))}
+                </ul>
+              </div>
+            </article>
+          ))}
+        </div>
       </div>
       <LandingCarouselControls
         activeSlide={carousel.activeSlide}
