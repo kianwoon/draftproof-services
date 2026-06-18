@@ -16,6 +16,7 @@ import SignalHighlights from './report/SignalHighlights';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import CriticalThinkingControl from './report/CriticalThinkingControl';
 import ReportHero from './report/ReportHero';
+import PolicyRiskView from './report/PolicyRiskView';
 import useTextareaCaretOverlay from './report/useTextareaCaretOverlay';
 import { buildTrackedDiff, trackedDiffToPlainText, trackedDiffToHtml } from './report/trackedDiff';
 import {
@@ -69,6 +70,7 @@ import {
   buildRewriteEventsUrl,
   aiLikelihoodBands,
   submissionRisk,
+  policyRisk,
   rewriteDetectorVerdict,
   buildRepairSummary,
   groundingDiagnosis,
@@ -1636,27 +1638,37 @@ export default function Report() {
             </div>
           </div>
         )}
-        <div className="ai-likelihood-pair">
-          <div className="ai-likelihood-metric">
-            <div className="ai-likelihood-caption">{t('report.aiLikelihood.draftproof')}</div>
-            <div className="ai-likelihood-score" style={{ color: dp.color }}>{dp.score}%</div>
-            <div className="ai-likelihood-band">{dp.tier}</div>
-            <div className="ai-likelihood-actionable">{t('report.aiLikelihood.draftproofNote')}</div>
-          </div>
-          {EXTERNAL_ESTIMATE_DISPLAY_ENABLED && (
-            <div className="ai-likelihood-metric">
-              <div className="ai-likelihood-caption">{t('report.aiLikelihood.external')}</div>
-              {ext ? (
-                <>
-                  <div className="ai-likelihood-score" style={{ color: ext.color }}>~{ext.score}%</div>
-                  <div className="ai-likelihood-band">{t(`report.aiLikelihood.externalBand.${ext.band}`, { defaultValue: '' })}</div>
-                </>
-              ) : (
-                <div className="ai-likelihood-unavailable">{t('report.aiLikelihood.externalUnavailable')}</div>
-              )}
+        {policyRisk(variantBadge) ? (
+          <>
+            <PolicyRiskView t={t} pr={policyRisk(variantBadge)} />
+            <div className="ai-likelihood-detector-detail">
+              {t('report.aiLikelihood.draftproof')}: {dp.score}% ({dp.tier})
+              {EXTERNAL_ESTIMATE_DISPLAY_ENABLED && ext ? ` · ${t('report.aiLikelihood.external')}: ~${ext.score}%` : ''}
             </div>
-          )}
-        </div>
+          </>
+        ) : (
+          <div className="ai-likelihood-pair">
+            <div className="ai-likelihood-metric">
+              <div className="ai-likelihood-caption">{t('report.aiLikelihood.draftproof')}</div>
+              <div className="ai-likelihood-score" style={{ color: dp.color }}>{dp.score}%</div>
+              <div className="ai-likelihood-band">{dp.tier}</div>
+              <div className="ai-likelihood-actionable">{t('report.aiLikelihood.draftproofNote')}</div>
+            </div>
+            {EXTERNAL_ESTIMATE_DISPLAY_ENABLED && (
+              <div className="ai-likelihood-metric">
+                <div className="ai-likelihood-caption">{t('report.aiLikelihood.external')}</div>
+                {ext ? (
+                  <>
+                    <div className="ai-likelihood-score" style={{ color: ext.color }}>~{ext.score}%</div>
+                    <div className="ai-likelihood-band">{t(`report.aiLikelihood.externalBand.${ext.band}`, { defaultValue: '' })}</div>
+                  </>
+                ) : (
+                  <div className="ai-likelihood-unavailable">{t('report.aiLikelihood.externalUnavailable')}</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {ratingLabel && (
           <div className="ai-likelihood-meta">{ratingLabel}</div>
         )}

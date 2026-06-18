@@ -1513,6 +1513,16 @@ function submissionRisk(badge) {
   return sr;
 }
 
+// Two policy-interpreted scores (AI-allowed vs AI-restricted). Returns null when the
+// diagnosis abstained, so the card falls back to the raw detector two-number block.
+function policyRisk(badge) {
+  const pr = (badge || {}).policy_risk;
+  if (!pr || typeof pr !== 'object') return null;
+  const level = pr.ai_allowed && pr.ai_allowed.level;
+  if (!level || level === 'unknown') return null;
+  return pr;
+}
+
 const REWRITE_VERDICT_TONES = {
   high: { color: '#b91c1c', bg: '#fef2f2' },
   elevated: { color: '#c2410c', bg: '#fff7ed' },
@@ -1716,4 +1726,5 @@ export {
   CRITICAL_THINKING_CONTROL_ENABLED,
   submissionRisk,
   SUBMISSION_RISK_AXES,
+  policyRisk,
 };

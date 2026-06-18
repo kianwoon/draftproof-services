@@ -542,6 +542,37 @@ export const report = {
     }
   },
   "ok": "确定",
+  // allow-hardcode: 两个政策分数的 i18n UI 文案（按 code 索引），仅展示，不与文本比对。
+  // 与 poc/report/render.py _POLICY_* + en/report.js 保持同步。
+  "policyRisk": {
+    "heading": "政策风险",
+    "subheading": "在你学校的 AI 政策下，这份草稿可能如何被看待",
+    "allowedLabel": "若允许使用 AI（需声明）",
+    "restrictedLabel": "若不允许使用 AI",
+    "mainIssuePrefix": "主要问题：",
+    "bestFixPrefix": "最佳修复：",
+    "confirmTitle": "自行确认以降低分数",
+    "confirmAllowed": "我能说明 AI 是如何使用的",
+    "confirmRestricted": "我有这份作业的草稿 / 笔记",
+    "disclaimer": "这些分数并不证明使用了 AI。它们只是估计在不同学校政策下，这份草稿可能呈现多大风险。",
+    "levels": {
+      "low": "低", "moderate": "中等", "high": "高", "severe": "严重", "unknown": "未知"
+    },
+    "issues": {
+      "grounding_gap": "来源支撑薄弱",
+      "judgment_gap": "缺少自己的判断",
+      "prompt_specificity_gap": "笼统，未紧扣任务",
+      "surface_ai_text_signal": "过于光滑、类似 AI 的表层风格",
+      "authorship_voice_gap": "缺少个人作者声音"
+    },
+    "fixes": {
+      "grounding_gap": "将论断对应到真实来源与具名证据。",
+      "judgment_gap": "展示你的决定、比较与评析。",
+      "prompt_specificity_gap": "紧扣作业、课程模块与具体细节。",
+      "surface_ai_text_signal": "变化结构与措辞，加入自己的声音。",
+      "authorship_voice_gap": "加入你的个人推理过程与草稿取舍。"
+    }
+  },
   "aiLikelihood": {
     "title": "AI 写作信号",
     "mainFixLabel": "首先要修复的",

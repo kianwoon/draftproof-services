@@ -28,6 +28,7 @@ from detect.external_grouped_scoring import estimate_external_grouped_score
 from detect.grounding_diagnosis import diagnose_grounding_gap
 from detect.critical_thinking import score_critical_thinking, score_critical_thinking_per_paragraph
 from detect.submission_risk import score_submission_risk
+from detect.policy_risk import score_policy_risk
 from detect.transformation import (
     TRANSFORMATION_SIGNAL_METADATA,
     classify_transformation_from_scan,
@@ -1531,6 +1532,15 @@ class ReportBuilder:
             scored_sentence_count=len(_pred_sentences) if _pred_sentences else None,
         )
 
+        # Additive policy-risk view: re-weights the SAME grounding + critical-thinking
+        # signals into two policy-interpreted scores (AI-allowed vs AI-restricted).
+        # Additive only -- does NOT affect tier, ai_likelihood, or any gate. Declaration
+        # and process aren't in the text -> confirm-yourself factors (see detect.policy_risk).
+        policy_risk = score_policy_risk(
+            grounding_diagnosis=grounding_diagnosis,
+            critical_thinking_control=critical_thinking_control,
+        )
+
         ai_risk_badge = {
             # AI Generation (Phase 1)
             "tier": layer3.tier.value,
@@ -1539,6 +1549,7 @@ class ReportBuilder:
             "grounding_diagnosis": grounding_diagnosis,
             "critical_thinking_control": critical_thinking_control,
             "submission_risk": submission_risk,
+            "policy_risk": policy_risk,
             "authorship_rating": layer3.authorship_rating,
             "authorship_rating_label": layer3.authorship_rating.get("label"),
             "authorship_rating_code": layer3.authorship_rating.get("code"),

@@ -287,6 +287,75 @@
   line-height: 1.5;
 }
 
+/* Policy risk — two policy-interpreted scores replacing the raw two-number block. */
+.policy-risk { margin: .4rem 0 0; }
+.policy-risk-kicker {
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.policy-risk-sub { margin: .15rem 0 .7rem; color: #475569; font-size: .9rem; }
+
+.policy-risk-row {
+  padding: .7rem .85rem;
+  margin-top: .55rem;
+  border-radius: 12px;
+  border: 1px solid rgba(13, 27, 42, .10);
+  background: #f8fafc;
+  border-left: 4px solid #cbd5e1;
+}
+.policy-risk-row.is-low { border-left-color: #16a34a; }
+.policy-risk-row.is-moderate { border-left-color: #d97706; }
+.policy-risk-row.is-high { border-left-color: #dc2626; }
+.policy-risk-row.is-severe { border-left-color: #991b1b; }
+.policy-risk-row.is-unknown { border-left-color: #94a3b8; }
+
+.policy-risk-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .4rem;
+}
+.policy-risk-mode { color: #334155; font-size: .88rem; font-weight: 700; }
+.policy-risk-level {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+.policy-risk-level.is-low { color: #15803d; }
+.policy-risk-level.is-moderate { color: #b45309; }
+.policy-risk-level.is-high { color: #b91c1c; }
+.policy-risk-level.is-severe { color: #7f1d1d; }
+.policy-risk-level.is-unknown { color: #475569; }
+.policy-risk-level > em { font-style: normal; font-size: .82rem; color: #64748b; font-weight: 600; }
+
+.policy-risk-issue { margin: .4rem 0 0; color: #334155; font-size: .86rem; }
+.policy-risk-fix { margin: .2rem 0 0; color: #64748b; font-size: .84rem; }
+.policy-risk-issue > span,
+.policy-risk-fix > span { font-weight: 750; color: #475569; }
+
+.policy-risk-confirm {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  margin-top: .55rem;
+  color: #475569;
+  font-size: .82rem;
+  cursor: pointer;
+}
+.policy-risk-confirm > input { accent-color: #16a34a; }
+
+.policy-risk-disclaimer { margin: .8rem 0 0; color: #64748b; font-size: .78rem; line-height: 1.5; }
+
+.ai-likelihood-detector-detail {
+  margin: .7rem 0 0;
+  color: #94a3b8;
+  font-size: .76rem;
+}
+
 .report-hero-repair {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 34%);

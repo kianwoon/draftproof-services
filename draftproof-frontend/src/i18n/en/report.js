@@ -546,6 +546,38 @@ export const report = {
     }
   },
   "ok": "OK",
+  // allow-hardcode: i18n UI copy for the two policy scores (labels/levels/issues/fixes
+  // keyed by code) — presentation, never matched against text. KEEP IN SYNC with
+  // poc/report/render.py _POLICY_* maps + zh/report.js.
+  "policyRisk": {
+    "heading": "Policy risk",
+    "subheading": "How this draft may read under your school's AI policy",
+    "allowedLabel": "If AI is allowed (with declaration)",
+    "restrictedLabel": "If AI is not allowed",
+    "mainIssuePrefix": "Main issue:",
+    "bestFixPrefix": "Best fix:",
+    "confirmTitle": "Confirm yourself to lower a score",
+    "confirmAllowed": "I can explain how AI was used",
+    "confirmRestricted": "I have drafts / notes for this work",
+    "disclaimer": "These scores do not prove AI use. They estimate how risky the draft may look under different school policies.",
+    "levels": {
+      "low": "Low", "moderate": "Moderate", "high": "High", "severe": "Severe", "unknown": "Unknown"
+    },
+    "issues": {
+      "grounding_gap": "weak source grounding",
+      "judgment_gap": "limited own judgment",
+      "prompt_specificity_gap": "generic, not tied to the task",
+      "surface_ai_text_signal": "polished, AI-like surface style",
+      "authorship_voice_gap": "limited personal authorship voice"
+    },
+    "fixes": {
+      "grounding_gap": "Tie claims to real sources and named evidence.",
+      "judgment_gap": "Show your decisions, comparisons, and critique.",
+      "prompt_specificity_gap": "Anchor to the assignment, module, and concrete details.",
+      "surface_ai_text_signal": "Vary structure and phrasing; add your own voice.",
+      "authorship_voice_gap": "Add your personal reasoning path and draft choices."
+    }
+  },
   "aiLikelihood": {
     "title": "AI-writing signal",
     "mainFixLabel": "Main thing to fix",

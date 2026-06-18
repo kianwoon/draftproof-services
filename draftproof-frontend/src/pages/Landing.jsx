@@ -4,11 +4,19 @@ import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
 import SubmissionRiskBand from './report/SubmissionRiskBand';
+import PolicyRiskView from './report/PolicyRiskView';
 import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 // Representative Submission-risk shape for the marketing sample report. Mirrors the
 // real ai_risk_badge.submission_risk object; values are an illustrative example, not
 // a scoring oracle (the band's labels come from i18n report.submissionRisk.*).
+// Representative two-policy-score sample for the marketing card. Same draft reads
+// differently by school policy (the whole point). Illustrative, not a scoring oracle.
+const SAMPLE_POLICY_RISK = {
+  ai_allowed: { score: 38, level: 'moderate', main_issue: 'grounding_gap', confirm_factor: 'declaration_gap', confirm_delta: 7, confirm_level: 'moderate' },
+  ai_restricted: { score: 52, level: 'high', main_issue: 'surface_ai_text_signal', confirm_factor: 'process_defensibility_gap', confirm_delta: 5, confirm_level: 'high' },
+};
+
 const SAMPLE_SUBMISSION_RISK = {
   overall: { level: 'high', main_reason_code: 'ownership' },
   axes: {
@@ -744,6 +752,7 @@ function SampleReportPreview() {
         {activeSection === 'aiSignal' && (
           <>
             <SubmissionRiskBand t={t} sr={SAMPLE_SUBMISSION_RISK} />
+            <PolicyRiskView t={t} pr={SAMPLE_POLICY_RISK} />
             <div className="sample-report-pattern">
               <div className="sample-report-pattern-main">
                 <div className="sample-transformation-icon" aria-hidden="true">

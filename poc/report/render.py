@@ -422,6 +422,61 @@ def _ai_signal_verdict(badge: dict) -> str:
     return verdict
 
 
+# allow-hardcode: presentation maps for the two policy scores (level labels +
+# plain-language main-issue / best-fix keyed by signal CODE). Display strings for the
+# PDF, never matched against document text. KEEP IN SYNC with frontend i18n
+# report.policyRisk.* (en + zh).
+_POLICY_LEVEL = {"low": "Low", "moderate": "Moderate", "high": "High", "severe": "Severe", "unknown": "Unknown"}
+_POLICY_ISSUE = {
+    "grounding_gap": "weak source grounding",
+    "judgment_gap": "limited own judgment",
+    "prompt_specificity_gap": "generic, not tied to the task",
+    "surface_ai_text_signal": "polished, AI-like surface style",
+    "authorship_voice_gap": "limited personal authorship voice",
+}
+_POLICY_FIX = {
+    "grounding_gap": "Tie claims to real sources and named evidence.",
+    "judgment_gap": "Show your decisions, comparisons, and critique.",
+    "prompt_specificity_gap": "Anchor to the assignment, module, and concrete details.",
+    "surface_ai_text_signal": "Vary structure and phrasing; add your own voice.",
+    "authorship_voice_gap": "Add your personal reasoning path and draft choices.",
+}
+_POLICY_DISCLAIMER = (
+    "These scores do not prove AI use. They estimate how risky the draft may look under "
+    "different school policies."
+)
+
+
+def _policy_row(label: str, p: dict) -> str:
+    issue = _POLICY_ISSUE.get(p.get("main_issue"), "")
+    fix = _POLICY_FIX.get(p.get("main_issue"), "")
+    line = f"- **{label}: {_POLICY_LEVEL.get(p.get('level'), 'Unknown')}**"
+    if issue:
+        line += f" — main issue: {issue}."
+    if fix:
+        line += f" {fix}"
+    return line
+
+
+def _render_policy_risk(badge: dict | None) -> list[str]:
+    """Two policy-interpreted scores (AI-allowed vs AI-restricted). Returns [] when the
+    diagnosis abstained, so the caller keeps the raw detector detail as the fallback."""
+    pr = (badge or {}).get("policy_risk") or {}
+    a = pr.get("ai_allowed") or {}
+    r = pr.get("ai_restricted") or {}
+    if not a.get("level") or a.get("level") == "unknown":
+        return []
+    return [
+        "**Policy risk — how this draft may read under your school's AI policy**",
+        "",
+        _policy_row("If AI is allowed (with declaration)", a),
+        _policy_row("If AI is not allowed", r),
+        "",
+        f"_{_POLICY_DISCLAIMER}_",
+        "",
+    ]
+
+
 def _render_ai_likelihood_headline(badge: dict | None) -> str:
     bands = _ai_likelihood_bands(badge)
     dp = bands["draftproof"]
@@ -436,12 +491,22 @@ def _render_ai_likelihood_headline(badge: dict | None) -> str:
     if lead:
         out.extend(lead)
         out.append("")
-        out.append(f"- _Detail — DraftProof AI-style estimate (conservative): {dp['score']}% ({dp['tier']})_")
-    else:
-        out.append(f"- **DraftProof AI-style estimate (conservative): {dp['score']}% — {dp['tier']}** — mostly writing fluency that grounding won't fully move; the grounding fix above is what to act on")
+    # Two policy-interpreted scores replace the raw DraftProof/external two-number block.
+    policy = _render_policy_risk(badge)
     ext = bands["external"]
-    if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and ext:
-        out.append(f"- **Turnitin / external (estimated): ~{ext['score']}% — {ext['label']}**")
+    if policy:
+        out.extend(policy)
+        # Raw detector numbers demoted to a single transparency detail line.
+        raw = f"- _Detector detail — DraftProof AI-style estimate (conservative): {dp['score']}% ({dp['tier']})"
+        if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and ext:
+            raw += f" · external ~{ext['score']}% ({ext['label']})"
+        raw += "_"
+        out.append(raw)
+    else:
+        # Fallback (older reports without policy_risk): keep the prior two-number block.
+        out.append(f"- **DraftProof AI-style estimate (conservative): {dp['score']}% — {dp['tier']}**")
+        if EXTERNAL_ESTIMATE_DISPLAY_ENABLED and ext:
+            out.append(f"- **Turnitin / external (estimated): ~{ext['score']}% — {ext['label']}**")
     out.append("")
     tc = badge.get("transformation_classification") or {}
     meta = []
