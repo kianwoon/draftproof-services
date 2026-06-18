@@ -390,7 +390,7 @@ export const report = {
     "cancelFailed": "无法取消改写",
     "queuing": "正在排队改写",
     "noRewriteableTitle": "没有可自动改写的 AI 段落",
-    "noRewriteableMessage": "此报告只有仅供审阅的信号。DraftProof 没有可自动改写的内容，因此没有扣除积分。",
+    "noRewriteableMessage": "此报告只有仅供审阅的信号。DraftProof 没有可自动改写的内容。",
     "progressMessages": [
       "正在改写被标记段落，同时保留原意。",
       "正在对照原始草稿检查修改文本。",

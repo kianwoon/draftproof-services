@@ -394,7 +394,7 @@ export const report = {
     "cancelFailed": "Failed to cancel rewrite",
     "queuing": "Queuing rewrite",
     "noRewriteableTitle": "No rewriteable AI sections",
-    "noRewriteableMessage": "This report only has review-only signals. There is nothing DraftProof can rewrite automatically, so no credits were deducted.",
+    "noRewriteableMessage": "This report only has review-only signals. There is nothing DraftProof can rewrite automatically.",
     "progressMessages": [
       "Rewriting flagged passages while preserving the original meaning.",
       "Checking revised text against the source draft.",
