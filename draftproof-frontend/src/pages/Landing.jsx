@@ -494,7 +494,7 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
       id: `use-case-${uc.id}`,
       eyebrow: uc.eyebrow,
       title: uc.title,
-      body: [uc.body],
+      body: Array.isArray(uc.body) ? uc.body : [uc.body],
       renderPanel: () => (
         <SignalPanel
           label={uc.eyebrow}

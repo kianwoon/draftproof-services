@@ -27,7 +27,10 @@ export const landing = {
       "eyebrow": "A score isn't help",
       "tag": "The problem with checkers",
       "title": "A percentage doesn't tell you what to fix.",
-      "body": "Turnitin and free AI checkers hand back one number and leave you to guess. DraftProof shows the exact claims and passages at risk — and how to ground them.",
+      "body": [
+        "Turnitin and free AI checkers hand back one number and leave you to guess. A percentage tells you that you're flagged — it never tells you which sentence, why, or what to do next.",
+        "DraftProof reads the draft instead: it marks the exact claims and passages at risk and gives you a highlighted before/after for each one, so you can see what to add, anchor, or rewrite in your own words before you submit."
+      ],
       // allow-hardcode: i18n display copy (carousel slide points/guardrails/punch shown to users) — not a scoring/matching oracle.
       "points": [
         "Pinpoints the exact claims and passages at risk",
@@ -47,7 +50,10 @@ export const landing = {
       "eyebrow": "If your school allows AI",
       "tag": "AI-assisted, done right",
       "title": "Prove your AI-assisted work is grounded and yours.",
-      "body": "Where AI is permitted, the bar is quality and control. DraftProof weighs grounding, judgment and specificity — and treats surface AI-wording lightly.",
+      "body": [
+        "Where AI is permitted, the bar isn't whether you used it — it's quality and control. DraftProof weighs grounding, judgment and specificity, and treats surface AI-wording lightly.",
+        "It reads your draft the way a course that allows AI would: does each claim rest on real evidence and your own reasoning? You see exactly where the work is well-grounded and where it still reads as generic — so you can make it unmistakably yours."
+      ],
       // allow-hardcode: i18n display copy (carousel slide points/guardrails/punch shown to users) — not a scoring/matching oracle.
       "points": [
         "Rewards real evidence, reasoning and your own framing",
@@ -67,7 +73,10 @@ export const landing = {
       "eyebrow": "If your school bans AI",
       "tag": "Prove the thinking is yours",
       "title": "Show the work is authored by you, not a model.",
-      "body": "Where AI is prohibited, DraftProof weighs authorship voice and surface AI-text more, and flags passages that read machine-written — so you can rewrite them in your own voice. Never a bypass, never an accusation.",
+      "body": [
+        "Where AI is prohibited, DraftProof weighs authorship voice and surface AI-text more, and flags the passages that read machine-written — so you can rewrite them in your own voice before a reader ever questions them.",
+        "It can't prove how you wrote it, and never pretends to. It surfaces the passages a reader might challenge and the factors only you can confirm — so the defence is the one that actually holds: the thinking, and the words, are yours. Never a bypass, never an accusation."
+      ],
       // allow-hardcode: i18n display copy (carousel slide points/guardrails/punch shown to users) — not a scoring/matching oracle.
       "points": [
         "Surfaces passages that don't sound like your voice",
