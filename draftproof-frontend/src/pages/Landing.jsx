@@ -127,13 +127,12 @@ export default function Landing() {
         </div>
       </section>
 
-      <UseCaseCarousel slides={useCases} />
-
       <ContentRiskCarousel
         anchorCards={anchorCards}
         anchorWorkflow={anchorWorkflow}
         humanizerSignals={humanizerSignals}
         humanWrittenSignals={humanWrittenSignals}
+        useCases={useCases}
       />
 
       <ReportStrategyCarousel
@@ -390,61 +389,7 @@ function toneClass(tone, allowed = ['positive', 'warning', 'neutral']) {
   return allowed.includes(tone) ? `is-${tone}` : 'is-neutral';
 }
 
-function UseCaseCarousel({ slides }) {
-  const { t } = useTranslation();
-  const list = Array.isArray(slides) ? slides : [];
-  const carousel = useLandingCarousel(list.length, 6000);
-  if (list.length === 0) return null;
-
-  return (
-    <section
-      className="landing-section use-case-carousel-section"
-      aria-label={t('landing.useCasesLabel')}
-      onMouseEnter={carousel.pause}
-      onMouseLeave={carousel.resume}
-      onFocusCapture={carousel.pause}
-      onBlurCapture={carousel.resume}
-    >
-      <div className="section-inner use-case-head">
-        <p className="use-case-eyebrow">{t('landing.useCasesEyebrow')}</p>
-        <h2>{t('landing.useCasesHeading')}</h2>
-      </div>
-      <div className="use-case-shell section-inner">
-        <div className="use-case-track" style={{ '--active-slide': carousel.activeSlide }}>
-          {list.map((slide, index) => (
-            <article
-              key={slide.id}
-              className={`use-case-slide${carousel.activeSlide === index ? ' is-active' : ''}`}
-              aria-hidden={carousel.activeSlide !== index}
-              inert={carousel.activeSlide !== index ? '' : undefined}
-            >
-              <div className="use-case-inner">
-                <span className="use-case-tag">{slide.tag}</span>
-                <h3>{slide.title}</h3>
-                <p className="use-case-body">{slide.body}</p>
-                <ul className="use-case-points">
-                  {(Array.isArray(slide.points) ? slide.points : []).map((point) => (
-                    <li key={point}>{point}</li>
-                  ))}
-                </ul>
-              </div>
-            </article>
-          ))}
-        </div>
-      </div>
-      <LandingCarouselControls
-        activeSlide={carousel.activeSlide}
-        dotsLabel={t('landing.useCasesTabsLabel')}
-        nextLabel={t('landing.useCasesNext')}
-        onNext={carousel.goToNextSlide}
-        onSelect={carousel.goToSlide}
-        slides={list}
-      />
-    </section>
-  );
-}
-
-function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals }) {
+function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals, useCases }) {
   const { t } = useTranslation();
   const slides = useMemo(() => ([
     {
@@ -545,7 +490,21 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
         />
       ),
     },
-  ]), [anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals, t]);
+    ...(Array.isArray(useCases) ? useCases : []).map((uc) => ({
+      id: `use-case-${uc.id}`,
+      eyebrow: uc.eyebrow,
+      title: uc.title,
+      body: [uc.body],
+      renderPanel: () => (
+        <SignalPanel
+          label={uc.eyebrow}
+          signals={Array.isArray(uc.points) ? uc.points : []}
+          guardrails={[]}
+          punch={uc.tag}
+        />
+      ),
+    })),
+  ]), [anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals, useCases, t]);
   const carousel = useLandingCarousel(slides.length);
 
   return (
