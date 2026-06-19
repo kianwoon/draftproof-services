@@ -23,7 +23,7 @@ export const dashboard = {
   "workflowTitle": "Detect the risk. Understand why. Fix it.",
   "scanWorkflowLabel": "Scan workflow",
   "scanWorkflowTitle": "Get a paragraph-level breakdown, not just a score",
-  "rewriteWorkflowLabel": "Rewrite workflow",
+  "rewriteWorkflowLabel": "Auto rewrite",
   "rewriteWorkflowTitle": "Receive a coached rewrite from your scan report",
   "reportGateLabel": "Report",
   "unlockAfterReport": "Unlocks after report",
@@ -66,7 +66,7 @@ export const dashboard = {
       "body": "The rewrite PDF is emailed to you — a clear record of what changed, why it changed, and what to verify."
     }
   ],
-  "manualWorkflowLabel": "Manual correction",
+  "manualWorkflowLabel": "Manual rewrite",
   "manualWorkflowTitle": "Fix it yourself, guided by findings",
   "manualSteps": [
     {

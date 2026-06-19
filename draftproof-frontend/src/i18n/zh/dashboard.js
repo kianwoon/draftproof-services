@@ -23,7 +23,7 @@ export const dashboard = {
   "workflowTitle": "发现风险。明白原因。针对性修正。",
   "scanWorkflowLabel": "扫描工作流",
   "scanWorkflowTitle": "逐段诊断，不只给你一个分数",
-  "rewriteWorkflowLabel": "改写工作流",
+  "rewriteWorkflowLabel": "自动改写",
   "rewriteWorkflowTitle": "根据扫描报告，获得有针对性的辅导式改写",
   "reportGateLabel": "报告",
   "unlockAfterReport": "报告完成后解锁",
@@ -66,7 +66,7 @@ export const dashboard = {
       "body": "改写 PDF 会发送到你的邮箱，清楚记录改了什么、为什么改、以及需要你核实的地方。"
     }
   ],
-  "manualWorkflowLabel": "手动修正",
+  "manualWorkflowLabel": "手动改写",
   "manualWorkflowTitle": "参照发现，亲自修改",
   "manualSteps": [
     {
