@@ -22,13 +22,16 @@ export const pricing = {
   ],
   "rewriteTitle": "Guided revision",
   "rewriteUnit": "/ 1,000 words",
+  // allow-hardcode: i18n marketing copy for rewrite feature list — UI strings, not a detection/scoring oracle
   "rewriteFeatures": [
-    "5 credits per guided revision",
-    "Up to 1,000 words per revision",
-    "Showcase how to ground weak claims",
-    "Replace vague phrasing with evidence-aware language",
-    "Preserves original meaning and structure",
-    "Reviewable draft with improvements and author checks highlighted"
+    "5 credits per guided revision (completed scan required)",
+    "Paragraph-level rewrite — only flagged sections are changed",
+    "Grounding-based coaching — adds concrete anchors, examples, and evidence",
+    "Explains what changed and why in each paragraph",
+    "Before/after diff view — see exactly what DraftProof changed",
+    "Preserves your original voice, argument, and structure",
+    "Author checks highlighted — human-written markers surface for review",
+    "Reviewable draft — a teaching example to learn from, not a final submission"
   ],
   "startScan": "Start a scan",
   "startWithScan": "Start with a scan",

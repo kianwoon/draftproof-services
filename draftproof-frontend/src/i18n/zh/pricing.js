@@ -22,13 +22,16 @@ export const pricing = {
   ],
   "rewriteTitle": "引导式修改",
   "rewriteUnit": "/ 1,000 词",
+  // allow-hardcode: i18n marketing copy for rewrite feature list — UI strings, not a detection/scoring oracle
   "rewriteFeatures": [
-    "每次引导式修改 5 个积分",
-    "每次修改最多 1,000 词",
-    "示范如何补强薄弱论断",
-    "用依据感知的语言替换含糊表达",
-    "保留原始含义和结构",
-    "提供带改进高亮和作者核查项的可审阅草稿"
+    "每次引导式修改 5 个积分（需先完成扫描）",
+    "逐段改写——仅修改被标记的段落",
+    "基于依据的辅导——补充具体锚点、案例与论据",
+    "解释每段改动内容及原因",
+    "改写前后对比视图——清晰呈现每处变化",
+    "保留你的原始观点、论证逻辑与行文结构",
+    "作者核查项高亮——将人类写作标记浮现供审阅",
+    "可审阅草稿——作为学习示例，而非最终提交版本"
   ],
   "startScan": "开始扫描",
   "startWithScan": "从扫描开始",
