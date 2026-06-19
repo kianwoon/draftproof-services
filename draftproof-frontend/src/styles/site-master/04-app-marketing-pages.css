@@ -1695,7 +1695,7 @@
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  color: var(--muted);
   margin: 0 0 0.75rem;
 }
 
@@ -1717,8 +1717,8 @@
   padding: 0.5rem 0.75rem;
   font-size: 0.6875rem;
   font-weight: 600;
-  color: var(--color-text-secondary);
-  border-bottom: 1px solid var(--color-border-tertiary);
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
   text-align: center;
   white-space: nowrap;
 }
@@ -1729,22 +1729,22 @@
 }
 
 .feat-table th.feat-th-dp {
-  background: var(--color-background-info);
-  color: var(--color-text-info);
+  background: var(--green-50);
+  color: var(--green-700);
   border-radius: 6px 6px 0 0;
 }
 
 .feat-table td {
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--color-border-tertiary);
+  border-bottom: 1px solid var(--line);
   text-align: center;
-  color: var(--color-text-secondary);
+  color: var(--muted);
   vertical-align: middle;
 }
 
 .feat-table td:first-child {
   text-align: left;
-  color: var(--color-text-primary);
+  color: var(--ink);
 }
 
 .feat-table tbody tr:last-child td {
@@ -1752,17 +1752,17 @@
 }
 
 .feat-table td.feat-td-dp {
-  background: var(--color-background-info);
+  background: var(--green-50);
 }
 
 .feat-yes {
-  color: var(--color-text-success);
+  color: var(--green-600);
   font-size: 1rem;
   line-height: 1;
 }
 
 .feat-no {
-  color: var(--color-text-danger);
+  color: var(--red);
   font-size: 1rem;
   line-height: 1;
 }
@@ -1770,7 +1770,7 @@
 .feat-partial {
   font-size: 0.6875rem;
   font-weight: 600;
-  color: var(--color-text-warning);
+  color: var(--gold);
 }
 
 .feat-cards {
@@ -1781,15 +1781,15 @@
 }
 
 .feat-card {
-  background: var(--color-background-primary);
-  border: 1px solid var(--color-border-tertiary);
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 12px;
   padding: 1.125rem 1.25rem;
 }
 
 .feat-card-icon {
   font-size: 1.25rem;
-  color: var(--color-text-info);
+  color: var(--green-700);
   margin-bottom: 0.4rem;
 }
 
@@ -1797,12 +1797,12 @@
   font-size: 0.875rem;
   font-weight: 600;
   margin: 0 0 0.35rem;
-  color: var(--color-text-primary);
+  color: var(--ink);
 }
 
 .feat-card p {
   font-size: 0.8125rem;
-  color: var(--color-text-secondary);
+  color: var(--muted);
   margin: 0;
   line-height: 1.55;
 }
