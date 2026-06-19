@@ -20,11 +20,11 @@ export const dashboard = {
   "purchasesCount_one": "{{count}} purchase",
   "purchasesCount_other": "{{count}} purchases",
   "workflow": "Workflow",
-  "workflowTitle": "Know what looks risky. Fix it with proof.",
+  "workflowTitle": "Detect the risk. Understand why. Fix it.",
   "scanWorkflowLabel": "Scan workflow",
-  "scanWorkflowTitle": "Find what a reviewer may question",
+  "scanWorkflowTitle": "Get a paragraph-level breakdown, not just a score",
   "rewriteWorkflowLabel": "Rewrite workflow",
-  "rewriteWorkflowTitle": "Turn weak spots into a grounded draft",
+  "rewriteWorkflowTitle": "Receive a coached rewrite from your scan report",
   "reportGateLabel": "Report",
   "unlockAfterReport": "Unlocks after report",
   "scanCreatesReport": "Scan creates this report",
@@ -33,37 +33,37 @@ export const dashboard = {
   "steps": [
     {
       "title": "Paste your draft",
-      "body": "Drop in the text you want to check before you submit."
+      "body": "Drop in the text you want to review. No institution account needed — just your words."
     },
     {
-      "title": "See what stands out",
-      "body": "DraftProof flags AI-like wording, weak evidence, citation gaps, and source issues."
+      "title": "See exactly why it's flagged",
+      "body": "DraftProof diagnoses citation gaps, source integrity, AI-like signals, policy risk, submission risk, and critical thinking — paragraph by paragraph."
     },
     {
-      "title": "Fix with evidence",
-      "body": "Use plain guidance to add proof, clearer reasoning, and your own voice."
+      "title": "Understand why, then fix it",
+      "body": "Each finding explains what's risky and why. Use the guidance to add concrete proof, real examples, and your own voice."
     },
     {
-      "title": "Keep your record",
-      "body": "Save the PDF so you can see what was checked and why it matters."
+      "title": "Download your PDF report",
+      "body": "Get a full findings report — emailed to you and available any time in Reports."
     }
   ],
   "rewriteSteps": [
     {
-      "title": "Open a report",
-      "body": "Choose a completed scan with parts DraftProof can help revise."
+      "title": "Open a scan report",
+      "body": "Pick a completed scan. DraftProof uses your report findings to target only the paragraphs that need work."
     },
     {
-      "title": "Get a grounded draft",
-      "body": "DraftProof rewrites suitable weak spots with the report context, not random word swaps."
+      "title": "Receive a coached rewrite",
+      "body": "DraftProof rewrites only flagged paragraphs — adding concrete grounding, examples, and evidence where content was too generic."
     },
     {
-      "title": "Check before using",
-      "body": "Compare the original and revised text so your meaning, proof, and voice stay intact."
+      "title": "Review the before/after diff",
+      "body": "Compare original and rewrite side by side. Verify the meaning, citations, and voice are still yours before using."
     },
     {
-      "title": "Keep the rewrite PDF",
-      "body": "Use the emailed PDF as a clear record of your revision."
+      "title": "Download the rewrite PDF",
+      "body": "The rewrite PDF is emailed to you — a clear record of what changed, why it changed, and what to verify."
     }
   ]
 };

@@ -20,11 +20,11 @@ export const dashboard = {
   "purchasesCount_one": "{{count}} 笔购买",
   "purchasesCount_other": "{{count}} 笔购买",
   "workflow": "工作流",
-  "workflowTitle": "看清风险点，用证据改扎实。",
+  "workflowTitle": "发现风险。明白原因。针对性修正。",
   "scanWorkflowLabel": "扫描工作流",
-  "scanWorkflowTitle": "找出审阅者可能质疑的地方",
+  "scanWorkflowTitle": "逐段诊断，不只给你一个分数",
   "rewriteWorkflowLabel": "改写工作流",
-  "rewriteWorkflowTitle": "把薄弱处改成有依据的草稿",
+  "rewriteWorkflowTitle": "根据扫描报告，获得有针对性的辅导式改写",
   "reportGateLabel": "报告",
   "unlockAfterReport": "报告完成后解锁",
   "scanCreatesReport": "扫描会生成这份报告",
@@ -33,37 +33,37 @@ export const dashboard = {
   "steps": [
     {
       "title": "粘贴草稿",
-      "body": "把提交前想检查的文字放进扫描页面。"
+      "body": "把想审阅的文字放进来，无需机构账户，只需你的文字。"
     },
     {
-      "title": "看清突出问题",
-      "body": "DraftProof 会标出像 AI 的表达、证据不足、引用缺口和来源问题。"
+      "title": "清楚看到被标记的原因",
+      "body": "DraftProof 逐段诊断引用缺口、来源完整性、类 AI 信号、政策风险、提交风险和批判性思维。"
     },
     {
-      "title": "用证据修正",
-      "body": "按清楚的建议补强依据、推理和你自己的表达。"
+      "title": "明白原因，再有针对性地修正",
+      "body": "每项发现都会说明风险是什么、为什么有风险。按建议补充具体证据、真实案例和你自己的表达。"
     },
     {
-      "title": "保留记录",
-      "body": "保存 PDF，清楚看到检查了什么，以及为什么重要。"
+      "title": "下载 PDF 报告",
+      "body": "完整报告会发送到你的邮箱，也可随时在「报告」页面查看。"
     }
   ],
   "rewriteSteps": [
     {
-      "title": "打开报告",
-      "body": "选择一份已完成、且有可协助修改部分的扫描报告。"
+      "title": "打开扫描报告",
+      "body": "选择一份已完成的扫描报告。DraftProof 会根据报告发现，只针对需要修改的段落进行处理。"
     },
     {
-      "title": "获得有依据的草稿",
-      "body": "DraftProof 会根据报告内容修改合适的薄弱处，不是随意换词。"
+      "title": "获得辅导式改写",
+      "body": "DraftProof 仅改写被标记的段落——补充具体的论据支撑、案例和证据，针对内容过于泛泛的地方。"
     },
     {
-      "title": "使用前检查",
-      "body": "对比原文和修改稿，确认意思、证据和你的语气都保留下来。"
+      "title": "对比改写前后",
+      "body": "并排对比原文与改写稿，确认意思、引用和语气仍然是你自己的，再决定是否使用。"
     },
     {
-      "title": "保留改写 PDF",
-      "body": "使用邮件中的 PDF 作为清楚的修改记录。"
+      "title": "下载改写 PDF",
+      "body": "改写 PDF 会发送到你的邮箱，清楚记录改了什么、为什么改、以及需要你核实的地方。"
     }
   ]
 };
