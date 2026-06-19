@@ -39,6 +39,13 @@ export const PAGE_META = {
     schemaType: 'AboutPage',
     freshness: { type: 'reviewed', date: SEO_REVIEW_DATE },
   },
+  '/features': {
+    titleKey: 'seo.featuresTitle',
+    descriptionKey: 'seo.featuresDescription',
+    canonical: '/features',
+    schemaType: 'WebPage',
+    freshness: { type: 'reviewed', date: '2026-06-19' },
+  },
   '/content-checker': {
     titleKey: 'seo.essayCheckerTitle',
     descriptionKey: 'seo.essayCheckerDescription',
