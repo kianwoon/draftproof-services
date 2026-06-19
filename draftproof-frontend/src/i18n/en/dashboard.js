@@ -65,5 +65,21 @@ export const dashboard = {
       "title": "Download the rewrite PDF",
       "body": "The rewrite PDF is emailed to you — a clear record of what changed, why it changed, and what to verify."
     }
+  ],
+  "manualWorkflowLabel": "Manual correction",
+  "manualWorkflowTitle": "Fix it yourself, guided by findings",
+  "manualSteps": [
+    {
+      "title": "Read paragraph findings",
+      "body": "Open the scan report. Each flagged paragraph tells you what's risky and why — use that as your edit brief."
+    },
+    {
+      "title": "Edit your own draft",
+      "body": "Go back to your source document. Add your own evidence, rephrase with your voice, and ground each weak claim yourself."
+    },
+    {
+      "title": "Re-scan to confirm",
+      "body": "Paste the revised text into a new scan and check whether the risk is lower before you submit."
+    }
   ]
 };

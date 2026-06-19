@@ -66,6 +66,7 @@ export default function Dashboard() {
   const tokenLabel = balance === null ? t('common.checking') : t('common.token', { count: balance });
   const steps = t('dashboard.steps', { returnObjects: true });
   const rewriteSteps = t('dashboard.rewriteSteps', { returnObjects: true });
+  const manualSteps = t('dashboard.manualSteps', { returnObjects: true });
   const scanSteps = steps.slice(0, 3);
   const reportStep = steps[3];
 
@@ -215,6 +216,23 @@ export default function Dashboard() {
                 ))}
               </ol>
               <Link to="/reports" className="dash-workflow-link">{t('dashboard.openReports')}</Link>
+
+              <div className="dash-flow-or-divider"><span>or</span></div>
+
+              <div className="dash-workflow-panel-heading">
+                <span className="brand-pill brand-pill-muted">{t('dashboard.manualWorkflowLabel')}</span>
+                <h3>{t('dashboard.manualWorkflowTitle')}</h3>
+              </div>
+              <ol className="dash-steps">
+                {manualSteps.map((step, index) => (
+                  <li className="dash-step dash-step-manual" key={step.title} style={{ '--i': index + 8 }}>
+                    <span className="step-num">{index + 1}</span>
+                    <strong>{step.title}</strong>
+                    <p>{step.body}</p>
+                  </li>
+                ))}
+              </ol>
+              <Link to="/scan" className="dash-workflow-link">{t('dashboard.startScan')}</Link>
             </div>
           </div>
         </section>

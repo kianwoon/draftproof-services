@@ -649,6 +649,39 @@
   text-decoration: underline;
 }
 
+.dash-flow-or-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 20px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.dash-flow-or-divider::before,
+.dash-flow-or-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+  opacity: .5;
+}
+
+.brand-pill-muted {
+  background: rgba(0, 0, 0, .05);
+  color: var(--muted);
+  border: .5px solid var(--line);
+}
+
+.dash-step-manual .step-num {
+  background: var(--surface);
+  color: var(--muted);
+  border: 1.5px solid var(--line);
+}
+
 .dash-steps {
   display: grid;
   grid-template-columns: 1fr;
