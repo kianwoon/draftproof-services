@@ -184,8 +184,8 @@ export default function Landing() {
         <div className="section-inner">
           <p className="eyebrow">{t('featuresPage.tableLabel')}</p>
           <h2>{t('featuresPage.title')}</h2>
-          <p className="section-lead">{t('featuresPage.lead')}</p>
-          <div className="feat-table-wrap" style={{ marginTop: '1.5rem' }}>
+          <p className="section-lead" style={{ marginBottom: '1.25rem' }}>{t('featuresPage.lead')}</p>
+          <div className="feat-table-wrap">
             <table className="feat-table">
               <thead>
                 <tr>
