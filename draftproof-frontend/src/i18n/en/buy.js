@@ -8,7 +8,7 @@ export const buy = {
   "currentBalance": "Current balance",
   "tokenRate": "1 credit per 1,000 words",
   "balanceScanEstimate": "About {{count}} scan words",
-  "balanceRewriteEstimate": "{{count}} guided revision blocks",
+  "balanceRewriteEstimate": "{{count}} rewrite blocks",
   "usageAria": "Credit usage",
   "usageItems": [
     {
@@ -17,7 +17,7 @@ export const buy = {
       "detail": "per started 1,000 words"
     },
     {
-      "label": "Guided revision",
+      "label": "Rewrite",
       "value": "5 credits",
       "detail": "per started 1,000 words"
     },
@@ -29,11 +29,11 @@ export const buy = {
   ],
   "packNotes": {
     "single": "Good for a quick check or short draft.",
-    "starter": "Useful for a few scans or one guided revision block.",
+    "starter": "Useful for a few scans or one rewrite block.",
     "standard": "Balanced pack for repeated review and revision.",
     "pro": "Best for longer documents and frequent review."
   },
-  "defaultPackNote": "Review credits for scans and guided revision.",
+  "defaultPackNote": "Review credits for scans and rewrite.",
   "recommended": "Most useful",
   "promo": "Promo",
   "tokenCount_one": "{{count}} credit",

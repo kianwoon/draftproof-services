@@ -20,11 +20,11 @@ export const pricing = {
     "Authorship signals — human-written markers already in your draft",
     "PDF report + email delivery"
   ],
-  "rewriteTitle": "Guided revision",
+  "rewriteTitle": "Rewrite",
   "rewriteUnit": "/ 1,000 words",
   // allow-hardcode: i18n marketing copy for rewrite feature list — UI strings, not a detection/scoring oracle
   "rewriteFeatures": [
-    "5 credits per guided revision (completed scan required)",
+    "5 credits per rewrite (completed scan required)",
     "Paragraph-level rewrite — only flagged sections are changed",
     "Grounding-based coaching — adds concrete anchors, examples, and evidence",
     "Explains what changed and why in each paragraph",
@@ -44,7 +44,7 @@ export const pricing = {
     },
     {
       "q": "How should I use DraftProof as guidance?",
-      "a": "Start with a scan, review the report, then fix the highest-risk issues first: unsupported claims, missing citations, vague phrasing, overly uniform sections, and AI-style wording. If you use guided revision, treat the rewritten text as a teaching draft to review, personalize, and verify against your sources."
+      "a": "Start with a scan, review the report, then fix the highest-risk issues first: unsupported claims, missing citations, vague phrasing, overly uniform sections, and AI-style wording. If you use rewrite, treat the rewritten text as a teaching draft to review, personalize, and verify against your sources."
     },
     {
       "q": "What if my AI signal is above 20%?",
@@ -60,11 +60,11 @@ export const pricing = {
     },
     {
       "q": "Will the rewrite make my work safe to submit?",
-      "a": "No rewrite can honestly guarantee that. Guided revision shows how to reduce risky patterns and improve clarity, grounding, and academic tone, but you remain responsible for checking the meaning, citations, course requirements, and academic integrity rules before submission."
+      "a": "No rewrite can honestly guarantee that. Rewrite shows how to reduce risky patterns and improve clarity, grounding, and academic tone, but you remain responsible for checking the meaning, citations, course requirements, and academic integrity rules before submission."
     },
     {
       "q": "Do I need a scan before a rewrite?",
-      "a": "Yes. A completed scan is required before guided revision. DraftProof uses the scan report to identify which sections are safe and useful to revise."
+      "a": "Yes. A completed scan is required before rewrite. DraftProof uses the scan report to identify which sections are safe and useful to revise."
     },
     {
       "q": "When are rewrite credits deducted?",

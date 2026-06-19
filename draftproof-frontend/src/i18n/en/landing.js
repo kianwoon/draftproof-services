@@ -553,7 +553,7 @@ export const landing = {
     },
     {
       "title": "Revise responsibly",
-      "body": "Use the report and guided revision to strengthen claims, add source grounding, clarify wording, and keep your own meaning intact."
+      "body": "Use the report and rewrite to strengthen claims, add source grounding, clarify wording, and keep your own meaning intact."
     },
     {
       "title": "Keep a review trail",

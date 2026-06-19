@@ -63,7 +63,7 @@ export const faqPage = {
     },
     {
       "id": "rewrite-and-pdf",
-      "kicker": "Guided revision",
+      "kicker": "Rewrite",
       "title": "Rewrite and PDF delivery",
       "items": [
         {

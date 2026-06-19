@@ -21,7 +21,7 @@ export const history = {
   "legacyCurrency": "Legacy currency",
   "emptyKicker": "No billing activity",
   "empty": "No purchases yet.",
-  "emptyBody": "Buy credits once, use them whenever you need a review or guided revision.",
+  "emptyBody": "Buy credits once, use them whenever you need a review or rewrite.",
   "firstTokens": "Buy your first credits",
   "date": "Date",
   "tokens": "Credits",

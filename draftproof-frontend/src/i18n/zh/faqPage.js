@@ -63,7 +63,7 @@ export const faqPage = {
     },
     {
       "id": "rewrite-and-pdf",
-      "kicker": "引导式修改",
+      "kicker": "改写",
       "title": "改写与 PDF 发送",
       "items": [
         {
