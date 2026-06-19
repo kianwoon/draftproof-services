@@ -20,5 +20,7 @@ export const seo = {
   "privateTitle": "DraftProof 工作区",
   "privateDescription": "DraftProof 私人工作区，用于内容扫描、报告、改写指导、积分和购买记录。",
   "imageAlt": "DraftProof 内容依据支撑与完整性审阅仪表盘预览",
-  "offerDescription": "每 1,000 词的提交前内容审阅"
+  "offerDescription": "每 1,000 词的提交前内容审阅",
+  "featuresTitle": "功能对比 | DraftProof vs GPTZero、Turnitin 等",
+  "featuresDescription": "了解 DraftProof 与 GPTZero、Turnitin、Originality.ai 和 Winston AI 的区别 — 唯一能解释内容被标记原因并辅导你改进的检测工具。",
 };

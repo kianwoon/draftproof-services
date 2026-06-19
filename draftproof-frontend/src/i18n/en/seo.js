@@ -20,5 +20,7 @@ export const seo = {
   "privateTitle": "DraftProof Workspace",
   "privateDescription": "Private DraftProof workspace for content scans, reports, rewrite guidance, credits, and purchase history.",
   "imageAlt": "DraftProof content grounding and integrity review dashboard preview",
-  "offerDescription": "Pre-submission content review per 1,000 words"
+  "offerDescription": "Pre-submission content review per 1,000 words",
+  "featuresTitle": "Features | DraftProof vs GPTZero, Turnitin & More",
+  "featuresDescription": "See how DraftProof compares to GPTZero, Turnitin, Originality.ai, and Winston AI — the only detector that explains why content is flagged and coaches you to fix it.",
 };

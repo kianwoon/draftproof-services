@@ -21,6 +21,7 @@ import { rewriteFraming } from './en/rewriteFraming.js';
 import { dialog } from './en/dialog.js';
 import { errorReload } from './en/errorReload.js';
 import { ticker } from './en/ticker.js';
+import { featuresPage } from './en/features.js';
 
 export const enTranslation = {
   "common": common,
@@ -46,4 +47,5 @@ export const enTranslation = {
   "dialog": dialog,
   "errorReload": errorReload,
   "ticker": ticker,
+  "featuresPage": featuresPage,
 };

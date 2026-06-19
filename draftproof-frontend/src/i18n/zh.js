@@ -21,6 +21,7 @@ import { rewriteFraming } from './zh/rewriteFraming.js';
 import { dialog } from './zh/dialog.js';
 import { errorReload } from './zh/errorReload.js';
 import { ticker } from './zh/ticker.js';
+import { featuresPage } from './zh/features.js';
 
 export const zhTranslation = {
   "common": common,
@@ -46,4 +47,5 @@ export const zhTranslation = {
   "dialog": dialog,
   "errorReload": errorReload,
   "ticker": ticker,
+  "featuresPage": featuresPage,
 };

@@ -11,6 +11,7 @@ export const nav = {
   "buyTokens": "Buy Credits",
   "history": "History",
   "why": "Why",
+  "features": "Features",
   "essayChecker": "Content checker",
   "pricing": "Pricing",
   "faq": "FAQ",

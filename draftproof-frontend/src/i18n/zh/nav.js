@@ -11,6 +11,7 @@ export const nav = {
   "buyTokens": "购买积分",
   "history": "历史记录",
   "why": "为什么选择我们",
+  "features": "功能对比",
   "essayChecker": "内容检查器",
   "pricing": "价格",
   "faq": "常见问题",
