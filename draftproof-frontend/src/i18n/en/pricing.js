@@ -1,3 +1,4 @@
+// allow-hardcode: i18n UI strings for pricing feature lists — human-crafted marketing copy, not a scoring/matching oracle
 export const pricing = {
   "eyebrow": "Pricing",
   "title": "Pay for the review you need.",
@@ -6,13 +7,18 @@ export const pricing = {
   "perWords": "per 1,000 words",
   "scanTitle": "Scan",
   "scanUnit": "/ 1,000 words",
+  // allow-hardcode: i18n marketing copy for scan feature list — UI strings, not a detection/scoring oracle
   "scanFeatures": [
-    "1 credit per 1,000 words",
-    "1,000 words included per credit (larger documents use more credits)",
-    "Citation gap analysis",
-    "Source integrity review",
-    "Review-only phrasing and authorship signals",
-    "Downloadable PDF report"
+    "1 credit per 1,000 words (first 800 words free)",
+    "Paragraph-level findings — not just a single score",
+    "Citation gap detection — claims that lack source support",
+    "Source integrity check — whether cited sources actually support the claim",
+    "AI-like writing signals — generic phrasing and predictable structure",
+    "Policy risk scoring — separate scores for AI-allowed vs AI-restricted policies",
+    "Submission risk framing — text pattern, ownership, citation, and defence readiness",
+    "Critical thinking assessment — 5 dimensions of author control",
+    "Authorship signals — human-written markers already in your draft",
+    "PDF report + email delivery"
   ],
   "rewriteTitle": "Guided revision",
   "rewriteUnit": "/ 1,000 words",

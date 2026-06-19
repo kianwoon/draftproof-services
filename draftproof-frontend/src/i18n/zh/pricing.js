@@ -1,3 +1,4 @@
+// allow-hardcode: i18n UI strings for pricing feature lists — human-crafted marketing copy, not a scoring/matching oracle
 export const pricing = {
   "eyebrow": "价格",
   "title": "按你需要的审阅付费。",
@@ -6,13 +7,18 @@ export const pricing = {
   "perWords": "每 1,000 词",
   "scanTitle": "扫描",
   "scanUnit": "/ 1,000 词",
+  // allow-hardcode: i18n marketing copy for scan feature list — UI strings, not a detection/scoring oracle
   "scanFeatures": [
-    "每 1,000 词 1 个积分",
-    "每个积分包含 1,000 词（更长文档会使用更多积分）",
-    "引用缺口分析",
-    "来源完整性审阅",
-    "仅供审阅的表达和作者身份信号",
-    "可下载 PDF 报告"
+    "每 1,000 词 1 个积分（前 800 词免费）",
+    "逐段诊断——不只是一个总分",
+    "引用缺口检测——找出缺乏来源支撑的论断",
+    "来源完整性核查——所引用的来源是否真正支持论断",
+    "类 AI 写作信号——泛泛表达与可预测结构",
+    "政策风险评分——AI 允许与 AI 受限政策下的独立评分",
+    "提交风险评估——文本模式、作者身份、引用与答辩准备度",
+    "批判性思维评估——5 个维度评估作者对写作的掌控程度",
+    "作者身份信号——草稿中已有的人类写作标记",
+    "PDF 报告 + 邮件送达"
   ],
   "rewriteTitle": "引导式修改",
   "rewriteUnit": "/ 1,000 词",
