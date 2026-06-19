@@ -5,7 +5,8 @@
 .dash-shell,
 .pricing-shell,
 .why-shell,
-.content-checker-shell {
+.content-checker-shell,
+.feat-shell {
   background: var(--surface-soft);
 }
 
@@ -1687,7 +1688,7 @@
 .feat-shell .container {
   max-width: 860px;
   margin: 0 auto;
-  padding: 0 1.5rem 4rem;
+  padding: 24px clamp(24px, 4vw, 48px) 4rem;
 }
 
 .feat-section-label {
