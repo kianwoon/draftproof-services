@@ -19,6 +19,7 @@ import Reports from './pages/Reports';
 import Pricing from './pages/Pricing';
 import FAQ from './pages/FAQ';
 import Why from './pages/Why';
+import Features from './pages/Features';
 import Privacy from './pages/Privacy';
 import Security from './pages/Security';
 import EssayChecker from './pages/EssayChecker';
@@ -114,6 +115,8 @@ export default function App() {
             <Route path="/zh/faq" element={<FAQ />} />
             <Route path="/why" element={<Why />} />
             <Route path="/zh/why" element={<Why />} />
+            <Route path="/features" element={<Features />} />
+            <Route path="/zh/features" element={<Features />} />
             <Route path="/content-checker" element={<EssayChecker />} />
             <Route path="/zh/content-checker" element={<EssayChecker />} />
             <Route path="/essay-checker" element={<Navigate to="/content-checker" replace />} />
