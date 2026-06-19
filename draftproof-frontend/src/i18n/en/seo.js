@@ -2,12 +2,16 @@
 export const seo = {
   "defaultTitle": "The Only AI Detector That Shows You How to Fix It | DraftProof",
   "defaultDescription": "DraftProof is the only AI detector that explains why your content is flagged and coaches you to fix it — paragraph by paragraph. Scan for citation gaps, source grounding, and submission risk. Then get a worked rewrite showing you exactly what to change. No institution needed.",
+  "defaultSocialDescription": "The only AI detector that explains why you're flagged — and coaches you to fix it. No institution needed.",
   "whyTitle": "Why AI Detectors Flag Human Writing — and How DraftProof Helps You Fix It | DraftProof",
   "whyDescription": "See why human-written content can trigger AI-like signals and how DraftProof helps students review evidence, sources, and phrasing — then coaches them to fix it — before submission.",
+  "whySocialDescription": "See why AI detectors flag human writing — and how DraftProof coaches you to fix it before submission.",
   "essayCheckerTitle": "AI Content Checker That Explains and Coaches You to Fix Flagged Writing | DraftProof",
   "essayCheckerDescription": "Unlike GPTZero or Turnitin, DraftProof tells you exactly why each paragraph is flagged — then coaches you through a rewrite. Check citations, source grounding, and submission risk before you submit. No institution account needed.",
+  "essayCheckerSocialDescription": "Unlike GPTZero or Turnitin, DraftProof explains why you're flagged — then coaches you to fix it. No institution needed.",
   "pricingTitle": "DraftProof Pricing — AI Detection + Rewrite Coaching | No Institution Needed",
   "pricingDescription": "Review DraftProof credit pricing for pre-submission content checks covering citations, source grounding, submission risk, and AI-like writing — plus paragraph-level rewrite coaching.",
+  "pricingSocialDescription": "AI detection + rewrite coaching per 1,000 words. No institution account needed.",
   "faqTitle": "DraftProof FAQ | AI Detection, Guided Rewrite, and Submission Risk",
   "faqDescription": "Answers about DraftProof content reviews, paragraph-level rewrite coaching, submission risk framing, reports, privacy, and credit pricing for students.",
   "privacyTitle": "Privacy Policy | DraftProof",
@@ -24,4 +28,5 @@ export const seo = {
   "offerDescription": "Pre-submission content review per 1,000 words",
   "featuresTitle": "DraftProof vs GPTZero & Turnitin — The Only AI Detector with Rewrite Coaching",
   "featuresDescription": "GPTZero flags it. Turnitin scores it. DraftProof explains it and shows you how to fix it — with paragraph-level diagnosis, submission risk framing, and a before/after rewrite diff. No institution needed.",
+  "featuresSocialDescription": "GPTZero flags it. Turnitin scores it. DraftProof explains it and shows you how to fix it. No institution needed.",
 };

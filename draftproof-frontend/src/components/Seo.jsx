@@ -30,7 +30,7 @@ export default function Seo() {
     setProperty('og:site_name', SITE_NAME);
     setProperty('og:type', 'website');
     setProperty('og:title', meta.title);
-    setProperty('og:description', meta.description);
+    setProperty('og:description', meta.socialDescription);
     setProperty('og:url', canonicalUrl);
     setProperty('og:image', DEFAULT_IMAGE);
     setProperty('og:image:width', '1200');
@@ -39,7 +39,7 @@ export default function Seo() {
 
     setMeta('twitter:card', 'summary_large_image');
     setMeta('twitter:title', meta.title);
-    setMeta('twitter:description', meta.description);
+    setMeta('twitter:description', meta.socialDescription);
     setMeta('twitter:image', DEFAULT_IMAGE);
     setMeta('twitter:image:alt', t('seo.imageAlt'));
 

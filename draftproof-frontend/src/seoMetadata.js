@@ -28,6 +28,7 @@ export const PAGE_META = {
   '/': {
     titleKey: 'seo.defaultTitle',
     descriptionKey: 'seo.defaultDescription',
+    socialDescriptionKey: 'seo.defaultSocialDescription',
     canonical: '/',
     schemaType: 'SoftwareApplication',
     freshness: { type: 'reviewed', date: HOME_REVIEW_DATE },
@@ -35,6 +36,7 @@ export const PAGE_META = {
   '/why': {
     titleKey: 'seo.whyTitle',
     descriptionKey: 'seo.whyDescription',
+    socialDescriptionKey: 'seo.whySocialDescription',
     canonical: '/why',
     schemaType: 'AboutPage',
     freshness: { type: 'reviewed', date: SEO_REVIEW_DATE },
@@ -42,6 +44,7 @@ export const PAGE_META = {
   '/features': {
     titleKey: 'seo.featuresTitle',
     descriptionKey: 'seo.featuresDescription',
+    socialDescriptionKey: 'seo.featuresSocialDescription',
     canonical: '/features',
     schemaType: 'WebPage',
     freshness: { type: 'reviewed', date: '2026-06-19' },
@@ -49,6 +52,7 @@ export const PAGE_META = {
   '/content-checker': {
     titleKey: 'seo.essayCheckerTitle',
     descriptionKey: 'seo.essayCheckerDescription',
+    socialDescriptionKey: 'seo.essayCheckerSocialDescription',
     canonical: '/content-checker',
     schemaType: 'WebPage',
     freshness: { type: 'reviewed', date: CRITICAL_THINKING_REVIEW_DATE },
@@ -56,6 +60,7 @@ export const PAGE_META = {
   '/pricing': {
     titleKey: 'seo.pricingTitle',
     descriptionKey: 'seo.pricingDescription',
+    socialDescriptionKey: 'seo.pricingSocialDescription',
     canonical: '/pricing',
     schemaType: 'WebPage',
     freshness: { type: 'updated', date: SEO_REVIEW_DATE },
@@ -119,6 +124,9 @@ export function getSeoMeta(pathname, translate = defaultTranslate) {
     alternates: getAlternates(metaConfig.canonical),
     title: translate(metaConfig.titleKey),
     description: translate(metaConfig.descriptionKey),
+    socialDescription: metaConfig.socialDescriptionKey
+      ? translate(metaConfig.socialDescriptionKey)
+      : translate(metaConfig.descriptionKey),
   };
 }
 

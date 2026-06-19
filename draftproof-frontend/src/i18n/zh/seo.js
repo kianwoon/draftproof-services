@@ -2,12 +2,16 @@
 export const seo = {
   "defaultTitle": "唯一能告诉你如何修正 AI 风险的检测工具 | DraftProof",
   "defaultDescription": "DraftProof 是唯一能解释内容被标记原因、并逐段辅导你修正的 AI 检测工具。扫描引用缺口、来源支撑与提交风险，获得具体改写示例，知道该改什么。无需机构账号。",
+  "defaultSocialDescription": "唯一能解释被标记原因、并辅导你修正的 AI 检测工具。无需机构账号。",
   "whyTitle": "AI 检测工具为何会误判人类写作 — DraftProof 如何帮你修正 | DraftProof",
   "whyDescription": "了解人类亲自写的内容为什么也可能触发类似 AI 的信号，以及 DraftProof 如何帮助学生在提交前审阅证据、来源和表达——并辅导他们进行修正。",
+  "whySocialDescription": "了解 AI 检测工具为何标记人类写作，以及 DraftProof 如何辅导你在提交前修正。",
   "essayCheckerTitle": "能解释原因并辅导你修正 AI 标记写作的内容检查工具 | DraftProof",
   "essayCheckerDescription": "与 GPTZero 或 Turnitin 不同，DraftProof 会告诉你每个段落被标记的具体原因，并辅导你完成改写。在提交前检查引用、来源支撑和提交风险。无需机构账号。",
+  "essayCheckerSocialDescription": "与 GPTZero、Turnitin 不同，DraftProof 解释被标记原因并辅导改写。无需机构账号。",
   "pricingTitle": "DraftProof 价格 — AI 检测 + 改写辅导 | 无需机构账号",
   "pricingDescription": "查看 DraftProof 积分价格，用于提交前内容检查，包括引用、来源支撑、提交风险、类似 AI 的写作信号，以及逐段改写辅导。",
+  "pricingSocialDescription": "AI 检测 + 逐段改写辅导，按每千字计费。无需机构账号。",
   "faqTitle": "DraftProof 常见问题 | AI 检测、引导式改写与提交风险",
   "faqDescription": "了解 DraftProof 内容审阅、逐段改写辅导、提交风险评估、报告、隐私和积分价格等常见问题。",
   "privacyTitle": "隐私政策 | DraftProof",
@@ -24,4 +28,5 @@ export const seo = {
   "offerDescription": "每 1,000 词的提交前内容审阅",
   "featuresTitle": "DraftProof vs GPTZero & Turnitin — 唯一提供改写辅导的 AI 检测工具",
   "featuresDescription": "GPTZero 标记它，Turnitin 给它打分，DraftProof 解释原因并告诉你如何修正——逐段诊断、提交风险评估、改写前后对比。无需机构账号。",
+  "featuresSocialDescription": "GPTZero 标记，Turnitin 打分，DraftProof 解释原因并辅导修正。无需机构账号。",
 };
