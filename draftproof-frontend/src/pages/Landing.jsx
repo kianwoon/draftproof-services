@@ -33,11 +33,11 @@ export default function Landing() {
   const location = useLocation();
   const locale = getLocaleFromPathname(location.pathname);
   const publicPath = (path) => localizePath(path, locale);
-  const checks = t('landing.checks', { returnObjects: true });
   const whyCards = t('landing.whyCards', { returnObjects: true });
   const helpCards = t('landing.helpCards', { returnObjects: true });
   const contentStrategies = t('landing.contentStrategies', { returnObjects: true });
-  const beliefs = t('landing.beliefs', { returnObjects: true });
+  const competitors = t('featuresPage.competitors', { returnObjects: true });
+  const comparisonRows = t('featuresPage.rows', { returnObjects: true });
   const reportValueCards = t('landing.reportValueCards', { returnObjects: true });
   const humanWrittenSignals = t('landing.humanWrittenSignals', { returnObjects: true });
   const humanizerSignals = t('landing.humanizerSignals', { returnObjects: true });
@@ -180,40 +180,42 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="engine" className="landing-section checks-section">
-        <CodeTexture id="landingChecks" />
+      <section id="compare" className="landing-section">
         <div className="section-inner">
-          <p className="eyebrow">{t('landing.engineEyebrow')}</p>
-          <h2>{t('landing.engineTitle')}</h2>
-          <p className="section-lead">{t('landing.engineLead')}</p>
-          <div className="check-line">
-            {checks.map((check, index) => (
-              <article className="check-step" key={check.title}>
-                <span>{index + 1}</span>
-                <h3>{check.title}</h3>
-                <p>{check.body}</p>
-              </article>
-            ))}
+          <p className="eyebrow">{t('featuresPage.tableLabel')}</p>
+          <h2>{t('featuresPage.title')}</h2>
+          <p className="section-lead">{t('featuresPage.lead')}</p>
+          <div className="feat-table-wrap">
+            <table className="feat-table">
+              <thead>
+                <tr>
+                  <th />
+                  {competitors.map((name, i) => (
+                    <th key={name} className={i === 0 ? 'feat-th-dp' : undefined}>{name}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {comparisonRows.map((row) => (
+                  <tr key={row.label}>
+                    <td>{row.label}</td>
+                    {row.values.map((val, i) => (
+                      <td key={i} className={i === 0 ? 'feat-td-dp' : undefined}>
+                        {val === 'yes'
+                          ? <span className="feat-yes" aria-label="yes">✓</span>
+                          : val === 'no'
+                          ? <span className="feat-no" aria-label="no">✗</span>
+                          : <span className="feat-partial">{val}</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      </section>
-
-      <section id="trust" className="landing-section beliefs-section">
-        <div className="section-inner">
-          <p className="eyebrow">{t('landing.beliefsEyebrow')}</p>
-          <h2>{t('landing.beliefsTitle')}</h2>
-          <div className="belief-row-grid">
-            {beliefs.map((belief) => (
-              <div className="belief-row" key={belief}>
-                <span aria-hidden="true">×</span>
-                {belief}
-              </div>
-            ))}
-            <div className="belief-row belief-row-positive">
-              <span aria-hidden="true">✓</span>
-              {t('landing.positiveBelief')}
-            </div>
-          </div>
+          <p style={{ textAlign: 'center', marginTop: '1.25rem', fontSize: '0.875rem' }}>
+            <Link to={publicPath('/features')}>{t('nav.features')} →</Link>
+          </p>
         </div>
       </section>
 
