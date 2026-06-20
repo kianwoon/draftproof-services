@@ -1,7 +1,7 @@
 export const DEFAULT_LOCALE = 'en';
 export const SEO_LOCALES = ['en', 'zh'];
 export const LOCALE_PREFIXES = ['zh'];
-export const LOCALIZABLE_PUBLIC_PATHS = ['/', '/why', '/content-checker', '/pricing', '/faq', '/privacy', '/security', '/signin'];
+export const LOCALIZABLE_PUBLIC_PATHS = ['/', '/why', '/features', '/content-checker', '/pricing', '/faq', '/privacy', '/security', '/signin'];
 
 export function getLocaleFromPathname(pathname = '/') {
   return String(pathname).split('/')[1] === 'zh' ? 'zh' : DEFAULT_LOCALE;
