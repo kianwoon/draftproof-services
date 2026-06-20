@@ -118,7 +118,7 @@ export default function Reports() {
             <p className="eyebrow">{t('reports.library')}</p>
             <h1>{t('reports.title')}</h1>
             <p>{t('reports.body')}</p>
-            <p className="reports-retention-note">{t('reports.retentionNotice')}</p>
+            {t('reports.retentionNotice') && <p className="reports-retention-note">{t('reports.retentionNotice')}</p>}
           </div>
           <div className="reports-hero-actions">
             <div className="app-hero-stat">
