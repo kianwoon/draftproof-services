@@ -41,7 +41,7 @@ export const scan = {
   "afterTitle": "扫描之后",
   "after1": "审阅高亮段落",
   "after2": "修复薄弱论断或泛化表达",
-  "after3": "使用手动改写 / 修正",
+  "after3": "使用自动改写或手动改写",
   "after4": "重新扫描编辑版本",
   "notEnoughTitle": "积分不足",
   "notEnoughMessage": "你的积分不足，无法扫描此文档。请购买更多积分后继续。",

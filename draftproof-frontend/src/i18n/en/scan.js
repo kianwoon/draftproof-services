@@ -41,7 +41,7 @@ export const scan = {
   "afterTitle": "After the scan",
   "after1": "Review highlighted paragraphs",
   "after2": "Fix weak claims or generic phrasing",
-  "after3": "Use Manual Rewrite / Correction",
+  "after3": "Use Auto Rewrite or Manual Rewrite",
   "after4": "Re-scan the edited version",
   "notEnoughTitle": "Not enough credits",
   "notEnoughMessage": "You don't have enough credits to scan this document. Purchase more credits to continue.",
