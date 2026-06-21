@@ -17,6 +17,20 @@ _CSS = """
     }
 }
 
+/* ── Design tokens (minimal — drive severity coding + masthead) ─── */
+:root {
+    --dp-ink: #0f172a;
+    --dp-muted: #64748b;
+    --dp-line: #e2e8f0;
+    --dp-bg-soft: #f8fafc;
+    --dp-critical: #dc2626;
+    --dp-high: #ea580c;
+    --dp-medium: #b45309;
+    --dp-low: #0f766e;
+    --dp-human: #16a34a;
+    --dp-ai: #c2410c;
+}
+
 body {
     font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
     font-size: 11pt;
@@ -36,17 +50,18 @@ table {
     font-size: 9pt;
 }
 th {
-    background: #f5f5f5;
-    font-weight: 600;
+    background: var(--dp-bg-soft);
+    color: var(--dp-ink);
+    font-weight: 700;
     text-align: left;
-    padding: 4pt 6pt;
-    border: 1px solid #ddd;
+    padding: 5pt 7pt;
+    border: 1px solid var(--dp-line);
     overflow-wrap: break-word;
     word-break: break-word;
 }
 td {
-    padding: 3pt 6pt;
-    border: 1px solid #ddd;
+    padding: 4pt 7pt;
+    border: 1px solid var(--dp-line);
     vertical-align: top;
     word-wrap: break-word;
     overflow-wrap: break-word;
@@ -103,32 +118,41 @@ hr { border: none; border-top: 1px solid #ddd; margin: 12pt 0; }
 
 img[src^="https://img.shields.io"] { height: 18px; }
 
-.dp-rewrite-letterhead {
+/* ── Masthead (shared by scan + rewrite reports) ───────────────── */
+.dp-masthead {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    margin: -4pt 0 14pt;
-    padding: 9pt 0 11pt;
-    border-top: 2px solid #111827;
-    border-bottom: 1px solid #cbd5e1;
+    align-items: flex-end;
+    margin: 0 0 16pt;
+    padding: 2pt 0 10pt;
+    border-bottom: 2.5pt solid var(--dp-ink);
 }
 
-.dp-rewrite-letterhead strong {
-    display: block;
-    color: #0f172a;
-    font-size: 16pt;
-    letter-spacing: .02em;
-}
-
-.dp-rewrite-letterhead span,
-.dp-rewrite-letterhead em {
-    display: block;
-    color: #64748b;
-    font-size: 7pt;
-    font-style: normal;
+.dp-masthead-title {
+    color: var(--dp-ink);
+    font-size: 20pt;
     font-weight: 800;
-    letter-spacing: .12em;
+    line-height: 1;
+    letter-spacing: .01em;
+}
+
+.dp-masthead-sub {
+    display: block;
+    margin-top: 4pt;
+    color: var(--dp-muted);
+    font-size: 7.5pt;
+    font-weight: 800;
+    letter-spacing: .14em;
     text-transform: uppercase;
+}
+
+.dp-masthead-meta {
+    color: var(--dp-muted);
+    font-size: 7.5pt;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    white-space: nowrap;
 }
 
 .dp-rewrite-outcome-panel {
@@ -261,6 +285,190 @@ img[src^="https://img.shields.io"] { height: 18px; }
 .dp-executive-chart {
     margin: 4pt 0 12pt;
 }
+
+/* ── At-a-glance severity strip (scan executive summary) ───────── */
+.dp-glance {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6pt;
+    margin: 2pt 0 12pt;
+}
+
+.dp-glance span {
+    display: inline-block;
+    padding: 4pt 8pt;
+    border-radius: 6pt;
+    border: 1px solid var(--dp-line);
+    background: var(--dp-bg-soft);
+    color: var(--dp-ink);
+    font-size: 8pt;
+    font-weight: 800;
+}
+
+.dp-glance span b {
+    font-size: 10pt;
+    font-weight: 900;
+}
+
+.dp-glance .dp-glance--critical { border-color: var(--dp-critical); color: var(--dp-critical); }
+.dp-glance .dp-glance--high { border-color: var(--dp-high); color: var(--dp-high); }
+.dp-glance .dp-glance--medium { border-color: var(--dp-medium); color: var(--dp-medium); }
+.dp-glance .dp-glance--low { border-color: var(--dp-low); color: var(--dp-low); }
+
+/* ════════════ Enhanced report design system ════════════ */
+
+.dp-section-intro {
+    margin: -2pt 0 9pt;
+    color: #475569;
+    font-size: 9pt;
+    line-height: 1.45;
+}
+
+/* ── Hero "overall read" panel ── */
+.dp-hero {
+    margin: 2pt 0 13pt;
+    padding: 13pt 15pt;
+    border: 1px solid var(--dp-line);
+    border-left: 4pt solid var(--dp-low);
+    border-radius: 8pt;
+    background: #fff;
+    page-break-inside: avoid;
+}
+.dp-hero--good { border-left-color: #16a34a; }
+.dp-hero--warn { border-left-color: #ea580c; }
+.dp-hero--info { border-left-color: #2563eb; }
+.dp-hero-read {
+    margin: 0;
+    color: var(--dp-ink);
+    font-size: 13pt;
+    font-weight: 800;
+    line-height: 1.3;
+}
+.dp-hero-sub {
+    margin: 6pt 0 0;
+    color: #374151;
+    font-size: 9.5pt;
+    line-height: 1.5;
+}
+.dp-chip-strip {
+    margin-top: 10pt;
+}
+.dp-statchip {
+    display: inline-block;
+    margin: 0 4pt 4pt 0;
+    padding: 3pt 8pt;
+    border: 1px solid var(--dp-line);
+    border-radius: 999pt;
+    background: var(--dp-bg-soft);
+    color: var(--dp-muted);
+    font-size: 6.8pt;
+    font-weight: 800;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+}
+.dp-statchip--good { color: #15803d; background: #ecfdf5; border-color: #a7f3d0; }
+.dp-statchip--info { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
+.dp-statchip--warn { color: #b45309; background: #fffbeb; border-color: #fde68a; }
+
+/* ── KPI stat row ── */
+.dp-kpi-row {
+    display: flex;
+    gap: 8pt;
+    margin: 4pt 0 14pt;
+}
+.dp-kpi {
+    flex: 1;
+    padding: 11pt 6pt;
+    border: 1px solid var(--dp-line);
+    border-radius: 8pt;
+    background: #fff;
+    text-align: center;
+}
+.dp-kpi b {
+    display: block;
+    color: var(--dp-ink);
+    font-size: 19pt;
+    font-weight: 800;
+    line-height: 1;
+}
+.dp-kpi span {
+    display: block;
+    margin-top: 5pt;
+    color: var(--dp-muted);
+    font-size: 7pt;
+    font-weight: 700;
+}
+
+/* ── Callout panels (colored left rail + tint) ── */
+.dp-callout {
+    margin: 10pt 0 12pt;
+    padding: 10pt 13pt;
+    border-left: 3pt solid var(--dp-line);
+    border-radius: 0 7pt 7pt 0;
+    background: var(--dp-bg-soft);
+    page-break-inside: avoid;
+}
+.dp-callout--good { border-left-color: #16a34a; background: #ecfdf5; }
+.dp-callout--warn { border-left-color: #ea580c; background: #fff7ed; }
+.dp-callout--info { border-left-color: #2563eb; background: #eff6ff; }
+.dp-callout--think { border-left-color: #7c3aed; background: #f5f3ff; }
+.dp-callout-title {
+    display: block;
+    margin-bottom: 4pt;
+    color: var(--dp-ink);
+    font-size: 10.5pt;
+    font-weight: 800;
+}
+.dp-callout p { margin: 4pt 0 0; color: #1f2937; font-size: 9pt; line-height: 1.5; }
+.dp-callout ol, .dp-callout ul { margin: 4pt 0 0 15pt; padding: 0; }
+.dp-callout li { margin: 4pt 0; color: #1f2937; font-size: 9pt; line-height: 1.45; }
+
+/* ── Policy row-cards ── */
+.dp-policy-head {
+    display: flex;
+    gap: 10pt;
+    margin: 8pt 0 2pt;
+    color: var(--dp-muted);
+    font-size: 6.8pt;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+.dp-policy-head .dp-ph-name { flex: 5; }
+.dp-policy-head .dp-ph-issue { flex: 9; text-align: right; }
+.dp-policy-row {
+    display: flex;
+    align-items: center;
+    gap: 10pt;
+    margin: 6pt 0;
+    padding: 10pt 13pt;
+    border: 1px solid var(--dp-line);
+    border-radius: 8pt;
+    background: #fff;
+    page-break-inside: avoid;
+}
+.dp-policy-row--warn { background: #fff7ed; border-color: #fed7aa; }
+.dp-policy-row--good { background: #ecfdf5; border-color: #bbf7d0; }
+.dp-policy-name { flex: 5; color: var(--dp-ink); font-size: 10pt; font-weight: 800; }
+.dp-policy-level { flex: 3; font-size: 11pt; font-weight: 900; color: var(--dp-muted); }
+.dp-policy-row--warn .dp-policy-level { color: #c2410c; }
+.dp-policy-row--good .dp-policy-level { color: #15803d; }
+.dp-policy-issue { flex: 6; color: #6b7280; font-size: 8.5pt; }
+
+/* ── Question cards (purple) ── */
+.dp-q-card {
+    margin: 6pt 0;
+    padding: 9pt 12pt;
+    border: 1px solid var(--dp-line);
+    border-left: 3pt solid #7c3aed;
+    border-radius: 0 7pt 7pt 0;
+    background: #fff;
+    page-break-inside: avoid;
+}
+.dp-q-claim { margin: 0 0 4pt; color: var(--dp-ink); font-size: 9.5pt; font-weight: 800; line-height: 1.35; }
+.dp-q-claim em { font-style: italic; }
+.dp-q-body { margin: 0; color: #374151; font-size: 9pt; line-height: 1.5; }
+.dp-q-target { margin: 5pt 0 0; color: #6b7280; font-size: 7.5pt; font-style: italic; }
 
 .dp-signal-card {
     border: 1px solid #d8e1ea;
@@ -517,9 +725,22 @@ img[src^="https://img.shields.io"] { height: 18px; }
 /* ── Finding cards (Findings section) ─────────── */
 
 .dp-finding-card {
+    --dp-accent: var(--dp-medium);
     margin: 0 0 14pt;
+    border-left: 3.5pt solid var(--dp-accent);
+    border-radius: 0 8pt 8pt 0;
     page-break-inside: avoid;
 }
+
+/* Severity-driven accent (left rail + section id + signal bar) */
+.dp-finding-card--critical { --dp-accent: var(--dp-critical); }
+.dp-finding-card--high { --dp-accent: var(--dp-high); }
+.dp-finding-card--medium { --dp-accent: var(--dp-medium); }
+.dp-finding-card--low { --dp-accent: var(--dp-low); }
+.dp-finding-card--clean { --dp-accent: var(--dp-human); }
+
+.dp-finding-card .dp-finding-section-id { color: var(--dp-accent); }
+.dp-finding-card .dp-signal-strength-fill { background: var(--dp-accent); }
 
 .dp-finding-card-header {
     display: flex;

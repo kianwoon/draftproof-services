@@ -1183,7 +1183,7 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
 
     # Section identifier
     if len(sentence_ids) > 1:
-        sid_label = f"{sentence_ids[0]}&ndash;{sentence_ids[-1]}"
+        sid_label = f"{sentence_ids[0]}–{sentence_ids[-1]}"
     elif sentence_ids:
         sid_label = sentence_ids[0]
     else:
@@ -1278,7 +1278,7 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
       <ul class="dp-finding-bullets">{items}</ul>
     </div>"""
 
-    return f"""<div class="dp-signal-card dp-finding-card">
+    return f"""<div class="dp-signal-card dp-finding-card dp-finding-card--{tier_level.value}">
   <div class="dp-finding-card-header">
     <div>
       <span class="dp-finding-section-id">{_e(sid_label)}</span>
@@ -1540,74 +1540,62 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     n_low = len(fb.get(Tier.LOW.value, []))
     total = report.finding_count
 
-    lines.append(f"# DraftProof — Integrity Report")
+    _mast_ts = report.generated_at or ""
+    lines.append(
+        '<div class="dp-masthead">'
+        '<div><span class="dp-masthead-title">DraftProof</span>'
+        '<span class="dp-masthead-sub">Integrity Report</span></div>'
+        + (f'<span class="dp-masthead-meta">Generated {escape(str(_mast_ts))}</span>' if _mast_ts else '')
+        + '</div>'
+    )
     lines.append("")
 
-    # Header: mirror the web report's LEAD -- Submission risk + the two policy scores.
-    # The raw AI-likelihood %, Turnitin estimate, and authorship rating are NOT surfaced
-    # here (the page removed them); the AI-writing-signal section below carries detail.
-    if report.ai_risk_badge:
-        _ab = report.ai_risk_badge
-
-        _sr = (_ab.get("submission_risk") or {}).get("overall") or {}
-        if _sr.get("level") and _sr["level"] != "unknown":
-            _hl = f"**Submission risk: {_SR_LEVEL_LABELS.get(_sr['level'], _sr['level'])}**"
-            if _sr.get("main_reason"):
-                _hl += f" — {_sr['main_reason']}"
-            lines.append(_hl)
-            lines.append("")
-
-        _pr = _ab.get("policy_risk") or {}
-        _pa, _prr = _pr.get("ai_allowed") or {}, _pr.get("ai_restricted") or {}
-        if _pa.get("level") and _pa["level"] != "unknown":
-            lines.append("**Policy risk — how this draft may read under your school's AI policy**")
-            lines.append("")
-            lines.append(f"- If AI is allowed (with declaration): **{_POLICY_LEVEL.get(_pa['level'], _pa['level'])}** ({round(_pa.get('score') or 0)})")
-            lines.append(f"- If AI is not allowed: **{_POLICY_LEVEL.get(_prr.get('level'), _prr.get('level'))}** ({round(_prr.get('score') or 0)})")
-            lines.append("")
-            lines.append(f"_{_POLICY_DISCLAIMER}_")
-            lines.append("")
-
-        # Writing Quality badge (matches the web hero's Writing Score).
-        wq_tier_header = _ab.get("writing_quality_tier", "")
-        wq_score_header = _ab.get("writing_quality_score", 0)
-        _wq_labels = {"LOW": "Clean", "LIGHT_REVIEW": "Light+Review", "REVIEW": "Review", "HIGH_REVIEW": "Heavy+Review"}
-        _wq_colors = {"LOW": "green", "LIGHT_REVIEW": "yellow", "REVIEW": "orange", "HIGH_REVIEW": "red"}
-        if wq_tier_header:
-            wq_lbl = _wq_labels.get(wq_tier_header, wq_tier_header)
-            wq_clr = _wq_colors.get(wq_tier_header, "lightgrey")
-            lines.append(f"![{wq_lbl}](https://img.shields.io/badge/Quality-{wq_lbl}-{wq_clr}) &nbsp; Score `{wq_score_header:.0f}%`")
+    # ── LEAD: enhanced hero + KPI row + priority fixes + policy view ──
+    # (Submitted Text is moved to an appendix before the footer; the verdict +
+    #  policy view + findings lead instead.)
+    from .render_panels import render_scan_lead
+    _lead = render_scan_lead(report, data) if report.ai_risk_badge else ""
+    if _lead:
+        lines.append(_lead)
+        lines.append("")
+    elif report.ai_risk_badge:
+        # Legacy fallback (older reports without a submission_risk diagnosis).
+        _submission = _render_submission_risk_headline(report.ai_risk_badge)
+        if _submission:
+            lines.append(_submission)
+        _headline = _render_ai_likelihood_headline(report.ai_risk_badge)
+        if _headline:
+            lines.append(_headline)
+        lines.append("")
     else:
         lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
-    lines.append("")
-
-    # ── SUBMITTED TEXT ────────────────────────────────────────────
-    if report.original_text:
-        lines.append("## Submitted Text")
-        lines.append("")
-        paragraphs = report.original_text.strip().split("\n")
-        for p in paragraphs:
-            p = p.strip()
-            if p:
-                lines.append(f"> {p}")
-                lines.append(">")
         lines.append("")
 
-    # ── SUBMISSION RISK HEADLINE (leads; demotes AI-likelihood below) ──
-    _submission = _render_submission_risk_headline(report.ai_risk_badge)
-    if _submission:
-        lines.append(_submission)
-
-    # ── AI LIKELIHOOD (text-pattern axis + external trigger detail) ────
-    _headline = _render_ai_likelihood_headline(report.ai_risk_badge)
-    if _headline:
-        lines.append(_headline)
-
-    # ── 1. EXECUTIVE SUMMARY ──────────────────────────────────────
-    lines.append('<div style="page-break-before: always;"></div>')
+    # ── 2. CALIBRATION SUMMARY ────────────────────────────────────
+    lines.append("## 2. Calibration summary")
+    lines.append(
+        '<p class="dp-section-intro">How DraftProof reads the writing signal — shown with its '
+        "uncertainty, not hidden.</p>"
+    )
     lines.append("")
-    lines.append("## Executive Summary")
-    lines.append("")
+
+    # At-a-glance severity strip (findings breakdown the chart doesn't show).
+    _glance = [
+        (k, n, lbl)
+        for k, n, lbl in (
+            ("critical", n_critical, "Critical"),
+            ("high", n_high, "High"),
+            ("medium", n_medium, "Medium"),
+            ("low", n_low, "Low"),
+        )
+        if n
+    ]
+    if _glance:
+        _spans = "".join(
+            f'<span class="dp-glance--{k}"><b>{n}</b> {lbl}</span>' for k, n, lbl in _glance
+        )
+        lines.append(f'<div class="dp-glance">{_spans}</div>')
+        lines.append("")
 
     signal_chart = _executive_signal_chart_html(
         report,
@@ -1618,9 +1606,6 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         n_low=n_low,
         total=total,
     )
-    if _headline:
-        lines.append("### How DraftProof calibrates this")
-        lines.append("")
     if signal_chart:
         lines.append(signal_chart)
     else:
@@ -1646,17 +1631,16 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append(f"| **Breakdown** | {' / '.join(sev_parts)} |")
         lines.append("")
 
-    # ── CRITICAL THINKING QUESTIONS ───────────────────────────────
-    _ct_questions = _render_critical_thinking_questions(report.ai_risk_badge)
+    # ── 3. QUESTIONS TO SHARPEN YOUR THINKING ─────────────────────
+    from .render_panels import render_question_cards
+    _ct_questions = render_question_cards(report.ai_risk_badge)
     if _ct_questions:
-        lines.append('<div style="page-break-before: always;"></div>')
         lines.append("")
         lines.append(_ct_questions)
 
-    # ── 2. FINDINGS BY SEVERITY ───────────────────────────────────
-    lines.append("---")
+    # ── FINDINGS (numbered 3 or 4 depending on whether questions showed) ──
     lines.append("")
-    lines.append("## Findings")
+    lines.append(f"## {4 if _ct_questions else 3}. Findings")
     lines.append("")
 
     finding_num = 0
@@ -1743,6 +1727,19 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
                     tier_change = f"{orig_tier} → {new_tier}" if orig_tier != new_tier else orig_tier
                     lines.append(f"| {i} | {tier_change} | {orig_text} | {new_text} |")
                 lines.append("")
+
+    # ── APPENDIX: SUBMITTED TEXT ──────────────────────────────────
+    if report.original_text:
+        lines.append('<div style="page-break-before: always;"></div>')
+        lines.append("")
+        lines.append("## Appendix — Submitted Text")
+        lines.append("")
+        for p in report.original_text.strip().split("\n"):
+            p = p.strip()
+            if p:
+                lines.append(f"> {p}")
+                lines.append(">")
+        lines.append("")
 
     # ── FOOTER ────────────────────────────────────────────────────
     lines.append("---")

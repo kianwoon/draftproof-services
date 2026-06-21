@@ -593,12 +593,11 @@ def render_rewrite_report(
     ts = time.strftime("%Y-%m-%d %H:%M")
 
     # ── Header ──────────────────────────────────────────────────────
-    lines.append("# DraftProof — Rewrite Report")
-    lines.append("")
     lines.append(
-        '<div class="dp-rewrite-letterhead">'
-        '<div><strong>DraftProof</strong><span>Rewrite Delivery Report</span></div>'
-        f'<em>Generated {html.escape(ts)}</em>'
+        '<div class="dp-masthead">'
+        '<div><span class="dp-masthead-title">DraftProof</span>'
+        '<span class="dp-masthead-sub">Rewrite Delivery Report</span></div>'
+        f'<span class="dp-masthead-meta">Generated {html.escape(ts)}</span>'
         '</div>'
     )
     lines.append("")
@@ -742,32 +741,41 @@ def render_rewrite_report(
         elif outcome == "topk_blocked":
             result_label = "Top-k Blocked"
 
-        lines.append("### Result")
-        lines.append("")
-        lines.append(f"**{result_label}**")
-        lines.append("")
+        # Plain-English result explanation (used as the hero panel's sub-line).
         if outcome == "cleanup_improved":
-            lines.append("Review burden reduced, but AI-footprint signals are still high. Do not treat this as detector-safe mitigation.")
+            _expl = "Review burden reduced, but AI-footprint signals are still high. Do not treat this as detector-safe mitigation."
         elif outcome == "partially_ai_mitigated":
-            lines.append("AI-footprint signals reduced, but the result is still not guaranteed to pass external detectors.")
+            _expl = "AI-footprint signals reduced, but the result is still not guaranteed to pass external detectors."
         elif outcome == "topk_blocked":
-            lines.append("Top-k predictability remains above the safe mark, so this rewrite is not detector-safe mitigation yet.")
+            _expl = "Top-k predictability remains above the safe mark, so this rewrite is not detector-safe mitigation yet."
         elif outcome == "ai_mitigated" or ai_first_kept:
-            lines.append(
-                "AI likelihood improved enough to keep the rewrite. Writing-quality or lower-severity changes are follow-up work."
-            )
+            _expl = "AI likelihood improved enough to keep the rewrite. Writing-quality or lower-severity changes are follow-up work."
         elif original_preserved and rollback and attempted_scan:
-            lines.append("The attempted rewrite was not kept because the final scan did not improve.")
+            _expl = "The attempted rewrite was not kept because the final scan did not improve."
         elif no_text_change:
-            lines.append("DraftProof found revision opportunities, but the main issues need evidence, examples, or source context from the author.")
+            _expl = "DraftProof found revision opportunities, but the main issues need evidence, examples, or source context from the author."
         elif improved_with_review:
-            lines.append("At least one measured risk signal improved. Review the new findings before keeping the final output.")
+            _expl = "At least one measured risk signal improved. Review the new findings before keeping the final output."
         elif mixed_result:
-            lines.append("Some risk scores improved, but the final scan added findings or increased review burden. Review the revision plan before keeping the final output.")
+            _expl = "Some risk scores improved, but the final scan added findings or increased review burden. Review the revision plan before keeping the final output."
         elif improved:
-            lines.append("The final output reduced at least one measured risk signal.")
+            _expl = "The final output reduced at least one measured risk signal."
         else:
-            lines.append("Review the revision plan below before making another pass.")
+            _expl = "Review the revision plan below before making another pass."
+
+        # Hero result panel + before→after KPI row (mirrors the scan report design).
+        from .render_panels import rewrite_hero
+        lines.append(rewrite_hero(
+            result_label=result_label, explanation=_expl, outcome=outcome,
+            ai_improved=ai_improved, score_worse=score_worse, original_preserved=original_preserved,
+            orig_ai=_display_ai_score(orig_ai), new_ai=_display_ai_score(new_ai),
+            orig_human=orig_human, new_human=new_human, orig_wq=orig_wq, new_wq=new_wq,
+            o_total=o_total, n_total=n_total,
+        ))
+        lines.append("")
+
+        # Then the outcome scorecard (detector-risk seal) before the detail tables.
+        lines.append(_outcome_stamp_html(summary, result_label, new_scan))
         lines.append("")
 
         lines.append("### Detect Scan Comparison")
@@ -956,9 +964,9 @@ def render_rewrite_report(
             converged=converged,
         )
         lines.append(f"**{result_label}**")
-    lines.append("")
-
-    lines.append(_outcome_stamp_html(summary, result_label, new_scan))
+        lines.append("")
+        # No detect-scan tables in this branch — scorecard leads directly.
+        lines.append(_outcome_stamp_html(summary, result_label, new_scan))
     lines.append("")
     lines.extend(_document_section("Submitted Content", original_text))
     lines.extend(_document_section("Rewritten Content", final_text))
