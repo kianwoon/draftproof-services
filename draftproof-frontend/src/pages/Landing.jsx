@@ -682,7 +682,7 @@ function useLandingCarousel(slideCount, intervalMs = 6500) {
 
   useEffect(() => {
     if (isPaused || slideCount < 2) return undefined;
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
+    // CSS handles prefers-reduced-motion (disables transitions) — don't stop rotation here
 
     const timer = window.setTimeout(() => {
       setActiveSlide((current) => (current + 1) % slideCount);
