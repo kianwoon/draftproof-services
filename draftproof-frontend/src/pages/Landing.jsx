@@ -49,6 +49,7 @@ export default function Landing() {
     ? heroTitlesRaw
     : [{ text: t('landing.heroTitle'), highlight: t('landing.heroTitleHighlight') }];
   const heroTitleCarousel = useLandingCarousel(heroTitles.length, 4500);
+  const canHover = typeof window !== 'undefined' && window.matchMedia?.('(hover: hover)').matches;
   const useCases = t('landing.useCases', { returnObjects: true });
 
   return (
@@ -60,8 +61,8 @@ export default function Landing() {
             <p className="brand-pill">{t('landing.heroPill')}</p>
             <h1
               className="hero-rotating-title"
-              onMouseEnter={heroTitleCarousel.pause}
-              onMouseLeave={heroTitleCarousel.resume}
+              onMouseEnter={canHover ? heroTitleCarousel.pause : undefined}
+              onMouseLeave={canHover ? heroTitleCarousel.resume : undefined}
             >
               {heroTitles.map((item, index) => {
                 const text = String(item?.text ?? '');
