@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<!-- allow-hardcode: static install landing page (marketing/support copy + steps),
+     not scoring/matching logic. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Install DraftProof for Microsoft Word</title>
+    <meta name="description" content="Add the DraftProof add-in to Microsoft Word to scan highlighted text for AI-writing risk." />
+    <link rel="icon" href="https://draftproof.app/favicon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --ink: #0D1B2A; --muted: #5b6472; --line: rgba(13,27,42,.10);
+        --green: #3BA876; --green-dark: #0F6E56; --surface: #fff; --soft: #F4F2EE; --mint: #E1F5EE;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--soft); color: var(--ink);
+        font-family: Inter, "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.6;
+      }
+      .wrap { max-width: 760px; margin: 0 auto; padding: 40px 20px 64px; }
+      .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+      .brand svg { width: 30px; height: 30px; }
+      .brand span { font-family: Georgia, serif; font-weight: 700; font-size: 20px; }
+      h1 { font-family: Georgia, serif; font-size: 30px; margin: 0 0 8px; }
+      .lede { color: var(--muted); font-size: 17px; margin: 0 0 28px; }
+      .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 24px; margin-bottom: 18px; }
+      .step-num { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--mint); color: var(--green-dark); font-weight: 700; font-size: 14px; margin-right: 8px; }
+      h2 { font-size: 18px; margin: 0 0 12px; display: flex; align-items: center; }
+      .btn { display: inline-flex; align-items: center; gap: 8px; background: var(--green); color: #fff; text-decoration: none; font-weight: 600; padding: 12px 20px; border-radius: 8px; border: none; cursor: pointer; }
+      .btn:hover { background: var(--green-dark); }
+      .btn-ghost { background: transparent; color: var(--green-dark); border: 1px solid var(--line); }
+      .platforms { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 16px; }
+      .ptab { padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); cursor: pointer; font: inherit; font-weight: 600; color: var(--muted); }
+      .ptab.active { background: var(--mint); color: var(--green-dark); border-color: transparent; }
+      ol.steps { margin: 0; padding-left: 20px; }
+      ol.steps li { margin: 8px 0; }
+      code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--soft); padding: 1px 6px; border-radius: 5px; font-size: .9em; }
+      .hide { display: none; }
+      .muted { color: var(--muted); font-size: 14px; }
+      a { color: var(--green-dark); }
+      .foot { margin-top: 28px; color: var(--muted); font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="brand">
+        <svg viewBox="0 0 32 32" fill="none" stroke="#3BA876" stroke-width="2"><path d="M16 3 27 7v8c0 7.2-4.6 11.8-11 14C9.6 26.8 5 22.2 5 15V7l11-4Z"/><path d="m10.8 15.9 3.4 3.3 7.4-8"/></svg>
+        <span>DraftProof</span>
+      </div>
+
+      <h1>Add DraftProof to Microsoft Word</h1>
+      <p class="lede">Highlight text in Word and scan it for AI‑writing risk — billed to your DraftProof credits.</p>
+
+      <div class="card">
+        <h2><span class="step-num">1</span> Get your API key</h2>
+        <p class="muted">The add‑in signs in with a personal key. Generate one (copy it — it's shown once), then paste it into the add‑in's pane.</p>
+        <a class="btn" href="https://draftproof.app/api-keys" target="_blank" rel="noopener">Generate an API key ↗</a>
+      </div>
+
+      <div class="card">
+        <h2><span class="step-num">2</span> Add the add‑in to Word</h2>
+        <p class="muted">Download the manifest, then follow the steps for your version of Word.</p>
+        <p><a class="btn btn-ghost" href="https://draftproof.app/word-addin/manifest.xml" download="draftproof-manifest.xml">Download manifest.xml</a></p>
+
+        <div class="platforms" role="tablist">
+          <button class="ptab" data-os="web" type="button">Word on the web</button>
+          <button class="ptab" data-os="win" type="button">Windows</button>
+          <button class="ptab" data-os="mac" type="button">Mac</button>
+        </div>
+
+        <div data-panel="web">
+          <ol class="steps">
+            <li>Open a document at <a href="https://word.cloud.microsoft" target="_blank" rel="noopener">word.cloud.microsoft</a>.</li>
+            <li>Go to <strong>Home → Add‑ins → More Add‑ins</strong>.</li>
+            <li>Open the <strong>My Add‑ins</strong> tab → <strong>Upload My Add‑in</strong>.</li>
+            <li>Choose the <code>manifest.xml</code> you downloaded → <strong>Upload</strong>.</li>
+            <li>Open it from the Home tab: <strong>DraftProof → Scan selection</strong>.</li>
+          </ol>
+        </div>
+
+        <div data-panel="win" class="hide">
+          <ol class="steps">
+            <li>Put <code>manifest.xml</code> in a folder and <strong>share that folder</strong> on your network.</li>
+            <li>In Word: <strong>File → Options → Trust Center → Trust Center Settings → Trusted Add‑in Catalogs</strong>.</li>
+            <li>Paste the folder's share path, click <strong>Add catalog</strong>, tick <strong>Show in Menu</strong>, OK, and restart Word.</li>
+            <li><strong>Insert → My Add‑ins → Shared Folder</strong> → select <strong>DraftProof</strong>.</li>
+          </ol>
+          <p class="muted">Full guide: <a href="https://learn.microsoft.com/office/dev/add-ins/testing/create-a-network-shared-folder-catalog-for-task-pane-and-content-add-ins" target="_blank" rel="noopener">network shared‑folder catalog ↗</a></p>
+        </div>
+
+        <div data-panel="mac" class="hide">
+          <ol class="steps">
+            <li>Copy <code>manifest.xml</code> into:<br /><code>~/Library/Containers/com.microsoft.Word/Data/Documents/wef</code><br />(create the <code>wef</code> folder if it doesn't exist).</li>
+            <li>Restart Word.</li>
+            <li><strong>Insert → Add‑ins → My Add‑ins → Developer Add‑ins</strong> → <strong>DraftProof</strong>.</li>
+          </ol>
+        </div>
+      </div>
+
+      <p class="foot">Trouble installing? Email <a href="mailto:support@draftproof.app">support@draftproof.app</a>. Coming soon: one‑click install from the Office store (AppSource).</p>
+    </div>
+
+    <script>
+      (function () {
+        var tabs = document.querySelectorAll('.ptab');
+        var panels = document.querySelectorAll('[data-panel]');
+        function show(os) {
+          tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.os === os); });
+          panels.forEach(function (p) { p.classList.toggle('hide', p.dataset.panel !== os); });
+        }
+        tabs.forEach(function (t) { t.addEventListener('click', function () { show(t.dataset.os); }); });
+        var ua = navigator.userAgent || '';
+        show(/Macintosh|Mac OS X/.test(ua) ? 'mac' : /Windows/.test(ua) ? 'win' : 'web');
+      })();
+    </script>
+  </body>
+</html>
