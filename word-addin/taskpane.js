@@ -36,7 +36,7 @@
     [
       "setup", "apiKey", "saveKey", "setupError",
       "scanner", "keyPrefix", "changeKey", "scanBtn", "status", "result",
-      "selectionPreview", "wordCount",
+      "selectionPreview", "wordCount", "docState",
     ].forEach(function (id) { els[id] = document.getElementById(id); });
   }
 
@@ -295,8 +295,45 @@
         lowConfidence: !!lowConfidence,
         report: report,
       });
-      Office.context.document.settings.saveAsync(function () {});
-    } catch (e) { /* settings unavailable — non-fatal */ }
+      Office.context.document.settings.saveAsync(function (res) {
+        // settings.saveAsync only writes the bag INTO the document; per MS docs
+        // it reaches disk (and survives a reopen) only when the FILE is saved.
+        // Persist the file so the association sticks across sessions.
+        if (res && res.status === Office.AsyncResultStatus.Succeeded) {
+          setDocState("Saved to this document.", "ok");
+          persistDocumentFile();
+        } else {
+          var msg = res && res.error ? res.error.message : "unknown error";
+          setDocState("Couldn't save to this document: " + msg, "err");
+        }
+      });
+    } catch (e) {
+      setDocState("Couldn't save to this document: " + (e && e.message), "err");
+    }
+  }
+
+  function setDocState(msg, kind) {
+    if (!els.docState) return;
+    if (!msg) { els.docState.hidden = true; els.docState.textContent = ""; return; }
+    els.docState.textContent = msg;
+    els.docState.className = "dp-docstate" + (kind ? " dp-docstate-" + kind : "");
+    els.docState.hidden = false;
+  }
+
+  // Save the document file so the in-document settings reach disk — but only if
+  // it already has a path, to avoid springing a "Save As" dialog on a brand-new
+  // unsaved doc (where in-session restore still works until the user saves once).
+  function persistDocumentFile() {
+    try {
+      Office.context.document.getFilePropertiesAsync(function (res) {
+        var url = res && res.value && res.value.url;
+        if (!url || typeof Word === "undefined" || !Word.run) return;
+        Word.run(function (context) {
+          context.document.save();
+          return context.sync();
+        }).catch(function () {});
+      });
+    } catch (e) { /* non-fatal */ }
   }
 
   function restoreSavedScan() {
@@ -308,8 +345,12 @@
           restored: true,
           savedAt: formatTs(saved.ts),
         });
+      } else {
+        setDocState("No saved scan found in this document yet.", null);
       }
-    } catch (e) { /* non-fatal */ }
+    } catch (e) {
+      setDocState("Couldn't read saved scan: " + (e && e.message), "err");
+    }
   }
 
   function formatTs(iso) {

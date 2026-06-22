@@ -227,3 +227,7 @@ input[type="password"]:focus {
   font-weight: 600;
   font-size: 13px;
 }
+
+.dp-docstate { margin: 12px 0 0; font-size: 12px; color: var(--dp-muted); }
+.dp-docstate-ok { color: var(--dp-green-dark); }
+.dp-docstate-err { color: var(--dp-red); }
