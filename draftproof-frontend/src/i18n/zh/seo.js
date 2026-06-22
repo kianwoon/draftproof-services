@@ -16,6 +16,8 @@ export const seo = {
   "faqDescription": "了解 DraftProof 内容审阅、逐段改写辅导、提交风险评估、报告、隐私和积分价格等常见问题。",
   "privacyTitle": "隐私政策 | DraftProof",
   "privacyDescription": "DraftProof 如何处理账户数据、上传文档、生成报告、付款、Cookie、存储和删除请求。",
+  "termsTitle": "服务条款 | DraftProof",
+  "termsDescription": "约束你使用 DraftProof 的条款——账户、API 密钥、额度与计费、可接受使用、内容、免责声明与责任。",
   "securityTitle": "安全 | DraftProof",
   "securityDescription": "DraftProof 如何通过加密存储、OAuth 登录、安全付款、访问控制和用户可控删除来保护学术文档。",
   "signInTitle": "登录 | DraftProof",

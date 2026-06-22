@@ -79,6 +79,13 @@ export const PAGE_META = {
     schemaType: 'PrivacyPolicy',
     freshness: { type: 'updated', date: SEO_REVIEW_DATE },
   },
+  '/terms': {
+    titleKey: 'seo.termsTitle',
+    descriptionKey: 'seo.termsDescription',
+    canonical: '/terms',
+    schemaType: 'WebPage',
+    freshness: { type: 'updated', date: SEO_REVIEW_DATE },
+  },
   '/security': {
     titleKey: 'seo.securityTitle',
     descriptionKey: 'seo.securityDescription',

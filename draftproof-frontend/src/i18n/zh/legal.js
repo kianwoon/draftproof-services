@@ -1,6 +1,29 @@
 export const legal = {
   "lastUpdated": "最后更新",
   "may2026": "2026 年 5 月",
+  // allow-hardcode: i18n legal copy (Terms of Service), not scoring/matching logic.
+  "terms": {
+    "eyebrow": "服务条款",
+    "title": "DraftProof 服务条款",
+    "lead": "本条款约束你对 DraftProof 的使用——包括网站、扫描与改写服务，以及 Microsoft Word 和 Google 文档加载项。使用 DraftProof 即表示你同意本条款。",
+    "stat": "通俗易懂的条款",
+    "sections": [
+      { "title": "1. 接受条款", "paragraphs": ["创建账户或使用 DraftProof，即表示你同意本服务条款及我们的隐私政策。若不同意，请勿使用本服务。"] },
+      { "title": "2. 服务说明", "paragraphs": ["DraftProof 会分析你提交的文本，返回 AI 写作风险信号、写作质量与批判性思维指引，以及可选的改写建议。结果为帮助你审阅和改进自身写作的参考性指引——并非对任何结果的保证，也不是规避 AI 检测器或学术诚信检查的手段。你对在别处提交的作品仍负全部责任。"] },
+      { "title": "3. 账户与 API 密钥", "paragraphs": ["你通过 Google 或 Microsoft 登录。你需对账户下的活动负责，并妥善保管 API 密钥。密钥会消耗你的额度——请将其视为密码，若怀疑泄露请立即吊销。"] },
+      { "title": "4. 额度与计费", "paragraphs": ["扫描和改写会消耗你余额中的额度。额度通过 Stripe 购买。由于额度用于交付数字服务，已消耗的额度除法律另有规定外不予退款。价格与额度费率可能在合理通知后变更。"] },
+      { "title": "5. 可接受使用", "bullets": ["不得使用 DraftProof 从事违法行为或侵犯他人权利。", "不得提交你无权提交的内容。", "不得试图干扰、逆向工程或滥用本服务及其配额。", "不得使用 DraftProof 虚构作者身份或协助学术不端。"] },
+      { "title": "6. 你的内容", "paragraphs": ["你保留对所提交文本的全部权利。你授予 DraftProof 有限许可，仅为提供服务（分析、报告与改写）而处理该文本。我们不主张对你内容的所有权。内容的存储与删除详见隐私政策。"] },
+      { "title": "7. 准确性与 AI 免责声明", "paragraphs": ["DraftProof 的信号由自动化的概率模型生成，且外部检测器差异很大。分数仅供参考，可能出错，不得视为作者身份的证明或合规保证。请始终运用你自己的判断。"] },
+      { "title": "8. 知识产权", "paragraphs": ["DraftProof 及其软件、模型和品牌归 DraftProof 及其许可方所有。除按预期使用本服务外，本条款不授予你任何相关权利。"] },
+      { "title": "9. 不作担保", "paragraphs": ["在法律允许的最大范围内，本服务按“现状”和“现有”提供，不作任何形式的担保。"] },
+      { "title": "10. 责任限制", "paragraphs": ["在法律允许的最大范围内，DraftProof 不对间接、附带或后果性损害负责；我们对任何索赔的总责任以你在索赔前三个月内为使用本服务所支付的金额为限。"] },
+      { "title": "11. 终止", "paragraphs": ["你可随时停止使用 DraftProof。若你违反本条款或滥用服务，我们可暂停或终止访问。"] },
+      { "title": "12. 条款变更", "paragraphs": ["我们可能更新本条款；重大变更将在此页注明更新日期。变更后继续使用即表示你接受变更。"] },
+      { "title": "13. 适用法律", "paragraphs": ["本条款受新加坡法律管辖，不适用其冲突法规则。"] },
+      { "title": "14. 联系我们", "paragraphs": ["对本条款有疑问？请发送邮件至 support@draftproof.app。"] }
+    ]
+  },
   "privacy": {
     "eyebrow": "隐私政策",
     "title": "我们如何处理你的数据",

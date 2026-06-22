@@ -21,6 +21,7 @@ import FAQ from './pages/FAQ';
 import Why from './pages/Why';
 import Features from './pages/Features';
 import Privacy from './pages/Privacy';
+import Terms from './pages/Terms';
 import Security from './pages/Security';
 import EssayChecker from './pages/EssayChecker';
 import NotFound from './pages/NotFound';
@@ -124,6 +125,8 @@ export default function App() {
             <Route path="/zh/essay-checker" element={<Navigate to="/zh/content-checker" replace />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/zh/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
+            <Route path="/zh/terms" element={<Terms />} />
             <Route path="/security" element={<Security />} />
             <Route path="/zh/security" element={<Security />} />
             <Route path="/buy" element={<ProtectedRoute><BuyTokens /></ProtectedRoute>} />

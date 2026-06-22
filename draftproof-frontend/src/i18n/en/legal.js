@@ -1,6 +1,29 @@
 export const legal = {
   "lastUpdated": "Last updated",
   "may2026": "May 2026",
+  // allow-hardcode: i18n legal copy (Terms of Service), not scoring/matching logic.
+  "terms": {
+    "eyebrow": "Terms of Service",
+    "title": "DraftProof Terms of Service",
+    "lead": "These terms govern your use of DraftProof — the website, the scanning and rewrite services, and the Microsoft Word and Google Docs add-ons. By using DraftProof you agree to them.",
+    "stat": "Plain-language terms",
+    "sections": [
+      { "title": "1. Acceptance", "paragraphs": ["By creating an account or using DraftProof, you agree to these Terms of Service and our Privacy Policy. If you do not agree, do not use the service."] },
+      { "title": "2. The service", "paragraphs": ["DraftProof analyses text you submit and returns AI-writing-risk signals, writing-quality and critical-thinking guidance, and optional rewrite suggestions. Results are indicative guidance to help you review and improve your own writing — they are not a guarantee of any outcome and not a means to evade AI detectors or academic-integrity checks. You remain responsible for any work you submit elsewhere."] },
+      { "title": "3. Accounts and API keys", "paragraphs": ["You sign in via Google or Microsoft. You are responsible for activity under your account and for keeping your API keys secret. API keys consume your credits — treat them like passwords and revoke any key you believe is exposed."] },
+      { "title": "4. Credits and billing", "paragraphs": ["Scans and rewrites consume credits from your balance. Credits are purchased through Stripe. Because credits are consumed to deliver a digital service, consumed credits are non-refundable except where required by law. Prices and credit rates may change with reasonable notice."] },
+      { "title": "5. Acceptable use", "bullets": ["Do not use DraftProof to break the law or infringe others' rights.", "Do not submit content you have no right to submit.", "Do not attempt to disrupt, reverse-engineer, or abuse the service or its quotas.", "Do not use DraftProof to misrepresent authorship or to facilitate academic dishonesty."] },
+      { "title": "6. Your content", "paragraphs": ["You keep all rights to the text you submit. You grant DraftProof a limited licence to process that text solely to provide the service (analysis, reports, and rewrites). We do not claim ownership of your content. See the Privacy Policy for how content is stored and deleted."] },
+      { "title": "7. Accuracy and AI disclaimer", "paragraphs": ["DraftProof's signals are produced by automated, probabilistic models, and external detectors vary widely. Scores are indicative, can be wrong, and must not be treated as proof of authorship or as a compliance guarantee. Always apply your own judgement."] },
+      { "title": "8. Intellectual property", "paragraphs": ["DraftProof and its software, models, and branding are owned by DraftProof and its licensors. These terms grant you no rights in them beyond using the service as intended."] },
+      { "title": "9. Disclaimer of warranties", "paragraphs": ["The service is provided \"as is\" and \"as available\", without warranties of any kind, to the fullest extent permitted by law."] },
+      { "title": "10. Limitation of liability", "paragraphs": ["To the fullest extent permitted by law, DraftProof is not liable for indirect, incidental, or consequential damages, and our total liability for any claim is limited to the amount you paid to use the service in the three months before the claim."] },
+      { "title": "11. Termination", "paragraphs": ["You may stop using DraftProof at any time. We may suspend or terminate access for breach of these terms or misuse of the service."] },
+      { "title": "12. Changes to these terms", "paragraphs": ["We may update these terms; material changes will be posted here with an updated date. Continued use after a change means you accept it."] },
+      { "title": "13. Governing law", "paragraphs": ["These terms are governed by the laws of Singapore, without regard to conflict-of-law rules."] },
+      { "title": "14. Contact", "paragraphs": ["Questions about these terms? Email support@draftproof.app."] }
+    ]
+  },
   "privacy": {
     "eyebrow": "Privacy Policy",
     "title": "How we handle your data",

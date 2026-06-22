@@ -16,6 +16,8 @@ export const seo = {
   "faqDescription": "Answers about DraftProof content reviews, paragraph-level rewrite coaching, submission risk framing, reports, privacy, and credit pricing for students.",
   "privacyTitle": "Privacy Policy | DraftProof",
   "privacyDescription": "How DraftProof handles account data, uploaded documents, generated reports, payments, cookies, storage, and deletion requests.",
+  "termsTitle": "Terms of Service | DraftProof",
+  "termsDescription": "The terms governing your use of DraftProof — accounts, API keys, credits and billing, acceptable use, content, disclaimers, and liability.",
   "securityTitle": "Security | DraftProof",
   "securityDescription": "How DraftProof protects academic documents with encrypted storage, OAuth sign-in, secure payments, access controls, and user-controlled deletion.",
   "signInTitle": "Sign In | DraftProof",
