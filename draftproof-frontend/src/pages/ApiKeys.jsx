@@ -183,12 +183,32 @@ export default function ApiKeys() {
           <div className="api-keys-modal">
             <h2>{t('apiKeys.modal.title')}</h2>
             <p className="api-keys-modal-warn">{t('apiKeys.modal.warning')}</p>
-            <code className="api-keys-secret">{newKey.key}</code>
+            <div className="api-keys-secret-row">
+              <code className="api-keys-secret">{newKey.key}</code>
+              <button
+                type="button"
+                className={`api-keys-copy-btn${copied ? ' is-copied' : ''}`}
+                onClick={handleCopy}
+                aria-label={copied ? t('apiKeys.modal.copied') : t('apiKeys.modal.copy')}
+                title={copied ? t('apiKeys.modal.copied') : t('apiKeys.modal.copy')}
+              >
+                {copied ? (
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="m5 13 4 4 10-11" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <rect x="9" y="9" width="11" height="11" rx="2" />
+                    <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <p className="api-keys-copy-feedback" aria-live="polite">
+              {copied ? t('apiKeys.modal.copied') : ''}
+            </p>
             <p className="api-keys-muted">{t('apiKeys.modal.usageHint')}</p>
             <div className="api-keys-modal-actions">
-              <button type="button" className="btn btn-ghost" onClick={handleCopy}>
-                {copied ? t('apiKeys.modal.copied') : t('apiKeys.modal.copy')}
-              </button>
               <button type="button" className="btn btn-primary" onClick={() => setNewKey(null)}>
                 {t('apiKeys.modal.done')}
               </button>
