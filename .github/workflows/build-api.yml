@@ -6,6 +6,7 @@ on:
     paths:
       - 'draftproof-api/**'
       - 'draftproof-frontend/**'
+      - 'word-addin/**'
       - '.github/workflows/build-api.yml'
 
 env:

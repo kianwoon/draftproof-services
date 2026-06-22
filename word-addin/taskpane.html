@@ -33,6 +33,13 @@
           Key <code id="keyPrefix"></code>
           <button id="changeKey" class="dp-link" type="button">change</button>
         </p>
+        <div class="dp-selection">
+          <div class="dp-selection-head">
+            <span>Selected text</span>
+            <span id="wordCount" class="dp-wordcount">0 words</span>
+          </div>
+          <p id="selectionPreview" class="dp-selection-text dp-muted">Highlight text in the document to scan.</p>
+        </div>
         <button id="scanBtn" class="dp-btn dp-btn-primary">Scan selected text</button>
         <div id="status" class="dp-status" role="status" aria-live="polite"></div>
         <div id="result" class="dp-result" hidden></div>

@@ -15,18 +15,26 @@
   var POLL_MAX_ATTEMPTS = 60; // ~120s ceiling
 
   var els = {};
+  var scanning = false;
 
   Office.onReady(function (info) {
     if (info.host !== Office.HostType.Word) return;
     cache();
     bind();
     render();
+    // Live-preview the selection + word count, updating as it changes.
+    Office.context.document.addHandlerAsync(
+      Office.EventType.DocumentSelectionChanged,
+      updateSelectionPreview
+    );
+    updateSelectionPreview();
   });
 
   function cache() {
     [
       "setup", "apiKey", "saveKey", "setupError",
       "scanner", "keyPrefix", "changeKey", "scanBtn", "status", "result",
+      "selectionPreview", "wordCount",
     ].forEach(function (id) { els[id] = document.getElementById(id); });
   }
 
@@ -48,6 +56,7 @@
     if (key) {
       els.keyPrefix.textContent = key.slice(0, 16) + "…";
       show(els.scanner); hide(els.setup);
+      updateSelectionPreview();
     } else {
       show(els.setup); hide(els.scanner);
     }
@@ -93,6 +102,30 @@
         else reject(res.error);
       });
     });
+  }
+
+  function countWords(text) {
+    var t = (text || "").trim();
+    return t ? t.split(/\s+/).length : 0;
+  }
+
+  // Reflect the current selection (preview + word count) in the pane. Fires on
+  // load and on every DocumentSelectionChanged event.
+  function updateSelectionPreview() {
+    getSelectedText().then(function (text) {
+      var t = (text || "").trim();
+      var n = countWords(t);
+      els.wordCount.textContent = n === 1 ? "1 word" : n + " words";
+      els.wordCount.classList.toggle("dp-wordcount-low", n > 0 && n < 100);
+      if (n === 0) {
+        els.selectionPreview.textContent = "Highlight text in the document to scan.";
+        els.selectionPreview.classList.add("dp-muted");
+      } else {
+        els.selectionPreview.textContent = t.length > 240 ? t.slice(0, 240) + "…" : t;
+        els.selectionPreview.classList.remove("dp-muted");
+      }
+      if (!scanning) els.scanBtn.disabled = n === 0;
+    }).catch(function () {});
   }
 
   // ── API ──────────────────────────────────────────────────────────────────
@@ -193,7 +226,7 @@
   // ── tiny helpers ───────────────────────────────────────────────────────────
   function show(el) { if (el) el.hidden = false; }
   function hide(el) { if (el) el.hidden = true; }
-  function busy(on) { els.scanBtn.disabled = on; }
+  function busy(on) { scanning = on; els.scanBtn.disabled = on; }
   function setStatus(msg) { els.status.textContent = msg || ""; }
   function clearResult() { els.result.innerHTML = ""; hide(els.result); setStatus(""); }
   function setupError(msg) {

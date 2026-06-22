@@ -9,6 +9,10 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute must win over .dp-card's display:flex, otherwise the
+   setup and scanner sections both render at once. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -86,4 +90,33 @@ input[type="password"] {
   background: #fdf3e2;
   border-radius: 6px;
   color: #7a5410;
+}
+
+.dp-muted { color: var(--dp-muted); }
+
+.dp-selection {
+  border: 1px solid var(--dp-border);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fafbfc;
+}
+.dp-selection-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dp-muted);
+  margin-bottom: 6px;
+}
+.dp-wordcount { font-variant-numeric: tabular-nums; }
+.dp-wordcount-low { color: #9a6212; }
+.dp-selection-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  max-height: 110px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
