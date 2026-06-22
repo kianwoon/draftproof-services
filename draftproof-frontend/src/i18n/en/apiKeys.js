@@ -35,6 +35,8 @@ export const apiKeys = {
   revokedBadge: "Revoked",
   revoke: "Revoke",
   revoking: "Revoking…",
+  copy: "Copy",
+  copied: "Copied!",
   revokeConfirm: "Revoke this key? Any add-in using it will stop working immediately. This cannot be undone.",
   revokeError: "Couldn't revoke the key. Please try again.",
   modal: {

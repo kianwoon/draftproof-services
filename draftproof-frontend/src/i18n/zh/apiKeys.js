@@ -35,6 +35,8 @@ export const apiKeys = {
   revokedBadge: "已吊销",
   revoke: "吊销",
   revoking: "正在吊销…",
+  copy: "复制",
+  copied: "已复制！",
   revokeConfirm: "确定要吊销此密钥吗？使用它的加载项将立即停止工作。此操作无法撤销。",
   revokeError: "无法吊销密钥，请重试。",
   modal: {

@@ -1364,7 +1364,7 @@
 .api-keys-table th { font-size: .8rem; color: var(--muted); font-weight: 600; }
 .api-keys-table tr.is-revoked { opacity: .55; }
 .api-keys-mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
-.api-keys-action-cell { text-align: right; }
+.api-keys-action-cell { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
 .api-keys-badge {
   font-size: .78rem;
   color: var(--muted);
