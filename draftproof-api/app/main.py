@@ -159,6 +159,7 @@ PRIVATE_FRONTEND_PREFIXES = (
     "rewrite/",
     "buy",
     "history",
+    "api-keys",
     "auth/callback",
 )
 

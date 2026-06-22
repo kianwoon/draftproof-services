@@ -64,6 +64,19 @@ def test_resolve_frontend_file_serves_private_route_with_noindex(tmp_path):
     assert headers == {"X-Robots-Tag": "noindex, nofollow"}
 
 
+def test_api_keys_route_is_served_as_private_spa_route(tmp_path):
+    """/api-keys is a private (ProtectedRoute) SPA page, not prerendered — a direct
+    visit/refresh must serve index.html so React Router handles it, not 404."""
+    root = tmp_path
+    (root / "index.html").write_text("home", encoding="utf-8")
+
+    file_path, cache_control, status_code, headers = resolve_frontend_file(str(root), "api-keys")
+
+    assert Path(file_path) == root / "index.html"
+    assert status_code == 200
+    assert headers == {"X-Robots-Tag": "noindex, nofollow"}
+
+
 def test_resolve_frontend_file_returns_404_for_unknown_route(tmp_path):
     root = tmp_path
     (root / "index.html").write_text("home", encoding="utf-8")
