@@ -121,7 +121,8 @@
         els.selectionPreview.textContent = "Highlight text in the document to scan.";
         els.selectionPreview.classList.add("dp-muted");
       } else {
-        els.selectionPreview.textContent = t.length > 240 ? t.slice(0, 240) + "…" : t;
+        // Show the full selection; the box is scrollable + user-resizable.
+        els.selectionPreview.textContent = t;
         els.selectionPreview.classList.remove("dp-muted");
       }
       if (!scanning) els.scanBtn.disabled = n === 0;

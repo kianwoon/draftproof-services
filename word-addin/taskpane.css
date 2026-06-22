@@ -1,10 +1,18 @@
-/* allow-hardcode: presentation styles for the task pane, not logic. */
+/* allow-hardcode: presentation styles for the task pane, not logic.
+   Mirrors the DraftProof site theme (brand green, Inter body / Georgia headings,
+   warm surfaces) — token values copied from site-master/00-foundation.css :root. */
 :root {
-  --dp-ink: #1a1f29;
-  --dp-muted: #5b6472;
-  --dp-border: #dde1e8;
-  --dp-accent: #2f6df6;
+  --dp-ink: #0D1B2A;
+  --dp-muted: #7A8694;
+  --dp-line: rgba(13, 27, 42, .10);
+  --dp-green: #3BA876;       /* brand */
+  --dp-green-dark: #0F6E56;  /* hover / pressed */
   --dp-bg: #ffffff;
+  --dp-surface-soft: #F4F2EE;
+  --dp-surface-mint: #E1F5EE;
+  --dp-red: #E24B4A;
+  --dp-gold: #C9973A;
+  --dp-radius: 8px;
 }
 
 * { box-sizing: border-box; }
@@ -15,90 +23,92 @@
 
 body {
   margin: 0;
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: Inter, "Noto Sans SC", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--dp-ink);
   background: var(--dp-bg);
   font-size: 14px;
+  line-height: 1.6;
 }
 
 #app { padding: 16px; }
 
-.dp-head h1 { margin: 0 0 2px; font-size: 18px; }
+.dp-head h1 {
+  margin: 0 0 2px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  font-weight: 700;
+}
 .dp-sub { margin: 0 0 16px; color: var(--dp-muted); }
 
 .dp-card { display: flex; flex-direction: column; gap: 10px; }
 
 label { font-weight: 600; }
 
+a, .dp-link { color: var(--dp-green); }
+
 input[type="password"] {
   width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--dp-border);
-  border-radius: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--dp-line);
+  border-radius: var(--dp-radius);
   font: inherit;
+  color: var(--dp-ink);
+}
+input[type="password"]:focus {
+  outline: 2px solid rgba(58, 168, 118, .3);
+  outline-offset: 1px;
+  border-color: var(--dp-green);
 }
 
 .dp-btn {
-  padding: 9px 12px;
-  border: 1px solid var(--dp-border);
-  border-radius: 6px;
-  background: #f3f4f7;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 11px 16px;
+  border: 1px solid var(--dp-line);
+  border-radius: var(--dp-radius);
+  background: var(--dp-surface-soft);
+  color: var(--dp-ink);
   font: inherit;
+  font-weight: 500;
   cursor: pointer;
+  transition: background .18s ease, transform .18s ease, box-shadow .18s ease;
 }
-.dp-btn-primary { background: var(--dp-accent); border-color: var(--dp-accent); color: #fff; }
-.dp-btn:disabled { opacity: 0.6; cursor: default; }
+.dp-btn-primary {
+  background: var(--dp-green);
+  border-color: var(--dp-green);
+  color: #fff;
+}
+.dp-btn-primary:hover:not(:disabled) {
+  background: var(--dp-green-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(13, 27, 42, .12);
+}
+.dp-btn:disabled { opacity: .55; cursor: default; }
 
 .dp-link {
-  background: none; border: none; padding: 0;
-  color: var(--dp-accent); cursor: pointer; font: inherit; text-decoration: underline;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
 }
 
 .dp-hint, .dp-keyline { color: var(--dp-muted); margin: 0; }
-.dp-keyline code { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.dp-keyline code { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--dp-ink); }
 
-.dp-error { color: #c0322b; margin: 0; }
-
+.dp-error { color: var(--dp-red); margin: 0; }
 .dp-status { margin-top: 12px; color: var(--dp-muted); min-height: 1em; }
-
-.dp-result { margin-top: 14px; }
-
-.dp-tier {
-  display: inline-block;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-weight: 700;
-  margin-bottom: 10px;
-}
-.dp-tier-clean { background: #e6f6ec; color: #1b7f43; }
-.dp-tier-acceptable { background: #eef4e6; color: #5c7a1b; }
-.dp-tier-concerning { background: #fdf3e2; color: #9a6212; }
-.dp-tier-strong { background: #fdeaea; color: #b32b22; }
-
-.dp-metrics {
-  display: grid;
-  grid-template-columns: auto auto;
-  gap: 4px 14px;
-  margin: 0;
-}
-.dp-metrics dt { color: var(--dp-muted); }
-.dp-metrics dd { margin: 0; font-weight: 600; text-align: right; }
-
-.dp-lowconf {
-  margin-top: 12px;
-  padding: 8px 10px;
-  background: #fdf3e2;
-  border-radius: 6px;
-  color: #7a5410;
-}
-
 .dp-muted { color: var(--dp-muted); }
 
+/* Selected-text preview — resizable so the user can drag to enlarge it. */
 .dp-selection {
-  border: 1px solid var(--dp-border);
-  border-radius: 8px;
+  border: 1px solid var(--dp-line);
+  border-radius: var(--dp-radius);
   padding: 10px;
-  background: #fafbfc;
+  background: var(--dp-surface-soft);
 }
 .dp-selection-head {
   display: flex;
@@ -110,13 +120,51 @@ input[type="password"] {
   margin-bottom: 6px;
 }
 .dp-wordcount { font-variant-numeric: tabular-nums; }
-.dp-wordcount-low { color: #9a6212; }
+.dp-wordcount-low { color: var(--dp-gold); }
 .dp-selection-text {
   margin: 0;
   font-size: 13px;
-  line-height: 1.5;
-  max-height: 110px;
-  overflow-y: auto;
+  line-height: 1.55;
+  height: 7rem;
+  min-height: 3rem;
+  max-height: 60vh;
+  resize: vertical;
+  overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+  background: var(--dp-bg);
+  border: 1px solid var(--dp-line);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.dp-result { margin-top: 14px; }
+
+.dp-tier {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.dp-tier-clean { background: var(--dp-surface-mint); color: var(--dp-green-dark); }
+.dp-tier-acceptable { background: #eef4e6; color: #5c7a1b; }
+.dp-tier-concerning { background: #fdf3e2; color: #9a6212; }
+.dp-tier-strong { background: #fdeaea; color: #b32b22; }
+
+.dp-metrics {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 6px 14px;
+  margin: 0;
+}
+.dp-metrics dt { color: var(--dp-muted); }
+.dp-metrics dd { margin: 0; font-weight: 600; text-align: right; }
+
+.dp-lowconf {
+  margin-top: 12px;
+  padding: 8px 10px;
+  background: #fdf3e2;
+  border-radius: 6px;
+  color: #7a5410;
 }
