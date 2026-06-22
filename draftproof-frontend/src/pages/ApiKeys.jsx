@@ -26,6 +26,7 @@ export default function ApiKeys() {
   const [newKey, setNewKey] = useState(null); // {key, key_prefix} — shown once
   const [copied, setCopied] = useState(false);
   const [revokingId, setRevokingId] = useState(null);
+  const [showInstall, setShowInstall] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -107,19 +108,40 @@ export default function ApiKeys() {
           </div>
         </section>
 
-        <a className="api-keys-addon" href="/word-addin/" target="_blank" rel="noopener">
-          <span className="api-keys-addon-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M7 3.8h7.2L18 7.6v12.6H7V3.8Z" />
-              <path d="M14 3.8v4h4" />
-            </svg>
-          </span>
-          <span className="api-keys-addon-text">
-            <strong>{t('apiKeys.addon.title')}</strong>
-            <span>{t('apiKeys.addon.body')}</span>
-          </span>
-          <span className="api-keys-addon-cta">{t('apiKeys.addon.cta')}</span>
-        </a>
+        <div className="api-keys-addon">
+          <button
+            type="button"
+            className="api-keys-addon-head"
+            aria-expanded={showInstall}
+            onClick={() => setShowInstall((v) => !v)}
+          >
+            <span className="api-keys-addon-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M7 3.8h7.2L18 7.6v12.6H7V3.8Z" />
+                <path d="M14 3.8v4h4" />
+              </svg>
+            </span>
+            <span className="api-keys-addon-text">
+              <strong>{t('apiKeys.addon.title')}</strong>
+              <span>{t('apiKeys.addon.body')}</span>
+            </span>
+            <span className="api-keys-addon-cta">
+              {showInstall ? t('apiKeys.addon.hide') : t('apiKeys.addon.cta')}
+            </span>
+          </button>
+          {showInstall && (
+            <div className="api-keys-addon-steps">
+              <a className="btn btn-primary btn-small" href="/word-addin/manifest.xml" download="draftproof-manifest.xml">
+                {t('apiKeys.addon.download')}
+              </a>
+              <ol>
+                {t('apiKeys.addon.steps', { returnObjects: true }).map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
 
         <section className="api-keys-panel">
           <form onSubmit={handleCreate} className="api-keys-create">

@@ -102,7 +102,7 @@ export const PAGE_META = {
   },
 };
 
-export const PRIVATE_PREFIXES = ['/dashboard', '/scan', '/reports', '/report/', '/rewrite/', '/buy', '/history', '/auth/callback'];
+export const PRIVATE_PREFIXES = ['/dashboard', '/scan', '/reports', '/report/', '/rewrite/', '/buy', '/history', '/api-keys', '/auth/callback'];
 export const PRERENDER_PATHS = Object.keys(PAGE_META).flatMap((pathname) => (
   SEO_LOCALES.map((locale) => localizePath(pathname, locale))
 ));

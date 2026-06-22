@@ -1297,19 +1297,26 @@
 .api-keys-hero-actions { display: flex; align-items: center; }
 
 .api-keys-addon {
-  display: flex;
-  align-items: center;
-  gap: 14px;
   margin-top: 1.25rem;
   padding: 1rem 1.25rem;
   background: var(--surface-mint);
   border: 1px solid var(--green-200);
   border-radius: 16px;
-  text-decoration: none;
   color: var(--ink);
-  transition: box-shadow .18s var(--ease), transform .18s var(--ease);
 }
-.api-keys-addon:hover { box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.api-keys-addon-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
 .api-keys-addon-icon {
   flex: 0 0 auto;
   width: 40px;
@@ -1326,6 +1333,9 @@
 .api-keys-addon-text strong { font-size: 1rem; }
 .api-keys-addon-text span { color: var(--muted); font-size: .9rem; line-height: 1.5; }
 .api-keys-addon-cta { flex: 0 0 auto; color: var(--green-dark); font-weight: 600; white-space: nowrap; }
+.api-keys-addon-steps { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--green-200); }
+.api-keys-addon-steps ol { margin: 12px 0 0; padding-left: 20px; }
+.api-keys-addon-steps li { margin: 8px 0; font-size: .92rem; line-height: 1.55; }
 
 .api-keys-panel {
   background: var(--surface);

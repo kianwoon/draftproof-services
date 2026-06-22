@@ -5,10 +5,18 @@ export const apiKeys = {
   title: "API keys",
   subtitle: "Generate a key to scan highlighted text from the DraftProof add-ins for Microsoft Word and Google Docs. Each scan draws on your credit balance (1 credit per 1,000 words).",
   activeLabel: "Active keys",
+  // allow-hardcode: i18n UI copy (install-step strings), not scoring/matching logic.
   addon: {
     title: "Scan inside Microsoft Word",
     body: "Install the DraftProof add-in, then paste a key below to scan highlighted text right in Word.",
-    cta: "Install the Word add-in ↗",
+    cta: "Show install steps",
+    hide: "Hide",
+    download: "Download manifest",
+    steps: [
+      "Word on the web: Home → Add-ins → More Add-ins → My Add-ins → Upload My Add-in → pick the downloaded file.",
+      "Word desktop: put the file in a Trusted Add-in Catalog folder (Windows) or the Word ‘wef’ folder (Mac), restart Word, then Insert → My Add-ins.",
+      "Open DraftProof → Scan selection, paste a key from below, highlight text, and scan.",
+    ],
   },
   createNamePlaceholder: "Key name (e.g. My Word add-in)",
   createButton: "Generate key",
