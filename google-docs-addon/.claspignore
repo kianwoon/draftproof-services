@@ -1,0 +1,5 @@
+# Push only the add-on source to Apps Script (whitelist pattern).
+**/**
+!appsscript.json
+!Code.gs
+!Sidebar.html

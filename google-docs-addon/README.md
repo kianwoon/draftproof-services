@@ -30,21 +30,21 @@ sidebar's key field. It's stored per‑user via `PropertiesService`.
 
 ## Deploy / test (Apps Script — this is NOT on the Koyeb pipeline)
 
-**Option A — clasp (recommended):**
+**Option A — clasp (recommended).** clasp 3.x is installed.
 ```bash
-npm install -g @google/clasp
-clasp login
-# from this folder:
-clasp create --type docs --title "DraftProof"   # or: clasp clone <scriptId>
-clasp push
+clasp login                  # interactive: authorises YOUR Google account in a browser
+# from this folder (google-docs-addon/):
+clasp create-script --type standalone --title "DraftProof" --rootDir .
+clasp push                   # uploads Code.gs, Sidebar.html, appsscript.json
+clasp open-script            # opens the Apps Script editor
 ```
-Then open the bound/standalone script → **Deploy → Test deployments → Install** → open a
-Google Doc → **Extensions → DraftProof → Open DraftProof**.
+Then in the editor: **Deploy → Test deployments → Install** → open a Google Doc →
+**Extensions → DraftProof → Open DraftProof**.
 
-> `clasp create --type docs` makes a container‑bound script on a new Doc. For a
-> standalone/publishable add‑on, create the Apps Script project first, then `clasp clone`
-> its `scriptId` here and `clasp push`. `clasp` ignores `.html` extension issues — keep
-> `Sidebar.html` named exactly so `createHtmlOutputFromFile('Sidebar')` resolves.
+> v3 note: it's `create-script` / `clone-script` (not `create`/`clone`). A **standalone**
+> script is the right base for a publishable add-on. `.claspignore` here whitelists only
+> `Code.gs`, `Sidebar.html`, `appsscript.json`; `.clasp.json` (the scriptId) is gitignored.
+> Keep `Sidebar.html` named exactly so `createHtmlOutputFromFile('Sidebar')` resolves.
 
 **Option B — manual paste:**
 1. In a Google Doc: **Extensions → Apps Script**.

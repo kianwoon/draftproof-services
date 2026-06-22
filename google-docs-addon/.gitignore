@@ -1,0 +1,4 @@
+# Created per-user by `clasp create-script` / `clasp clone` (holds the scriptId).
+.clasp.json
+# clasp credentials (should only ever live in $HOME, never here) — belt-and-suspenders.
+.clasprc.json
