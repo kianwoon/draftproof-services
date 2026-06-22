@@ -1,8 +1,10 @@
 // allow-hardcode: i18n UI copy (presentation strings for the API-keys page),
 // not scoring/matching logic — same category as every other file in src/i18n/zh/.
 export const apiKeys = {
+  eyebrow: "开发者访问",
   title: "API 密钥",
   subtitle: "生成密钥后，即可在 Microsoft Word 和 Google 文档的 DraftProof 加载项中扫描所选文本。每次扫描会消耗你的额度（每 1,000 字 1 个额度）。",
+  activeLabel: "有效密钥",
   createNamePlaceholder: "密钥名称（例如：我的 Word 加载项）",
   createButton: "生成密钥",
   creating: "正在生成…",

@@ -63,14 +63,36 @@ export default function Header() {
           <Link to="/history" className="token-badge">
             {balance !== null ? t('common.token', { count: balance }) : '—'}
           </Link>
-          {user.avatar_url ? (
-            <img src={user.avatar_url} alt={user.email} className="user-avatar" />
-          ) : (
-            <div className="user-avatar-placeholder">
-              {user.email.charAt(0).toUpperCase()}
+          <div className="header-account">
+            <button
+              type="button"
+              className="header-account-trigger"
+              aria-haspopup="menu"
+              aria-label={user.email}
+            >
+              {user.avatar_url ? (
+                <img src={user.avatar_url} alt="" className="user-avatar" />
+              ) : (
+                <div className="user-avatar-placeholder">
+                  {user.email.charAt(0).toUpperCase()}
+                </div>
+              )}
+            </button>
+            <div className="header-account-menu" role="menu">
+              <span className="header-account-email">{user.email}</span>
+              <Link to="/api-keys" className="header-account-item" role="menuitem">
+                {t('nav.apiKeys')}
+              </Link>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="header-account-item header-account-signout"
+                role="menuitem"
+              >
+                {t('nav.signOut')}
+              </button>
             </div>
-          )}
-          <button onClick={handleLogout} className="btn btn-secondary btn-small">{t('nav.signOut')}</button>
+          </div>
         </div>
       ) : (
         <div className="header-actions">
@@ -100,6 +122,7 @@ export default function Header() {
             {user && <Link to="/reports" className="mobile-link">{t('nav.viewReports')}</Link>}
             {user && <Link to="/buy" className="mobile-link">{t('nav.buyTokens')}</Link>}
             {user && <Link to="/history" className="mobile-link">{t('nav.history')}</Link>}
+            {user && <Link to="/api-keys" className="mobile-link">{t('nav.apiKeys')}</Link>}
             {visiblePublicLinks.map((link) => (
               <Link key={link.to} to={link.to} className="mobile-link" onClick={() => setMenuOpen(false)}>{link.label}</Link>
             ))}

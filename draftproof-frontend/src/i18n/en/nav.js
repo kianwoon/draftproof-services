@@ -10,6 +10,7 @@ export const nav = {
   "viewReports": "View Reports/Guided Rewrite",
   "buyTokens": "Buy Credits",
   "history": "History",
+  "apiKeys": "API keys",
   "why": "Why",
   "features": "Features",
   "essayChecker": "Content checker",

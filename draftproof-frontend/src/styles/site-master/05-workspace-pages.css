@@ -1292,3 +1292,75 @@
 .btn-danger:hover { background: #b91c1c; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── API keys page ─────────────────────────────────────────────────────── */
+.api-keys-hero-actions { display: flex; align-items: center; }
+
+.api-keys-panel {
+  background: var(--surface);
+  border: 1px solid rgba(13, 27, 42, .08);
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-top: 1.25rem;
+}
+
+.api-keys-create { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.api-keys-create input {
+  flex: 1 1 260px;
+  padding: .6rem .8rem;
+  border: 1px solid rgba(13, 27, 42, .18);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.api-keys-muted { color: var(--muted); }
+.api-keys-error { color: #b3261e; }
+
+.api-keys-table-wrap { overflow-x: auto; }
+.api-keys-table { width: 100%; border-collapse: collapse; }
+.api-keys-table th,
+.api-keys-table td { padding: .65rem .6rem; text-align: left; border-bottom: 1px solid rgba(13, 27, 42, .08); }
+.api-keys-table th { font-size: .8rem; color: var(--muted); font-weight: 600; }
+.api-keys-table tr.is-revoked { opacity: .55; }
+.api-keys-mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.api-keys-action-cell { text-align: right; }
+.api-keys-badge {
+  font-size: .78rem;
+  color: var(--muted);
+  background: var(--surface-soft, rgba(13, 27, 42, .06));
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.api-keys-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(13, 27, 42, .5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.api-keys-modal {
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 16px;
+  padding: 1.5rem;
+  max-width: 540px;
+  width: 100%;
+  box-shadow: 0 18px 50px rgba(13, 27, 42, .28);
+}
+.api-keys-modal h2 { margin-top: 0; }
+.api-keys-modal-warn { color: #b3261e; font-weight: 600; }
+.api-keys-secret {
+  display: block;
+  word-break: break-all;
+  background: var(--surface-soft, #f4f5f8);
+  padding: .75rem;
+  border-radius: 8px;
+  margin: .75rem 0;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: .9rem;
+}
+.api-keys-modal-actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: 1rem; }

@@ -1,8 +1,9 @@
-// allow-hardcode: this is a React view (JSX markup + inline CSS-var style
-// fallbacks + i18n lookups). All user-facing text comes from t('apiKeys.*');
-// there is no scoring/matching list here, only presentation.
+// allow-hardcode: this is a React view (JSX markup + i18n lookups + class names).
+// All user-facing text comes from t('apiKeys.*'); there is no scoring/matching
+// list here, only presentation.
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import CodeTexture from '../components/CodeTexture';
 import { listApiKeys, createApiKey, revokeApiKey } from '../api/draftproofApi';
 
 function formatDate(iso, locale) {
@@ -86,125 +87,109 @@ export default function ApiKeys() {
     }
   };
 
-  const cellStyle = { padding: '0.55rem 0.5rem' };
-  const mutedColor = 'var(--text-muted, #5b6472)';
-  const borderColor = 'var(--border, #dde1e8)';
+  const activeCount = keys.filter((k) => !k.revoked_at).length;
 
   return (
-    <main
-      className="container"
-      style={{ paddingTop: 'calc(var(--header-h) + 3rem)', paddingBottom: '4rem', maxWidth: 880 }}
-    >
-      <h1 style={{ marginBottom: '0.5rem' }}>{t('apiKeys.title')}</h1>
-      <p style={{ color: mutedColor, maxWidth: 660 }}>{t('apiKeys.subtitle')}</p>
+    <main className="app-page api-keys-page">
+      <div className="container">
+        <section className="app-hero app-hero-dark api-keys-hero">
+          <CodeTexture id="apiKeysHero" />
+          <div>
+            <p className="eyebrow">{t('apiKeys.eyebrow')}</p>
+            <h1>{t('apiKeys.title')}</h1>
+            <p>{t('apiKeys.subtitle')}</p>
+          </div>
+          <div className="api-keys-hero-actions">
+            <div className="app-hero-stat">
+              <span>{t('apiKeys.activeLabel')}</span>
+              <strong>{activeCount}</strong>
+            </div>
+          </div>
+        </section>
 
-      <form
-        onSubmit={handleCreate}
-        style={{ display: 'flex', gap: '0.5rem', margin: '1.5rem 0 0.5rem', flexWrap: 'wrap' }}
-      >
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={t('apiKeys.createNamePlaceholder')}
-          maxLength={80}
-          style={{
-            flex: '1 1 260px', padding: '0.6rem 0.8rem', borderRadius: 8,
-            border: `1px solid ${borderColor}`, font: 'inherit',
-          }}
-        />
-        <button type="submit" className="btn" disabled={creating}>
-          {creating ? t('apiKeys.creating') : t('apiKeys.createButton')}
-        </button>
-      </form>
-      {createError && (
-        <p role="alert" style={{ color: 'crimson' }}>{t('apiKeys.createError')}</p>
-      )}
+        <section className="api-keys-panel">
+          <form onSubmit={handleCreate} className="api-keys-create">
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t('apiKeys.createNamePlaceholder')}
+              maxLength={80}
+              aria-label={t('apiKeys.createNamePlaceholder')}
+            />
+            <button type="submit" className="btn btn-primary" disabled={creating}>
+              {creating ? t('apiKeys.creating') : t('apiKeys.createButton')}
+            </button>
+          </form>
+          {createError && (
+            <p role="alert" className="api-keys-error">{t('apiKeys.createError')}</p>
+          )}
 
-      <div style={{ marginTop: '1.5rem' }}>
-        {loading ? (
-          <p>{t('apiKeys.loading')}</p>
-        ) : loadError ? (
-          <p role="alert" style={{ color: 'crimson' }}>{t('apiKeys.loadError')}</p>
-        ) : keys.length === 0 ? (
-          <p style={{ color: mutedColor }}>{t('apiKeys.empty')}</p>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: `1px solid ${borderColor}` }}>
-                <th style={cellStyle}>{t('apiKeys.th.name')}</th>
-                <th style={cellStyle}>{t('apiKeys.th.key')}</th>
-                <th style={cellStyle}>{t('apiKeys.th.created')}</th>
-                <th style={cellStyle}>{t('apiKeys.th.lastUsed')}</th>
-                <th style={cellStyle} aria-hidden="true" />
-              </tr>
-            </thead>
-            <tbody>
-              {keys.map((k) => (
-                <tr
-                  key={k.id}
-                  style={{ borderBottom: `1px solid ${borderColor}`, opacity: k.revoked_at ? 0.55 : 1 }}
-                >
-                  <td style={cellStyle}>{k.name}</td>
-                  <td style={{ ...cellStyle, fontFamily: 'monospace' }}>{k.key_prefix}…</td>
-                  <td style={cellStyle}>{formatDate(k.created_at, locale) || '—'}</td>
-                  <td style={cellStyle}>{formatDate(k.last_used_at, locale) || t('apiKeys.neverUsed')}</td>
-                  <td style={{ ...cellStyle, textAlign: 'right' }}>
-                    {k.revoked_at ? (
-                      <span style={{ color: mutedColor }}>{t('apiKeys.revokedBadge')}</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-small"
-                        onClick={() => handleRevoke(k.id)}
-                        disabled={revokingId === k.id}
-                      >
-                        {revokingId === k.id ? t('apiKeys.revoking') : t('apiKeys.revoke')}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+          {loading ? (
+            <p className="api-keys-muted">{t('apiKeys.loading')}</p>
+          ) : loadError ? (
+            <p role="alert" className="api-keys-error">{t('apiKeys.loadError')}</p>
+          ) : keys.length === 0 ? (
+            <p className="api-keys-muted">{t('apiKeys.empty')}</p>
+          ) : (
+            <div className="api-keys-table-wrap">
+              <table className="api-keys-table">
+                <thead>
+                  <tr>
+                    <th>{t('apiKeys.th.name')}</th>
+                    <th>{t('apiKeys.th.key')}</th>
+                    <th>{t('apiKeys.th.created')}</th>
+                    <th>{t('apiKeys.th.lastUsed')}</th>
+                    <th aria-hidden="true" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {keys.map((k) => (
+                    <tr key={k.id} className={k.revoked_at ? 'is-revoked' : ''}>
+                      <td>{k.name}</td>
+                      <td className="api-keys-mono">{k.key_prefix}…</td>
+                      <td>{formatDate(k.created_at, locale) || '—'}</td>
+                      <td>{formatDate(k.last_used_at, locale) || t('apiKeys.neverUsed')}</td>
+                      <td className="api-keys-action-cell">
+                        {k.revoked_at ? (
+                          <span className="api-keys-badge">{t('apiKeys.revokedBadge')}</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-small"
+                            onClick={() => handleRevoke(k.id)}
+                            disabled={revokingId === k.id}
+                          >
+                            {revokingId === k.id ? t('apiKeys.revoking') : t('apiKeys.revoke')}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       </div>
 
       {newKey && (
         <div
+          className="api-keys-modal-overlay"
           role="dialog"
           aria-modal="true"
           aria-label={t('apiKeys.modal.title')}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex',
-            alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem',
-          }}
         >
-          <div
-            style={{
-              background: 'var(--surface, #fff)', color: 'var(--text, #1a1f29)',
-              borderRadius: 12, padding: '1.5rem', maxWidth: 540, width: '100%',
-              boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
-            }}
-          >
-            <h2 style={{ marginTop: 0 }}>{t('apiKeys.modal.title')}</h2>
-            <p style={{ color: 'crimson', fontWeight: 600 }}>{t('apiKeys.modal.warning')}</p>
-            <code
-              style={{
-                display: 'block', wordBreak: 'break-all', background: 'var(--code-bg, #f4f5f8)',
-                padding: '0.75rem', borderRadius: 8, margin: '0.75rem 0', fontSize: '0.9rem',
-              }}
-            >
-              {newKey.key}
-            </code>
-            <p style={{ fontSize: '0.85rem', color: mutedColor }}>
-              {t('apiKeys.modal.usageHint')}
-            </p>
-            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+          <div className="api-keys-modal">
+            <h2>{t('apiKeys.modal.title')}</h2>
+            <p className="api-keys-modal-warn">{t('apiKeys.modal.warning')}</p>
+            <code className="api-keys-secret">{newKey.key}</code>
+            <p className="api-keys-muted">{t('apiKeys.modal.usageHint')}</p>
+            <div className="api-keys-modal-actions">
               <button type="button" className="btn btn-ghost" onClick={handleCopy}>
                 {copied ? t('apiKeys.modal.copied') : t('apiKeys.modal.copy')}
               </button>
-              <button type="button" className="btn" onClick={() => setNewKey(null)}>
+              <button type="button" className="btn btn-primary" onClick={() => setNewKey(null)}>
                 {t('apiKeys.modal.done')}
               </button>
             </div>

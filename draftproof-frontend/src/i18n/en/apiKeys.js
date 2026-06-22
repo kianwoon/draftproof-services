@@ -1,8 +1,10 @@
 // allow-hardcode: i18n UI copy (presentation strings for the API-keys page),
 // not scoring/matching logic — same category as every other file in src/i18n/en/.
 export const apiKeys = {
+  eyebrow: "Developer access",
   title: "API keys",
   subtitle: "Generate a key to scan highlighted text from the DraftProof add-ins for Microsoft Word and Google Docs. Each scan draws on your credit balance (1 credit per 1,000 words).",
+  activeLabel: "Active keys",
   createNamePlaceholder: "Key name (e.g. My Word add-in)",
   createButton: "Generate key",
   creating: "Generating…",

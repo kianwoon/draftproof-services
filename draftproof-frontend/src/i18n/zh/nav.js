@@ -10,6 +10,7 @@ export const nav = {
   "viewReports": "查看报告/引导改写",
   "buyTokens": "购买积分",
   "history": "历史记录",
+  "apiKeys": "API 密钥",
   "why": "为什么选择我们",
   "features": "功能对比",
   "essayChecker": "内容检查器",
