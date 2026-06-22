@@ -197,6 +197,16 @@
       function renderReport(rep, lowConfidence) {
         setStatus('');
         setHeadScores(rep);
+
+        // Show the scanned text in the "Selected text" box so the result is
+        // self-describing — a restored result has no live selection to show.
+        if (rep.scanned_text) {
+          els.selText.textContent = rep.scanned_text;
+          var swc = rep.word_count != null ? rep.word_count : rep.scanned_text.split(/\s+/).filter(Boolean).length;
+          els.wordCount.textContent = swc === 1 ? '1 word' : swc + ' words';
+          els.wordCount.className = (swc > 0 && swc < 100) ? 'wc-low' : '';
+        }
+
         var p = [];
 
         var ct = rep.critical_thinking;

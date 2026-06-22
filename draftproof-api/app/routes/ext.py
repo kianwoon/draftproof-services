@@ -153,7 +153,13 @@ async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
         ctc["questions"] = pre_questions
     sub_overall = (badge.get("submission_risk") or {}).get("overall") or {}
     issues = report.get("issues") or []
-    paragraph_issues = _build_paragraph_issues(report.get("results_json") or {}, EXT_SIGNAL_HIGHLIGHT_LIMIT)
+    results_json = report.get("results_json") or {}
+    paragraph_issues = _build_paragraph_issues(results_json, EXT_SIGNAL_HIGHLIGHT_LIMIT)
+    # The text that was scanned, so the add-in can show it in the "Selected text"
+    # box alongside a (re-fetched) result. Capped to bound the payload.
+    scanned_text = results_json.get("input_text") or ""
+    if len(scanned_text) > 8000:
+        scanned_text = scanned_text[:8000] + "…"
 
     return {
         "scan_id": scan_id,
@@ -184,6 +190,8 @@ async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
             "risk": sub_overall.get("risk"),
             "reason": sub_overall.get("main_reason"),
         } if sub_overall else None,
+        "scanned_text": scanned_text,
+        "word_count": report.get("word_count"),
         "paragraph_issues": paragraph_issues,
         "signal_highlights": [
             {

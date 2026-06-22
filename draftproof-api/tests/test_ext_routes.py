@@ -170,11 +170,16 @@ def test_ext_scan_report_returns_rich_sections(client):
             {"severity": "high", "title": "Uncited claim", "description": "Missing citation"},
             {"severity": "low", "title": "Generic phrasing", "description": "Unanchored"},
         ],
+        "word_count": 42,
+        "results_json": {"input_text": "The scanned passage goes here."},
     }
     with patch("app.routes.ext.get_report", new=AsyncMock(return_value=report)):
         r = client.get("/api/ext/scan/abc/report")
     assert r.status_code == 200
     body = r.json()
+    # the add-in shows the scanned text + count back in the "Selected text" box
+    assert body["scanned_text"] == "The scanned passage goes here."
+    assert body["word_count"] == 42
     assert body["critical_thinking"]["status"] == "Acceptable control"
     assert body["critical_thinking"]["questions"][0]["question"] == "What specific example supports this?"
     assert body["critical_thinking"]["action"] == "anchor claims to a real assignment"

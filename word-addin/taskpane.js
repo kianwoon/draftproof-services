@@ -271,6 +271,17 @@
 
     setHeadScores(report);  // AI-likelihood + writing-quality badges live in the header row
 
+    // Show the text this result is about in the "Selected text" box. For a
+    // restored result there is no live selection; for a fresh one this keeps the
+    // result tied to exactly what was scanned. A later selection change overwrites it.
+    if (report.scanned_text) {
+      els.selectionPreview.textContent = report.scanned_text;
+      els.selectionPreview.classList.remove("dp-muted");
+      var swc = report.word_count != null ? report.word_count : countWords(report.scanned_text);
+      els.wordCount.textContent = swc === 1 ? "1 word" : swc + " words";
+      els.wordCount.classList.toggle("dp-wordcount-low", swc > 0 && swc < 100);
+    }
+
     // allow-hardcode: the strings below are HTML render templates + CSS class names
     // for presentation; all user-facing text comes from the server report. No
     // scoring/matching list here.
