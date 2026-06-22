@@ -1355,6 +1355,7 @@
 }
 
 .api-keys-muted { color: var(--muted); }
+.api-keys-copy-hint { font-size: .85rem; line-height: 1.5; margin: .25rem 0 0; }
 .api-keys-error { color: #b3261e; }
 
 .api-keys-table-wrap { overflow-x: auto; }

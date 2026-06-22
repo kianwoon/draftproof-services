@@ -26,7 +26,7 @@ export default function ApiKeys() {
   const [newKey, setNewKey] = useState(null); // {key, key_prefix} — shown once
   const [copied, setCopied] = useState(false);
   const [revokingId, setRevokingId] = useState(null);
-  const [showInstall, setShowInstall] = useState(false);
+  const [showInstall, setShowInstall] = useState(true);
   // Full keys created THIS session, kept in memory only (never persisted) so a
   // freshly-created key can still be copied from the table after the modal closes.
   const [sessionKeys, setSessionKeys] = useState({});
@@ -174,6 +174,7 @@ export default function ApiKeys() {
               {creating ? t('apiKeys.creating') : t('apiKeys.createButton')}
             </button>
           </form>
+          <p className="api-keys-muted api-keys-copy-hint">{t('apiKeys.copyHint')}</p>
           {createError && (
             <p role="alert" className="api-keys-error">{t('apiKeys.createError')}</p>
           )}
@@ -207,7 +208,7 @@ export default function ApiKeys() {
                         {!k.revoked_at && sessionKeys[k.id] && (
                           <button
                             type="button"
-                            className="btn btn-ghost btn-small"
+                            className="btn btn-secondary btn-small"
                             onClick={() => handleCopyRow(k.id)}
                           >
                             {copiedRowId === k.id ? t('apiKeys.copied') : t('apiKeys.copy')}
@@ -218,7 +219,7 @@ export default function ApiKeys() {
                         ) : (
                           <button
                             type="button"
-                            className="btn btn-ghost btn-small"
+                            className="btn btn-secondary btn-small"
                             onClick={() => handleRevoke(k.id)}
                             disabled={revokingId === k.id}
                           >

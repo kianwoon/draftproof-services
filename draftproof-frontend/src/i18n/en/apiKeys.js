@@ -37,6 +37,7 @@ export const apiKeys = {
   revoking: "Revoking…",
   copy: "Copy",
   copied: "Copied!",
+  copyHint: "A key can be copied only right after you create it (the Copy button stays on its row until you reload). It's never shown again — generate a new one if you lose it.",
   revokeConfirm: "Revoke this key? Any add-in using it will stop working immediately. This cannot be undone.",
   revokeError: "Couldn't revoke the key. Please try again.",
   modal: {

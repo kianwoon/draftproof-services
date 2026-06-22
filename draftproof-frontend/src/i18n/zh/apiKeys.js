@@ -37,6 +37,7 @@ export const apiKeys = {
   revoking: "正在吊销…",
   copy: "复制",
   copied: "已复制！",
+  copyHint: "只能在创建密钥后立即复制（复制按钮会保留在该行，直到刷新页面）。密钥不会再次显示——若丢失请重新生成。",
   revokeConfirm: "确定要吊销此密钥吗？使用它的加载项将立即停止工作。此操作无法撤销。",
   revokeError: "无法吊销密钥，请重试。",
   modal: {
