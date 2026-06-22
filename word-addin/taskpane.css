@@ -40,6 +40,30 @@ body {
 }
 .dp-sub { margin: 0 0 16px; color: var(--dp-muted); }
 
+/* Header row: title on the left, score badges on the right, same height. */
+.dp-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.dp-head-row h1 { margin: 0; }
+.dp-head-scores { display: flex; gap: 6px; flex-shrink: 0; }
+.dp-score-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--dp-surface-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.dp-score-label { color: var(--dp-muted); font-weight: 600; }
+.dp-score-value { font-weight: 700; color: var(--dp-ink); font-variant-numeric: tabular-nums; }
+
 .dp-card { display: flex; flex-direction: column; gap: 10px; }
 
 label { font-weight: 600; }

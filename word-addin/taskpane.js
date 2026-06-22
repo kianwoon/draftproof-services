@@ -37,7 +37,7 @@
     [
       "setup", "apiKey", "saveKey", "setupError",
       "scanner", "keyPrefix", "changeKey", "scanBtn", "status", "result",
-      "selectionPreview", "wordCount", "docState",
+      "selectionPreview", "wordCount", "docState", "headScores",
     ].forEach(function (id) { els[id] = document.getElementById(id); });
   }
 
@@ -234,6 +234,30 @@
 
   function pct(v) { return v == null ? "—" : Math.round(v) + "%"; }
 
+  // allow-hardcode: HTML render template + class names for the header score
+  // badges (presentation), not scoring logic.
+  function setHeadScores(report) {
+    if (!els.headScores) return;
+    var ai = report && report.ai_score != null ? pct(report.ai_score) : null;
+    var wq = report && report.writing_score != null ? pct(report.writing_score) : null;
+    if (ai == null && wq == null) {
+      els.headScores.hidden = true;
+      els.headScores.innerHTML = "";
+      return;
+    }
+    var html = "";
+    if (ai != null) html += scoreBadge("AI", "AI-likelihood", ai);
+    if (wq != null) html += scoreBadge("Writing", "Writing quality", wq);
+    els.headScores.innerHTML = html;
+    els.headScores.hidden = false;
+  }
+
+  function scoreBadge(label, full, value) {
+    return '<span class="dp-score-badge" title="' + escapeHtml(full) + '">' +
+      '<span class="dp-score-label">' + escapeHtml(label) + '</span>' +
+      '<span class="dp-score-value">' + escapeHtml(value) + "</span></span>";
+  }
+
   function section(title, valueHtml, levelClass, noteText) {
     return '<div class="dp-section"><div class="dp-section-title">' + escapeHtml(title) + "</div>" +
       '<div class="dp-section-value' + (levelClass ? " " + levelClass : "") + '">' + valueHtml + "</div>" +
@@ -255,11 +279,10 @@
         (opts.savedAt ? " · " + escapeHtml(opts.savedAt) : "") + "</div>");
     }
 
+    setHeadScores(report);  // AI-likelihood + writing-quality badges live in the header row
+
     var tier = report.tier || "unknown";
     p.push('<div class="dp-tier dp-tier-' + escapeAttr(tier) + '">' + escapeHtml(tierLabel(tier)) + "</div>");
-    p.push('<dl class="dp-metrics">' +
-      "<dt>AI-likelihood</dt><dd>" + pct(report.ai_score) + "</dd>" +
-      "<dt>Writing quality</dt><dd>" + pct(report.writing_score) + "</dd></dl>");
 
     // allow-hardcode: the strings below are HTML render templates + CSS class names
     // for presentation; all user-facing text comes from the server report. No
@@ -418,7 +441,7 @@
   function hide(el) { if (el) el.hidden = true; }
   function busy(on) { scanning = on; els.scanBtn.disabled = on; }
   function setStatus(msg) { els.status.textContent = msg || ""; }
-  function clearResult() { els.result.innerHTML = ""; hide(els.result); setStatus(""); }
+  function clearResult() { els.result.innerHTML = ""; hide(els.result); setStatus(""); setHeadScores(null); }
   function setupError(msg) {
     if (!msg) { els.setupError.hidden = true; els.setupError.textContent = ""; return; }
     els.setupError.textContent = msg; els.setupError.hidden = false;
