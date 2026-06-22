@@ -107,6 +107,20 @@ export default function ApiKeys() {
           </div>
         </section>
 
+        <a className="api-keys-addon" href="/word-addin/" target="_blank" rel="noopener">
+          <span className="api-keys-addon-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M7 3.8h7.2L18 7.6v12.6H7V3.8Z" />
+              <path d="M14 3.8v4h4" />
+            </svg>
+          </span>
+          <span className="api-keys-addon-text">
+            <strong>{t('apiKeys.addon.title')}</strong>
+            <span>{t('apiKeys.addon.body')}</span>
+          </span>
+          <span className="api-keys-addon-cta">{t('apiKeys.addon.cta')}</span>
+        </a>
+
         <section className="api-keys-panel">
           <form onSubmit={handleCreate} className="api-keys-create">
             <input

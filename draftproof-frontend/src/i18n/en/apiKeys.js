@@ -5,6 +5,11 @@ export const apiKeys = {
   title: "API keys",
   subtitle: "Generate a key to scan highlighted text from the DraftProof add-ins for Microsoft Word and Google Docs. Each scan draws on your credit balance (1 credit per 1,000 words).",
   activeLabel: "Active keys",
+  addon: {
+    title: "Scan inside Microsoft Word",
+    body: "Install the DraftProof add-in, then paste a key below to scan highlighted text right in Word.",
+    cta: "Install the Word add-in ↗",
+  },
   createNamePlaceholder: "Key name (e.g. My Word add-in)",
   createButton: "Generate key",
   creating: "Generating…",

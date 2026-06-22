@@ -1296,6 +1296,37 @@
 /* ── API keys page ─────────────────────────────────────────────────────── */
 .api-keys-hero-actions { display: flex; align-items: center; }
 
+.api-keys-addon {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 1.25rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface-mint);
+  border: 1px solid var(--green-200);
+  border-radius: 16px;
+  text-decoration: none;
+  color: var(--ink);
+  transition: box-shadow .18s var(--ease), transform .18s var(--ease);
+}
+.api-keys-addon:hover { box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.api-keys-addon-icon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--green-dark);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.api-keys-addon-icon svg { width: 22px; height: 22px; }
+.api-keys-addon-text { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.api-keys-addon-text strong { font-size: 1rem; }
+.api-keys-addon-text span { color: var(--muted); font-size: .9rem; line-height: 1.5; }
+.api-keys-addon-cta { flex: 0 0 auto; color: var(--green-dark); font-weight: 600; white-space: nowrap; }
+
 .api-keys-panel {
   background: var(--surface);
   border: 1px solid rgba(13, 27, 42, .08);

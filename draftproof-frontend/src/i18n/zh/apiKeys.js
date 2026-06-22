@@ -5,6 +5,11 @@ export const apiKeys = {
   title: "API 密钥",
   subtitle: "生成密钥后，即可在 Microsoft Word 和 Google 文档的 DraftProof 加载项中扫描所选文本。每次扫描会消耗你的额度（每 1,000 字 1 个额度）。",
   activeLabel: "有效密钥",
+  addon: {
+    title: "在 Microsoft Word 中扫描",
+    body: "安装 DraftProof 加载项，然后在下方粘贴密钥，即可在 Word 中扫描所选文本。",
+    cta: "安装 Word 加载项 ↗",
+  },
   createNamePlaceholder: "密钥名称（例如：我的 Word 加载项）",
   createButton: "生成密钥",
   creating: "正在生成…",
