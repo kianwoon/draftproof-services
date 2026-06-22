@@ -17,7 +17,7 @@ from app.services.report_service import get_report
 from app.services.scan_service import create_scan, get_scan
 
 # How many top findings to surface as "signal highlights" in the add-in.
-EXT_SIGNAL_HIGHLIGHT_LIMIT = 5
+EXT_SIGNAL_HIGHLIGHT_LIMIT = 8
 
 router = APIRouter()
 
@@ -101,6 +101,14 @@ async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
             "score": ctc.get("score"),
             "status": ctc.get("status"),
             "band": ctc.get("band"),
+            "lead": ctc.get("lead_dimension_label"),
+            "action": ctc.get("lead_dimension_action"),
+            "caveat": ctc.get("caveat") or None,
+            "dimensions": [
+                {"label": d.get("label"), "control": d.get("control"), "gap": d.get("gap")}
+                for d in (ctc.get("dimensions") or {}).values()
+                if isinstance(d, dict) and d.get("control") is not None
+            ],
         } if ctc else None,
         "submission_risk": {
             "level": sub_overall.get("level"),
@@ -113,6 +121,7 @@ async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
                 "severity": i.get("severity"),
                 "title": i.get("title"),
                 "description": i.get("description"),
+                "recommendation": i.get("recommendation"),
             }
             for i in issues[:EXT_SIGNAL_HIGHLIGHT_LIMIT]
         ],

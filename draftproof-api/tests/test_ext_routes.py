@@ -148,6 +148,12 @@ def test_ext_scan_report_returns_rich_sections(client):
             "policy_risk": {"present": True},  # makes _enrich_badge a no-op
             "critical_thinking_control": {
                 "score": 65.5, "status": "Acceptable control", "band": "acceptable_control",
+                "lead_dimension_label": "specific context",
+                "lead_dimension_action": "anchor claims to a real assignment",
+                "dimensions": {
+                    "specific_context": {"label": "specific context", "control": 70.0, "gap": 30.0},
+                    "student_judgement": {"label": "student judgement", "control": None, "gap": None},
+                },
             },
             "submission_risk": {
                 "overall": {
@@ -166,6 +172,10 @@ def test_ext_scan_report_returns_rich_sections(client):
     assert r.status_code == 200
     body = r.json()
     assert body["critical_thinking"]["status"] == "Acceptable control"
+    assert body["critical_thinking"]["action"] == "anchor claims to a real assignment"
+    # only dimensions with a non-null control are surfaced
+    dims = body["critical_thinking"]["dimensions"]
+    assert len(dims) == 1 and dims[0]["label"] == "specific context"
     assert body["submission_risk"]["level"] == "medium"
     assert body["signal_highlights"][0]["title"] == "Uncited claim"
     assert body["report_url"] == "/report/abc"

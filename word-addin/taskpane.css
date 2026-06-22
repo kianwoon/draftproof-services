@@ -146,11 +146,13 @@ input[type="password"]:focus {
   border-radius: 999px;
   font-weight: 700;
   margin-bottom: 10px;
+  background: var(--dp-surface-soft);
+  color: var(--dp-ink);
+  text-transform: capitalize;
 }
-.dp-tier-clean { background: var(--dp-surface-mint); color: var(--dp-green-dark); }
-.dp-tier-acceptable { background: #eef4e6; color: #5c7a1b; }
-.dp-tier-concerning { background: #fdf3e2; color: #9a6212; }
-.dp-tier-strong { background: #fdeaea; color: #b32b22; }
+.dp-tier-green, .dp-tier-clean { background: var(--dp-surface-mint); color: var(--dp-green-dark); }
+.dp-tier-amber, .dp-tier-acceptable, .dp-tier-concerning { background: #fdf3e2; color: #9a6212; }
+.dp-tier-red, .dp-tier-strong { background: #fdeaea; color: #b32b22; }
 
 .dp-metrics {
   display: grid;
@@ -170,10 +172,10 @@ input[type="password"]:focus {
 }
 
 .dp-docname {
-  font-family: Georgia, "Times New Roman", serif;
-  font-weight: 700;
-  font-size: 14px;
+  font-weight: 600;
+  font-size: 13px;
   margin-bottom: 8px;
+  color: var(--dp-ink);
   word-break: break-word;
 }
 
@@ -208,14 +210,29 @@ input[type="password"]:focus {
 .dp-level-high { color: #b32b22; }
 .dp-level-unknown { color: var(--dp-muted); }
 
+.dp-dim-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.dp-dim-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12.5px;
+}
+.dp-dim-list .dp-dim-score { color: var(--dp-muted); font-variant-numeric: tabular-nums; }
+
 .dp-signal-list { list-style: none; margin: 0; padding: 0; }
 .dp-signal-list li {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 8px;
-  padding: 4px 0;
+  padding: 6px 0;
   font-size: 13px;
+  border-bottom: 1px solid var(--dp-line);
 }
+.dp-signal-list li:last-child { border-bottom: 0; }
+.dp-sig-body { display: flex; flex-direction: column; gap: 2px; }
+.dp-sig-desc { margin: 0; font-size: 12.5px; color: var(--dp-muted); line-height: 1.5; }
+.dp-sig-rec { margin: 0; font-size: 12.5px; color: var(--dp-green-dark); line-height: 1.5; }
 .dp-sev {
   flex: 0 0 auto;
   width: 8px;

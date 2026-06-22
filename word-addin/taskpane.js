@@ -261,10 +261,29 @@
       "<dt>AI-likelihood</dt><dd>" + pct(report.ai_score) + "</dd>" +
       "<dt>Writing quality</dt><dd>" + pct(report.writing_score) + "</dd></dl>");
 
+    // allow-hardcode: the strings below are HTML render templates + CSS class names
+    // for presentation; all user-facing text comes from the server report. No
+    // scoring/matching list here.
     var ct = report.critical_thinking;
     if (ct && (ct.status || ct.score != null)) {
-      p.push(section("Critical thinking",
-        escapeHtml(ct.status || "—") + (ct.score != null ? " · " + Math.round(ct.score) + "/100" : "")));
+      var ctHead = escapeHtml(ct.status || "—") +
+        (ct.score != null ? " · " + Math.round(ct.score) + "/100" : "");
+      var ctBody = "";
+      if (ct.action) {
+        ctBody += '<p class="dp-section-note"><strong>' + escapeHtml(ct.lead || "Focus") +
+          ":</strong> " + escapeHtml(ct.action) + "</p>";
+      }
+      if (ct.dimensions && ct.dimensions.length) {
+        ctBody += '<ul class="dp-dim-list">' + ct.dimensions.map(function (d) {
+          return "<li><span>" + escapeHtml(d.label || "") + "</span>" +
+            '<span class="dp-dim-score">' + Math.round(d.control) + "/100</span></li>";
+        }).join("") + "</ul>";
+      }
+      if (ct.caveat) {
+        ctBody += '<p class="dp-section-note dp-muted">' + escapeHtml(ct.caveat) + "</p>";
+      }
+      p.push('<div class="dp-section"><div class="dp-section-title">Critical thinking</div>' +
+        '<div class="dp-section-value">' + ctHead + "</div>" + ctBody + "</div>");
     }
 
     var sr = report.submission_risk;
@@ -276,8 +295,14 @@
     var sig = report.signal_highlights || [];
     if (sig.length) {
       var items = sig.map(function (s) {
+        var title = humanize(s.title || s.description || "");
+        var desc = (s.description && s.description !== s.title)
+          ? '<p class="dp-sig-desc">' + escapeHtml(s.description) + "</p>" : "";
+        var rec = s.recommendation
+          ? '<p class="dp-sig-rec">' + escapeHtml(s.recommendation) + "</p>" : "";
         return '<li><span class="dp-sev dp-sev-' + escapeAttr(s.severity || "low") + '"></span>' +
-          '<span class="dp-sig-title">' + escapeHtml(s.title || s.description || "") + "</span></li>";
+          '<div class="dp-sig-body"><span class="dp-sig-title">' + escapeHtml(title) + "</span>" +
+          desc + rec + "</div></li>";
       }).join("");
       p.push('<div class="dp-section"><div class="dp-section-title">Signal highlights</div>' +
         '<ul class="dp-signal-list">' + items + "</ul></div>");
@@ -302,8 +327,13 @@
       case "acceptable": return "Acceptable";
       case "concerning": return "Concerning";
       case "strong": return "Strong AI signal";
-      default: return tier;
+      default: return tier ? tier.charAt(0).toUpperCase() + tier.slice(1) : "Unknown";
     }
+  }
+
+  // "medium_predictability" -> "Medium predictability"
+  function humanize(s) {
+    return String(s || "").replace(/_/g, " ").replace(/^./, function (c) { return c.toUpperCase(); });
   }
 
   // ── Persist the last scan into the Word document ────────────────────────────
