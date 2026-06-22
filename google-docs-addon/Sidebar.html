@@ -1,0 +1,260 @@
+<!-- allow-hardcode: add-on sidebar UI (HTML/CSS + google.script.run calls + status
+     strings), not scoring/matching logic. All detection happens server-side. -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <meta charset="UTF-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --ink: #0D1B2A; --muted: #7A8694; --line: rgba(13,27,42,.10);
+        --green: #3BA876; --green-dark: #0F6E56; --bg: #fff; --soft: #F4F2EE; --mint: #E1F5EE;
+        --red: #E24B4A; --gold: #C9973A;
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      body { margin: 0; font-family: Inter, "Noto Sans SC", system-ui, "Segoe UI", sans-serif; color: var(--ink); font-size: 14px; line-height: 1.6; }
+      #app { padding: 14px; }
+      .head-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+      .head-row h1 { margin: 0; font-family: Georgia, serif; font-size: 19px; }
+      .sub { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+      .head-scores { display: flex; gap: 6px; }
+      .score-badge { display: inline-flex; align-items: baseline; gap: 4px; padding: 3px 9px; border-radius: 999px; background: var(--soft); font-size: 12px; white-space: nowrap; }
+      .score-badge .lbl { color: var(--muted); font-weight: 600; }
+      .score-badge .val { font-weight: 700; font-variant-numeric: tabular-nums; }
+      label { font-weight: 600; display: block; margin-bottom: 4px; }
+      input[type=password] { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+      .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 9px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; }
+      .btn-primary { background: var(--green); border-color: var(--green); color: #fff; width: 100%; }
+      .btn-primary:hover:not(:disabled) { background: var(--green-dark); }
+      .btn:disabled { opacity: .55; cursor: default; }
+      .link { background: none; border: none; padding: 0; color: var(--green-dark); cursor: pointer; font: inherit; text-decoration: underline; }
+      .hint, .keyline { color: var(--muted); margin: 6px 0 0; font-size: 13px; }
+      a { color: var(--green-dark); }
+      .err { color: var(--red); margin: 6px 0 0; }
+      .stack { display: flex; flex-direction: column; gap: 10px; }
+      .selbox { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--soft); }
+      .selbox-head { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+      .seltext { margin: 0; font-size: 12.5px; max-height: 120px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+      .wc-low { color: var(--gold); }
+      .status { margin-top: 10px; color: var(--muted); min-height: 1em; }
+      .status:empty { display: none; }
+      .result { margin-top: 8px; }
+      .metrics { display: grid; grid-template-columns: auto auto; gap: 6px 14px; margin: 0; }
+      .metrics dt { color: var(--muted); } .metrics dd { margin: 0; font-weight: 600; text-align: right; }
+      .section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+      .section-title { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 4px; }
+      .section-note { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+      .q-list { list-style: none; margin: 8px 0 0; padding: 0; }
+      .q-list li { display: flex; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+      .q-list li:first-child { border-top: 0; }
+      .q-num { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%; background: var(--mint); color: var(--green-dark); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+      .q-quote { margin: 0 0 4px; font-style: italic; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+      .q-text { margin: 0; font-size: 13px; line-height: 1.5; }
+      .issue { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 8px; background: var(--soft); }
+      .issue-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+      .issue-tier { font-size: 11px; padding: 2px 8px; border-radius: 999px; text-transform: capitalize; background: var(--soft); }
+      .issue-tier.t-green, .issue-tier.t-clean { background: var(--mint); color: var(--green-dark); }
+      .issue-tier.t-amber, .issue-tier.t-medium, .issue-tier.t-concerning { background: #fdf3e2; color: #9a6212; }
+      .issue-tier.t-red, .issue-tier.t-high, .issue-tier.t-critical, .issue-tier.t-strong { background: #fdeaea; color: #b32b22; }
+      .issue-sig { font-size: 11px; color: var(--muted); }
+      .issue-snippet { margin: 0 0 6px; font-size: 12.5px; line-height: 1.5; }
+      .issue-summary { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+      .issue-block { margin-top: 6px; }
+      .issue-label { display: block; font-size: 11px; font-weight: 700; color: var(--green-dark); text-transform: uppercase; letter-spacing: .03em; }
+      .issue-block p { margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; }
+      .lowconf { margin-top: 12px; padding: 8px 10px; background: #fdf3e2; border-radius: 6px; color: #7a5410; font-size: 12.5px; }
+      .report-link { display: inline-block; margin-top: 14px; font-weight: 600; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div class="head-row">
+        <h1>DraftProof</h1>
+        <div id="headScores" class="head-scores" hidden></div>
+      </div>
+      <p class="sub">Scan highlighted text for AI-writing risk.</p>
+
+      <section id="setup" class="stack" hidden>
+        <div>
+          <label for="apiKey">API key</label>
+          <input id="apiKey" type="password" placeholder="dp_live_…" autocomplete="off" spellcheck="false" />
+        </div>
+        <button id="saveKey" class="btn btn-primary">Save key</button>
+        <p class="hint">Generate a key at <a href="https://draftproof.app/api-keys" target="_blank" rel="noopener">draftproof.app/api-keys</a>.</p>
+        <p id="setupError" class="err" hidden></p>
+      </section>
+
+      <section id="scanner" class="stack" hidden>
+        <p class="keyline">Key <code id="keyPrefix"></code> · <button id="changeKey" class="link" type="button">change</button></p>
+        <div class="selbox">
+          <div class="selbox-head">
+            <span>Selected text</span>
+            <span><span id="wordCount">0 words</span> · <button id="refreshSel" class="link" type="button">refresh</button></span>
+          </div>
+          <p id="selText" class="seltext">Highlight text in the document, then refresh.</p>
+        </div>
+        <button id="scanBtn" class="btn btn-primary">Scan selected text</button>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+        <div id="result" class="result" hidden></div>
+      </section>
+    </div>
+
+    <script>
+      var els = {};
+      var scanning = false;
+      var POLL_MS = 2000, POLL_MAX = 60;
+
+      document.addEventListener('DOMContentLoaded', function () {
+        ['apiKey','saveKey','setupError','keyPrefix','changeKey','refreshSel','selText','wordCount','scanBtn','status','result','setup','scanner','headScores']
+          .forEach(function (id) { els[id] = document.getElementById(id); });
+        els.saveKey.addEventListener('click', onSaveKey);
+        els.changeKey.addEventListener('click', onChangeKey);
+        els.refreshSel.addEventListener('click', refreshSelection);
+        els.scanBtn.addEventListener('click', onScan);
+        google.script.run.withSuccessHandler(applyKeyInfo).withFailureHandler(showFatal).getKeyInfo();
+      });
+
+      function applyKeyInfo(info) {
+        if (info && info.hasKey) {
+          els.keyPrefix.textContent = info.prefix + '…';
+          show(els.scanner); hide(els.setup);
+          refreshSelection();
+        } else {
+          show(els.setup); hide(els.scanner);
+        }
+      }
+
+      function onSaveKey() {
+        var v = (els.apiKey.value || '').trim();
+        setupErr(null);
+        google.script.run
+          .withSuccessHandler(function (info) { els.apiKey.value = ''; applyKeyInfo(info); })
+          .withFailureHandler(function (e) { setupErr(cleanErr(e)); })
+          .saveKey(v);
+      }
+
+      function onChangeKey() {
+        clearResult();
+        google.script.run.withSuccessHandler(applyKeyInfo).clearKey();
+      }
+
+      function refreshSelection() {
+        google.script.run.withSuccessHandler(function (sel) {
+          var n = sel.wordCount || 0;
+          els.wordCount.textContent = n === 1 ? '1 word' : n + ' words';
+          els.wordCount.className = (n > 0 && n < 100) ? 'wc-low' : '';
+          els.selText.textContent = sel.text ? sel.text : 'Highlight text in the document, then refresh.';
+          els.scanBtn.disabled = n === 0 && !scanning;
+        }).previewSelection();
+      }
+
+      function onScan() {
+        clearResult();
+        busy(true);
+        setStatus('Scanning… this can take up to a minute.');
+        google.script.run
+          .withSuccessHandler(function (r) { poll(r.scanId, r.lowConfidence, 0); })
+          .withFailureHandler(function (e) { busy(false); handleErr(e); })
+          .submitScan();
+      }
+
+      function poll(scanId, lowConfidence, attempt) {
+        if (attempt >= POLL_MAX) { busy(false); setStatus('Still working — check the DraftProof dashboard shortly.'); return; }
+        google.script.run
+          .withSuccessHandler(function (data) {
+            if (data.status === 'completed') { loadReport(scanId, lowConfidence); }
+            else if (data.status === 'failed') { busy(false); setStatus('The scan failed. Please try again.'); }
+            else { setTimeout(function () { poll(scanId, lowConfidence, attempt + 1); }, POLL_MS); }
+          })
+          .withFailureHandler(function (e) { busy(false); handleErr(e); })
+          .getScanStatus(scanId);
+      }
+
+      function loadReport(scanId, lowConfidence) {
+        google.script.run
+          .withSuccessHandler(function (rep) { busy(false); renderReport(rep, lowConfidence); })
+          .withFailureHandler(function (e) { busy(false); handleErr(e); })
+          .getScanReport(scanId);
+      }
+
+      // ── rendering (matches the Word add-in) ──────────────────────────────────
+      function pct(v) { return v == null ? '—' : Math.round(v) + '%'; }
+      function setHeadScores(rep) {
+        var ai = rep && rep.ai_score != null ? pct(rep.ai_score) : null;
+        var wq = rep && rep.writing_score != null ? pct(rep.writing_score) : null;
+        if (ai == null && wq == null) { els.headScores.hidden = true; els.headScores.innerHTML = ''; return; }
+        var h = '';
+        if (ai != null) h += badge('AI', ai);
+        if (wq != null) h += badge('Writing', wq);
+        els.headScores.innerHTML = h; els.headScores.hidden = false;
+      }
+      function badge(lbl, val) { return '<span class="score-badge"><span class="lbl">' + esc(lbl) + '</span><span class="val">' + esc(val) + '</span></span>'; }
+      function humanize(s) { return String(s || '').replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); }); }
+
+      function renderReport(rep, lowConfidence) {
+        setStatus('');
+        setHeadScores(rep);
+        var p = [];
+
+        var ct = rep.critical_thinking;
+        if (ct && ct.questions && ct.questions.length) {
+          var q = ct.questions.map(function (x, i) {
+            var quote = x.quote ? '<p class="q-quote">“' + esc(x.quote) + '”</p>' : '';
+            return '<li><span class="q-num">' + (i + 1) + '</span><div>' + quote + '<p class="q-text">' + esc(x.question) + '</p></div></li>';
+          }).join('');
+          p.push('<div class="section"><div class="section-title">Critical thinking</div><p class="section-note">Questions to sharpen your thinking — the answers are yours to write.</p><ul class="q-list">' + q + '</ul></div>');
+        } else if (ct && (ct.status || ct.score != null)) {
+          p.push('<div class="section"><div class="section-title">Critical thinking</div><div>' + esc(ct.status || '—') + (ct.score != null ? ' · ' + Math.round(ct.score) + '/100' : '') + '</div></div>');
+        }
+
+        var sr = rep.submission_risk;
+        if (sr && (sr.label || sr.level)) {
+          var head = esc(sr.label || sr.level) + (sr.risk != null ? ' · ' + Math.round(sr.risk) + '%' : '');
+          p.push('<div class="section"><div class="section-title">Submitted content</div><div>' + head + '</div>' + (sr.reason ? '<p class="section-note">' + esc(sr.reason) + '</p>' : '') + '</div>');
+        }
+
+        var pis = rep.paragraph_issues || [];
+        if (pis.length) {
+          var cards = pis.map(function (it) {
+            var chips = '';
+            if (it.tier) chips += '<span class="issue-tier t-' + escAttr(it.tier) + '">' + esc(it.tier) + '</span>';
+            if (it.signal_label) chips += '<span class="issue-sig">' + esc(humanize(it.signal_label)) + '</span>';
+            var b = '';
+            if (it.snippet) b += '<p class="issue-snippet">' + esc(it.snippet) + '</p>';
+            if (it.reader_summary) b += '<p class="issue-summary">' + esc(it.reader_summary) + '</p>';
+            if (it.main_issue) b += '<div class="issue-block"><span class="issue-label">Main issue to fix</span><p>' + esc(it.main_issue) + '</p></div>';
+            if (it.recommendation) b += '<div class="issue-block"><span class="issue-label">How to improve</span><p>' + esc(it.recommendation) + '</p></div>';
+            return '<div class="issue">' + (chips ? '<div class="issue-chips">' + chips + '</div>' : '') + b + '</div>';
+          }).join('');
+          p.push('<div class="section"><div class="section-title">Issues</div>' + cards + '</div>');
+        }
+
+        if (lowConfidence) p.push('<p class="lowconf">Short selection — this read is indicative only. Scan a fuller passage (100+ words) for a confident result.</p>');
+        if (rep.report_url) p.push('<a class="report-link" href="https://draftproof.app' + esc(rep.report_url) + '" target="_blank" rel="noopener">View full report ↗</a>');
+
+        els.result.innerHTML = p.join(''); show(els.result);
+      }
+
+      // ── helpers ──────────────────────────────────────────────────────────────
+      function show(el) { el.hidden = false; } function hide(el) { el.hidden = true; }
+      function busy(on) { scanning = on; els.scanBtn.disabled = on; }
+      function setStatus(m) { els.status.textContent = m || ''; }
+      function clearResult() { els.result.innerHTML = ''; hide(els.result); setStatus(''); setHeadScores(null); }
+      function setupErr(m) { if (!m) { els.setupError.hidden = true; els.setupError.textContent = ''; } else { els.setupError.textContent = m; els.setupError.hidden = false; } }
+      function cleanErr(e) { return (e && e.message) ? e.message : 'Something went wrong.'; }
+      function handleErr(e) {
+        var m = cleanErr(e);
+        if (m === 'NO_SELECTION') { setStatus('Highlight some text in the document first, then scan.'); return; }
+        if (m === 'NO_CREDITS') { setStatus("You're out of credits. Top up at draftproof.app/buy."); return; }
+        if (m === 'BAD_KEY' || m === 'NO_KEY') { google.script.run.withSuccessHandler(applyKeyInfo).clearKey(); setupErr('Your API key was rejected. Paste a current key.'); return; }
+        setStatus('Couldn’t scan: ' + m);
+      }
+      function showFatal(e) { document.getElementById('app').innerHTML = '<p class="err">' + esc(cleanErr(e)) + '</p>'; }
+      function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]; }); }
+      function escAttr(s) { return String(s || '').replace(/[^a-z0-9_-]/gi, ''); }
+    </script>
+  </body>
+</html>
