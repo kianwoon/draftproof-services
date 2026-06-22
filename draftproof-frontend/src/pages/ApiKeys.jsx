@@ -27,6 +27,7 @@ export default function ApiKeys() {
   const [copied, setCopied] = useState(false);
   const [revokingId, setRevokingId] = useState(null);
   const [showInstall, setShowInstall] = useState(true);
+  const [installOS, setInstallOS] = useState('word');
   // Full keys created THIS session, kept in memory only (never persisted) so a
   // freshly-created key can still be copied from the table after the modal closes.
   const [sessionKeys, setSessionKeys] = useState({});
@@ -148,14 +149,43 @@ export default function ApiKeys() {
           </button>
           {showInstall && (
             <div className="api-keys-addon-steps">
-              <a className="btn btn-primary btn-small" href="/word-addin/manifest.xml" download="draftproof-manifest.xml">
-                {t('apiKeys.addon.download')}
-              </a>
-              <ol>
-                {t('apiKeys.addon.steps', { returnObjects: true }).map((s, i) => (
-                  <li key={i}>{s}</li>
-                ))}
-              </ol>
+              <div className="api-keys-addon-tabs" role="tablist">
+                <button
+                  type="button"
+                  className={`api-keys-addon-tab${installOS === 'word' ? ' is-active' : ''}`}
+                  onClick={() => setInstallOS('word')}
+                >
+                  {t('apiKeys.addon.wordTab')}
+                </button>
+                <button
+                  type="button"
+                  className={`api-keys-addon-tab${installOS === 'gdocs' ? ' is-active' : ''}`}
+                  onClick={() => setInstallOS('gdocs')}
+                >
+                  {t('apiKeys.addon.gdocsTab')}
+                </button>
+              </div>
+              {installOS === 'word' ? (
+                <>
+                  <a className="btn btn-primary btn-small" href="/word-addin/manifest.xml" download="draftproof-manifest.xml">
+                    {t('apiKeys.addon.download')}
+                  </a>
+                  <ol>
+                    {t('apiKeys.addon.wordSteps', { returnObjects: true }).map((s, i) => (
+                      <li key={i}>{s}</li>
+                    ))}
+                  </ol>
+                </>
+              ) : (
+                <>
+                  <ol>
+                    {t('apiKeys.addon.gdocsSteps', { returnObjects: true }).map((s, i) => (
+                      <li key={i}>{s}</li>
+                    ))}
+                  </ol>
+                  <p className="api-keys-muted">{t('apiKeys.addon.gdocsNote')}</p>
+                </>
+              )}
             </div>
           )}
         </div>

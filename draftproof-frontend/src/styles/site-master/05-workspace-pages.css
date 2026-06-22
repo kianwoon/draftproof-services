@@ -1336,6 +1336,20 @@
 .api-keys-addon-steps { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--green-200); }
 .api-keys-addon-steps ol { margin: 12px 0 0; padding-left: 20px; }
 .api-keys-addon-steps li { margin: 8px 0; font-size: .92rem; line-height: 1.55; }
+.api-keys-addon-steps .btn { margin-top: 12px; }
+.api-keys-addon-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.api-keys-addon-tab {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  font-size: .85rem;
+  color: var(--muted);
+}
+.api-keys-addon-tab.is-active { background: var(--surface-mint); color: var(--green-dark); border-color: transparent; }
 
 .api-keys-panel {
   background: var(--surface);

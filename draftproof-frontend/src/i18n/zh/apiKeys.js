@@ -7,16 +7,24 @@ export const apiKeys = {
   activeLabel: "有效密钥",
   // allow-hardcode: i18n UI copy (install-step strings), not scoring/matching logic.
   addon: {
-    title: "在 Microsoft Word 中扫描",
-    body: "安装 DraftProof 加载项，然后在下方粘贴密钥，即可在 Word 中扫描所选文本。",
+    title: "在 Word 或 Google 文档中扫描",
+    body: "为你的编辑器安装 DraftProof 加载项，然后在下方粘贴密钥即可扫描所选文本。",
     cta: "查看安装步骤",
     hide: "收起",
+    wordTab: "Microsoft Word",
+    gdocsTab: "Google 文档",
     download: "下载清单文件",
-    steps: [
+    wordSteps: [
       "Word 网页版：开始 → 加载项 → 更多加载项 → 我的加载项 → 上传我的加载项 → 选择已下载的文件。",
       "Word 桌面版：将文件放入受信任加载项目录文件夹（Windows）或 Word 的 “wef” 文件夹（Mac），重启 Word，然后插入 → 我的加载项。",
       "打开 DraftProof → 扫描所选文本，从下方粘贴密钥，选中文本并扫描。",
     ],
+    gdocsSteps: [
+      "打开 Google 文档 → 扩展程序 → 加载项 → 获取加载项。",
+      "搜索 “DraftProof” 并点击安装。",
+      "通过 扩展程序 → DraftProof → 打开 DraftProof 启动，从下方粘贴密钥，选中文本并扫描。",
+    ],
+    gdocsNote: "Google 文档加载项正在等待 Google Workspace Marketplace 审核——即将推出。",
   },
   createNamePlaceholder: "密钥名称（例如：我的 Word 加载项）",
   createButton: "生成密钥",

@@ -7,16 +7,24 @@ export const apiKeys = {
   activeLabel: "Active keys",
   // allow-hardcode: i18n UI copy (install-step strings), not scoring/matching logic.
   addon: {
-    title: "Scan inside Microsoft Word",
-    body: "Install the DraftProof add-in, then paste a key below to scan highlighted text right in Word.",
+    title: "Scan inside Word or Google Docs",
+    body: "Install the DraftProof add-in for your editor, then paste a key below to scan highlighted text.",
     cta: "Show install steps",
     hide: "Hide",
+    wordTab: "Microsoft Word",
+    gdocsTab: "Google Docs",
     download: "Download manifest",
-    steps: [
+    wordSteps: [
       "Word on the web: Home → Add-ins → More Add-ins → My Add-ins → Upload My Add-in → pick the downloaded file.",
       "Word desktop: put the file in a Trusted Add-in Catalog folder (Windows) or the Word ‘wef’ folder (Mac), restart Word, then Insert → My Add-ins.",
       "Open DraftProof → Scan selection, paste a key from below, highlight text, and scan.",
     ],
+    gdocsSteps: [
+      "Open a Google Doc → Extensions → Add-ons → Get add-ons.",
+      "Search for “DraftProof” and click Install.",
+      "Open it from Extensions → DraftProof → Open DraftProof, paste a key from below, highlight text, and scan.",
+    ],
+    gdocsNote: "The Google Docs add-on is pending Google Workspace Marketplace approval — coming soon.",
   },
   createNamePlaceholder: "Key name (e.g. My Word add-in)",
   createButton: "Generate key",
