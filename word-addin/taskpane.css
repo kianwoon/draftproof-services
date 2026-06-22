@@ -125,6 +125,9 @@ input[type="password"]:focus {
 
 .dp-error { color: var(--dp-red); margin: 0; }
 .dp-status { margin-top: 12px; color: var(--dp-muted); min-height: 1em; }
+/* When there's no status message, collapse it so it doesn't reserve a gap
+   between the Scan button and the result. */
+.dp-status:empty { display: none; }
 .dp-muted { color: var(--dp-muted); }
 
 /* Selected-text preview — resizable so the user can drag to enlarge it. */
@@ -162,7 +165,7 @@ input[type="password"]:focus {
   padding: 8px 10px;
 }
 
-.dp-result { margin-top: 14px; }
+.dp-result { margin-top: 7px; }
 
 .dp-tier {
   display: inline-block;
