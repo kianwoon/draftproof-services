@@ -140,12 +140,17 @@ async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
         raise HTTPException(status_code=404, detail="Report not found")
 
     badge = report.get("ai_risk_badge") or {}
+    # _enrich_badge can RECOMPUTE critical_thinking_control via the deterministic
+    # composer (no LLM questions). Preserve any questions the worker already wrote.
+    pre_questions = (badge.get("critical_thinking_control") or {}).get("questions")
     try:
         _enrich_badge(badge)  # no-op if already enriched
     except Exception:
         pass
 
-    ctc = badge.get("critical_thinking_control") or {}
+    ctc = dict(badge.get("critical_thinking_control") or {})
+    if pre_questions and not ctc.get("questions"):
+        ctc["questions"] = pre_questions
     sub_overall = (badge.get("submission_risk") or {}).get("overall") or {}
     issues = report.get("issues") or []
     paragraph_issues = _build_paragraph_issues(report.get("results_json") or {}, EXT_SIGNAL_HIGHLIGHT_LIMIT)

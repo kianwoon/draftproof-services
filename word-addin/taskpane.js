@@ -453,20 +453,32 @@
   }
 
   function restoreSavedScan() {
+    var saved;
     try {
-      var saved = Office.context.document.settings.get(DOC_SETTING);
-      if (saved && saved.report) {
-        renderReport(saved.report, {
-          lowConfidence: saved.lowConfidence,
-          restored: true,
-          savedAt: formatTs(saved.ts),
-          docName: saved.docName,
-        });
-      } else {
-        setDocState("No saved scan found in this document yet.", null);
-      }
+      saved = Office.context.document.settings.get(DOC_SETTING);
     } catch (e) {
       setDocState("Couldn't read saved scan: " + (e && e.message), "err");
+      return;
+    }
+    if (!saved || !saved.report) {
+      setDocState("No saved scan found in this document yet.", null);
+      return;
+    }
+    var opts = {
+      lowConfidence: saved.lowConfidence,
+      restored: true,
+      savedAt: formatTs(saved.ts),
+      docName: saved.docName,
+    };
+    // Re-fetch the live report so content/format upgrades apply on reload; the
+    // frozen snapshot is only a fallback if the report is gone (purged / offline).
+    if (saved.scanId) {
+      fetch(EXT + "/scan/" + encodeURIComponent(saved.scanId) + "/report", { headers: authHeaders() })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+        .then(function (fresh) { renderReport(fresh, opts); })
+        .catch(function () { renderReport(saved.report, opts); });
+    } else {
+      renderReport(saved.report, opts);
     }
   }
 
