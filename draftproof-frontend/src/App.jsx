@@ -26,6 +26,7 @@ import EssayChecker from './pages/EssayChecker';
 import NotFound from './pages/NotFound';
 import BuyTokens from './pages/BuyTokens';
 import PurchaseHistory from './pages/PurchaseHistory';
+import ApiKeys from './pages/ApiKeys';
 import { getLocaleFromPathname, isLocalizablePublicPath } from './localeRouting';
 
 function HomeRedirect() {
@@ -127,6 +128,7 @@ export default function App() {
             <Route path="/zh/security" element={<Security />} />
             <Route path="/buy" element={<ProtectedRoute><BuyTokens /></ProtectedRoute>} />
             <Route path="/history" element={<ProtectedRoute><PurchaseHistory /></ProtectedRoute>} />
+            <Route path="/api-keys" element={<ProtectedRoute><ApiKeys /></ProtectedRoute>} />
             <Route path="/signin" element={<SignIn />} />
             <Route path="/zh/signin" element={<SignIn />} />
             <Route path="/auth/callback" element={<AuthCallback />} />

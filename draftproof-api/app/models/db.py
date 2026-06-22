@@ -195,6 +195,25 @@ class RewriteJob(Base):
     completed_at = Column(DateTime(timezone=True))
 
 
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(Text, nullable=False, default="API key")
+    # Display-only prefix (e.g. "dp_live_a1b2c3d4"). The full secret is shown
+    # exactly once at creation and is never stored in clear text.
+    key_prefix = Column(Text, nullable=False)
+    # SHA-256 hex digest of the full key. Keys are high-entropy random tokens, so
+    # a fast hash is the correct primitive (bcrypt is for low-entropy passwords).
+    # Unique + indexed for O(1) authentication lookup.
+    key_hash = Column(Text, nullable=False, unique=True, index=True)
+    last_used_at = Column(DateTime(timezone=True))
+    # Soft-delete / revocation timestamp; NULL means the key is active.
+    revoked_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 async def init_db():
     pass  # Tables managed by migrations — no auto-create needed
 

@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse
-from app.routes import documents, scans, reports, rewrites, auth, payments, translate, feedback
+from app.routes import documents, scans, reports, rewrites, auth, payments, translate, feedback, keys, ext
 from app.models.db import init_db, async_session
 from app.config import COOKIE_SECURE, SECRET_KEY, FRONTEND_URL
 from sqlalchemy import text as sa_text
@@ -95,7 +95,9 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    # Authorization / X-API-Key let the MS Word task pane (a browser fetch) send
+    # its API key cross-origin; the web SPA still uses cookies.
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
@@ -106,6 +108,8 @@ app.include_router(rewrites.router, prefix="/api/rewrites", tags=["rewrites"])
 app.include_router(payments.router, prefix="/api/payments", tags=["payments"])
 app.include_router(translate.router, prefix="/api/translate", tags=["translate"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
+app.include_router(keys.router, prefix="/api/keys", tags=["api-keys"])
+app.include_router(ext.router, prefix="/api/ext", tags=["extension"])
 
 
 @app.get("/api/health")

@@ -154,6 +154,19 @@ export default function Dashboard() {
                 </span>
               )}
             </Link>
+
+            <Link to="/api-keys" className="dash-small-card">
+              <span className="dash-action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <circle cx="8" cy="15" r="3.2" />
+                  <path d="M10.3 12.7 19 4M16 7l2.5 2.5M14 9l2 2" />
+                </svg>
+              </span>
+              <div>
+                <h3>{t('dashboard.apiKeysTitle')}</h3>
+                <p>{t('dashboard.apiKeysBody')}</p>
+              </div>
+            </Link>
           </div>
         </section>
 

@@ -22,6 +22,7 @@ import { dialog } from './en/dialog.js';
 import { errorReload } from './en/errorReload.js';
 import { ticker } from './en/ticker.js';
 import { featuresPage } from './en/features.js';
+import { apiKeys } from './en/apiKeys.js';
 
 export const enTranslation = {
   "common": common,
@@ -48,4 +49,5 @@ export const enTranslation = {
   "errorReload": errorReload,
   "ticker": ticker,
   "featuresPage": featuresPage,
+  "apiKeys": apiKeys,
 };

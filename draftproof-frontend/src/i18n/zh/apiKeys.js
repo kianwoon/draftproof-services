@@ -1,0 +1,33 @@
+// allow-hardcode: i18n UI copy (presentation strings for the API-keys page),
+// not scoring/matching logic — same category as every other file in src/i18n/zh/.
+export const apiKeys = {
+  title: "API 密钥",
+  subtitle: "生成密钥后，即可在 Microsoft Word 和 Google 文档的 DraftProof 加载项中扫描所选文本。每次扫描会消耗你的额度（每 1,000 字 1 个额度）。",
+  createNamePlaceholder: "密钥名称（例如：我的 Word 加载项）",
+  createButton: "生成密钥",
+  creating: "正在生成…",
+  empty: "你还没有任何 API 密钥。生成一个以连接加载项。",
+  loading: "正在加载你的密钥…",
+  loadError: "无法加载你的 API 密钥，请重试。",
+  createError: "无法生成密钥，请重试。",
+  th: {
+    name: "名称",
+    key: "密钥",
+    created: "创建时间",
+    lastUsed: "上次使用",
+  },
+  neverUsed: "从未使用",
+  revokedBadge: "已吊销",
+  revoke: "吊销",
+  revoking: "正在吊销…",
+  revokeConfirm: "确定要吊销此密钥吗？使用它的加载项将立即停止工作。此操作无法撤销。",
+  revokeError: "无法吊销密钥，请重试。",
+  modal: {
+    title: "复制你的新 API 密钥",
+    warning: "这是你唯一一次看到此密钥的机会。请立即复制并粘贴到加载项中。若丢失，请吊销并重新生成。",
+    copy: "复制密钥",
+    copied: "已复制！",
+    done: "完成",
+    usageHint: "将其粘贴到 DraftProof 加载项中，或作为 Authorization: Bearer 标头发送。",
+  },
+};

@@ -15,6 +15,8 @@ export const dashboard = {
   "reportsBody": "回到过去的扫描并下载 PDF 报告。",
   "purchaseHistory": "购买历史",
   "historyBody": "查看积分购买和账户活动。",
+  "apiKeysTitle": "API 密钥",
+  "apiKeysBody": "为 Word 和 Google 文档加载项生成密钥。",
   "reportsCount_one": "{{count}} 份报告",
   "reportsCount_other": "{{count}} 份报告",
   "purchasesCount_one": "{{count}} 笔购买",

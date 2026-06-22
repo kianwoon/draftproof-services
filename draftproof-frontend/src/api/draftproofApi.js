@@ -45,6 +45,12 @@ export const submitFeedback = (payload) => api.post('/feedback', payload);
 // stays a plain env var instead of a Vite build-time inline.
 export const getFeedbackConfig = () => api.get('/feedback/config');
 
+// API keys (for the Google Docs / MS Word add-ins). createApiKey returns the
+// clear-text key exactly once, in response.data.key.
+export const listApiKeys = () => api.get('/keys/');
+export const createApiKey = (name) => api.post('/keys/', { name });
+export const revokeApiKey = (keyId) => api.delete(`/keys/${keyId}`);
+
 // Payments
 export const getPurchaseHistory = (page = 1, perPage = 5, opts = {}) =>
   api.get('/payments/history', { params: { page, per_page: perPage }, signal: opts.signal });

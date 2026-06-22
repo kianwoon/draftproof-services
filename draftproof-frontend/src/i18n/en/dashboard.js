@@ -15,6 +15,8 @@ export const dashboard = {
   "reportsBody": "Return to prior scans and download report PDFs.",
   "purchaseHistory": "Purchase history",
   "historyBody": "Review credit purchases and account activity.",
+  "apiKeysTitle": "API keys",
+  "apiKeysBody": "Generate keys for the Word & Google Docs add-ins.",
   "reportsCount_one": "{{count}} report",
   "reportsCount_other": "{{count}} reports",
   "purchasesCount_one": "{{count}} purchase",

@@ -1,0 +1,33 @@
+// allow-hardcode: i18n UI copy (presentation strings for the API-keys page),
+// not scoring/matching logic — same category as every other file in src/i18n/en/.
+export const apiKeys = {
+  title: "API keys",
+  subtitle: "Generate a key to scan highlighted text from the DraftProof add-ins for Microsoft Word and Google Docs. Each scan draws on your credit balance (1 credit per 1,000 words).",
+  createNamePlaceholder: "Key name (e.g. My Word add-in)",
+  createButton: "Generate key",
+  creating: "Generating…",
+  empty: "You don't have any API keys yet. Generate one to connect an add-in.",
+  loading: "Loading your keys…",
+  loadError: "Couldn't load your API keys. Please try again.",
+  createError: "Couldn't generate the key. Please try again.",
+  th: {
+    name: "Name",
+    key: "Key",
+    created: "Created",
+    lastUsed: "Last used",
+  },
+  neverUsed: "Never",
+  revokedBadge: "Revoked",
+  revoke: "Revoke",
+  revoking: "Revoking…",
+  revokeConfirm: "Revoke this key? Any add-in using it will stop working immediately. This cannot be undone.",
+  revokeError: "Couldn't revoke the key. Please try again.",
+  modal: {
+    title: "Copy your new API key",
+    warning: "This is the only time you'll see this key. Copy it now and paste it into your add-in. If you lose it, revoke it and generate a new one.",
+    copy: "Copy key",
+    copied: "Copied!",
+    done: "Done",
+    usageHint: "Paste it into the DraftProof add-in, or send it as the Authorization: Bearer header.",
+  },
+};

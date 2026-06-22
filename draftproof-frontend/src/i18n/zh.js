@@ -22,6 +22,7 @@ import { dialog } from './zh/dialog.js';
 import { errorReload } from './zh/errorReload.js';
 import { ticker } from './zh/ticker.js';
 import { featuresPage } from './zh/features.js';
+import { apiKeys } from './zh/apiKeys.js';
 
 export const zhTranslation = {
   "common": common,
@@ -48,4 +49,5 @@ export const zhTranslation = {
   "errorReload": errorReload,
   "ticker": ticker,
   "featuresPage": featuresPage,
+  "apiKeys": apiKeys,
 };

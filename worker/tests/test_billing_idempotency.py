@@ -142,6 +142,19 @@ def test_capture_scan_credits_no_double_charge_on_redelivery(monkeypatch):
     assert len(state["usage_events"]) == 1
 
 
+def test_capture_charges_reserved_amount_not_word_count_derived_cost(monkeypatch):
+    """always_paid extension scans reserve >=1 even for short text. Capture must
+    debit the RESERVED amount, never re-derive a free-rate cost (0) from a
+    sub-800 word_count — otherwise 'always charge' silently fails for exactly the
+    short selections this feature targets. word_count is audit-only here."""
+    state, log = _install_fake_db(monkeypatch, balance=10, reserved=1, tokens=1)
+
+    db.capture_credits("user-1", "job-1", word_count=50)  # free-rate would be 0
+
+    assert state["balance"] == 9  # charged the reserved 1, not 0
+    assert state["usage_events"][0] == ("user-1", "acct-1", 1, "job-1", 50)
+
+
 def test_capture_then_release_cannot_both_apply(monkeypatch):
     """Saga race: a job that completes (capture) while a cancel/stale-recovery
     tries to release. Whichever flips 'active' first wins; the other no-ops."""

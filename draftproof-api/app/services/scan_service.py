@@ -183,8 +183,19 @@ async def _mark_scan_interrupted(session, job: ScanJob) -> int:
     return await _release_active_scan_reservations(session, job.id)
 
 
-async def create_scan(document_id: str, user_id: str | None = None, text: str | None = None) -> dict:
-    """Create a scan_job row, enqueue Celery task, return scan info."""
+async def create_scan(
+    document_id: str,
+    user_id: str | None = None,
+    text: str | None = None,
+    *,
+    always_paid: bool = False,
+) -> dict:
+    """Create a scan_job row, enqueue Celery task, return scan info.
+
+    always_paid=True forces the paid rate (>=1 credit) and skips the free-scan
+    quota entirely. Extension/API-key scans use this so they never draw on the
+    web free allowance, while reusing the same reserve→capture billing path.
+    """
     if not text:
         text = await asyncio.to_thread(_read_document_text_sync, document_id)
     if not text:
@@ -198,8 +209,9 @@ async def create_scan(document_id: str, user_id: str | None = None, text: str | 
     async with async_session() as session:
         # Reserve tokens based on word count. Short scans are free for the first
         # FREE_SCAN_LIMIT; after that they fall back to the normal paid rate so
-        # purchased credits can pay for short docs too.
-        cost = _scan_cost(word_count)
+        # purchased credits can pay for short docs too. always_paid bypasses the
+        # free path so cost is always >=1 (the `cost == 0` branch below can't run).
+        cost = _paid_scan_cost(word_count) if always_paid else _scan_cost(word_count)
 
         # Free scans draw on a durable lifetime counter (users.free_scans_used),
         # NOT a count of scan_jobs rows — those get purged by the report
