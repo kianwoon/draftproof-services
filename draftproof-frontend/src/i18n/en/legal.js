@@ -1,7 +1,17 @@
 export const legal = {
   "lastUpdated": "Last updated",
   "may2026": "May 2026",
-  // allow-hardcode: i18n legal copy (Terms of Service), not scoring/matching logic.
+  // allow-hardcode: i18n support + legal copy, not scoring/matching logic.
+  "support": {
+    "eyebrow": "Support",
+    "title": "Get help with DraftProof",
+    "lead": "Questions, bugs, or feature requests — here's how to reach us.",
+    "sections": [
+      { "title": "Email us", "paragraphs": ["For account, billing, or scan questions, email support@draftproof.app. We aim to reply within 1–2 business days."] },
+      { "title": "Report a bug or request a feature", "paragraphs": ["Use the feedback button in the bottom corner of any DraftProof page — it sends your report straight to our team. Tell us which page you were on and what you expected to happen."] },
+      { "title": "Common questions", "paragraphs": ["Many answers are on our FAQ at draftproof.app/faq — covering pricing, scans, rewrites, credits, and the Word and Google Docs add-ins."] }
+    ]
+  },
   "terms": {
     "eyebrow": "Terms of Service",
     "title": "DraftProof Terms of Service",

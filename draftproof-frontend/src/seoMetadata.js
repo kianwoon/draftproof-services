@@ -86,6 +86,12 @@ export const PAGE_META = {
     schemaType: 'WebPage',
     freshness: { type: 'updated', date: SEO_REVIEW_DATE },
   },
+  '/support': {
+    titleKey: 'seo.supportTitle',
+    descriptionKey: 'seo.supportDescription',
+    canonical: '/support',
+    schemaType: 'WebPage',
+  },
   '/security': {
     titleKey: 'seo.securityTitle',
     descriptionKey: 'seo.securityDescription',

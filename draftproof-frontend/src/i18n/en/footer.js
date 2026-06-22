@@ -7,6 +7,7 @@ export const footer = {
   "faq": "FAQ",
   "privacy": "Privacy",
   "terms": "Terms",
+  "support": "Support",
   "security": "Security",
   "community": "Community",
   "supportEmail": "support@draftproof.app",

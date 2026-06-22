@@ -18,6 +18,8 @@ export const seo = {
   "privacyDescription": "DraftProof 如何处理账户数据、上传文档、生成报告、付款、Cookie、存储和删除请求。",
   "termsTitle": "服务条款 | DraftProof",
   "termsDescription": "约束你使用 DraftProof 的条款——账户、API 密钥、额度与计费、可接受使用、内容、免责声明与责任。",
+  "supportTitle": "支持 | DraftProof",
+  "supportDescription": "获取 DraftProof 帮助——邮件支持、问题反馈与功能建议，以及常见问题解答。",
   "securityTitle": "安全 | DraftProof",
   "securityDescription": "DraftProof 如何通过加密存储、OAuth 登录、安全付款、访问控制和用户可控删除来保护学术文档。",
   "signInTitle": "登录 | DraftProof",

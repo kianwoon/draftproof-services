@@ -18,6 +18,8 @@ export const seo = {
   "privacyDescription": "How DraftProof handles account data, uploaded documents, generated reports, payments, cookies, storage, and deletion requests.",
   "termsTitle": "Terms of Service | DraftProof",
   "termsDescription": "The terms governing your use of DraftProof — accounts, API keys, credits and billing, acceptable use, content, disclaimers, and liability.",
+  "supportTitle": "Support | DraftProof",
+  "supportDescription": "Get help with DraftProof — email support, bug reports and feature requests, and answers to common questions.",
   "securityTitle": "Security | DraftProof",
   "securityDescription": "How DraftProof protects academic documents with encrypted storage, OAuth sign-in, secure payments, access controls, and user-controlled deletion.",
   "signInTitle": "Sign In | DraftProof",

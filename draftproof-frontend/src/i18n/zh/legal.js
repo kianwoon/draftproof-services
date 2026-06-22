@@ -1,7 +1,17 @@
 export const legal = {
   "lastUpdated": "最后更新",
   "may2026": "2026 年 5 月",
-  // allow-hardcode: i18n legal copy (Terms of Service), not scoring/matching logic.
+  // allow-hardcode: i18n support + legal copy, not scoring/matching logic.
+  "support": {
+    "eyebrow": "支持",
+    "title": "获取 DraftProof 帮助",
+    "lead": "有疑问、遇到问题或想提建议——可通过以下方式联系我们。",
+    "sections": [
+      { "title": "发送邮件", "paragraphs": ["关于账户、计费或扫描的问题，请发送邮件至 support@draftproof.app。我们会在 1–2 个工作日内回复。"] },
+      { "title": "报告问题或提交功能建议", "paragraphs": ["使用任意 DraftProof 页面右下角的反馈按钮，即可将报告直接发送给我们的团队。请说明你所在的页面以及预期的行为。"] },
+      { "title": "常见问题", "paragraphs": ["许多答案可在我们的常见问题页 draftproof.app/faq 找到——涵盖价格、扫描、改写、额度，以及 Word 和 Google 文档加载项。"] }
+    ]
+  },
   "terms": {
     "eyebrow": "服务条款",
     "title": "DraftProof 服务条款",
