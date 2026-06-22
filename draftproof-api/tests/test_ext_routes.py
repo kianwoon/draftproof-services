@@ -122,3 +122,44 @@ def test_ext_scan_status_404(client):
     with patch("app.routes.ext.get_scan", new=AsyncMock(return_value=None)):
         r = client.get("/api/ext/scan/missing")
     assert r.status_code == 404
+
+
+def test_ext_scan_report_returns_rich_sections(client):
+    report = {
+        "tier": "concerning",
+        "ai_score": 32.0,
+        "writing_score": 46.0,
+        "ai_risk_badge": {
+            "ai_likelihood_score": 32.0,
+            "writing_quality_score": 46.0,
+            "tier": "concerning",
+            "policy_risk": {"present": True},  # makes _enrich_badge a no-op
+            "critical_thinking_control": {
+                "score": 65.5, "status": "Acceptable control", "band": "acceptable_control",
+            },
+            "submission_risk": {
+                "overall": {
+                    "level": "medium", "label": "Medium submission risk",
+                    "risk": 48.5, "main_reason": "weak ownership of the thinking",
+                },
+            },
+        },
+        "issues": [
+            {"severity": "high", "title": "Uncited claim", "description": "Missing citation"},
+            {"severity": "low", "title": "Generic phrasing", "description": "Unanchored"},
+        ],
+    }
+    with patch("app.routes.ext.get_report", new=AsyncMock(return_value=report)):
+        r = client.get("/api/ext/scan/abc/report")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["critical_thinking"]["status"] == "Acceptable control"
+    assert body["submission_risk"]["level"] == "medium"
+    assert body["signal_highlights"][0]["title"] == "Uncited claim"
+    assert body["report_url"] == "/report/abc"
+
+
+def test_ext_scan_report_404_when_missing(client):
+    with patch("app.routes.ext.get_report", new=AsyncMock(return_value=None)):
+        r = client.get("/api/ext/scan/missing/report")
+    assert r.status_code == 404

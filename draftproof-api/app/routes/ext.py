@@ -11,8 +11,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.models.db import async_session, CreditAccount
+from app.policy_enrich import _enrich_badge
 from app.services.api_key_service import get_api_key_user
+from app.services.report_service import get_report
 from app.services.scan_service import create_scan, get_scan
+
+# How many top findings to surface as "signal highlights" in the add-in.
+EXT_SIGNAL_HIGHLIGHT_LIMIT = 5
 
 router = APIRouter()
 
@@ -62,6 +67,54 @@ async def ext_scan_status(scan_id: str, user: dict = Depends(get_api_key_user)):
     if not result:
         raise HTTPException(status_code=404, detail="Scan not found")
     return result
+
+
+@router.get("/scan/{scan_id}/report")
+async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
+    """Richer result for a completed scan: the two headline scores plus the
+    Critical Thinking, Submitted-content (submission risk), and signal-highlight
+    sections the web report shows. get_report is user-scoped; _enrich_badge fills
+    the additive composers at read time (idempotent) if the badge lacks them."""
+    report = await get_report(scan_id, user_id=user["id"])
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    badge = report.get("ai_risk_badge") or {}
+    try:
+        _enrich_badge(badge)  # no-op if already enriched
+    except Exception:
+        pass
+
+    ctc = badge.get("critical_thinking_control") or {}
+    sub_overall = (badge.get("submission_risk") or {}).get("overall") or {}
+    issues = report.get("issues") or []
+
+    return {
+        "scan_id": scan_id,
+        "tier": report.get("tier"),
+        "ai_score": report.get("ai_score"),
+        "writing_score": report.get("writing_score"),
+        "critical_thinking": {
+            "score": ctc.get("score"),
+            "status": ctc.get("status"),
+            "band": ctc.get("band"),
+        } if ctc else None,
+        "submission_risk": {
+            "level": sub_overall.get("level"),
+            "label": sub_overall.get("label"),
+            "risk": sub_overall.get("risk"),
+            "reason": sub_overall.get("main_reason"),
+        } if sub_overall else None,
+        "signal_highlights": [
+            {
+                "severity": i.get("severity"),
+                "title": i.get("title"),
+                "description": i.get("description"),
+            }
+            for i in issues[:EXT_SIGNAL_HIGHLIGHT_LIMIT]
+        ],
+        "report_url": f"/report/{scan_id}",
+    }
 
 
 @router.get("/credits")

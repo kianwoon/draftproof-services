@@ -28,6 +28,8 @@
       updateSelectionPreview
     );
     updateSelectionPreview();
+    // Re-show the last scan saved in this document, if any.
+    if (getKey()) restoreSavedScan();
   });
 
   function cache() {
@@ -164,7 +166,7 @@
       .then(function (data) {
         if (data.status === "completed") {
           busy(false);
-          renderResult(data, lowConfidence);
+          fetchAndRenderReport(scanId, lowConfidence);
         } else if (data.status === "failed") {
           busy(false);
           setStatus("The scan failed. Please try again.");
@@ -195,22 +197,78 @@
   }
 
   // ── Rendering ──────────────────────────────────────────────────────────────
-  function renderResult(data, lowConfidence) {
-    setStatus("");
-    var tier = data.tier || "unknown";
-    var ai = data.ai_score == null ? "—" : Math.round(data.ai_score) + "%";
-    var writing = data.writing_score == null ? "—" : Math.round(data.writing_score) + "%";
+  // After a scan completes, pull the richer report (Critical Thinking, Submitted
+  // content, signal highlights) and render + persist it into the document.
+  function fetchAndRenderReport(scanId, lowConfidence) {
+    setStatus("Loading results…");
+    fetch(EXT + "/scan/" + encodeURIComponent(scanId) + "/report", { headers: authHeaders() })
+      .then(handleAuthThenJson)
+      .then(function (report) {
+        renderReport(report, { lowConfidence: lowConfidence, restored: false });
+        saveScanToDoc(scanId, report, lowConfidence);
+      })
+      .catch(function (err) {
+        if (err && err.handled) return;
+        setStatus(errorText(err));
+      });
+  }
 
-    var html =
-      '<div class="dp-tier dp-tier-' + escapeAttr(tier) + '">' + escapeHtml(tierLabel(tier)) + "</div>" +
-      '<dl class="dp-metrics">' +
-        "<dt>AI-likelihood</dt><dd>" + ai + "</dd>" +
-        "<dt>Writing quality</dt><dd>" + writing + "</dd>" +
-      "</dl>";
-    if (lowConfidence) {
-      html += '<p class="dp-lowconf">Short selection — this read is indicative only. Scan a fuller passage (100+ words) for a confident result.</p>';
+  function pct(v) { return v == null ? "—" : Math.round(v) + "%"; }
+
+  function section(title, valueHtml, levelClass, noteText) {
+    return '<div class="dp-section"><div class="dp-section-title">' + escapeHtml(title) + "</div>" +
+      '<div class="dp-section-value' + (levelClass ? " " + levelClass : "") + '">' + valueHtml + "</div>" +
+      (noteText ? '<p class="dp-section-note">' + escapeHtml(noteText) + "</p>" : "") + "</div>";
+  }
+
+  function renderReport(report, opts) {
+    opts = opts || {};
+    setStatus("");
+    var p = [];
+
+    if (opts.restored) {
+      p.push('<div class="dp-restored">Last scan for this document' +
+        (opts.savedAt ? " · " + escapeHtml(opts.savedAt) : "") + "</div>");
     }
-    els.result.innerHTML = html;
+
+    var tier = report.tier || "unknown";
+    p.push('<div class="dp-tier dp-tier-' + escapeAttr(tier) + '">' + escapeHtml(tierLabel(tier)) + "</div>");
+    p.push('<dl class="dp-metrics">' +
+      "<dt>AI-likelihood</dt><dd>" + pct(report.ai_score) + "</dd>" +
+      "<dt>Writing quality</dt><dd>" + pct(report.writing_score) + "</dd></dl>");
+
+    var ct = report.critical_thinking;
+    if (ct && (ct.status || ct.score != null)) {
+      p.push(section("Critical thinking",
+        escapeHtml(ct.status || "—") + (ct.score != null ? " · " + Math.round(ct.score) + "/100" : "")));
+    }
+
+    var sr = report.submission_risk;
+    if (sr && (sr.label || sr.level)) {
+      var srHead = escapeHtml(sr.label || sr.level) + (sr.risk != null ? " · " + Math.round(sr.risk) + "%" : "");
+      p.push(section("Submitted content", srHead, "dp-level-" + escapeAttr(sr.level || "unknown"), sr.reason));
+    }
+
+    var sig = report.signal_highlights || [];
+    if (sig.length) {
+      var items = sig.map(function (s) {
+        return '<li><span class="dp-sev dp-sev-' + escapeAttr(s.severity || "low") + '"></span>' +
+          '<span class="dp-sig-title">' + escapeHtml(s.title || s.description || "") + "</span></li>";
+      }).join("");
+      p.push('<div class="dp-section"><div class="dp-section-title">Signal highlights</div>' +
+        '<ul class="dp-signal-list">' + items + "</ul></div>");
+    }
+
+    if (opts.lowConfidence) {
+      p.push('<p class="dp-lowconf">Short selection — this read is indicative only. Scan a fuller passage (100+ words) for a confident result.</p>');
+    }
+
+    if (report.report_url) {
+      p.push('<a class="dp-report-link" href="https://draftproof.app' +
+        escapeHtml(report.report_url) + '" target="_blank" rel="noopener">View full report ↗</a>');
+    }
+
+    els.result.innerHTML = p.join("");
     show(els.result);
   }
 
@@ -222,6 +280,40 @@
       case "strong": return "Strong AI signal";
       default: return tier;
     }
+  }
+
+  // ── Persist the last scan into the Word document ────────────────────────────
+  // Office document settings travel with the .docx, so reopening the doc lets us
+  // re-show the report without rescanning (offline snapshot + link to the web).
+  var DOC_SETTING = "draftproof_scan_v1";
+
+  function saveScanToDoc(scanId, report, lowConfidence) {
+    try {
+      Office.context.document.settings.set(DOC_SETTING, {
+        scanId: scanId,
+        ts: new Date().toISOString(),
+        lowConfidence: !!lowConfidence,
+        report: report,
+      });
+      Office.context.document.settings.saveAsync(function () {});
+    } catch (e) { /* settings unavailable — non-fatal */ }
+  }
+
+  function restoreSavedScan() {
+    try {
+      var saved = Office.context.document.settings.get(DOC_SETTING);
+      if (saved && saved.report) {
+        renderReport(saved.report, {
+          lowConfidence: saved.lowConfidence,
+          restored: true,
+          savedAt: formatTs(saved.ts),
+        });
+      }
+    } catch (e) { /* non-fatal */ }
+  }
+
+  function formatTs(iso) {
+    try { return new Date(iso).toLocaleString(); } catch (e) { return ""; }
   }
 
   // ── tiny helpers ───────────────────────────────────────────────────────────
