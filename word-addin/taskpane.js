@@ -16,6 +16,7 @@
 
   var els = {};
   var scanning = false;
+  var pendingDocName = null; // Word file name captured at scan time
 
   Office.onReady(function (info) {
     if (info.host !== Office.HostType.Word) return;
@@ -85,15 +86,33 @@
   function onScan() {
     clearResult();
     setStatus("Reading your selection…");
-    getSelectedText()
-      .then(function (text) {
-        if (!text || !text.trim()) {
-          setStatus("Highlight some text in the document first, then scan.");
-          return null;
+    getDocName(function (docName) {
+      pendingDocName = docName;
+      getSelectedText()
+        .then(function (text) {
+          if (!text || !text.trim()) {
+            setStatus("Highlight some text in the document first, then scan.");
+            return null;
+          }
+          return submitScan(text.trim());
+        })
+        .catch(function (err) { setStatus(errorText(err)); });
+    });
+  }
+
+  // The Word file name (basename of the document URL), or null if unsaved.
+  function getDocName(cb) {
+    try {
+      Office.context.document.getFilePropertiesAsync(function (res) {
+        var url = (res && res.value && res.value.url) || "";
+        var name = "";
+        if (url) {
+          var base = url.split(/[\\/]/).pop().split("?")[0];
+          try { name = decodeURIComponent(base); } catch (e) { name = base; }
         }
-        return submitScan(text.trim());
-      })
-      .catch(function (err) { setStatus(errorText(err)); });
+        cb(name || null);
+      });
+    } catch (e) { cb(null); }
   }
 
   // ── Office selection ───────────────────────────────────────────────────────
@@ -142,7 +161,7 @@
     return fetch(EXT + "/scan", {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ text: text }),
+      body: JSON.stringify({ text: text, document_name: pendingDocName }),
     })
       .then(handleAuthThenJson)
       .then(function (data) {
@@ -204,8 +223,8 @@
     fetch(EXT + "/scan/" + encodeURIComponent(scanId) + "/report", { headers: authHeaders() })
       .then(handleAuthThenJson)
       .then(function (report) {
-        renderReport(report, { lowConfidence: lowConfidence, restored: false });
-        saveScanToDoc(scanId, report, lowConfidence);
+        renderReport(report, { lowConfidence: lowConfidence, restored: false, docName: pendingDocName });
+        saveScanToDoc(scanId, report, lowConfidence, pendingDocName);
       })
       .catch(function (err) {
         if (err && err.handled) return;
@@ -225,6 +244,11 @@
     opts = opts || {};
     setStatus("");
     var p = [];
+
+    if (opts.docName) {
+      p.push('<div class="dp-docname" title="' + escapeHtml(opts.docName) + '">' +
+        escapeHtml(opts.docName) + "</div>");
+    }
 
     if (opts.restored) {
       p.push('<div class="dp-restored">Last scan for this document' +
@@ -287,12 +311,13 @@
   // re-show the report without rescanning (offline snapshot + link to the web).
   var DOC_SETTING = "draftproof_scan_v1";
 
-  function saveScanToDoc(scanId, report, lowConfidence) {
+  function saveScanToDoc(scanId, report, lowConfidence, docName) {
     try {
       Office.context.document.settings.set(DOC_SETTING, {
         scanId: scanId,
         ts: new Date().toISOString(),
         lowConfidence: !!lowConfidence,
+        docName: docName || null,
         report: report,
       });
       Office.context.document.settings.saveAsync(function (res) {
@@ -344,6 +369,7 @@
           lowConfidence: saved.lowConfidence,
           restored: true,
           savedAt: formatTs(saved.ts),
+          docName: saved.docName,
         });
       } else {
         setDocState("No saved scan found in this document yet.", null);

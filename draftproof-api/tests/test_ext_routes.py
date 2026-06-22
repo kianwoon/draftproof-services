@@ -92,6 +92,18 @@ def test_ext_scan_not_low_confidence_when_long(client):
     assert r.json()["low_confidence"] is False
 
 
+def test_ext_scan_forwards_document_name_as_title(client):
+    mock = AsyncMock(return_value={"id": "scan-x", "status": "pending"})
+    with patch("app.routes.ext.create_scan", new=mock):
+        r = client.post("/api/ext/scan", json={
+            "text": " ".join(["w"] * 120), "document_name": "Essay.docx",
+        })
+    assert r.status_code == 200
+    _, kwargs = mock.call_args
+    assert kwargs.get("title") == "Essay.docx"
+    assert kwargs.get("always_paid") is True
+
+
 def test_ext_scan_insufficient_credits_returns_402(client):
     with patch("app.routes.ext.create_scan",
                new=AsyncMock(side_effect=ValueError("Insufficient tokens — please purchase more"))):

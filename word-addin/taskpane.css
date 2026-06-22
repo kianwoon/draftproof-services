@@ -169,6 +169,14 @@ input[type="password"]:focus {
   color: #7a5410;
 }
 
+.dp-docname {
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
 .dp-restored {
   margin-bottom: 10px;
   padding: 6px 10px;

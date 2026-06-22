@@ -31,6 +31,8 @@ MAX_SCAN_CHARS = 50000
 
 class ExtScanRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=MAX_SCAN_CHARS)
+    # Optional source document name (e.g. the Word file name) — tags the report.
+    document_name: str | None = Field(None, max_length=200)
 
 
 @router.post("/scan")
@@ -46,6 +48,7 @@ async def ext_create_scan(req: ExtScanRequest, user: dict = Depends(get_api_key_
             user_id=user["id"],
             text=text,
             always_paid=True,
+            title=req.document_name,    # tag the report with the source file name
         )
     except ValueError as exc:
         msg = str(exc)

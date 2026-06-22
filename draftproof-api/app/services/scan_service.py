@@ -189,6 +189,7 @@ async def create_scan(
     text: str | None = None,
     *,
     always_paid: bool = False,
+    title: str | None = None,
 ) -> dict:
     """Create a scan_job row, enqueue Celery task, return scan info.
 
@@ -205,6 +206,13 @@ async def create_scan(
     word_count = len(text.split())
     job_id = uuid.uuid4()
     report_metadata = build_scan_report_metadata(text)
+    # An explicit title (e.g. the Word file name from the add-in) overrides the
+    # text-derived one so reports are identifiable by their source document.
+    document_title = (
+        _truncate_display_text(title, DOCUMENT_TITLE_MAX_CHARS)
+        if title and title.strip()
+        else report_metadata["document_title"]
+    )
 
     async with async_session() as session:
         # Reserve tokens based on word count. Short scans are free for the first
@@ -243,7 +251,7 @@ async def create_scan(
             user_id=uuid.UUID(user_id) if user_id else None,
             input_text_hash=text_hash,
             word_count=word_count,
-            document_title=report_metadata["document_title"],
+            document_title=document_title,
             content_preview=report_metadata["content_preview"],
             scan_type="scan",
             status="pending",
