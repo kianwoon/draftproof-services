@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<!-- allow-hardcode: static task-pane markup (UI text + structure), not logic. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DraftProof</title>
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <link rel="stylesheet" href="taskpane.css" />
+  </head>
+  <body>
+    <main id="app">
+      <header class="dp-head">
+        <h1>DraftProof</h1>
+        <p class="dp-sub">Scan highlighted text for AI-writing risk.</p>
+      </header>
+
+      <!-- Key setup (shown until a key is saved) -->
+      <section id="setup" class="dp-card" hidden>
+        <label for="apiKey">API key</label>
+        <input id="apiKey" type="password" placeholder="dp_live_…" autocomplete="off" spellcheck="false" />
+        <button id="saveKey" class="dp-btn dp-btn-primary">Save key</button>
+        <p class="dp-hint">
+          Don't have one? Generate it at
+          <a href="https://draftproof.app/api-keys" target="_blank" rel="noopener">draftproof.app/api-keys</a>.
+        </p>
+        <p id="setupError" class="dp-error" role="alert" hidden></p>
+      </section>
+
+      <!-- Scanner (shown once a key is saved) -->
+      <section id="scanner" class="dp-card" hidden>
+        <p class="dp-keyline">
+          Key <code id="keyPrefix"></code>
+          <button id="changeKey" class="dp-link" type="button">change</button>
+        </p>
+        <button id="scanBtn" class="dp-btn dp-btn-primary">Scan selected text</button>
+        <div id="status" class="dp-status" role="status" aria-live="polite"></div>
+        <div id="result" class="dp-result" hidden></div>
+      </section>
+    </main>
+    <script src="taskpane.js"></script>
+  </body>
+</html>

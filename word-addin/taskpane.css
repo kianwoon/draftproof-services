@@ -1,0 +1,89 @@
+/* allow-hardcode: presentation styles for the task pane, not logic. */
+:root {
+  --dp-ink: #1a1f29;
+  --dp-muted: #5b6472;
+  --dp-border: #dde1e8;
+  --dp-accent: #2f6df6;
+  --dp-bg: #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  color: var(--dp-ink);
+  background: var(--dp-bg);
+  font-size: 14px;
+}
+
+#app { padding: 16px; }
+
+.dp-head h1 { margin: 0 0 2px; font-size: 18px; }
+.dp-sub { margin: 0 0 16px; color: var(--dp-muted); }
+
+.dp-card { display: flex; flex-direction: column; gap: 10px; }
+
+label { font-weight: 600; }
+
+input[type="password"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--dp-border);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.dp-btn {
+  padding: 9px 12px;
+  border: 1px solid var(--dp-border);
+  border-radius: 6px;
+  background: #f3f4f7;
+  font: inherit;
+  cursor: pointer;
+}
+.dp-btn-primary { background: var(--dp-accent); border-color: var(--dp-accent); color: #fff; }
+.dp-btn:disabled { opacity: 0.6; cursor: default; }
+
+.dp-link {
+  background: none; border: none; padding: 0;
+  color: var(--dp-accent); cursor: pointer; font: inherit; text-decoration: underline;
+}
+
+.dp-hint, .dp-keyline { color: var(--dp-muted); margin: 0; }
+.dp-keyline code { font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+.dp-error { color: #c0322b; margin: 0; }
+
+.dp-status { margin-top: 12px; color: var(--dp-muted); min-height: 1em; }
+
+.dp-result { margin-top: 14px; }
+
+.dp-tier {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.dp-tier-clean { background: #e6f6ec; color: #1b7f43; }
+.dp-tier-acceptable { background: #eef4e6; color: #5c7a1b; }
+.dp-tier-concerning { background: #fdf3e2; color: #9a6212; }
+.dp-tier-strong { background: #fdeaea; color: #b32b22; }
+
+.dp-metrics {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 4px 14px;
+  margin: 0;
+}
+.dp-metrics dt { color: var(--dp-muted); }
+.dp-metrics dd { margin: 0; font-weight: 600; text-align: right; }
+
+.dp-lowconf {
+  margin-top: 12px;
+  padding: 8px 10px;
+  background: #fdf3e2;
+  border-radius: 6px;
+  color: #7a5410;
+}

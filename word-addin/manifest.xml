@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- allow-hardcode: Office add-in manifest — declarative config + display strings
+     for the host, not scoring/matching logic. -->
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+  xsi:type="TaskPaneApp">
+
+  <!-- Regenerate this GUID for a fresh add-in identity if you fork. -->
+  <Id>2f8a1c6e-9b4d-4a7e-bc31-5e0d7a9f2b14</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>DraftProof</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="DraftProof" />
+  <Description DefaultValue="Scan highlighted text for AI-writing risk with DraftProof, billed to your DraftProof credits." />
+  <IconUrl DefaultValue="https://draftproof.app/favicon.png" />
+  <HighResolutionIconUrl DefaultValue="https://draftproof.app/apple-touch-icon.png" />
+  <SupportUrl DefaultValue="https://draftproof.app" />
+
+  <!-- Domains the task pane may navigate to internally. -->
+  <AppDomains>
+    <AppDomain>https://draftproof.app</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Document" />
+  </Hosts>
+
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://draftproof.app/word-addin/taskpane.html" />
+  </DefaultSettings>
+
+  <!-- We only read the current selection; ReadWriteDocument leaves room to later
+       insert the verdict as a comment without a manifest change. -->
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title" />
+            <Description resid="GetStarted.Description" />
+            <LearnMoreUrl resid="GetStarted.LearnMoreUrl" />
+          </GetStarted>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="DraftProof.Group">
+                <Label resid="Group.Label" />
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16" />
+                  <bt:Image size="32" resid="Icon.32" />
+                  <bt:Image size="80" resid="Icon.80" />
+                </Icon>
+                <Control xsi:type="Button" id="DraftProof.ScanButton">
+                  <Label resid="ScanButton.Label" />
+                  <Supertip>
+                    <Title resid="ScanButton.Label" />
+                    <Description resid="ScanButton.Tooltip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16" />
+                    <bt:Image size="32" resid="Icon.32" />
+                    <bt:Image size="80" resid="Icon.80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>DraftProofTaskpane</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16" DefaultValue="https://draftproof.app/favicon.png" />
+        <bt:Image id="Icon.32" DefaultValue="https://draftproof.app/favicon.png" />
+        <bt:Image id="Icon.80" DefaultValue="https://draftproof.app/apple-touch-icon.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://draftproof.app/api-keys" />
+        <bt:Url id="Taskpane.Url" DefaultValue="https://draftproof.app/word-addin/taskpane.html" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GetStarted.Title" DefaultValue="DraftProof is ready" />
+        <bt:String id="Group.Label" DefaultValue="DraftProof" />
+        <bt:String id="ScanButton.Label" DefaultValue="Scan selection" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="GetStarted.Description" DefaultValue="Generate an API key at draftproof.app/api-keys, then highlight text and scan it." />
+        <bt:String id="ScanButton.Tooltip" DefaultValue="Scan the highlighted text for AI-writing risk." />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

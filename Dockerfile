@@ -19,6 +19,10 @@ COPY draftproof-api/ .
 # Copy built frontend into static/ for production serving
 COPY --from=frontend /app/dist ./static
 
+# MS Word add-in (plain static files) — served same-origin at /word-addin/* so the
+# task pane can call /api/ext/* without CORS. See word-addin/README.md.
+COPY word-addin/ ./static/word-addin/
+
 RUN useradd --create-home appuser
 USER appuser
 
