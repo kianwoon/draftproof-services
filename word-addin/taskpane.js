@@ -269,20 +269,7 @@
     setStatus("");
     var p = [];
 
-    if (opts.docName) {
-      p.push('<div class="dp-docname" title="' + escapeHtml(opts.docName) + '">' +
-        escapeHtml(opts.docName) + "</div>");
-    }
-
-    if (opts.restored) {
-      p.push('<div class="dp-restored">Last scan for this document' +
-        (opts.savedAt ? " · " + escapeHtml(opts.savedAt) : "") + "</div>");
-    }
-
     setHeadScores(report);  // AI-likelihood + writing-quality badges live in the header row
-
-    var tier = report.tier || "unknown";
-    p.push('<div class="dp-tier dp-tier-' + escapeAttr(tier) + '">' + escapeHtml(tierLabel(tier)) + "</div>");
 
     // allow-hardcode: the strings below are HTML render templates + CSS class names
     // for presentation; all user-facing text comes from the server report. No
@@ -380,16 +367,6 @@
 
     els.result.innerHTML = p.join("");
     show(els.result);
-  }
-
-  function tierLabel(tier) {
-    switch (tier) {
-      case "clean": return "Clean";
-      case "acceptable": return "Acceptable";
-      case "concerning": return "Concerning";
-      case "strong": return "Strong AI signal";
-      default: return tier ? tier.charAt(0).toUpperCase() + tier.slice(1) : "Unknown";
-    }
   }
 
   // "medium_predictability" -> "Medium predictability"
