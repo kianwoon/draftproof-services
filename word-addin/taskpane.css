@@ -167,6 +167,16 @@ input[type="password"]:focus {
 
 .dp-result { margin-top: 7px; }
 
+/* Per-document scan version picker (newest first). */
+.dp-version-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.dp-version-row label { font-size: 12px; font-weight: 600; color: var(--dp-muted); }
+.dp-version-select {
+  font: inherit; font-size: 13px; color: var(--dp-ink); background: var(--dp-bg);
+  border: 1px solid var(--dp-line); border-radius: 6px; padding: 4px 8px; cursor: pointer;
+}
+.dp-version-select:focus { outline: none; border-color: var(--dp-green); }
+.dp-version-caption { margin: 0 0 8px; font-size: 12px; color: var(--dp-muted); font-variant-numeric: tabular-nums; }
+
 .dp-tier {
   display: inline-block;
   padding: 4px 12px;

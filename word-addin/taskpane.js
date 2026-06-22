@@ -38,6 +38,7 @@
       "setup", "apiKey", "saveKey", "setupError",
       "scanner", "keyPrefix", "changeKey", "scanBtn", "status", "result",
       "selectionPreview", "wordCount", "docState", "headScores",
+      "versionRow", "versionSelect",
     ].forEach(function (id) { els[id] = document.getElementById(id); });
   }
 
@@ -45,6 +46,7 @@
     els.saveKey.addEventListener("click", onSaveKey);
     els.changeKey.addEventListener("click", onChangeKey);
     els.scanBtn.addEventListener("click", onScan);
+    els.versionSelect.addEventListener("change", onVersionChange);
     // Click a finding's quoted/snippet text → jump to + highlight it in the doc.
     // Delegated because the result HTML is re-rendered on every scan.
     els.result.addEventListener("click", function (e) {
@@ -91,6 +93,7 @@
   function onChangeKey() {
     setKey(null);
     clearResult();
+    if (els.versionSelect) { els.versionSelect.innerHTML = ""; hide(els.versionRow); }
     render();
   }
 
@@ -270,8 +273,12 @@
     fetch(EXT + "/scan/" + encodeURIComponent(scanId) + "/report", { headers: authHeaders() })
       .then(handleAuthThenJson)
       .then(function (report) {
-        renderReport(report, { lowConfidence: lowConfidence, restored: false, docName: pendingDocName });
-        saveScanToDoc(scanId, report, lowConfidence, pendingDocName);
+        // Record this scan as a new version FIRST so we can label the result with it.
+        var entry = recordScan(scanId, report, lowConfidence, pendingDocName);
+        renderReport(report, {
+          lowConfidence: lowConfidence, restored: false, docName: pendingDocName,
+          version: entry.version, savedAt: formatTs(entry.ts),
+        });
       })
       .catch(function (err) {
         if (err && err.handled) return;
@@ -327,6 +334,13 @@
       var swc = report.word_count != null ? report.word_count : countWords(report.scanned_text);
       els.wordCount.textContent = swc === 1 ? "1 word" : swc + " words";
       els.wordCount.classList.toggle("dp-wordcount-low", swc > 0 && swc < 100);
+    }
+
+    // Version caption — which scan you're viewing (set for both fresh + restored).
+    if (opts.version) {
+      p.push('<p class="dp-version-caption">Version ' + opts.version + ".0" +
+        (opts.savedAt ? ' · scanned ' + escapeHtml(opts.savedAt) : "") +
+        (opts.restored ? "" : " · new") + "</p>");
     }
 
     // allow-hardcode: the strings below are HTML render templates + CSS class names
@@ -444,23 +458,34 @@
   // ── Persist the last scan into the Word document ────────────────────────────
   // Office document settings travel with the .docx, so reopening the doc lets us
   // re-show the report without rescanning (offline snapshot + link to the web).
-  var DOC_SETTING = "draftproof_scan_v1";
+  var DOC_SETTING = "draftproof_scan_v1";        // legacy single-snapshot (migrated)
+  var HISTORY_SETTING = "draftproof_history_v1";  // { scans: [meta...], latestReport }
+  var MAX_HISTORY = 25;                           // cap stored versions (metadata is tiny)
 
-  function saveScanToDoc(scanId, report, lowConfidence, docName) {
+  // Read the per-document scan history, migrating the old single-snapshot key once.
+  function loadHistory() {
+    var h = null;
+    try { h = Office.context.document.settings.get(HISTORY_SETTING); } catch (e) {}
+    if (h && h.scans) return h;
+    var old = null;
+    try { old = Office.context.document.settings.get(DOC_SETTING); } catch (e) {}
+    if (old && old.scanId) {
+      return {
+        scans: [{ scanId: old.scanId, ts: old.ts, version: 1, lowConfidence: !!old.lowConfidence, docName: old.docName || null }],
+        latestReport: old.report || null,
+      };
+    }
+    return { scans: [], latestReport: null };
+  }
+
+  function saveHistory(hist, onOk) {
     try {
-      Office.context.document.settings.set(DOC_SETTING, {
-        scanId: scanId,
-        ts: new Date().toISOString(),
-        lowConfidence: !!lowConfidence,
-        docName: docName || null,
-        report: report,
-      });
+      Office.context.document.settings.set(HISTORY_SETTING, hist);
       Office.context.document.settings.saveAsync(function (res) {
-        // settings.saveAsync only writes the bag INTO the document; per MS docs
-        // it reaches disk (and survives a reopen) only when the FILE is saved.
-        // Persist the file so the association sticks across sessions.
+        // saveAsync writes the bag INTO the document; it reaches disk (survives a
+        // reopen) only when the FILE itself is saved — so persist the file too.
         if (res && res.status === Office.AsyncResultStatus.Succeeded) {
-          setDocState("Saved to this document.", "ok");
+          if (onOk) onOk();
           persistDocumentFile();
         } else {
           var msg = res && res.error ? res.error.message : "unknown error";
@@ -470,6 +495,79 @@
     } catch (e) {
       setDocState("Couldn't save to this document: " + (e && e.message), "err");
     }
+  }
+
+  // Append a completed scan as the next version (newest), keep the report inline
+  // as an offline fallback, cap the list, persist, and refresh the picker.
+  // Returns the stored entry { scanId, ts, version, ... }.
+  function recordScan(scanId, report, lowConfidence, docName) {
+    var hist = loadHistory();
+    var entry = null;
+    for (var i = 0; i < hist.scans.length; i++) {
+      if (hist.scans[i].scanId === scanId) entry = hist.scans[i];
+    }
+    if (!entry) {
+      var version = 1;
+      for (var j = 0; j < hist.scans.length; j++) {
+        if (hist.scans[j].version >= version) version = hist.scans[j].version + 1;
+      }
+      entry = { scanId: scanId, ts: new Date().toISOString(), version: version, lowConfidence: !!lowConfidence, docName: docName || null };
+      hist.scans.push(entry);
+      if (hist.scans.length > MAX_HISTORY) {
+        hist.scans.sort(function (a, b) { return a.version - b.version; });
+        hist.scans = hist.scans.slice(hist.scans.length - MAX_HISTORY);
+      }
+    }
+    hist.latestReport = report;  // only the newest report is cached inline
+    saveHistory(hist, function () { setDocState("Saved v" + entry.version + ".0 to this document.", "ok"); });
+    populateVersionSelect(hist.scans, scanId);
+    return entry;
+  }
+
+  // Fill the version dropdown, newest first. Label is version-only; the scan time
+  // rides along as the option tooltip.
+  function populateVersionSelect(scans, selectedScanId) {
+    if (!els.versionSelect) return;
+    if (!scans || !scans.length) { hide(els.versionRow); els.versionSelect.innerHTML = ""; return; }
+    var sorted = scans.slice().sort(function (a, b) { return b.version - a.version; });
+    var html = "";
+    for (var i = 0; i < sorted.length; i++) {
+      var s = sorted[i];
+      html += '<option value="' + escapeAttr(s.scanId) + '"' +
+        (s.scanId === selectedScanId ? " selected" : "") +
+        ' title="' + escapeAttr(formatTs(s.ts)) + '">v' + s.version + '.0</option>';
+    }
+    els.versionSelect.innerHTML = html;
+    show(els.versionRow);
+  }
+
+  function onVersionChange() {
+    var scanId = els.versionSelect.value;
+    if (!scanId) return;
+    var hist = loadHistory();
+    var meta = null, newest = null;
+    for (var i = 0; i < hist.scans.length; i++) {
+      var s = hist.scans[i];
+      if (s.scanId === scanId) meta = s;
+      if (!newest || s.version > newest.version) newest = s;
+    }
+    var isNewest = newest && newest.scanId === scanId;
+    var vlabel = meta ? ("v" + meta.version + ".0") : "this version";
+    setStatus("Loading " + vlabel + "…");
+    var opts = {
+      lowConfidence: meta && meta.lowConfidence, restored: true,
+      savedAt: meta ? formatTs(meta.ts) : "", docName: meta ? meta.docName : null,
+      version: meta ? meta.version : null,
+    };
+    // Re-fetch the live report by scan id; fall back to the inline snapshot only
+    // for the newest scan (the only one cached) if the network/report is gone.
+    fetch(EXT + "/scan/" + encodeURIComponent(scanId) + "/report", { headers: authHeaders() })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (fresh) { setStatus(""); renderReport(fresh, opts); })
+      .catch(function () {
+        if (isNewest && hist.latestReport) { setStatus(""); renderReport(hist.latestReport, opts); }
+        else { setStatus("Couldn't load " + vlabel + " — it may be offline."); }
+      });
   }
 
   function setDocState(msg, kind) {
@@ -496,34 +594,18 @@
     } catch (e) { /* non-fatal */ }
   }
 
+  // On open: populate the version picker from this document's history and show
+  // the newest scan. Switching versions is handled by onVersionChange.
   function restoreSavedScan() {
-    var saved;
-    try {
-      saved = Office.context.document.settings.get(DOC_SETTING);
-    } catch (e) {
-      setDocState("Couldn't read saved scan: " + (e && e.message), "err");
-      return;
-    }
-    if (!saved || !saved.report) {
+    var hist = loadHistory();
+    if (!hist.scans.length) {
       setDocState("No saved scan found in this document yet.", null);
+      populateVersionSelect([], null);
       return;
     }
-    var opts = {
-      lowConfidence: saved.lowConfidence,
-      restored: true,
-      savedAt: formatTs(saved.ts),
-      docName: saved.docName,
-    };
-    // Re-fetch the live report so content/format upgrades apply on reload; the
-    // frozen snapshot is only a fallback if the report is gone (purged / offline).
-    if (saved.scanId) {
-      fetch(EXT + "/scan/" + encodeURIComponent(saved.scanId) + "/report", { headers: authHeaders() })
-        .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
-        .then(function (fresh) { renderReport(fresh, opts); })
-        .catch(function () { renderReport(saved.report, opts); });
-    } else {
-      renderReport(saved.report, opts);
-    }
+    var newest = hist.scans.slice().sort(function (a, b) { return b.version - a.version; })[0];
+    populateVersionSelect(hist.scans, newest.scanId);
+    onVersionChange();  // loads the (now-selected) newest version
   }
 
   function formatTs(iso) {

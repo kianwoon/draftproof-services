@@ -98,6 +98,44 @@ function getCredits() {
   return _request('/credits', 'get');
 }
 
+// ── Per-document scan history (version picker) ───────────────────────────────
+// Stored in document properties so it travels with the doc and survives reopen.
+var SCANS_PROP = 'draftproof_scans';
+var MAX_HISTORY = 25;
+
+function _readScans() {
+  try {
+    var raw = PropertiesService.getDocumentProperties().getProperty(SCANS_PROP);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { return []; }
+}
+
+// Newest first.
+function listScans() {
+  var arr = _readScans();
+  arr.sort(function (a, b) { return b.version - a.version; });
+  return arr;
+}
+
+// Append a completed scan as the next version, cap, persist. Returns the full
+// list (newest first) so the sidebar can repopulate the picker.
+function recordScan(scanId, lowConfidence) {
+  var props = PropertiesService.getDocumentProperties();
+  var arr = _readScans();
+  var exists = false;
+  for (var i = 0; i < arr.length; i++) { if (arr[i].scanId === scanId) exists = true; }
+  if (!exists) {
+    var version = 1;
+    for (var j = 0; j < arr.length; j++) { if (arr[j].version >= version) version = arr[j].version + 1; }
+    arr.push({ scanId: scanId, ts: Date.now(), version: version, lowConfidence: !!lowConfidence });
+    arr.sort(function (a, b) { return a.version - b.version; });
+    if (arr.length > MAX_HISTORY) arr = arr.slice(arr.length - MAX_HISTORY);
+    props.setProperty(SCANS_PROP, JSON.stringify(arr));
+  }
+  arr.sort(function (a, b) { return b.version - a.version; });
+  return arr;
+}
+
 // Jump to + highlight the passage a finding refers to. scope 'paragraph'
 // selects the whole containing paragraph (issues); else the matched run (CT).
 // Returns true if located. findText takes a regex subset, so metacharacters are

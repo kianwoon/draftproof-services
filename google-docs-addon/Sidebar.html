@@ -64,6 +64,10 @@
       /* Clickable finding text: jumps to + highlights the passage in the document. */
       .locate { cursor: pointer; border-radius: 4px; transition: background .12s, box-shadow .12s; }
       .locate:hover { background: var(--mint); box-shadow: inset 2px 0 0 var(--green-dark); padding-left: 6px; }
+      .version-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+      .version-row label { font-size: 12px; font-weight: 600; color: var(--muted); }
+      .version-select { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: pointer; }
+      .version-caption { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
       .issue-summary { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
       .issue-block { margin-top: 6px; }
       .issue-label { display: block; font-size: 11px; font-weight: 700; color: var(--green-dark); text-transform: uppercase; letter-spacing: .03em; }
@@ -101,6 +105,10 @@
         </div>
         <button id="scanBtn" class="btn btn-primary">Scan selected text</button>
         <div id="status" class="status" role="status" aria-live="polite"></div>
+        <div id="versionRow" class="version-row" hidden>
+          <label for="versionSelect">Version</label>
+          <select id="versionSelect" class="version-select"></select>
+        </div>
         <div id="result" class="result" hidden></div>
       </section>
     </div>
@@ -111,12 +119,13 @@
       var POLL_MS = 2000, POLL_MAX = 60;
 
       document.addEventListener('DOMContentLoaded', function () {
-        ['apiKey','saveKey','setupError','keyPrefix','changeKey','refreshSel','selText','wordCount','scanBtn','status','result','setup','scanner','headScores']
+        ['apiKey','saveKey','setupError','keyPrefix','changeKey','refreshSel','selText','wordCount','scanBtn','status','result','setup','scanner','headScores','versionRow','versionSelect']
           .forEach(function (id) { els[id] = document.getElementById(id); });
         els.saveKey.addEventListener('click', onSaveKey);
         els.changeKey.addEventListener('click', onChangeKey);
         els.refreshSel.addEventListener('click', refreshSelection);
         els.scanBtn.addEventListener('click', onScan);
+        els.versionSelect.addEventListener('change', onVersionChange);
         // Click a finding's quoted/snippet text → jump to + highlight it in the
         // doc. Delegated because the result HTML is re-rendered on every scan.
         els.result.addEventListener('click', function (e) {
@@ -139,6 +148,7 @@
           els.keyPrefix.textContent = info.prefix + '…';
           show(els.scanner); hide(els.setup);
           refreshSelection();
+          loadVersions();   // populate the version picker + show the newest scan
         } else {
           show(els.setup); hide(els.scanner);
         }
@@ -155,6 +165,7 @@
 
       function onChangeKey() {
         clearResult();
+        els.versionSelect.innerHTML = ''; hide(els.versionRow);
         google.script.run.withSuccessHandler(applyKeyInfo).clearKey();
       }
 
@@ -190,10 +201,72 @@
           .getScanStatus(scanId);
       }
 
+      // allow-hardcode: the strings below are HTML <option> render templates + data
+      // attributes (presentation) and status text — not a scoring/matching list.
       function loadReport(scanId, lowConfidence) {
         google.script.run
-          .withSuccessHandler(function (rep) { busy(false); renderReport(rep, lowConfidence); })
+          .withSuccessHandler(function (rep) {
+            busy(false);
+            // Record this scan as a new version, then label + show it.
+            google.script.run
+              .withSuccessHandler(function (scans) {
+                var meta = findScan(scans, scanId);
+                populateVersions(scans, scanId);
+                renderReport(rep, { lowConfidence: lowConfidence, version: meta ? meta.version : null, savedAt: meta ? fmtTs(meta.ts) : '', restored: false });
+              })
+              .withFailureHandler(function () { renderReport(rep, { lowConfidence: lowConfidence }); })
+              .recordScan(scanId, lowConfidence);
+          })
           .withFailureHandler(function (e) { busy(false); handleErr(e); })
+          .getScanReport(scanId);
+      }
+
+      // ── version history (per document) ───────────────────────────────────────
+      function findScan(scans, scanId) {
+        for (var i = 0; scans && i < scans.length; i++) { if (scans[i].scanId === scanId) return scans[i]; }
+        return null;
+      }
+      function fmtTs(ms) { try { return new Date(ms).toLocaleString(); } catch (e) { return ''; } }
+
+      // On open / key set: list this doc's scans, fill the picker, show the newest.
+      function loadVersions() {
+        google.script.run
+          .withSuccessHandler(function (scans) {
+            if (!scans || !scans.length) { hide(els.versionRow); return; }
+            populateVersions(scans, scans[0].scanId);   // server returns newest-first
+            loadVersion(scans[0].scanId, scans[0]);
+          })
+          .withFailureHandler(function () {})
+          .listScans();
+      }
+
+      // Fill the dropdown (newest first). Label is version-only; time + meta ride
+      // along as option attributes so switching needs no extra round-trip.
+      function populateVersions(scans, selectedScanId) {
+        if (!scans || !scans.length) { hide(els.versionRow); els.versionSelect.innerHTML = ''; return; }
+        var h = '';
+        for (var i = 0; i < scans.length; i++) {
+          var s = scans[i];
+          h += '<option value="' + escAttr(s.scanId) + '" data-version="' + s.version + '" data-ts="' + s.ts +
+            '" data-lc="' + (s.lowConfidence ? '1' : '0') + '"' + (s.scanId === selectedScanId ? ' selected' : '') +
+            ' title="' + escAttr(fmtTs(s.ts)) + '">v' + s.version + '.0</option>';
+        }
+        els.versionSelect.innerHTML = h;
+        show(els.versionRow);
+      }
+
+      function onVersionChange() {
+        var opt = els.versionSelect.options[els.versionSelect.selectedIndex];
+        if (!opt || !opt.value) return;
+        loadVersion(opt.value, { version: opt.getAttribute('data-version'), ts: Number(opt.getAttribute('data-ts')), lowConfidence: opt.getAttribute('data-lc') === '1' });
+      }
+
+      function loadVersion(scanId, meta) {
+        var vlabel = meta ? ('v' + meta.version + '.0') : 'this version';
+        setStatus('Loading ' + vlabel + '…');
+        google.script.run
+          .withSuccessHandler(function (rep) { setStatus(''); renderReport(rep, { lowConfidence: meta && meta.lowConfidence, version: meta ? meta.version : null, savedAt: meta ? fmtTs(meta.ts) : '', restored: true }); })
+          .withFailureHandler(function () { setStatus('Couldn’t load ' + vlabel + ' — it may be offline.'); })
           .getScanReport(scanId);
       }
 
@@ -218,7 +291,9 @@
         return (sp > 40 ? cut.slice(0, sp) : cut).trim();
       }
 
-      function renderReport(rep, lowConfidence) {
+      function renderReport(rep, opts) {
+        opts = opts || {};
+        var lowConfidence = opts.lowConfidence;
         setStatus('');
         setHeadScores(rep);
 
@@ -232,6 +307,9 @@
         }
 
         var p = [];
+
+        // Version caption — which scan you're viewing (fresh or restored).
+        if (opts.version) p.push('<p class="version-caption">Version ' + opts.version + '.0' + (opts.savedAt ? ' · scanned ' + esc(opts.savedAt) : '') + (opts.restored ? '' : ' · new') + '</p>');
 
         var ct = rep.critical_thinking;
         if (ct && ct.questions && ct.questions.length) {
