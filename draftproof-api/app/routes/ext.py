@@ -72,6 +72,63 @@ async def ext_scan_status(scan_id: str, user: dict = Depends(get_api_key_user)):
     return result
 
 
+_TIER_RANK = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+
+
+def _build_paragraph_issues(results_json: dict, limit: int) -> list[dict]:
+    """Reproduce the web report's paragraph-grouped 'Issues' for flagged paragraphs:
+    join sentence segments (by paragraph_id) with the per-paragraph explanations
+    (main issue / how to improve / reader summary). Mirrors poc/report/render.py."""
+    segments = (
+        results_json.get("highlight_segments")
+        or (((results_json.get("scan_intelligence") or {}).get("document") or {}).get("segments"))
+        or []
+    )
+    expl_by_pid = {
+        str(e.get("paragraph_id") or ""): e
+        for e in (((results_json.get("paragraph_explanations") or {}).get("paragraphs")) or [])
+        if isinstance(e, dict) and e.get("paragraph_id")
+    }
+
+    grouped: dict[str, list] = {}
+    order: list[str] = []
+    for seg in segments:
+        pid = str((seg or {}).get("paragraph_id") or "")
+        if not pid:
+            continue
+        if pid not in grouped:
+            grouped[pid] = []
+            order.append(pid)
+        grouped[pid].append(seg)
+
+    issues = []
+    for pid in order:
+        segs = sorted(grouped[pid], key=lambda x: x.get("start_char") or 0)
+        flagged = [x for x in segs if x.get("primary_signal")]
+        expl = expl_by_pid.get(pid)
+        if not flagged and not expl:
+            continue  # only surface paragraphs that carry an issue
+        top = None
+        for x in flagged:
+            ps = x.get("primary_signal") or {}
+            if top is None or _TIER_RANK.get(ps.get("tier", ""), -1) > _TIER_RANK.get(top.get("tier", ""), -1):
+                top = ps
+        top = top or {}
+        expl = expl or {}
+        text = " ".join((x.get("text") or "") for x in segs).strip()
+        issues.append({
+            "snippet": text[:220],
+            "tier": top.get("tier") or None,
+            "signal_label": top.get("label") or None,
+            "reader_summary": expl.get("reader_summary") or expl.get("summary") or None,
+            "main_issue": expl.get("main_issue") or None,
+            "recommendation": expl.get("recommendation") or top.get("recommendation") or None,
+        })
+        if len(issues) >= limit:
+            break
+    return issues
+
+
 @router.get("/scan/{scan_id}/report")
 async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
     """Richer result for a completed scan: the two headline scores plus the
@@ -91,6 +148,7 @@ async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
     ctc = badge.get("critical_thinking_control") or {}
     sub_overall = (badge.get("submission_risk") or {}).get("overall") or {}
     issues = report.get("issues") or []
+    paragraph_issues = _build_paragraph_issues(report.get("results_json") or {}, EXT_SIGNAL_HIGHLIGHT_LIMIT)
 
     return {
         "scan_id": scan_id,
@@ -101,6 +159,11 @@ async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
             "score": ctc.get("score"),
             "status": ctc.get("status"),
             "band": ctc.get("band"),
+            "questions": [
+                {"quote": q.get("anchor_quote"), "question": q.get("question")}
+                for q in (ctc.get("questions") or [])
+                if isinstance(q, dict) and q.get("question")
+            ],
             "lead": ctc.get("lead_dimension_label"),
             "action": ctc.get("lead_dimension_action"),
             "caveat": ctc.get("caveat") or None,
@@ -116,6 +179,7 @@ async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
             "risk": sub_overall.get("risk"),
             "reason": sub_overall.get("main_reason"),
         } if sub_overall else None,
+        "paragraph_issues": paragraph_issues,
         "signal_highlights": [
             {
                 "severity": i.get("severity"),

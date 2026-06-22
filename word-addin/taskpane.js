@@ -288,7 +288,17 @@
     // for presentation; all user-facing text comes from the server report. No
     // scoring/matching list here.
     var ct = report.critical_thinking;
-    if (ct && (ct.status || ct.score != null)) {
+    if (ct && ct.questions && ct.questions.length) {
+      var qHtml = ct.questions.map(function (q, i) {
+        var quote = q.quote
+          ? '<p class="dp-q-quote">“' + escapeHtml(q.quote) + '”</p>' : "";
+        return '<li><span class="dp-q-num">' + (i + 1) + "</span>" +
+          "<div>" + quote + '<p class="dp-q-text">' + escapeHtml(q.question) + "</p></div></li>";
+      }).join("");
+      p.push('<div class="dp-section"><div class="dp-section-title">Critical thinking</div>' +
+        '<p class="dp-section-note">Questions to sharpen your thinking — the answers are yours to write.</p>' +
+        '<ul class="dp-q-list">' + qHtml + "</ul></div>");
+    } else if (ct && (ct.status || ct.score != null)) {
       var ctHead = escapeHtml(ct.status || "—") +
         (ct.score != null ? " · " + Math.round(ct.score) + "/100" : "");
       var ctBody = "";
@@ -315,20 +325,48 @@
       p.push(section("Submitted content", srHead, "dp-level-" + escapeAttr(sr.level || "unknown"), sr.reason));
     }
 
-    var sig = report.signal_highlights || [];
-    if (sig.length) {
-      var items = sig.map(function (s) {
-        var title = humanize(s.title || s.description || "");
-        var desc = (s.description && s.description !== s.title)
-          ? '<p class="dp-sig-desc">' + escapeHtml(s.description) + "</p>" : "";
-        var rec = s.recommendation
-          ? '<p class="dp-sig-rec">' + escapeHtml(s.recommendation) + "</p>" : "";
-        return '<li><span class="dp-sev dp-sev-' + escapeAttr(s.severity || "low") + '"></span>' +
-          '<div class="dp-sig-body"><span class="dp-sig-title">' + escapeHtml(title) + "</span>" +
-          desc + rec + "</div></li>";
+    // allow-hardcode: HTML render templates + CSS class names (presentation); all
+    // user-facing text comes from the server report, no scoring/matching list.
+    var pis = report.paragraph_issues || [];
+    if (pis.length) {
+      var cards = pis.map(function (it) {
+        var chips = "";
+        if (it.tier) {
+          chips += '<span class="dp-tier dp-tier-' + escapeAttr(it.tier) + ' dp-issue-tier">' +
+            escapeHtml(it.tier) + "</span>";
+        }
+        if (it.signal_label) chips += '<span class="dp-issue-sig">' + escapeHtml(humanize(it.signal_label)) + "</span>";
+        var b = "";
+        if (it.snippet) b += '<p class="dp-issue-snippet">' + escapeHtml(it.snippet) + "</p>";
+        if (it.reader_summary) b += '<p class="dp-issue-summary">' + escapeHtml(it.reader_summary) + "</p>";
+        if (it.main_issue) {
+          b += '<div class="dp-issue-block"><span class="dp-issue-label">Main issue to fix</span><p>' +
+            escapeHtml(it.main_issue) + "</p></div>";
+        }
+        if (it.recommendation) {
+          b += '<div class="dp-issue-block"><span class="dp-issue-label">How to improve</span><p>' +
+            escapeHtml(it.recommendation) + "</p></div>";
+        }
+        return '<article class="dp-issue-card">' +
+          (chips ? '<div class="dp-issue-chips">' + chips + "</div>" : "") + b + "</article>";
       }).join("");
-      p.push('<div class="dp-section"><div class="dp-section-title">Signal highlights</div>' +
-        '<ul class="dp-signal-list">' + items + "</ul></div>");
+      p.push('<div class="dp-section"><div class="dp-section-title">Issues</div>' + cards + "</div>");
+    } else {
+      var sig = report.signal_highlights || [];
+      if (sig.length) {
+        var items = sig.map(function (s) {
+          var title = humanize(s.title || s.description || "");
+          var desc = (s.description && s.description !== s.title)
+            ? '<p class="dp-sig-desc">' + escapeHtml(s.description) + "</p>" : "";
+          var rec = s.recommendation
+            ? '<p class="dp-sig-rec">' + escapeHtml(s.recommendation) + "</p>" : "";
+          return '<li><span class="dp-sev dp-sev-' + escapeAttr(s.severity || "low") + '"></span>' +
+            '<div class="dp-sig-body"><span class="dp-sig-title">' + escapeHtml(title) + "</span>" +
+            desc + rec + "</div></li>";
+        }).join("");
+        p.push('<div class="dp-section"><div class="dp-section-title">Signal highlights</div>' +
+          '<ul class="dp-signal-list">' + items + "</ul></div>");
+      }
     }
 
     if (opts.lowConfidence) {

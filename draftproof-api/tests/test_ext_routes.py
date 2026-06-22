@@ -150,6 +150,10 @@ def test_ext_scan_report_returns_rich_sections(client):
                 "score": 65.5, "status": "Acceptable control", "band": "acceptable_control",
                 "lead_dimension_label": "specific context",
                 "lead_dimension_action": "anchor claims to a real assignment",
+                "questions": [
+                    {"anchor_quote": "a one-size-fit-all approach",
+                     "question": "What specific example supports this?"},
+                ],
                 "dimensions": {
                     "specific_context": {"label": "specific context", "control": 70.0, "gap": 30.0},
                     "student_judgement": {"label": "student judgement", "control": None, "gap": None},
@@ -172,6 +176,7 @@ def test_ext_scan_report_returns_rich_sections(client):
     assert r.status_code == 200
     body = r.json()
     assert body["critical_thinking"]["status"] == "Acceptable control"
+    assert body["critical_thinking"]["questions"][0]["question"] == "What specific example supports this?"
     assert body["critical_thinking"]["action"] == "anchor claims to a real assignment"
     # only dimensions with a non-null control are surfaced
     dims = body["critical_thinking"]["dimensions"]
@@ -179,6 +184,32 @@ def test_ext_scan_report_returns_rich_sections(client):
     assert body["submission_risk"]["level"] == "medium"
     assert body["signal_highlights"][0]["title"] == "Uncited claim"
     assert body["report_url"] == "/report/abc"
+
+
+def test_build_paragraph_issues_joins_segments_and_explanations():
+    from app.routes.ext import _build_paragraph_issues
+    results = {
+        "highlight_segments": [
+            {"paragraph_id": "p1", "start_char": 0, "text": "First sentence.",
+             "primary_signal": {"tier": "low", "label": "Generic assertion"}},
+            {"paragraph_id": "p1", "start_char": 16, "text": "Second sentence.",
+             "primary_signal": {"tier": "medium", "label": "Citation gap"}},
+            {"paragraph_id": "p2", "start_char": 40, "text": "Clean paragraph.",
+             "primary_signal": None},
+        ],
+        "paragraph_explanations": {"paragraphs": [
+            {"paragraph_id": "p1", "main_issue": "Too generic",
+             "recommendation": "Add a concrete example",
+             "reader_summary": "Reads like a stock statement"},
+        ]},
+    }
+    out = _build_paragraph_issues(results, 8)
+    assert len(out) == 1  # p2 has no signal and no explanation -> skipped
+    issue = out[0]
+    assert "First sentence. Second sentence." in issue["snippet"]
+    assert issue["tier"] == "medium"  # highest-severity segment wins
+    assert issue["main_issue"] == "Too generic"
+    assert issue["recommendation"] == "Add a concrete example"
 
 
 def test_ext_scan_report_404_when_missing(client):
