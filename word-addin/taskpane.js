@@ -45,6 +45,17 @@
     els.saveKey.addEventListener("click", onSaveKey);
     els.changeKey.addEventListener("click", onChangeKey);
     els.scanBtn.addEventListener("click", onScan);
+    // Click a finding's quoted/snippet text → jump to + highlight it in the doc.
+    // Delegated because the result HTML is re-rendered on every scan.
+    els.result.addEventListener("click", function (e) {
+      var el = e.target;
+      while (el && el !== els.result && !(el.getAttribute && el.getAttribute("data-find"))) {
+        el = el.parentNode;
+      }
+      if (!el || !el.getAttribute) return;
+      var needle = el.getAttribute("data-find");
+      if (needle) locateInDoc(needle, el.getAttribute("data-scope"));
+    });
   }
 
   function getKey() {
@@ -128,6 +139,42 @@
   function countWords(text) {
     var t = (text || "").trim();
     return t ? t.split(/\s+/).length : 0;
+  }
+
+  // Build a robust search needle from a finding's verbatim text: collapse
+  // whitespace and cap length (Word's body.search rejects strings over 255).
+  function findNeedle(text, maxChars) {
+    var t = (text || "").replace(/\s+/g, " ").trim();
+    if (t.length <= maxChars) return t;
+    var cut = t.slice(0, maxChars);
+    var sp = cut.lastIndexOf(" ");
+    return (sp > 40 ? cut.slice(0, sp) : cut).trim();  // don't end mid-word
+  }
+
+  // Jump to + highlight the passage a finding refers to. scope "paragraph"
+  // selects the whole containing paragraph (issues); else the matched run (CT).
+  function locateInDoc(needle, scope) {
+    if (!needle || typeof Word === "undefined" || !Word.run) return;
+    Word.run(function (context) {
+      var results = context.document.body.search(needle, {
+        matchCase: false, ignoreSpace: true, ignorePunct: true,
+      });
+      results.load("items");
+      return context.sync().then(function () {
+        if (!results.items.length) {
+          setStatus("Couldn’t find that passage in the document.");
+          return context.sync();
+        }
+        var target = scope === "paragraph"
+          ? results.items[0].paragraphs.getFirst()
+          : results.items[0];
+        target.select();
+        setStatus("");
+        return context.sync();
+      });
+    }).catch(function () {
+      setStatus("Couldn’t highlight that passage in the document.");
+    });
   }
 
   // Reflect the current selection (preview + word count) in the pane. Fires on
@@ -289,7 +336,11 @@
     if (ct && ct.questions && ct.questions.length) {
       var qHtml = ct.questions.map(function (q, i) {
         var quote = q.quote
-          ? '<p class="dp-q-quote">“' + escapeHtml(q.quote) + '”</p>' : "";
+          ? '<p class="dp-q-quote dp-locate" data-scope="text" data-find="' +
+            escapeAttr(findNeedle(q.quote, 200)) +
+            '" title="Click to highlight this in your document">“' +
+            escapeHtml(q.quote) + '”</p>'
+          : "";
         return '<li><span class="dp-q-num">' + (i + 1) + "</span>" +
           "<div>" + quote + '<p class="dp-q-text">' + escapeHtml(q.question) + "</p></div></li>";
       }).join("");
@@ -335,7 +386,12 @@
         }
         if (it.signal_label) chips += '<span class="dp-issue-sig">' + escapeHtml(humanize(it.signal_label)) + "</span>";
         var b = "";
-        if (it.snippet) b += '<p class="dp-issue-snippet">' + escapeHtml(it.snippet) + "</p>";
+        if (it.snippet) {
+          b += '<p class="dp-issue-snippet dp-locate" data-scope="paragraph" data-find="' +
+            escapeAttr(findNeedle(it.snippet, 120)) +
+            '" title="Click to highlight this paragraph in your document">' +
+            escapeHtml(it.snippet) + "</p>";
+        }
         if (it.reader_summary) b += '<p class="dp-issue-summary">' + escapeHtml(it.reader_summary) + "</p>";
         if (it.main_issue) {
           b += '<div class="dp-issue-block"><span class="dp-issue-label">Main issue to fix</span><p>' +

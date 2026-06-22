@@ -61,6 +61,9 @@
       .issue-tier.t-red, .issue-tier.t-high, .issue-tier.t-critical, .issue-tier.t-strong { background: #fdeaea; color: #b32b22; }
       .issue-sig { font-size: 11px; color: var(--muted); }
       .issue-snippet { margin: 0 0 6px; font-size: 12.5px; line-height: 1.5; }
+      /* Clickable finding text: jumps to + highlights the passage in the document. */
+      .locate { cursor: pointer; border-radius: 4px; transition: background .12s, box-shadow .12s; }
+      .locate:hover { background: var(--mint); box-shadow: inset 2px 0 0 var(--green-dark); padding-left: 6px; }
       .issue-summary { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
       .issue-block { margin-top: 6px; }
       .issue-label { display: block; font-size: 11px; font-weight: 700; color: var(--green-dark); text-transform: uppercase; letter-spacing: .03em; }
@@ -114,6 +117,20 @@
         els.changeKey.addEventListener('click', onChangeKey);
         els.refreshSel.addEventListener('click', refreshSelection);
         els.scanBtn.addEventListener('click', onScan);
+        // Click a finding's quoted/snippet text → jump to + highlight it in the
+        // doc. Delegated because the result HTML is re-rendered on every scan.
+        els.result.addEventListener('click', function (e) {
+          var el = e.target;
+          while (el && el !== els.result && !(el.getAttribute && el.getAttribute('data-find'))) el = el.parentNode;
+          if (!el || !el.getAttribute) return;
+          var needle = el.getAttribute('data-find');
+          if (!needle) return;
+          setStatus('Locating…');
+          google.script.run
+            .withSuccessHandler(function (ok) { setStatus(ok ? '' : 'Couldn’t find that passage in the document.'); })
+            .withFailureHandler(function () { setStatus('Couldn’t highlight that passage.'); })
+            .highlightInDoc(needle, el.getAttribute('data-scope'));
+        });
         google.script.run.withSuccessHandler(applyKeyInfo).withFailureHandler(showFatal).getKeyInfo();
       });
 
@@ -193,6 +210,13 @@
       }
       function badge(lbl, val) { return '<span class="score-badge"><span class="lbl">' + esc(lbl) + '</span><span class="val">' + esc(val) + '</span></span>'; }
       function humanize(s) { return String(s || '').replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); }); }
+      // Robust search needle from a finding's verbatim text: collapse whitespace, cap length.
+      function findNeedle(t, max) {
+        var s = String(t || '').replace(/\s+/g, ' ').trim();
+        if (s.length <= max) return s;
+        var cut = s.slice(0, max), sp = cut.lastIndexOf(' ');
+        return (sp > 40 ? cut.slice(0, sp) : cut).trim();
+      }
 
       function renderReport(rep, lowConfidence) {
         setStatus('');
@@ -212,7 +236,7 @@
         var ct = rep.critical_thinking;
         if (ct && ct.questions && ct.questions.length) {
           var q = ct.questions.map(function (x, i) {
-            var quote = x.quote ? '<p class="q-quote">“' + esc(x.quote) + '”</p>' : '';
+            var quote = x.quote ? '<p class="q-quote locate" data-scope="text" data-find="' + escAttr(findNeedle(x.quote, 200)) + '" title="Click to highlight this in your document">“' + esc(x.quote) + '”</p>' : '';
             return '<li><span class="q-num">' + (i + 1) + '</span><div>' + quote + '<p class="q-text">' + esc(x.question) + '</p></div></li>';
           }).join('');
           p.push('<div class="section"><div class="section-title">Critical thinking</div><p class="section-note">Questions to sharpen your thinking — the answers are yours to write.</p><ul class="q-list">' + q + '</ul></div>');
@@ -233,7 +257,7 @@
             if (it.tier) chips += '<span class="issue-tier t-' + escAttr(it.tier) + '">' + esc(it.tier) + '</span>';
             if (it.signal_label) chips += '<span class="issue-sig">' + esc(humanize(it.signal_label)) + '</span>';
             var b = '';
-            if (it.snippet) b += '<p class="issue-snippet">' + esc(it.snippet) + '</p>';
+            if (it.snippet) b += '<p class="issue-snippet locate" data-scope="paragraph" data-find="' + escAttr(findNeedle(it.snippet, 120)) + '" title="Click to highlight this paragraph in your document">' + esc(it.snippet) + '</p>';
             if (it.reader_summary) b += '<p class="issue-summary">' + esc(it.reader_summary) + '</p>';
             if (it.main_issue) b += '<div class="issue-block"><span class="issue-label">Main issue to fix</span><p>' + esc(it.main_issue) + '</p></div>';
             if (it.recommendation) b += '<div class="issue-block"><span class="issue-label">How to improve</span><p>' + esc(it.recommendation) + '</p></div>';

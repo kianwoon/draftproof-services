@@ -98,6 +98,35 @@ function getCredits() {
   return _request('/credits', 'get');
 }
 
+// Jump to + highlight the passage a finding refers to. scope 'paragraph'
+// selects the whole containing paragraph (issues); else the matched run (CT).
+// Returns true if located. findText takes a regex subset, so metacharacters are
+// escaped and straight/curly quotes made interchangeable (verbatim doc text).
+function highlightInDoc(needle, scope) {
+  if (!needle) return false;
+  try {
+    var doc = DocumentApp.getActiveDocument();
+    var body = doc.getBody();
+    var rx = String(needle)
+      .replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
+      .replace(/['‘’]/g, "['‘’]")
+      .replace(/["“”]/g, '["“”]');
+    var found = body.findText(rx);
+    if (!found) return false;
+    var textEl = found.getElement();
+    var range = doc.newRange();
+    if (scope === 'paragraph') {
+      range.addElement(textEl.getParent());          // whole paragraph / list item
+    } else {
+      range.addElement(textEl.asText(), found.getStartOffset(), found.getEndOffsetInclusive());
+    }
+    doc.setSelection(range.build());
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 function _docName() {
   try { return DocumentApp.getActiveDocument().getName(); } catch (e) { return null; }
