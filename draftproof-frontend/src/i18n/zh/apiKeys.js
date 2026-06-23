@@ -16,10 +16,10 @@ export const apiKeys = {
     download: "下载清单文件",
     // allow-hardcode: i18n install-step UI copy (human-written instructions), not scoring/matching logic.
     wordSteps: [
-      "Word 网页版：开始 → 加载项 → 更多加载项 → 我的加载项 → 上传我的加载项 → 选择已下载的文件。",
-      "Word 桌面版（Mac）：将文件复制到 `~/Library/Containers/com.microsoft.Word/Data/Documents/wef`（若没有 `wef` 文件夹请新建），重启 Word，然后 开始 → 加载项，从菜单中选择 DraftProof。",
-      "Word 桌面版（Windows）：将文件放入一个文件夹并共享（属性 → 共享 → 共享，并记下网络路径）。在 Word 中：文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的加载项目录 → 在 Catalog Url 中粘贴该路径 → 添加目录 → 勾选“在菜单中显示” → 确定。重启 Word，然后 开始 → 加载项 → 高级 → 共享文件夹 → 选择 DraftProof → 添加。",
-      "打开 DraftProof → 扫描所选文本，从下方粘贴密钥，选中文本并扫描。",
+      { os: "web", text: "Word 网页版：开始 → 加载项 → 更多加载项 → 我的加载项 → 上传我的加载项 → 选择已下载的文件。" },
+      { os: "mac", text: "Word 桌面版（Mac）：将文件复制到 `~/Library/Containers/com.microsoft.Word/Data/Documents/wef`（若没有 `wef` 文件夹请新建），重启 Word，然后 开始 → 加载项，从菜单中选择 DraftProof。" },
+      { os: "windows", text: "Word 桌面版（Windows）：将文件放入一个文件夹并共享（属性 → 共享 → 共享，并记下网络路径）。在 Word 中：文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的加载项目录 → 在 Catalog Url 中粘贴该路径 → 添加目录 → 勾选“在菜单中显示” → 确定。重启 Word，然后 开始 → 加载项 → 高级 → 共享文件夹 → 选择 DraftProof → 添加。" },
+      { os: null, text: "打开 DraftProof → 扫描所选文本，从下方粘贴密钥，选中文本并扫描。" },
     ],
     gdocsSteps: [
       "打开 Google 文档 → 扩展程序 → 加载项 → 获取加载项。",

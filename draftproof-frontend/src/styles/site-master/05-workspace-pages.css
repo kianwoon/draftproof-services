@@ -1336,6 +1336,7 @@
 .api-keys-addon-steps { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--green-200); }
 .api-keys-addon-steps ol { margin: 12px 0 0; padding-left: 20px; }
 .api-keys-addon-steps li { margin: 8px 0; font-size: .92rem; line-height: 1.55; }
+.api-keys-step-icon { width: 14px; height: 14px; display: inline-block; vertical-align: -2px; margin-right: 7px; color: var(--green-dark); flex: none; }
 .api-keys-addon-steps .btn { margin-top: 12px; }
 .api-keys-addon-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
 .api-keys-addon-tab {
