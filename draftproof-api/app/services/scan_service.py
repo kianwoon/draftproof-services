@@ -14,8 +14,6 @@ from app.models.db import async_session, ScanJob, CreditAccount, CreditReservati
 from app.services import progress_stream
 
 
-FREE_SCAN_WORD_LIMIT = 800
-FREE_SCAN_LIMIT = 5
 DOCUMENT_TITLE_MAX_CHARS = 90
 CONTENT_PREVIEW_MAX_CHARS = 220
 _STALE_THRESHOLD = timedelta(minutes=10)
@@ -56,31 +54,23 @@ def build_scan_report_metadata(text: str) -> dict:
 
 
 def _paid_scan_cost(word_count: int) -> int:
-    """Credit cost when a scan is billed: 1 token per started 1,000 words.
+    """Credit cost for a scan: 1 token per started 1,000 words (min 1).
 
-    For a short (<=800 word) doc this is 1 — the rate used once the free quota
-    is spent, so purchased credits can pay for short scans too.
+    A scan up to 1,000 words costs 1 credit; 1,001-2,000 costs 2; and so on.
+    Every scan is billed at this rate — new users instead receive a one-time
+    welcome grant of credits at signup (see config.WELCOME_CREDITS).
     """
     return max(1, -(-word_count // 1000))
 
 
-def _scan_cost(word_count: int) -> int:
-    """Free-eligible rate: 0 through 800 words (consumes a free scan), else billed.
-
-    A short doc only stays free while the user is under FREE_SCAN_LIMIT; once
-    the quota is spent, create_scan re-prices it at _paid_scan_cost.
-    """
-    if word_count <= FREE_SCAN_WORD_LIMIT:
-        return 0
-    return _paid_scan_cost(word_count)
-
-
 async def _refund_free_scan(session, job: ScanJob) -> None:
-    """Refund a free scan's durable counter exactly once on failure/cancel.
+    """Refund a legacy free scan's durable counter exactly once on failure/cancel.
 
-    Free scans have no credit reservation, so this mirrors release_scan_credits
-    for the 0-cost path. The CAS on scan_jobs.free_scan_counted guarantees the
-    decrement fires at most once even if multiple recovery paths run.
+    The per-scan free allowance was retired in favour of a signup welcome grant,
+    so new scans are never flagged free_scan_counted and this is a safe no-op for
+    them. It is retained to correctly settle any free scan still in flight across
+    the deploy: the CAS on scan_jobs.free_scan_counted guarantees the decrement
+    fires at most once even if multiple recovery paths run.
     """
     if job.user_id is None:
         return
@@ -193,9 +183,10 @@ async def create_scan(
 ) -> dict:
     """Create a scan_job row, enqueue Celery task, return scan info.
 
-    always_paid=True forces the paid rate (>=1 credit) and skips the free-scan
-    quota entirely. Extension/API-key scans use this so they never draw on the
-    web free allowance, while reusing the same reserve→capture billing path.
+    Every scan is billed at the paid rate (>=1 credit). New users instead
+    receive a one-time welcome grant of credits at signup. always_paid is kept
+    for call-site compatibility (extension/API-key scans) but no longer changes
+    the cost — all scans reserve >=1 credit via the same reserve→capture path.
     """
     if not text:
         text = await asyncio.to_thread(_read_document_text_sync, document_id)
@@ -215,36 +206,11 @@ async def create_scan(
     )
 
     async with async_session() as session:
-        # Reserve tokens based on word count. Short scans are free for the first
-        # FREE_SCAN_LIMIT; after that they fall back to the normal paid rate so
-        # purchased credits can pay for short docs too. always_paid bypasses the
-        # free path so cost is always >=1 (the `cost == 0` branch below can't run).
-        cost = _paid_scan_cost(word_count) if always_paid else _scan_cost(word_count)
-
-        # Free scans draw on a durable lifetime counter (users.free_scans_used),
-        # NOT a count of scan_jobs rows — those get purged by the report
-        # retention cleanup, which would silently refill the quota. The
-        # conditional increment is an atomic compare-and-swap: it consumes a free
-        # scan only while under the limit (no row returned == quota spent), which
-        # also closes the concurrent-submission race.
-        free_counted = False
-        if user_id and cost == 0:
-            increment = await session.execute(
-                sql_text(
-                    "UPDATE users SET free_scans_used = free_scans_used + 1 "
-                    "WHERE id = :uid AND free_scans_used < :limit "
-                    "RETURNING free_scans_used"
-                ),
-                {"uid": uuid.UUID(user_id), "limit": FREE_SCAN_LIMIT},
-            )
-            if increment.first() is not None:
-                free_counted = True
-            else:
-                # Free quota spent — re-price as a paid scan (>=1 credit). The
-                # paid path below then reserves credits or raises "Insufficient
-                # tokens" if the user has none, so the only hard block is a real
-                # lack of credits, never an unusable balance.
-                cost = _paid_scan_cost(word_count)
+        # Every scan is billed at the paid rate (1 credit per started 1,000
+        # words, min 1). New users instead start with a one-time welcome grant of
+        # credits at signup, so there is no per-scan free path. always_paid is
+        # retained for call-site compatibility but no longer changes the cost.
+        cost = _paid_scan_cost(word_count)
 
         job = ScanJob(
             id=job_id,
@@ -255,7 +221,7 @@ async def create_scan(
             content_preview=report_metadata["content_preview"],
             scan_type="scan",
             status="pending",
-            free_scan_counted=free_counted,
+            free_scan_counted=False,
         )
         session.add(job)
 
@@ -295,18 +261,6 @@ async def create_scan(
         "progress_message": "Queued",
         "report_id": None,
     }
-
-
-async def get_free_scan_usage(user_id: str) -> dict:
-    uid = uuid.UUID(user_id)
-    async with async_session() as session:
-        result = await session.execute(
-            sql_text("SELECT free_scans_used FROM users WHERE id = :uid"),
-            {"uid": uid},
-        )
-        row = result.first()
-    used = int(row[0]) if row else 0
-    return {"used": used, "limit": FREE_SCAN_LIMIT, "remaining": max(0, FREE_SCAN_LIMIT - used)}
 
 
 async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:

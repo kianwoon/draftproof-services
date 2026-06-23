@@ -11,28 +11,6 @@ def words(count: int) -> str:
     return " ".join(f"word{i}" for i in range(count))
 
 
-class FakeSession:
-    def __init__(self):
-        self.added = []
-        self.committed = False
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    def add(self, item):
-        self.added.append(item)
-
-    async def execute(self, *_args, **_kwargs):
-        # `.first()` returns a row -> free-scan increment is under the limit.
-        return SimpleNamespace(scalar=lambda: 0, first=lambda: (1,))
-
-    async def commit(self):
-        self.committed = True
-
-
 class FakeScanTask:
     def __init__(self):
         self.calls = []
@@ -71,33 +49,6 @@ class FakeListSession:
         self.committed = True
 
 
-class FreeScanCounterSession:
-    """Models the durable-counter enforcement path. The single execute() in the
-    free path is the atomic ``UPDATE users ... WHERE free_scans_used < limit
-    RETURNING`` increment: a row means under the limit, None means at the cap."""
-
-    def __init__(self, *, under_limit: bool):
-        self.under_limit = under_limit
-        self.added = []
-        self.committed = False
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    def add(self, item):
-        self.added.append(item)
-
-    async def execute(self, *_args, **_kwargs):
-        row = (1,) if self.under_limit else None
-        return SimpleNamespace(first=lambda: row)
-
-    async def commit(self):
-        self.committed = True
-
-
 class RefundCaptureSession:
     """Captures the SQL that _refund_free_scan issues. The first execute() is the
     CAS flip (returns a user_id row only if the scan was still counted); the
@@ -119,10 +70,10 @@ class RefundCaptureSession:
         return [s for s, _ in self.statements if "free_scans_used = GREATEST" in s]
 
 
-class ShortScanPaidFallbackSession:
-    """Models a short doc whose free quota is spent: the increment UPDATE returns
-    no row, so create_scan re-prices it to the paid path, which then selects the
-    credit account. `account` is the fake acct (or None for 'no credits')."""
+class PaidScanSession:
+    """Models the paid billing path: the only query create_scan issues for a user
+    scan is the credit-account ``SELECT ... FOR UPDATE``. `account` is the fake
+    acct (or None to model a user with no credit account)."""
 
     def __init__(self, *, account):
         self.account = account
@@ -139,9 +90,6 @@ class ShortScanPaidFallbackSession:
         self.added.append(item)
 
     async def execute(self, statement, params=None):
-        if "UPDATE users SET free_scans_used" in str(statement):
-            return SimpleNamespace(first=lambda: None)  # quota spent
-        # Credit-account SELECT on the paid path.
         return SimpleNamespace(scalar_one_or_none=lambda: self.account)
 
     async def commit(self):
@@ -152,15 +100,12 @@ def _stream_id(at: datetime) -> str:
     return f"{int(at.timestamp() * 1000)}-0"
 
 
-def test_scan_cost_is_free_through_800_words():
-    assert scan_service._scan_cost(1) == 0
-    assert scan_service._scan_cost(800) == 0
-
-
-def test_scan_cost_charges_from_801_words():
-    assert scan_service._scan_cost(801) == 1
-    assert scan_service._scan_cost(1000) == 1
-    assert scan_service._scan_cost(1001) == 2
+def test_paid_scan_cost_is_one_credit_per_started_1000_words():
+    assert scan_service._paid_scan_cost(1) == 1
+    assert scan_service._paid_scan_cost(800) == 1
+    assert scan_service._paid_scan_cost(1000) == 1
+    assert scan_service._paid_scan_cost(1001) == 2
+    assert scan_service._paid_scan_cost(2500) == 3
 
 
 def test_rewrite_cost_charges_five_tokens_per_started_1000_words():
@@ -197,68 +142,11 @@ def test_scan_report_metadata_truncates_long_values():
 
 
 @pytest.mark.asyncio
-async def test_create_free_scan_does_not_require_credit_account(monkeypatch):
-    fake_session = FakeSession()
-    fake_task = FakeScanTask()
-
-    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
-    monkeypatch.setitem(
-        sys.modules,
-        "app.services.celery_client",
-        SimpleNamespace(scan_document=fake_task),
-    )
-
-    result = await scan_service.create_scan(
-        "paste",
-        user_id="00000000-0000-0000-0000-000000000001",
-        text=words(500),
-    )
-
-    assert result["status"] == "pending"
-    assert fake_session.committed is True
-    assert len(fake_session.added) == 1
-    assert fake_session.added[0].word_count == 500
-    assert len(fake_session.added[0].document_title) <= scan_service.DOCUMENT_TITLE_MAX_CHARS
-    assert fake_session.added[0].document_title.startswith("word0 word1")
-    assert fake_session.added[0].document_title.endswith("…")
-    assert fake_session.added[0].content_preview.endswith("…")
-    assert len(fake_task.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_free_scan_allowed_increments_and_marks_counted(monkeypatch):
-    """Under the durable limit: the scan is created, flagged free_scan_counted
-    (so a later failure can refund), committed, and enqueued."""
-    fake_session = FreeScanCounterSession(under_limit=True)
-    fake_task = FakeScanTask()
-
-    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
-    monkeypatch.setitem(
-        sys.modules,
-        "app.services.celery_client",
-        SimpleNamespace(scan_document=fake_task),
-    )
-
-    result = await scan_service.create_scan(
-        "paste",
-        user_id="00000000-0000-0000-0000-000000000001",
-        text=words(300),
-    )
-
-    assert result["status"] == "pending"
-    assert fake_session.committed is True
-    assert len(fake_session.added) == 1
-    assert fake_session.added[0].free_scan_counted is True
-    assert len(fake_task.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_short_scan_charges_one_credit_when_free_exhausted(monkeypatch):
-    """Free quota spent + the user has credits: a short doc re-prices to the paid
-    rate (1 credit), reserves it, and is NOT marked free_scan_counted. This is
-    what lets the 237-credit user actually scan a <=800 word doc."""
-    acct = SimpleNamespace(id="acct-1", balance_tokens=237, reserved_tokens=0)
-    fake_session = ShortScanPaidFallbackSession(account=acct)
+async def test_short_scan_reserves_one_credit(monkeypatch):
+    """A <=1,000 word scan costs 1 credit: it reserves the credit, is NOT flagged
+    free_scan_counted (no per-scan free path exists), and is enqueued."""
+    acct = SimpleNamespace(id="acct-1", balance_tokens=5, reserved_tokens=0)
+    fake_session = PaidScanSession(account=acct)
     fake_task = FakeScanTask()
 
     monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
@@ -276,18 +164,45 @@ async def test_short_scan_charges_one_credit_when_free_exhausted(monkeypatch):
 
     assert result["status"] == "pending"
     job = next(a for a in fake_session.added if isinstance(a, scan_service.ScanJob))
-    assert job.free_scan_counted is False  # paid, not a free scan
-    assert acct.reserved_tokens == 1  # 1 credit reserved for the <=1000 word doc
+    assert job.word_count == 518
+    assert job.free_scan_counted is False
+    assert job.document_title.startswith("word0 word1")
+    assert acct.reserved_tokens == 1
     reservations = [a for a in fake_session.added if isinstance(a, scan_service.CreditReservation)]
     assert len(reservations) == 1 and reservations[0].tokens_reserved == 1
     assert len(fake_task.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_short_scan_blocked_when_free_exhausted_and_no_credits(monkeypatch):
-    """Free quota spent + no credit account: now the block is a genuine lack of
-    credits (the 'Buy credits' CTA is finally correct), not an unusable balance."""
-    fake_session = ShortScanPaidFallbackSession(account=None)
+async def test_long_scan_reserves_one_credit_per_started_1000_words(monkeypatch):
+    """A 2,500 word scan reserves 3 credits (ceil(2500/1000))."""
+    acct = SimpleNamespace(id="acct-1", balance_tokens=10, reserved_tokens=0)
+    fake_session = PaidScanSession(account=acct)
+    fake_task = FakeScanTask()
+
+    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
+    monkeypatch.setitem(
+        sys.modules,
+        "app.services.celery_client",
+        SimpleNamespace(scan_document=fake_task),
+    )
+
+    await scan_service.create_scan(
+        "paste",
+        user_id="00000000-0000-0000-0000-000000000001",
+        text=words(2500),
+    )
+
+    assert acct.reserved_tokens == 3
+    reservations = [a for a in fake_session.added if isinstance(a, scan_service.CreditReservation)]
+    assert len(reservations) == 1 and reservations[0].tokens_reserved == 3
+
+
+@pytest.mark.asyncio
+async def test_scan_blocked_when_no_credit_account(monkeypatch):
+    """No credit account: the scan is blocked with the 'buy credits' error and
+    nothing is enqueued."""
+    fake_session = PaidScanSession(account=None)
     fake_task = FakeScanTask()
 
     monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
@@ -298,6 +213,31 @@ async def test_short_scan_blocked_when_free_exhausted_and_no_credits(monkeypatch
     )
 
     with pytest.raises(ValueError, match="No credit account"):
+        await scan_service.create_scan(
+            "paste",
+            user_id="00000000-0000-0000-0000-000000000001",
+            text=words(518),
+        )
+
+    assert len(fake_task.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_blocked_when_insufficient_credits(monkeypatch):
+    """Account exists but the available balance is below the cost: blocked with
+    'Insufficient tokens', nothing enqueued."""
+    acct = SimpleNamespace(id="acct-1", balance_tokens=0, reserved_tokens=0)
+    fake_session = PaidScanSession(account=acct)
+    fake_task = FakeScanTask()
+
+    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
+    monkeypatch.setitem(
+        sys.modules,
+        "app.services.celery_client",
+        SimpleNamespace(scan_document=fake_task),
+    )
+
+    with pytest.raises(ValueError, match="Insufficient"):
         await scan_service.create_scan(
             "paste",
             user_id="00000000-0000-0000-0000-000000000001",

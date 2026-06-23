@@ -9,7 +9,7 @@ export const pricing = {
   "scanUnit": "/ 1,000 words",
   // allow-hardcode: i18n marketing copy for scan feature list — UI strings, not a detection/scoring oracle
   "scanFeatures": [
-    "1 credit per 1,000 words (first 800 words free)",
+    "1 credit per 1,000 words (5 free credits to start)",
     "Paragraph-level findings — not just a single score",
     "Citation gap detection — claims that lack source support",
     "Source integrity check — whether cited sources actually support the claim",
@@ -56,7 +56,7 @@ export const pricing = {
     },
     {
       "q": "What counts as a scan?",
-      "a": "Scans with 800 words or fewer are free. After that, 1 credit covers each started 1,000-word block. For example, a 2,500-word document costs 3 credits."
+      "a": "1 credit covers each started 1,000-word block, so a scan up to 1,000 words costs 1 credit and a 2,500-word document costs 3 credits. New accounts start with 5 free credits."
     },
     {
       "q": "Will the rewrite make my work safe to submit?",

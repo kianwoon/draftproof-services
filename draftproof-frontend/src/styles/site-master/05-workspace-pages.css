@@ -366,23 +366,6 @@
   line-height: 1.45;
 }
 
-.scan-free-usage-note {
-  margin: 4px 0 0;
-  padding: 7px 12px;
-  border-left: 3px solid var(--green);
-  background: rgba(58, 168, 118, .06);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.scan-free-usage-exhausted {
-  border-left-color: var(--amber, #f59e0b);
-  background: rgba(245, 158, 11, .07);
-  color: var(--amber-dark, #92400e);
-  font-weight: 500;
-}
-
 .scan-delivery-note {
   margin: -4px 0 0;
   color: var(--muted);

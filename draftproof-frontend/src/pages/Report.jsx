@@ -6,7 +6,7 @@ import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
 import { deleteReportDraft, getReportDraft, saveReportDraft } from '../utils/reportDraftStorage';
-import { countWords, scanTokensRequired } from '../utils/scanBilling';
+import { countWords, paidScanTokens } from '../utils/scanBilling';
 import {
   requestBrowserNotificationPermission,
   showBrowserNotification,
@@ -1076,7 +1076,7 @@ export default function Report() {
   const submittedHighlightRange = selectedParagraph?.id ? submittedHighlightRanges[selectedParagraph.id] : null;
   const submittedEditorHighlightParts = highlightedEditorParts(submittedDraftText, submittedHighlightRange);
   const submittedDraftWordCount = countWords(submittedDraftText);
-  const submittedDraftTokensRequired = scanTokensRequired(submittedDraftWordCount);
+  const submittedDraftTokensRequired = paidScanTokens(submittedDraftWordCount);
   const repairSummary = buildRepairSummary({
     report,
     submittedContent,
@@ -2378,9 +2378,7 @@ export default function Report() {
                       <span className="submitted-rescan-token-note">
                         {t('scan.word', { count: submittedDraftWordCount })}
                         {' · '}
-                        {submittedDraftTokensRequired > 0
-                          ? t('scan.tokensRequired', { count: submittedDraftTokensRequired })
-                          : t('scan.freeScan')}
+                        {t('scan.tokensRequired', { count: submittedDraftTokensRequired })}
                       </span>
                     </div>
                   </div>

@@ -14,8 +14,9 @@ from app.config import (
     ALLOWED_EMAIL_DOMAINS, COOKIE_SECURE, FRONTEND_URL,
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
     MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, MICROSOFT_TENANT,
+    WELCOME_CREDITS,
 )
-from app.models.db import get_db, User, UserIdentity, CreditAccount
+from app.models.db import get_db, User, UserIdentity, CreditAccount, CreditLedger
 
 router = APIRouter()
 
@@ -153,9 +154,30 @@ async def _upsert_user(db: AsyncSession, provider: str, user_info: dict) -> User
             db.add(user)
             try:
                 await db.flush()
-                # Only create credit account for truly new users
-                account = CreditAccount(user_id=user.id)
+                # Only create credit account for truly new users. New accounts
+                # receive a one-time welcome grant of free credits (replaces the
+                # old per-scan free allowance). entry_type uses the existing
+                # 'admin_adjustment' bucket — the credit_ledger CHECK constraint
+                # (migration 001) only permits a fixed vocabulary, and adding a
+                # new value would require a manual SQL migration that must land
+                # before this code auto-deploys, breaking signups in the gap. The
+                # welcome_<user_id> idempotency_key + note keep grants filterable
+                # and guarantee the grant is recorded at most once per user.
+                account = CreditAccount(user_id=user.id, balance_tokens=WELCOME_CREDITS)
                 db.add(account)
+                if WELCOME_CREDITS > 0:
+                    await db.flush()  # populate account.id (PK default fires on flush)
+                    db.add(CreditLedger(
+                        credit_account_id=account.id,
+                        user_id=user.id,
+                        entry_type="admin_adjustment",
+                        token_delta=WELCOME_CREDITS,
+                        balance_after=WELCOME_CREDITS,
+                        reference_type="user",
+                        reference_id=user.id,
+                        idempotency_key=f"welcome_{user.id}",
+                        note=f"Welcome bonus: {WELCOME_CREDITS} free credits",
+                    ))
             except IntegrityError:
                 # Race condition: user was created by a concurrent request or prior sign-in
                 await db.rollback()

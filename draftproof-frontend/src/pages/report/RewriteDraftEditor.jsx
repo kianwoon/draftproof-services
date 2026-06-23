@@ -7,7 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { startScanWithText, translateText, getScanStatus } from '../../api/draftproofApi';
 import { getReportDraft, saveReportDraft, deleteReportDraft } from '../../utils/reportDraftStorage';
-import { countWords, scanTokensRequired } from '../../utils/scanBilling';
+import { countWords, paidScanTokens } from '../../utils/scanBilling';
 import { useAuth } from '../../context/AuthContext';
 import { formatDate } from './reportHelpers';
 import { buildTrackedDiff, trackedDiffToPlainText, trackedDiffToHtml } from './trackedDiff';
@@ -76,7 +76,7 @@ export default function RewriteDraftEditor({ storageKey, baselineText, workedExa
   );
   const trackedDiff = buildTrackedDiff(baselineText, draftText);
   const draftWordCount = countWords(draftText);
-  const draftTokensRequired = scanTokensRequired(draftWordCount);
+  const draftTokensRequired = paidScanTokens(draftWordCount);
 
   const clearCloseTimer = () => {
     if (closeTimerRef.current) {
@@ -432,9 +432,7 @@ export default function RewriteDraftEditor({ storageKey, baselineText, workedExa
                 <span className="submitted-rescan-token-note">
                   {t('scan.word', { count: draftWordCount })}
                   {' · '}
-                  {draftTokensRequired > 0
-                    ? t('scan.tokensRequired', { count: draftTokensRequired })
-                    : t('scan.freeScan')}
+                  {t('scan.tokensRequired', { count: draftTokensRequired })}
                 </span>
               </div>
             </div>

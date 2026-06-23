@@ -1,11 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { startScanWithText, getScanStatus, buildApiEventUrl, getFreeScanUsage } from '../api/draftproofApi';
+import { startScanWithText, getScanStatus, buildApiEventUrl } from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import CodeTexture from '../components/CodeTexture';
-import { countWords, effectiveScanTokens } from '../utils/scanBilling';
+import { countWords, paidScanTokens } from '../utils/scanBilling';
 
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
@@ -22,17 +22,15 @@ export default function Scan() {
   const [error, setError] = useState(null);
   const [serverError, setServerError] = useState(null);
   const [insufficientTokens, setInsufficientTokens] = useState(false);
-  const [freeLimitReached, setFreeLimitReached] = useState(false);
-  const [freeUsage, setFreeUsage] = useState(null);
   const [authExpired, setAuthExpired] = useState(false);
   const navigate = useNavigate();
   const { refreshBalance, balance, logout } = useAuth();
   const abortRef = useRef(null);
   const eventSourceRef = useRef(null);
   const wordCount = countWords(text);
-  // Short docs are free while free scans remain, then cost the paid rate, so the
-  // displayed cost and the balance pre-check depend on remaining free usage.
-  const tokensRequired = effectiveScanTokens(wordCount, freeUsage ? freeUsage.remaining : null);
+  // Every scan is billed at the paid rate (1 credit per 1,000 words). New users
+  // start with a one-time welcome grant of credits to cover their first scans.
+  const tokensRequired = paidScanTokens(wordCount);
 
   // Cancel in-flight polling on unmount
   useEffect(() => {
@@ -41,8 +39,6 @@ export default function Scan() {
       setText(savedDraft);
       sessionStorage.removeItem('draftproof_scan_draft');
     }
-
-    getFreeScanUsage().then(({ data }) => setFreeUsage(data)).catch(() => {});
 
     return () => {
       if (abortRef.current) {
@@ -213,18 +209,13 @@ export default function Scan() {
         httpStatus === 403 &&
         String(msg).toLowerCase().includes('not authenticated')
       );
-      const isFreeLimitReached = httpStatus === 400 &&
-        msg.toLowerCase().includes('free scan limit');
-      const isInsufficient = httpStatus === 400 && !isFreeLimitReached && (
+      const isInsufficient = httpStatus === 400 && (
         msg.toLowerCase().includes('insufficient') ||
         msg.toLowerCase().includes('no credit account') ||
         msg.toLowerCase().includes('purchase')
       );
       if (isAuthExpired) {
         handleAuthExpired();
-      } else if (isFreeLimitReached) {
-        setShowProgress(false);
-        setFreeLimitReached(true);
       } else if (isInsufficient) {
         setShowProgress(false);
         setInsufficientTokens(true);
@@ -270,14 +261,6 @@ export default function Scan() {
               <span>{t('scan.documentHelp')}</span>
             </label>
             <p className="scan-pricing-note">{t('scan.pricingNote')}</p>
-            {freeUsage && (
-              <p className={`scan-free-usage-note${freeUsage.remaining === 0 ? ' scan-free-usage-exhausted' : ''}`}>
-                {t('scan.freeUsage', { used: freeUsage.used, limit: freeUsage.limit })}
-                {freeUsage.remaining > 0 && (
-                  <> — {t('scan.freeRemaining', { count: freeUsage.remaining })}</>
-                )}
-              </p>
-            )}
             <textarea
               id="scan-text"
               className="scan-textarea"
@@ -291,10 +274,7 @@ export default function Scan() {
             />
             <div className="scan-meta-row">
               <span>{t('scan.word', { count: wordCount })}</span>
-              {wordCount > 0 && tokensRequired === 0 && (
-                <strong>{t('scan.freeScan')}</strong>
-              )}
-              {tokensRequired > 0 && (
+              {wordCount > 0 && (
                 <strong>{t('scan.tokensRequired', { count: tokensRequired })}</strong>
               )}
             </div>
@@ -348,15 +328,6 @@ export default function Scan() {
 
         {error && <p className="error">{error}</p>}
         {serverError && <p className="error">{serverError}</p>}
-
-        <ConfirmDialog
-          open={freeLimitReached}
-          title={t('scan.freeLimitTitle')}
-          message={t('scan.freeLimitMessage')}
-          confirmLabel={t('scan.buyTokens')}
-          onConfirm={() => navigate('/buy')}
-          onCancel={() => setFreeLimitReached(false)}
-        />
 
         <ConfirmDialog
           open={insufficientTokens}
