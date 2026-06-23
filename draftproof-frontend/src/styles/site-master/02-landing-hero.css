@@ -89,7 +89,13 @@
   display: grid;
   align-items: center;
   padding: 60px clamp(24px, 4vw, 48px) 48px;
-  background: var(--navy-950);
+  /* Photo paints below .landing-hero::after (z0) scrim + .hero-code-field (z1).
+     navy-950 stays as the fallback color until the asset loads / if missing. */
+  background-color: var(--navy-950);
+  background-image: url('/landing/hero_bg.webp');
+  background-size: cover;
+  background-position: 50% 38%;
+  background-repeat: no-repeat;
   color: #fff;
   overflow: hidden;
   isolation: isolate;
@@ -126,7 +132,8 @@
 }
 
 .hero-code-field {
-  opacity: .5;
+  /* Dimmed further so the photo background reads through the code rain. */
+  opacity: .22;
 }
 
 .footer-code-texture {
