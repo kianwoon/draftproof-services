@@ -17,8 +17,8 @@ export const apiKeys = {
     // allow-hardcode: i18n install-step UI copy (human-written instructions), not scoring/matching logic.
     wordSteps: [
       "Word on the web: Home → Add-ins → More Add-ins → My Add-ins → Upload My Add-in → pick the downloaded file.",
-      "Word desktop (Mac): copy the file into `~/Library/Containers/com.microsoft.Word/Data/Documents/wef` (create the `wef` folder if it isn't there), restart Word, then Insert → My Add-ins → Shared Folder.",
-      "Word desktop (Windows): put the file in a folder, share it (Properties → Sharing), then add the share path under File → Options → Trust Center → Trust Center Settings → Trusted Add-in Catalogs (tick “Show in Menu”). Restart Word, then Insert → My Add-ins → Shared Folder.",
+      "Word desktop (Mac): copy the file into `~/Library/Containers/com.microsoft.Word/Data/Documents/wef` (create the `wef` folder if it isn't there), restart Word, then Home → Add-ins and pick DraftProof from the menu.",
+      "Word desktop (Windows): put the file in a folder and share it (Properties → Sharing → Share — note the network path). In Word: File → Options → Trust Center → Trust Center Settings → Trusted Add-in Catalogs → paste the path in Catalog Url → Add catalog → tick “Show in Menu” → OK. Restart Word, then Home → Add-ins → Advanced → SHARED FOLDER → select DraftProof → Add.",
       "Open DraftProof → Scan selection, paste a key from below, highlight text, and scan.",
     ],
     gdocsSteps: [
