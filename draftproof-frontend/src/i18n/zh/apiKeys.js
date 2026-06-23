@@ -21,6 +21,12 @@ export const apiKeys = {
       { os: "windows", text: "Word 桌面版（Windows）：将文件放入一个文件夹并共享（属性 → 共享 → 共享，并记下网络路径）。在 Word 中：文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的加载项目录 → 在 Catalog Url 中粘贴该路径 → 添加目录 → 勾选“在菜单中显示” → 确定。重启 Word，然后 开始 → 加载项 → 高级 → 共享文件夹 → 选择 DraftProof → 添加。" },
       { os: null, text: "打开 DraftProof → 扫描所选文本，从下方粘贴密钥，选中文本并扫描。" },
     ],
+    scriptIntro: "更喜欢用终端？粘贴以下命令即可自动安装，然后重启 Word。",
+    scriptMac: "macOS — 终端",
+    scriptWin: "Windows — PowerShell（管理员）",
+    scriptCopy: "复制",
+    scriptCopied: "已复制！",
+    scriptWinNote: "Windows：请以管理员身份运行 PowerShell——脚本会共享文件夹并注册受信任的加载项目录。macOS 无需管理员权限。",
     gdocsSteps: [
       "打开 Google 文档 → 扩展程序 → 加载项 → 获取加载项。",
       "搜索 “DraftProof” 并点击安装。",

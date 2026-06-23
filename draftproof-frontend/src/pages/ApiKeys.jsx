@@ -35,6 +35,56 @@ function OsIcon({ os }) {
   );
 }
 
+// allow-hardcode: these are shell/PowerShell install scripts (code), not i18n copy
+// or a scoring/matching list — identical across locales, so they live here not in i18n.
+// Mac: create the wef folder + download the live manifest into it.
+const MAC_INSTALL =
+  'mkdir -p ~/Library/Containers/com.microsoft.Word/Data/Documents/wef && ' +
+  'curl -fsSL https://draftproof.app/word-addin/manifest.xml ' +
+  '-o ~/Library/Containers/com.microsoft.Word/Data/Documents/wef/draftproof.xml && ' +
+  'echo "Installed. Restart Word, then Home > Add-ins > DraftProof."';
+
+// Windows: download the manifest, share its folder, and register a trusted
+// add-in catalog in the registry (needs an elevated PowerShell for New-SmbShare).
+const WIN_INSTALL = `$ErrorActionPreference='Stop'
+$dir="$env:USERPROFILE\\DraftProofAddin"
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+Invoke-WebRequest "https://draftproof.app/word-addin/manifest.xml" -OutFile "$dir\\draftproof.xml"
+$share="DraftProofAddin"
+if(-not(Get-SmbShare -Name $share -ErrorAction SilentlyContinue)){New-SmbShare -Name $share -Path $dir -FullAccess $env:USERNAME | Out-Null}
+$unc="\\\\$env:COMPUTERNAME\\$share"
+$guid=[guid]::NewGuid().ToString('B')
+$key="HKCU:\\Software\\Microsoft\\Office\\16.0\\WEF\\TrustedCatalogs\\$guid"
+New-Item $key -Force | Out-Null
+Set-ItemProperty $key Id $guid
+Set-ItemProperty $key Url $unc
+Set-ItemProperty $key Flags 1 -Type DWord
+Write-Host "Installed. Close all Office apps, reopen Word, then Home > Add-ins > Advanced > SHARED FOLDER > DraftProof > Add."`;
+
+function ScriptBlock({ os, label, code, copyLabel, copiedLabel }) {
+  const [done, setDone] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setDone(true);
+      setTimeout(() => setDone(false), 1500);
+    } catch (e) {
+      // clipboard blocked — user can still select the text manually
+    }
+  };
+  return (
+    <div className="api-keys-script">
+      <div className="api-keys-script-head">
+        <span className="api-keys-script-label"><OsIcon os={os} />{label}</span>
+        <button type="button" className={`api-keys-script-copy${done ? ' is-copied' : ''}`} onClick={copy}>
+          {done ? copiedLabel : copyLabel}
+        </button>
+      </div>
+      <pre><code>{code}</code></pre>
+    </div>
+  );
+}
+
 function formatDate(iso, locale) {
   if (!iso) return null;
   const d = new Date(iso);
@@ -204,6 +254,24 @@ export default function ApiKeys() {
                       <li key={i}><OsIcon os={s.os} />{withCodePaths(s.text)}</li>
                     ))}
                   </ol>
+                  <div className="api-keys-script-section">
+                    <p className="api-keys-script-intro">{t('apiKeys.addon.scriptIntro')}</p>
+                    <ScriptBlock
+                      os="mac"
+                      label={t('apiKeys.addon.scriptMac')}
+                      code={MAC_INSTALL}
+                      copyLabel={t('apiKeys.addon.scriptCopy')}
+                      copiedLabel={t('apiKeys.addon.scriptCopied')}
+                    />
+                    <ScriptBlock
+                      os="windows"
+                      label={t('apiKeys.addon.scriptWin')}
+                      code={WIN_INSTALL}
+                      copyLabel={t('apiKeys.addon.scriptCopy')}
+                      copiedLabel={t('apiKeys.addon.scriptCopied')}
+                    />
+                    <p className="api-keys-muted api-keys-script-note">{t('apiKeys.addon.scriptWinNote')}</p>
+                  </div>
                 </>
               ) : (
                 <>

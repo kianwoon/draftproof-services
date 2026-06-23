@@ -1337,6 +1337,17 @@
 .api-keys-addon-steps ol { margin: 12px 0 0; padding-left: 20px; }
 .api-keys-addon-steps li { margin: 8px 0; font-size: .92rem; line-height: 1.55; }
 .api-keys-step-icon { width: 14px; height: 14px; display: inline-block; vertical-align: -2px; margin-right: 7px; color: var(--green-dark); flex: none; }
+.api-keys-script-section { margin-top: 16px; }
+.api-keys-script-intro { margin: 0 0 10px; font-size: .9rem; color: var(--muted); }
+.api-keys-script { border: 1px solid var(--green-200); border-radius: 10px; overflow: hidden; margin-bottom: 10px; background: #fff; }
+.api-keys-script-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; background: var(--surface-mint); border-bottom: 1px solid var(--green-200); }
+.api-keys-script-label { display: inline-flex; align-items: center; font-size: .82rem; font-weight: 600; color: var(--green-dark); }
+.api-keys-script-copy { font: inherit; font-size: .78rem; padding: 3px 12px; border: 1px solid var(--green-200); border-radius: 999px; background: #fff; color: var(--green-dark); cursor: pointer; }
+.api-keys-script-copy:hover { background: var(--surface-mint); }
+.api-keys-script-copy.is-copied { background: var(--green-dark); color: #fff; border-color: transparent; }
+.api-keys-script pre { margin: 0; padding: 10px 12px; overflow-x: auto; }
+.api-keys-script code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .78rem; line-height: 1.5; white-space: pre; }
+.api-keys-script-note { margin-top: 4px; font-size: .82rem; }
 .api-keys-addon-steps .btn { margin-top: 12px; }
 .api-keys-addon-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
 .api-keys-addon-tab {

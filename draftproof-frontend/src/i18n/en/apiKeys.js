@@ -21,6 +21,12 @@ export const apiKeys = {
       { os: "windows", text: "Word desktop (Windows): put the file in a folder and share it (Properties → Sharing → Share — note the network path). In Word: File → Options → Trust Center → Trust Center Settings → Trusted Add-in Catalogs → paste the path in Catalog Url → Add catalog → tick “Show in Menu” → OK. Restart Word, then Home → Add-ins → Advanced → SHARED FOLDER → select DraftProof → Add." },
       { os: null, text: "Open DraftProof → Scan selection, paste a key from below, highlight text, and scan." },
     ],
+    scriptIntro: "Prefer the terminal? Paste this to install automatically, then restart Word.",
+    scriptMac: "macOS — Terminal",
+    scriptWin: "Windows — PowerShell (Administrator)",
+    scriptCopy: "Copy",
+    scriptCopied: "Copied!",
+    scriptWinNote: "Windows: run PowerShell as Administrator — the script shares a folder and registers a trusted add-in catalog. macOS needs no admin.",
     gdocsSteps: [
       "Open a Google Doc → Extensions → Add-ons → Get add-ons.",
       "Search for “DraftProof” and click Install.",
