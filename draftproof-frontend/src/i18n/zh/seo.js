@@ -20,6 +20,8 @@ export const seo = {
   "termsDescription": "约束你使用 DraftProof 的条款——账户、API 密钥、额度与计费、可接受使用、内容、免责声明与责任。",
   "supportTitle": "支持 | DraftProof",
   "supportDescription": "获取 DraftProof 帮助——邮件支持、问题反馈与功能建议，以及常见问题解答。",
+  "eulaTitle": "最终用户许可协议 | DraftProof",
+  "eulaDescription": "DraftProof 最终用户许可协议（EULA），适用于网站、扫描与改写服务，以及 Microsoft Word 与 Google 文档加载项。",
   "securityTitle": "安全 | DraftProof",
   "securityDescription": "DraftProof 如何通过加密存储、OAuth 登录、安全付款、访问控制和用户可控删除来保护学术文档。",
   "signInTitle": "登录 | DraftProof",

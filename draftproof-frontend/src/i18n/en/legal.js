@@ -12,6 +12,26 @@ export const legal = {
       { "title": "Common questions", "paragraphs": ["Many answers are on our FAQ at draftproof.app/faq — covering pricing, scans, rewrites, credits, and the Word and Google Docs add-ins."] }
     ]
   },
+  // allow-hardcode: i18n EULA legal copy (human-crafted), not scoring/matching logic.
+  "eula": {
+    "eyebrow": "End User License Agreement",
+    "title": "DraftProof End User License Agreement",
+    "lead": "This EULA governs your use of the DraftProof software, including the Microsoft Word and Google Docs add-ins. By installing or using them, you agree to it.",
+    "stat": "Plain-language licence",
+    "sections": [
+      { "title": "1. Licence grant", "paragraphs": ["DraftProof grants you a personal, non-exclusive, non-transferable, revocable licence to install and use the DraftProof add-ins and service for reviewing and improving your own writing, subject to this agreement and our Terms of Service."] },
+      { "title": "2. Restrictions", "paragraphs": ["You may not:"], "bullets": ["copy, sell, sublicense, rent, or redistribute the software;", "reverse-engineer, decompile, or extract source code except where permitted by law;", "use the software to evade academic-integrity or AI-detection systems, or to misrepresent authorship;", "share your API key, or submit content you have no right to process;", "interfere with, overload, or attempt unauthorised access to the service."] },
+      { "title": "3. Accounts and API keys", "paragraphs": ["Some features require an account and a personal API key. Keep your key secret; you are responsible for all activity and credit usage under your key. You can revoke a key at draftproof.app/api-keys at any time."] },
+      { "title": "4. Your content", "paragraphs": ["You retain ownership of the text you submit. You grant DraftProof a limited licence to process that text solely to produce your results. We do not claim ownership of your writing. See our Privacy Policy for how submitted content is handled."] },
+      { "title": "5. Intellectual property", "paragraphs": ["DraftProof and its software, models, and content are owned by DraftProof and protected by law. This agreement grants a licence to use the software, not any ownership of it."] },
+      { "title": "6. Credits and fees", "paragraphs": ["Scans and rewrites consume credits from your balance. Credits already consumed are non-refundable. Pricing and billing are described on draftproof.app and in our Terms of Service."] },
+      { "title": "7. No warranty", "paragraphs": ["The software is provided \"as is\", without warranties of any kind. DraftProof results are indicative guidance to help you review your own work — they are not a guarantee of any grade, acceptance, or detection outcome, and are not a means to evade AI detection."] },
+      { "title": "8. Limitation of liability", "paragraphs": ["To the maximum extent permitted by law, DraftProof is not liable for any indirect, incidental, or consequential damages, or for decisions made by any institution or third party based on your use of the software."] },
+      { "title": "9. Termination", "paragraphs": ["This licence ends automatically if you breach it, and we may suspend or terminate access for misuse. You may stop using the software at any time. Terms that by their nature should survive termination will survive."] },
+      { "title": "10. Governing law and changes", "paragraphs": ["This agreement is governed by the laws of Singapore, consistent with our Terms of Service. We may update this EULA; material changes will be posted here, and continued use means you accept the updated terms."] },
+      { "title": "11. Contact", "paragraphs": ["Questions about this agreement? Email support@draftproof.app."] }
+    ]
+  },
   "terms": {
     "eyebrow": "Terms of Service",
     "title": "DraftProof Terms of Service",

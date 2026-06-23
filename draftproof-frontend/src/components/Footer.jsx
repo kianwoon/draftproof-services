@@ -33,6 +33,7 @@ export default function Footer() {
           <Link to={publicPath('/privacy')}>{t('footer.privacy')}</Link>
           <Link to={publicPath('/terms')}>{t('footer.terms')}</Link>
           <Link to={publicPath('/support')}>{t('footer.support')}</Link>
+          <Link to={publicPath('/eula')}>{t('footer.eula')}</Link>
           <Link to={publicPath('/security')}>{t('footer.security')}</Link>
           <a href="https://www.reddit.com/r/DraftProofApp/" target="_blank" rel="noopener noreferrer">{t('footer.community')}</a>
           <a href={`mailto:${t('footer.supportEmail')}`}>{t('footer.supportEmail')}</a>

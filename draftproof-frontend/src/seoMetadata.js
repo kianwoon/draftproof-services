@@ -92,6 +92,13 @@ export const PAGE_META = {
     canonical: '/support',
     schemaType: 'WebPage',
   },
+  '/eula': {
+    titleKey: 'seo.eulaTitle',
+    descriptionKey: 'seo.eulaDescription',
+    canonical: '/eula',
+    schemaType: 'WebPage',
+    freshness: { type: 'updated', date: SEO_REVIEW_DATE },
+  },
   '/security': {
     titleKey: 'seo.securityTitle',
     descriptionKey: 'seo.securityDescription',

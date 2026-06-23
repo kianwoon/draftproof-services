@@ -23,6 +23,7 @@ import Features from './pages/Features';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Support from './pages/Support';
+import Eula from './pages/Eula';
 import Security from './pages/Security';
 import EssayChecker from './pages/EssayChecker';
 import NotFound from './pages/NotFound';
@@ -130,6 +131,8 @@ export default function App() {
             <Route path="/zh/terms" element={<Terms />} />
             <Route path="/support" element={<Support />} />
             <Route path="/zh/support" element={<Support />} />
+            <Route path="/eula" element={<Eula />} />
+            <Route path="/zh/eula" element={<Eula />} />
             <Route path="/security" element={<Security />} />
             <Route path="/zh/security" element={<Security />} />
             <Route path="/buy" element={<ProtectedRoute><BuyTokens /></ProtectedRoute>} />

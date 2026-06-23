@@ -12,6 +12,26 @@ export const legal = {
       { "title": "常见问题", "paragraphs": ["许多答案可在我们的常见问题页 draftproof.app/faq 找到——涵盖价格、扫描、改写、额度，以及 Word 和 Google 文档加载项。"] }
     ]
   },
+  // allow-hardcode: i18n EULA legal copy (human-crafted), not scoring/matching logic.
+  "eula": {
+    "eyebrow": "最终用户许可协议",
+    "title": "DraftProof 最终用户许可协议",
+    "lead": "本 EULA 约束你对 DraftProof 软件的使用，包括 Microsoft Word 与 Google 文档加载项。安装或使用即表示你同意本协议。",
+    "stat": "通俗易懂的许可",
+    "sections": [
+      { "title": "1. 许可授予", "paragraphs": ["DraftProof 授予你个人的、非独占、不可转让、可撤销的许可，用以安装并使用 DraftProof 加载项与服务，以审阅和改进你本人的写作；该许可受本协议与我们的服务条款约束。"] },
+      { "title": "2. 限制", "paragraphs": ["你不得："], "bullets": ["复制、出售、再许可、出租或再分发本软件；", "逆向工程、反编译或提取源代码（法律允许的情形除外）；", "使用本软件规避学术诚信或 AI 检测系统，或虚报作者身份；", "分享你的 API 密钥，或提交你无权处理的内容；", "干扰、超载或试图未经授权访问本服务。"] },
+      { "title": "3. 账户与 API 密钥", "paragraphs": ["部分功能需要账户与个人 API 密钥。请妥善保管密钥；你对密钥下的所有活动与额度消耗负责。你可随时在 draftproof.app/api-keys 撤销密钥。"] },
+      { "title": "4. 你的内容", "paragraphs": ["你保留所提交文本的所有权。你授予 DraftProof 有限许可，仅用于处理该文本以生成你的结果。我们不主张对你写作的所有权。提交内容的处理方式见我们的隐私政策。"] },
+      { "title": "5. 知识产权", "paragraphs": ["DraftProof 及其软件、模型与内容归 DraftProof 所有并受法律保护。本协议授予的是软件使用许可，而非任何所有权。"] },
+      { "title": "6. 额度与费用", "paragraphs": ["扫描与改写会消耗你余额中的额度。已消耗的额度不予退还。定价与计费详见 draftproof.app 及我们的服务条款。"] },
+      { "title": "7. 不作保证", "paragraphs": ["本软件按“现状”提供，不附带任何形式的保证。DraftProof 的结果是帮助你审阅自己作品的指示性建议——不保证任何成绩、录用或检测结果，也不是规避 AI 检测的手段。"] },
+      { "title": "8. 责任限制", "paragraphs": ["在法律允许的最大范围内，DraftProof 不对任何间接、附带或后果性损害负责，也不对任何机构或第三方基于你使用本软件所作的决定负责。"] },
+      { "title": "9. 终止", "paragraphs": ["若你违反本协议，许可将自动终止；对于滥用，我们可暂停或终止访问。你可随时停止使用本软件。依其性质应在终止后继续有效的条款将继续有效。"] },
+      { "title": "10. 适用法律与变更", "paragraphs": ["本协议受新加坡法律管辖，与我们的服务条款一致。我们可更新本 EULA；重大变更将在此公布，继续使用即表示你接受更新后的条款。"] },
+      { "title": "11. 联系", "paragraphs": ["对本协议有疑问？请发送邮件至 support@draftproof.app。"] }
+    ]
+  },
   "terms": {
     "eyebrow": "服务条款",
     "title": "DraftProof 服务条款",

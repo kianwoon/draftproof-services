@@ -20,6 +20,8 @@ export const seo = {
   "termsDescription": "The terms governing your use of DraftProof — accounts, API keys, credits and billing, acceptable use, content, disclaimers, and liability.",
   "supportTitle": "Support | DraftProof",
   "supportDescription": "Get help with DraftProof — email support, bug reports and feature requests, and answers to common questions.",
+  "eulaTitle": "End User License Agreement | DraftProof",
+  "eulaDescription": "The DraftProof end user license agreement (EULA) for the website, scanning and rewrite services, and the Microsoft Word and Google Docs add-ins.",
   "securityTitle": "Security | DraftProof",
   "securityDescription": "How DraftProof protects academic documents with encrypted storage, OAuth sign-in, secure payments, access controls, and user-controlled deletion.",
   "signInTitle": "Sign In | DraftProof",
