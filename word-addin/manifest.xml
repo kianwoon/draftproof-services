@@ -15,8 +15,8 @@
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="DraftProof" />
   <Description DefaultValue="Scan highlighted text for AI-writing risk with DraftProof, billed to your DraftProof credits." />
-  <IconUrl DefaultValue="https://draftproof.app/favicon.png" />
-  <HighResolutionIconUrl DefaultValue="https://draftproof.app/apple-touch-icon.png" />
+  <IconUrl DefaultValue="https://draftproof.app/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://draftproof.app/icon-64.png" />
   <SupportUrl DefaultValue="https://draftproof.app" />
 
   <!-- Domains the task pane may navigate to internally. -->
@@ -78,9 +78,9 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16" DefaultValue="https://draftproof.app/favicon.png" />
-        <bt:Image id="Icon.32" DefaultValue="https://draftproof.app/favicon.png" />
-        <bt:Image id="Icon.80" DefaultValue="https://draftproof.app/apple-touch-icon.png" />
+        <bt:Image id="Icon.16" DefaultValue="https://draftproof.app/icon-16.png" />
+        <bt:Image id="Icon.32" DefaultValue="https://draftproof.app/icon-32.png" />
+        <bt:Image id="Icon.80" DefaultValue="https://draftproof.app/icon-80.png" />
       </bt:Images>
       <bt:Urls>
         <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://draftproof.app/api-keys" />
