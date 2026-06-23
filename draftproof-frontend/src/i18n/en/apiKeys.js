@@ -14,9 +14,11 @@ export const apiKeys = {
     wordTab: "Microsoft Word",
     gdocsTab: "Google Docs",
     download: "Download manifest",
+    // allow-hardcode: i18n install-step UI copy (human-written instructions), not scoring/matching logic.
     wordSteps: [
       "Word on the web: Home → Add-ins → More Add-ins → My Add-ins → Upload My Add-in → pick the downloaded file.",
-      "Word desktop: put the file in a Trusted Add-in Catalog folder (Windows) or the Word ‘wef’ folder (Mac), restart Word, then Insert → My Add-ins.",
+      "Word desktop (Mac): copy the file into `~/Library/Containers/com.microsoft.Word/Data/Documents/wef` (create the `wef` folder if it isn't there), restart Word, then Insert → My Add-ins → Shared Folder.",
+      "Word desktop (Windows): put the file in a folder, share it (Properties → Sharing), then add the share path under File → Options → Trust Center → Trust Center Settings → Trusted Add-in Catalogs (tick “Show in Menu”). Restart Word, then Insert → My Add-ins → Shared Folder.",
       "Open DraftProof → Scan selection, paste a key from below, highlight text, and scan.",
     ],
     gdocsSteps: [

@@ -6,6 +6,11 @@ import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import { listApiKeys, createApiKey, revokeApiKey } from '../api/draftproofApi';
 
+// Render an install step, showing any `backtick`-wrapped path in monospace.
+function withCodePaths(text) {
+  return text.split('`').map((seg, i) => (i % 2 === 1 ? <code key={i}>{seg}</code> : seg));
+}
+
 function formatDate(iso, locale) {
   if (!iso) return null;
   const d = new Date(iso);
@@ -172,7 +177,7 @@ export default function ApiKeys() {
                   </a>
                   <ol>
                     {t('apiKeys.addon.wordSteps', { returnObjects: true }).map((s, i) => (
-                      <li key={i}>{s}</li>
+                      <li key={i}>{withCodePaths(s)}</li>
                     ))}
                   </ol>
                 </>

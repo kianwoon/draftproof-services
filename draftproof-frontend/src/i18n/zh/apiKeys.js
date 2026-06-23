@@ -14,9 +14,11 @@ export const apiKeys = {
     wordTab: "Microsoft Word",
     gdocsTab: "Google 文档",
     download: "下载清单文件",
+    // allow-hardcode: i18n install-step UI copy (human-written instructions), not scoring/matching logic.
     wordSteps: [
       "Word 网页版：开始 → 加载项 → 更多加载项 → 我的加载项 → 上传我的加载项 → 选择已下载的文件。",
-      "Word 桌面版：将文件放入受信任加载项目录文件夹（Windows）或 Word 的 “wef” 文件夹（Mac），重启 Word，然后插入 → 我的加载项。",
+      "Word 桌面版（Mac）：将文件复制到 `~/Library/Containers/com.microsoft.Word/Data/Documents/wef`（若没有 `wef` 文件夹请新建），重启 Word，然后 插入 → 我的加载项 → 共享文件夹。",
+      "Word 桌面版（Windows）：将文件放入一个文件夹并共享（属性 → 共享），然后在 文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的加载项目录 中添加该共享路径（勾选“在菜单中显示”）。重启 Word，然后 插入 → 我的加载项 → 共享文件夹。",
       "打开 DraftProof → 扫描所选文本，从下方粘贴密钥，选中文本并扫描。",
     ],
     gdocsSteps: [
