@@ -61,6 +61,31 @@ Set-ItemProperty $key Url $unc
 Set-ItemProperty $key Flags 1 -Type DWord
 Write-Host "Installed. Close all Office apps, reopen Word, then Home > Add-ins > Advanced > SHARED FOLDER > DraftProof > Add."`;
 
+// Product logo beside an install tab, for instant recognition. Decorative
+// (aria-hidden) — the tab text still names the app.
+function AppIcon({ app }) {
+  if (app === 'word') {
+    return (
+      <svg className="api-keys-tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3" y="2" width="18" height="20" rx="2.5" fill="#2B579A" />
+        <text x="12" y="16.5" textAnchor="middle" fontFamily="Arial, sans-serif" fontWeight="700" fontSize="11" fill="#fff">W</text>
+      </svg>
+    );
+  }
+  if (app === 'gdocs') {
+    return (
+      <svg className="api-keys-tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" fill="#4285F4" />
+        <path d="M14 2v6h6z" fill="#A1C2FA" />
+        <g stroke="#fff" strokeWidth="1.3" strokeLinecap="round">
+          <path d="M8 12.5h8M8 15.5h8M8 18.5h5" />
+        </g>
+      </svg>
+    );
+  }
+  return null;
+}
+
 function ScriptBlock({ os, label, code, copyLabel, copiedLabel }) {
   const [done, setDone] = useState(false);
   const copy = async () => {
@@ -234,14 +259,14 @@ export default function ApiKeys() {
                   className={`api-keys-addon-tab${installOS === 'word' ? ' is-active' : ''}`}
                   onClick={() => setInstallOS('word')}
                 >
-                  {t('apiKeys.addon.wordTab')}
+                  <AppIcon app="word" />{t('apiKeys.addon.wordTab')}
                 </button>
                 <button
                   type="button"
                   className={`api-keys-addon-tab${installOS === 'gdocs' ? ' is-active' : ''}`}
                   onClick={() => setInstallOS('gdocs')}
                 >
-                  {t('apiKeys.addon.gdocsTab')}
+                  <AppIcon app="gdocs" />{t('apiKeys.addon.gdocsTab')}
                 </button>
               </div>
               {installOS === 'word' ? (
