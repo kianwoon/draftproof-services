@@ -12,7 +12,7 @@ export const landing = {
   "heroLead": "DraftProof 会指出你还无法支撑的论断，以及读起来像机器写的段落，再追问你真正想表达什么——让你在提交前用自己的证据和推理，为每一个观点立稳依据。",
   "runCheck": "审阅我的内容",
   "viewSample": "查看示例报告",
-  "trustNote": "不是检测绕过工具 · 不是学术不端判定 · 是可执行的依据支撑与完整性审阅。",
+  "trustNote": "不是 Turnitin 的替代品 · 不是学术不端判定 · 在提交前做好准备，并留存负责任使用 AI 的证据。",
   // allow-hardcode: i18n 展示文案，用于落地页用例轮播——仅作为界面文本呈现给用户，
   // 绝不与文档内容比对、也不作为评分/匹配判定（与上方 heroReviewSteps/anchorCards 同类）。
   "useCasesLabel": "DraftProof 如何针对你的情况提供帮助",

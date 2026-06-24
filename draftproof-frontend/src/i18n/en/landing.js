@@ -12,7 +12,7 @@ export const landing = {
   "heroLead": "DraftProof points to the claims you can’t yet back up and the passages that sound machine-written, then asks what you actually meant — so you ground every point with your own evidence and reasoning before submission.",
   "runCheck": "Review my content",
   "viewSample": "View sample report",
-  "trustNote": "Not a detector bypass · Not a misconduct verdict · A grounding and integrity review you can act on.",
+  "trustNote": "Not a Turnitin replacement · Not a misconduct verdict · Prepare before submission, with evidence of responsible AI use.",
   // allow-hardcode: i18n display copy for the landing use-case carousel — UI text rendered to users,
   // never compared against document content or used as a scoring/matching oracle (same category as heroReviewSteps/anchorCards).
   "useCasesLabel": "How DraftProof helps in your situation",

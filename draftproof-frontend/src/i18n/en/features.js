@@ -2,9 +2,9 @@
 
 export const featuresPage = {
   eyebrow: "Why DraftProof",
-  title: "Detect. Understand. Improve.",
-  lead: "Every other detector tells you that you failed. DraftProof shows you how to pass — by teaching you to write better.",
-  tableLabel: "How we compare",
+  title: "Prepare. Improve. Prove.",
+  lead: "AI detectors flag your writing after you submit — DraftProof works before. It helps you prepare your draft and keep evidence of responsible AI use, rather than replacing your institution's checker.",
+  tableLabel: "How DraftProof is different",
   competitors: ["DraftProof", "GPTZero", "Turnitin", "Originality.ai", "Winston AI"],
   rows: [
     { label: "Paragraph-level output", values: ["yes", "yes", "yes", "yes", "no"] },

@@ -2,9 +2,9 @@
 
 export const featuresPage = {
   eyebrow: "为什么选择 DraftProof",
-  title: "检测。理解。提升。",
-  lead: "其他检测工具只告诉你不合格。DraftProof 告诉你如何通过 — 通过教你更好地写作。",
-  tableLabel: "功能对比",
+  title: "准备。改进。证明。",
+  lead: "AI 检测工具在你提交之后才标记你的写作 —— DraftProof 在此之前介入。它帮你准备好草稿，并留存你负责任使用 AI 的证据，而不是替代你所在机构的检测工具。",
+  tableLabel: "DraftProof 有何不同",
   competitors: ["DraftProof", "GPTZero", "Turnitin", "Originality.ai", "Winston AI"],
   rows: [
     { label: "段落级别输出", values: ["yes", "yes", "yes", "yes", "no"] },
