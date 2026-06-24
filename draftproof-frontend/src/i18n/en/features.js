@@ -39,6 +39,11 @@ export const featuresPage = {
       title: "Critical thinking control",
       body: "Five dimensions — specific context, student judgement, reasoning trail, evidence grounding, AI dependency — tell you what to think harder about.",
     },
+    {
+      icon: "ti-puzzle",
+      title: "Works inside Word & Google Docs",
+      body: "Scan highlighted text right where you write — DraftProof add-ins for Microsoft Word and Google Docs, no copy-paste.",
+    },
   ],
   rewriteCards: [
     {

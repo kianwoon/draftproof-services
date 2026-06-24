@@ -39,6 +39,11 @@ export const featuresPage = {
       title: "批判性思维控制",
       body: "五个维度 —— 具体情境、学生判断、推理轨迹、证据依据、AI 依赖度 —— 告诉你需要更深入思考的方向。",
     },
+    {
+      icon: "ti-puzzle",
+      title: "在 Word 与 Google 文档中直接使用",
+      body: "在你写作的地方直接扫描选中的文字 —— DraftProof 提供 Microsoft Word 与 Google 文档加载项，无需复制粘贴。",
+    },
   ],
   rewriteCards: [
     {
