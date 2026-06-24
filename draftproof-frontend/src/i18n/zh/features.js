@@ -19,17 +19,11 @@ export const featuresPage = {
   ],
   cardsLabel: "DraftProof 独有功能",
   // allow-hardcode: user-facing feature-card copy for /features — marketing prose, not a detector list or logic gate
-  cards: [
-    {
-      icon: "ti-writing",
-      title: "自动生成前后对比改写",
-      body: "扫描标记出有风险的段落，改写则为每一处生成一份前后对比 —— 该补充的锚点、来源和细节 —— 让你在提交前用自己的话重写。",
-    },
-    {
-      icon: "ti-brain",
-      title: "供你学习的范例",
-      body: "改写是一个示范，而不是可直接提交的答案。你看到有依据的写作是什么样子，然后把它变成你自己的。",
-    },
+  tabs: {
+    scan: { label: "扫描", desc: "诊断哪些内容被标记、以及为什么 —— 在你提交之前。" },
+    rewrite: { label: "改写", desc: "一份前后对比的范例，供你用自己的话重写。" },
+  },
+  scanCards: [
     {
       icon: "ti-shield-check",
       title: "政策风险（双模式）",
@@ -37,8 +31,30 @@ export const featuresPage = {
     },
     {
       icon: "ti-clipboard-check",
-      title: "提交与思维所有权",
-      body: '“你能证明这是你自己的作品吗？” —— 从文本模式、思维所有权和学术依据来评估，并用五个维度告诉你需要更深入思考的方向。',
+      title: "提交风险评估",
+      body: '“你能证明这是你自己的作品吗？” —— 从三个维度评估：文本模式、思维所有权和学术依据。',
+    },
+    {
+      icon: "ti-brain",
+      title: "批判性思维控制",
+      body: "五个维度 —— 具体情境、学生判断、推理轨迹、证据依据、AI 依赖度 —— 告诉你需要更深入思考的方向。",
+    },
+  ],
+  rewriteCards: [
+    {
+      icon: "ti-writing",
+      title: "自动生成前后对比改写",
+      body: "扫描标记出有风险的段落，改写则为每一处生成一份前后对比 —— 该补充的锚点、来源和细节 —— 让你在提交前用自己的话重写。",
+    },
+    {
+      icon: "ti-bulb",
+      title: "供你学习的范例",
+      body: "改写是一个示范，而不是可直接提交的答案。你看到有依据的写作是什么样子，然后把它变成你自己的。",
+    },
+    {
+      icon: "ti-git-compare",
+      title: "可直接采用的前后对比",
+      body: "高亮的逐段对比清楚展示改了什么、为什么改 —— 让你用自己的话采纳每一处修改。",
     },
   ],
   ctaTitle: "以全新视角审视你的写作。",

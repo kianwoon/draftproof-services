@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
@@ -18,7 +19,13 @@ export default function Features() {
 
   const competitors = t('featuresPage.competitors', { returnObjects: true });
   const rows = t('featuresPage.rows', { returnObjects: true });
-  const cards = t('featuresPage.cards', { returnObjects: true });
+  const tabKeys = ['scan', 'rewrite'];
+  const [activeTab, setActiveTab] = useState('scan');
+  const cardsByTab = {
+    scan: t('featuresPage.scanCards', { returnObjects: true }),
+    rewrite: t('featuresPage.rewriteCards', { returnObjects: true }),
+  };
+  const activeCards = Array.isArray(cardsByTab[activeTab]) ? cardsByTab[activeTab] : [];
 
   return (
     <main className="feat-shell">
@@ -64,8 +71,30 @@ export default function Features() {
 
         <section>
           <p className="feat-section-label">{t('featuresPage.cardsLabel')}</p>
-          <div className="feat-cards">
-            {cards.map((card) => (
+          <div className="feat-tabs" role="tablist" aria-label={t('featuresPage.cardsLabel')}>
+            {tabKeys.map((key) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                id={`feat-tab-${key}`}
+                aria-selected={activeTab === key}
+                aria-controls="feat-tab-panel"
+                className={`feat-tab${activeTab === key ? ' is-active' : ''}`}
+                onClick={() => setActiveTab(key)}
+              >
+                {t(`featuresPage.tabs.${key}.label`)}
+              </button>
+            ))}
+          </div>
+          <p className="feat-tab-desc">{t(`featuresPage.tabs.${activeTab}.desc`)}</p>
+          <div
+            className="feat-cards"
+            id="feat-tab-panel"
+            role="tabpanel"
+            aria-labelledby={`feat-tab-${activeTab}`}
+          >
+            {activeCards.map((card) => (
               <div className="feat-card" key={card.title}>
                 <div className="feat-card-icon" aria-hidden="true">
                   <i className={`ti ${card.icon}`} />

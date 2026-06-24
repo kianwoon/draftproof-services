@@ -1973,6 +1973,45 @@
   color: var(--gold);
 }
 
+.feat-tabs {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 0.6rem;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.feat-tab {
+  appearance: none;
+  border: 0;
+  border-radius: 9px;
+  padding: 0.5rem 1.15rem;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.feat-tab:hover {
+  color: var(--ink);
+}
+
+.feat-tab.is-active {
+  background: var(--green);
+  color: #fff;
+}
+
+.feat-tab-desc {
+  margin: 0 0 1.25rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .feat-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;
