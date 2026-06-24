@@ -3,6 +3,7 @@ export const footer = {
   "howItWorks": "工作方式",
   "sampleReport": "示例报告",
   "essayChecker": "内容检查器",
+  "academicIntegrity": "学术诚信",
   "pricing": "价格",
   "faq": "常见问题",
   "privacy": "隐私",

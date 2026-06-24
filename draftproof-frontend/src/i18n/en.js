@@ -23,6 +23,10 @@ import { errorReload } from './en/errorReload.js';
 import { ticker } from './en/ticker.js';
 import { featuresPage } from './en/features.js';
 import { apiKeys } from './en/apiKeys.js';
+import { turnitinScore } from './en/turnitinScore.js';
+import { academicIntegrity } from './en/academicIntegrity.js';
+import { aiDeclaration } from './en/aiDeclaration.js';
+import { reduceDetection } from './en/reduceDetection.js';
 
 export const enTranslation = {
   "common": common,
@@ -50,4 +54,8 @@ export const enTranslation = {
   "ticker": ticker,
   "featuresPage": featuresPage,
   "apiKeys": apiKeys,
+  "turnitinScore": turnitinScore,
+  "academicIntegrity": academicIntegrity,
+  "aiDeclaration": aiDeclaration,
+  "reduceDetection": reduceDetection,
 };

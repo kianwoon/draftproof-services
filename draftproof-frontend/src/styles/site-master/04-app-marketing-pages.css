@@ -1247,6 +1247,99 @@
   }
 }
 
+/* ── SEO landing pages (shared SeoLandingPage renderer) ── */
+.seo-section-lead {
+  max-width: 760px;
+  margin: -4px 0 18px;
+  color: var(--muted);
+}
+
+.seo-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.seo-template-card {
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  border: .5px solid rgba(13, 27, 42, .08);
+  border-left: 3px solid var(--green);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.seo-template-card h3 {
+  margin-bottom: 10px;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.seo-template-text {
+  margin: 0 0 10px;
+  padding: 14px;
+  border: .5px solid rgba(13, 27, 42, .08);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .86rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.seo-template-note {
+  margin: auto 0 0;
+  color: var(--muted);
+  font-size: .82rem;
+}
+
+.seo-related-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.seo-related-link {
+  display: block;
+  padding: 18px 20px;
+  border: .5px solid rgba(13, 27, 42, .08);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color .15s var(--ease), transform .15s var(--ease);
+}
+
+.seo-related-link:hover {
+  border-color: rgba(58, 168, 118, .35);
+  transform: translateY(-2px);
+}
+
+.seo-related-link strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--green-dark);
+  font-size: .98rem;
+  font-weight: 700;
+}
+
+.seo-related-link span {
+  color: var(--muted);
+  font-size: .86rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .seo-template-grid,
+  .seo-related-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── FAQ Page ─────────────────────────────── */
 .faq-shell {
   padding: 2rem 0 4.5rem;

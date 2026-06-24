@@ -23,6 +23,10 @@ import { errorReload } from './zh/errorReload.js';
 import { ticker } from './zh/ticker.js';
 import { featuresPage } from './zh/features.js';
 import { apiKeys } from './zh/apiKeys.js';
+import { turnitinScore } from './zh/turnitinScore.js';
+import { academicIntegrity } from './zh/academicIntegrity.js';
+import { aiDeclaration } from './zh/aiDeclaration.js';
+import { reduceDetection } from './zh/reduceDetection.js';
 
 export const zhTranslation = {
   "common": common,
@@ -50,4 +54,8 @@ export const zhTranslation = {
   "ticker": ticker,
   "featuresPage": featuresPage,
   "apiKeys": apiKeys,
+  "turnitinScore": turnitinScore,
+  "academicIntegrity": academicIntegrity,
+  "aiDeclaration": aiDeclaration,
+  "reduceDetection": reduceDetection,
 };

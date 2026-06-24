@@ -23,6 +23,8 @@ export const SEO_REVIEW_DATE = '2026-06-05';
 export const HOME_REVIEW_DATE = '2026-06-16';
 // Content-checker + FAQ copy extended to surface the Critical Thinking module.
 export const CRITICAL_THINKING_REVIEW_DATE = '2026-06-17';
+// SEO keyword landing pages (Turnitin score, academic integrity, AI declaration, reduce detection).
+export const SEO_LANDING_REVIEW_DATE = '2026-06-24';
 
 export const PAGE_META = {
   '/': {
@@ -56,6 +58,38 @@ export const PAGE_META = {
     canonical: '/content-checker',
     schemaType: 'WebPage',
     freshness: { type: 'reviewed', date: CRITICAL_THINKING_REVIEW_DATE },
+  },
+  '/turnitin-ai-score': {
+    titleKey: 'seo.turnitinScoreTitle',
+    descriptionKey: 'seo.turnitinScoreDescription',
+    socialDescriptionKey: 'seo.turnitinScoreSocialDescription',
+    canonical: '/turnitin-ai-score',
+    schemaType: 'WebPage',
+    freshness: { type: 'reviewed', date: SEO_LANDING_REVIEW_DATE },
+  },
+  '/academic-integrity-ai': {
+    titleKey: 'seo.academicIntegrityTitle',
+    descriptionKey: 'seo.academicIntegrityDescription',
+    socialDescriptionKey: 'seo.academicIntegritySocialDescription',
+    canonical: '/academic-integrity-ai',
+    schemaType: 'WebPage',
+    freshness: { type: 'reviewed', date: SEO_LANDING_REVIEW_DATE },
+  },
+  '/ai-declaration': {
+    titleKey: 'seo.aiDeclarationTitle',
+    descriptionKey: 'seo.aiDeclarationDescription',
+    socialDescriptionKey: 'seo.aiDeclarationSocialDescription',
+    canonical: '/ai-declaration',
+    schemaType: 'WebPage',
+    freshness: { type: 'reviewed', date: SEO_LANDING_REVIEW_DATE },
+  },
+  '/reduce-ai-detection': {
+    titleKey: 'seo.reduceDetectionTitle',
+    descriptionKey: 'seo.reduceDetectionDescription',
+    socialDescriptionKey: 'seo.reduceDetectionSocialDescription',
+    canonical: '/reduce-ai-detection',
+    schemaType: 'WebPage',
+    freshness: { type: 'reviewed', date: SEO_LANDING_REVIEW_DATE },
   },
   '/pricing': {
     titleKey: 'seo.pricingTitle',

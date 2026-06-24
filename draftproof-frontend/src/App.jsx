@@ -26,6 +26,7 @@ import Support from './pages/Support';
 import Eula from './pages/Eula';
 import Security from './pages/Security';
 import EssayChecker from './pages/EssayChecker';
+import SeoLandingPage from './pages/SeoLandingPage';
 import NotFound from './pages/NotFound';
 import BuyTokens from './pages/BuyTokens';
 import PurchaseHistory from './pages/PurchaseHistory';
@@ -125,6 +126,14 @@ export default function App() {
             <Route path="/zh/content-checker" element={<EssayChecker />} />
             <Route path="/essay-checker" element={<Navigate to="/content-checker" replace />} />
             <Route path="/zh/essay-checker" element={<Navigate to="/zh/content-checker" replace />} />
+            <Route path="/turnitin-ai-score" element={<SeoLandingPage ns="turnitinScore" path="/turnitin-ai-score" />} />
+            <Route path="/zh/turnitin-ai-score" element={<SeoLandingPage ns="turnitinScore" path="/turnitin-ai-score" />} />
+            <Route path="/academic-integrity-ai" element={<SeoLandingPage ns="academicIntegrity" path="/academic-integrity-ai" />} />
+            <Route path="/zh/academic-integrity-ai" element={<SeoLandingPage ns="academicIntegrity" path="/academic-integrity-ai" />} />
+            <Route path="/ai-declaration" element={<SeoLandingPage ns="aiDeclaration" path="/ai-declaration" />} />
+            <Route path="/zh/ai-declaration" element={<SeoLandingPage ns="aiDeclaration" path="/ai-declaration" />} />
+            <Route path="/reduce-ai-detection" element={<SeoLandingPage ns="reduceDetection" path="/reduce-ai-detection" />} />
+            <Route path="/zh/reduce-ai-detection" element={<SeoLandingPage ns="reduceDetection" path="/reduce-ai-detection" />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/zh/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
