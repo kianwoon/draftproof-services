@@ -18,26 +18,27 @@ export const featuresPage = {
     { label: "个人可直接使用（无需机构账号）", values: ["yes", "yes", "no", "yes", "yes"] },
   ],
   cardsLabel: "DraftProof 独有功能",
+  // allow-hardcode: user-facing feature-card copy for /features — marketing prose, not a detector list or logic gate
   cards: [
     {
       icon: "ti-writing",
-      title: "基于依据的改写辅导",
-      body: "展示你段落的改写示例，包含具体锚点、来源和细节 — 让你看到有依据的写作是什么样子。",
+      title: "自动生成前后对比改写",
+      body: "扫描标记出有风险的段落，改写则为每一处生成一份前后对比 —— 该补充的锚点、来源和细节 —— 让你在提交前用自己的话重写。",
+    },
+    {
+      icon: "ti-brain",
+      title: "供你学习的范例",
+      body: "改写是一个示范，而不是可直接提交的答案。你看到有依据的写作是什么样子，然后把它变成你自己的。",
     },
     {
       icon: "ti-shield-check",
       title: "政策风险（双模式）",
-      body: '同一引擎生成两个评分 — “允许使用 AI”与“限制使用 AI” — 匹配你所在机构的实际政策，而非单一通用判定。',
+      body: '同一引擎生成两个评分 —— “允许使用 AI”与“限制使用 AI” —— 匹配你所在机构的实际政策，而非单一通用判定。',
     },
     {
       icon: "ti-clipboard-check",
-      title: "提交风险评估",
-      body: '“你能证明这是你自己的作品吗？” — 从三个维度评估：文本模式、思维所有权和学术依据。',
-    },
-    {
-      icon: "ti-brain",
-      title: "批判性思维控制",
-      body: "五个维度 — 具体情境、学生判断、推理轨迹、证据依据、AI 依赖度 — 告诉你需要更深入思考的方向。",
+      title: "提交与思维所有权",
+      body: '“你能证明这是你自己的作品吗？” —— 从文本模式、思维所有权和学术依据来评估，并用五个维度告诉你需要更深入思考的方向。',
     },
   ],
   ctaTitle: "以全新视角审视你的写作。",

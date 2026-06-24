@@ -18,11 +18,17 @@ export const featuresPage = {
     { label: "Individual access (no institution needed)", values: ["yes", "yes", "no", "yes", "yes"] },
   ],
   cardsLabel: "DraftProof-only features",
+  // allow-hardcode: user-facing feature-card copy for /features — marketing prose, not a detector list or logic gate
   cards: [
     {
       icon: "ti-writing",
-      title: "Grounded rewrite coaching",
-      body: "Shows a worked example of your paragraph with concrete anchors, sources, and specifics — so you see what grounded writing looks like.",
+      title: "Auto before/after rewrite",
+      body: "Scan flags the passages; the rewrite generates a worked before/after for each — the anchors, sources, and specifics to add — so you revise in your own words before you submit.",
+    },
+    {
+      icon: "ti-brain",
+      title: "A solution to learn from",
+      body: "The rewrite is a teaching example, not a submit-ready answer. You see what grounded writing looks like, then make it yours.",
     },
     {
       icon: "ti-shield-check",
@@ -31,13 +37,8 @@ export const featuresPage = {
     },
     {
       icon: "ti-clipboard-check",
-      title: "Submission risk framing",
-      body: "\"Can you defend this as your own work?\" — framed across three layers: text pattern, thinking ownership, and academic grounding.",
-    },
-    {
-      icon: "ti-brain",
-      title: "Critical thinking control",
-      body: "Five dimensions — specific context, student judgement, reasoning trail, evidence grounding, AI dependency — tell you what to think harder about.",
+      title: "Submission & thinking ownership",
+      body: "\"Can you defend this as your own work?\" — across text patterns, thinking ownership, and academic grounding, with five dimensions that show what to think harder about.",
     },
   ],
   ctaTitle: "See your writing through a new lens.",
