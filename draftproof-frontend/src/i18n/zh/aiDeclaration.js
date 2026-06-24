@@ -10,6 +10,25 @@ export const aiDeclaration = {
     "value": "披露 AI 的使用",
     "detail": "简短、具体、诚实的致谢"
   },
+  // allow-hardcode: human-crafted declaration-builder UI strings + user-fill template, not a scoring/matching oracle
+  "generator": {
+    "eyebrow": "声明生成器",
+    "title": "生成你的声明。",
+    "subtitle": "填好空格并复制你的声明。它只留在你的设备上——不会被发送或存储。",
+    "toolLabel": "你使用的工具",
+    "toolPlaceholder": "例如 ChatGPT",
+    "purposeLabel": "你用它来做什么",
+    "purposePlaceholder": "例如 头脑风暴并搭建提纲",
+    "dateLabel": "日期（可选）",
+    "datePlaceholder": "例如 2026 年 3 月 12 日",
+    "outputLabel": "你的声明",
+    "copy": "复制声明",
+    "copied": "已复制！",
+    "template": "在准备这份作业的过程中，我使用了 {{tool}} 以 {{purpose}}{{dateClause}}。在使用该工具后，我已按需审阅并编辑了内容，并对本次提交的内容承担全部责任。",
+    "dateClause": "（于 {{date}}）",
+    "emptyTool": "[工具]",
+    "emptyPurpose": "[用途]"
+  },
   "intro": [
     {
       "title": "为什么要声明？",

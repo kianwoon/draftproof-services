@@ -130,8 +130,8 @@ export default function App() {
             <Route path="/zh/turnitin-ai-score" element={<SeoLandingPage ns="turnitinScore" path="/turnitin-ai-score" />} />
             <Route path="/academic-integrity-ai" element={<SeoLandingPage ns="academicIntegrity" path="/academic-integrity-ai" />} />
             <Route path="/zh/academic-integrity-ai" element={<SeoLandingPage ns="academicIntegrity" path="/academic-integrity-ai" />} />
-            <Route path="/ai-declaration" element={<SeoLandingPage ns="aiDeclaration" path="/ai-declaration" />} />
-            <Route path="/zh/ai-declaration" element={<SeoLandingPage ns="aiDeclaration" path="/ai-declaration" />} />
+            <Route path="/ai-declaration" element={<SeoLandingPage ns="aiDeclaration" path="/ai-declaration" generator />} />
+            <Route path="/zh/ai-declaration" element={<SeoLandingPage ns="aiDeclaration" path="/ai-declaration" generator />} />
             <Route path="/reduce-ai-detection" element={<SeoLandingPage ns="reduceDetection" path="/reduce-ai-detection" />} />
             <Route path="/zh/reduce-ai-detection" element={<SeoLandingPage ns="reduceDetection" path="/reduce-ai-detection" />} />
             <Route path="/privacy" element={<Privacy />} />

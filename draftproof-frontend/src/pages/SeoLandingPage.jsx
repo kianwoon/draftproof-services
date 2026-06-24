@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
+import DeclarationGenerator from '../components/DeclarationGenerator';
 import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 /**
@@ -11,7 +12,7 @@ import { getLocaleFromPathname, localizePath } from '../localeRouting';
  * namespace so each keyword page is just a content file. See
  * docs/superpowers/specs/2026-06-24-seo-landing-pages-design.md
  */
-export default function SeoLandingPage({ ns, path }) {
+export default function SeoLandingPage({ ns, path, generator = false }) {
   const { t } = useTranslation();
   const location = useLocation();
   const locale = getLocaleFromPathname(location.pathname);
@@ -46,6 +47,8 @@ export default function SeoLandingPage({ ns, path }) {
             </div>
           )}
         </section>
+
+        {generator && <DeclarationGenerator />}
 
         {intro.length > 0 && (
           <section className="content-checker-intro">

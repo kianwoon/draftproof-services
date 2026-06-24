@@ -10,6 +10,25 @@ export const aiDeclaration = {
     "value": "Disclosing AI use",
     "detail": "Short, specific, honest acknowledgements"
   },
+  // allow-hardcode: human-crafted declaration-builder UI strings + user-fill template, not a scoring/matching oracle
+  "generator": {
+    "eyebrow": "Declaration builder",
+    "title": "Build your declaration.",
+    "subtitle": "Fill in the blanks and copy your statement. It stays on your device — nothing is sent or stored.",
+    "toolLabel": "Tool you used",
+    "toolPlaceholder": "e.g. ChatGPT",
+    "purposeLabel": "What you used it for",
+    "purposePlaceholder": "e.g. brainstorm ideas and structure an outline",
+    "dateLabel": "Date (optional)",
+    "datePlaceholder": "e.g. 12 March 2026",
+    "outputLabel": "Your declaration",
+    "copy": "Copy declaration",
+    "copied": "Copied!",
+    "template": "During the preparation of this work I used {{tool}} in order to {{purpose}}{{dateClause}}. After using this tool, I reviewed and edited the content as needed and take full responsibility for the content of this submission.",
+    "dateClause": " on {{date}}",
+    "emptyTool": "[TOOL]",
+    "emptyPurpose": "[REASON]"
+  },
   "intro": [
     {
       "title": "Why declare at all?",

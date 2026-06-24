@@ -1340,6 +1340,79 @@
   }
 }
 
+/* ── Declaration generator (interactive, /ai-declaration) ── */
+.declaration-generator-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.declaration-generator-fields {
+  display: grid;
+  gap: 14px;
+}
+
+.declaration-generator-fields label {
+  display: grid;
+  gap: 6px;
+}
+
+.declaration-generator-fields label span {
+  color: var(--ink);
+  font-size: .88rem;
+  font-weight: 600;
+}
+
+.declaration-generator-fields input {
+  padding: 11px 13px;
+  border: .5px solid rgba(13, 27, 42, .16);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: .92rem;
+}
+
+.declaration-generator-fields input:focus {
+  outline: none;
+  border-color: rgba(58, 168, 118, .55);
+  box-shadow: 0 0 0 3px rgba(58, 168, 118, .12);
+}
+
+.declaration-generator-output {
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  border: .5px solid rgba(58, 168, 118, .22);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.declaration-generator-output-label {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.declaration-generator-output .seo-template-text {
+  flex: 1;
+  margin-bottom: 14px;
+}
+
+.declaration-generator-output .btn {
+  align-self: flex-start;
+}
+
+@media (max-width: 760px) {
+  .declaration-generator-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── FAQ Page ─────────────────────────────── */
 .faq-shell {
   padding: 2rem 0 4.5rem;
