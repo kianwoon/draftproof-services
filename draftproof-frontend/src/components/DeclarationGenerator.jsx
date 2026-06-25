@@ -18,13 +18,20 @@ export default function DeclarationGenerator() {
   const [date, setDate] = useState('');
   const [copied, setCopied] = useState(false);
 
+  // Substitute placeholders via replacer functions / a single pass: a function
+  // replacement returns its value literally, so user input containing `$&`,
+  // `$$`, etc. is not treated as a special replacement pattern. The single-pass
+  // template substitution also stops one field's text (e.g. a literal
+  // "{{purpose}}") from being re-scanned as another field's placeholder.
   const dateClause = date.trim()
-    ? g('dateClause').replace('{{date}}', date.trim())
+    ? g('dateClause').replace(/\{\{date\}\}/g, () => date.trim())
     : '';
-  const output = g('template')
-    .replace('{{tool}}', tool.trim() || g('emptyTool'))
-    .replace('{{purpose}}', purpose.trim() || g('emptyPurpose'))
-    .replace('{{dateClause}}', dateClause);
+  const fields = {
+    tool: tool.trim() || g('emptyTool'),
+    purpose: purpose.trim() || g('emptyPurpose'),
+    dateClause,
+  };
+  const output = g('template').replace(/\{\{(tool|purpose|dateClause)\}\}/g, (_, key) => fields[key]);
 
   const handleCopy = async () => {
     let ok = false;
