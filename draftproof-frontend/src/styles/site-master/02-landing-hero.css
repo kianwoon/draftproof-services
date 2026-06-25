@@ -101,6 +101,28 @@
   isolation: isolate;
 }
 
+/* Animated hero background. Sits as the first child at z-index 0, below the
+   ::after scrim (also z0, but the pseudo-element paints after in tree order),
+   the code rain (z1) and the copy grid (z2). The .landing-hero background-image
+   (hero_bg.webp) stays as the poster/fallback shown until the video paints and
+   for reduced-motion users. */
+.hero-bg-video {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 38%;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-bg-video {
+    display: none;
+  }
+}
+
 .landing-hero::after {
   content: "";
   position: absolute;

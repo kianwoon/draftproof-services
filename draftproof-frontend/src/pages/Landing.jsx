@@ -55,6 +55,18 @@ export default function Landing() {
   return (
     <main className="landing-page">
       <section id="hero" className="landing-hero">
+        <video
+          className="hero-bg-video"
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="auto"
+          poster="/landing/hero_bg.webp"
+          aria-hidden="true"
+        >
+          <source src="/landing/hero_background.mp4" type="video/mp4" />
+        </video>
         <CodeTexture id="landingHero" className="hero-code-field" />
         <div className="section-inner landing-hero-grid">
           <div className="hero-copy">
