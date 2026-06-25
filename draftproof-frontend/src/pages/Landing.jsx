@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
@@ -51,11 +51,33 @@ export default function Landing() {
   const heroTitleCarousel = useLandingCarousel(heroTitles.length, 4500);
   const canHover = typeof window !== 'undefined' && window.matchMedia?.('(hover: hover)').matches;
   const useCases = t('landing.useCases', { returnObjects: true });
+  const heroVideoRef = useRef(null);
+
+  // Mobile browsers (esp. iOS Safari) only autoplay a video they consider
+  // muted + inline. React's `muted` JSX attribute does NOT reliably set the
+  // underlying DOM property, so force it here and kick off playback explicitly;
+  // skip when the user prefers reduced motion (CSS hides the video → webp poster).
+  useEffect(() => {
+    const video = heroVideoRef.current;
+    if (!video) return undefined;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
+    video.muted = true;
+    video.setAttribute('muted', '');
+    const attemptPlay = () => {
+      const played = video.play();
+      if (played?.catch) played.catch(() => {});
+    };
+    attemptPlay();
+    // Retry once the tab/clip is actually ready in case the first call was too early.
+    video.addEventListener('loadeddata', attemptPlay, { once: true });
+    return () => video.removeEventListener('loadeddata', attemptPlay);
+  }, []);
 
   return (
     <main className="landing-page">
       <section id="hero" className="landing-hero">
         <video
+          ref={heroVideoRef}
           className="hero-bg-video"
           autoPlay
           muted
