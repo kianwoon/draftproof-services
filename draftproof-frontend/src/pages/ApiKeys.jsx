@@ -277,6 +277,15 @@ export default function ApiKeys() {
                     <p className="api-keys-muted api-keys-store-pending">{t('apiKeys.addon.wordStorePending')}</p>
                   </div>
                   <p className="api-keys-manual-title">{t('apiKeys.addon.wordManualTitle')}</p>
+                  <div className="api-keys-installers">
+                    <a className="btn btn-secondary btn-small api-keys-installer-btn" href="/draftproof-install.command.zip" download>
+                      <OsIcon os="mac" />{t('apiKeys.addon.installerMac')}
+                    </a>
+                    <a className="btn btn-secondary btn-small api-keys-installer-btn" href="/draftproof-install.bat" download>
+                      <OsIcon os="windows" />{t('apiKeys.addon.installerWin')}
+                    </a>
+                  </div>
+                  <p className="api-keys-muted api-keys-installer-note">{t('apiKeys.addon.installerNote')}</p>
                   <a className="btn btn-primary btn-small" href="/word-addin/manifest.xml" download="draftproof-manifest.xml">
                     {t('apiKeys.addon.download')}
                   </a>

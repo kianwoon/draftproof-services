@@ -1354,6 +1354,9 @@
 .api-keys-store-step { margin: 0; font-size: .9rem; line-height: 1.55; }
 .api-keys-store-pending { margin: 8px 0 0; font-size: .82rem; }
 .api-keys-manual-title { margin: 18px 0 4px; font-weight: 700; font-size: .9rem; color: var(--ink); }
+.api-keys-installers { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.api-keys-installer-btn { display: inline-flex; align-items: center; gap: 6px; }
+.api-keys-installer-note { margin: 0 0 12px; font-size: .82rem; }
 
 .api-keys-panel {
   background: var(--surface);

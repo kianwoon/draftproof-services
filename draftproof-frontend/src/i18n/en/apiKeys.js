@@ -18,6 +18,9 @@ export const apiKeys = {
     wordStoreStep: "In Word: Home → Add-ins → search “DraftProof” → Add. No files, no setup — works on Windows, Mac, and the web.",
     wordStorePending: "Coming soon: our Microsoft AppSource listing is in review. Until it's live, use the manual install below.",
     wordManualTitle: "Manual install (works today)",
+    installerMac: "macOS installer (.zip)",
+    installerWin: "Windows installer (.bat)",
+    installerNote: "Double-click to run. These are unsigned, so: macOS — unzip, then right-click → Open the first time (Gatekeeper); Windows — choose Run as administrator, and if SmartScreen warns, click More info → Run anyway.",
     // allow-hardcode: i18n install-step UI copy (human-written instructions), not scoring/matching logic.
     wordSteps: [
       { os: "web", text: "Word on the web: Home → Add-ins → More Add-ins → My Add-ins → Upload My Add-in → pick the downloaded file." },

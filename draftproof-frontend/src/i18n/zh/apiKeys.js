@@ -18,6 +18,9 @@ export const apiKeys = {
     wordStoreStep: "在 Word 中：开始 → 加载项 → 搜索 “DraftProof” → 添加。无需文件、无需设置——Windows、Mac 与网页版均可。",
     wordStorePending: "即将上线：我们的 Microsoft AppSource 上架正在审核中。上线前请使用下方的手动安装。",
     wordManualTitle: "手动安装（目前可用）",
+    installerMac: "macOS 安装程序（.zip）",
+    installerWin: "Windows 安装程序（.bat）",
+    installerNote: "双击运行。文件未签名，因此：macOS — 先解压，首次需右键 → 打开（Gatekeeper）；Windows — 选择“以管理员身份运行”，若 SmartScreen 警告，点击“更多信息 → 仍要运行”。",
     // allow-hardcode: i18n install-step UI copy (human-written instructions), not scoring/matching logic.
     wordSteps: [
       { os: "web", text: "Word 网页版：开始 → 加载项 → 更多加载项 → 我的加载项 → 上传我的加载项 → 选择已下载的文件。" },
