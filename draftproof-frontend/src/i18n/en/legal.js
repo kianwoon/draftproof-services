@@ -125,6 +125,27 @@ export const legal = {
         }
       },
       {
+        "title": "DraftProof Add-ins (Microsoft Word & Google Docs)",
+        "items": [
+          {
+            "title": "What the add-ins access",
+            "body": "DraftProof offers add-ins for Microsoft Word and Google Docs. They access only the text you select and choose to scan — nothing else in your document. In Google Docs the add-on uses the documents.currentonly permission, so it can read only the document you have open while the add-on is running, and never your other files or Drive."
+          },
+          {
+            "title": "How that text is used",
+            "body": "When you scan, the selected text is sent over HTTPS to the DraftProof API, authenticated by your personal API key, to produce the AI-writing-risk read and writing guidance. To generate that analysis the text is processed by our third-party AI processing providers for that sole purpose. Your content is not used to train any model, and is never sold or shared for advertising."
+          },
+          {
+            "title": "Storage, retention, and control",
+            "body": "Add-in scans are stored and purged on the same schedule as any other scan (see Data Retention & Deletion). You can revoke an add-in's API key at any time at draftproof.app/api-keys, which immediately stops its access."
+          },
+          {
+            "title": "Google API Services User Data Policy",
+            "body": "DraftProof's use of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements."
+          }
+        ]
+      },
+      {
         "title": "Data Retention & Deletion",
         "paragraphs": [
           "Generated scan and rewrite reports stay available in DraftProof for 3 days, then are purged from the system. Report copies are sent to your mailbox when email delivery is enabled so you can keep your own record.",

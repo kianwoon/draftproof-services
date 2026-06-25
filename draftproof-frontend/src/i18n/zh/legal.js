@@ -125,6 +125,27 @@ export const legal = {
         }
       },
       {
+        "title": "DraftProof 加载项（Microsoft Word 与 Google 文档）",
+        "items": [
+          {
+            "title": "加载项访问什么",
+            "body": "DraftProof 为 Microsoft Word 与 Google 文档提供加载项。它们只访问你选中并选择扫描的文本——不访问文档中的其他内容。在 Google 文档中，加载项使用 documents.currentonly 权限，因此只能读取你在加载项运行时打开的当前文档，绝不会访问你的其他文件或云端硬盘。"
+          },
+          {
+            "title": "这些文本如何使用",
+            "body": "当你扫描时，选中的文本通过 HTTPS 发送至 DraftProof API（以你的个人 API 密钥进行身份验证），以生成 AI 写作风险评估与写作建议。为生成该分析，文本会交由我们的第三方 AI 处理服务仅用于此目的进行处理。你的内容不会用于训练任何模型，也绝不会被出售或用于广告。"
+          },
+          {
+            "title": "存储、保留与控制",
+            "body": "加载项扫描的存储与清除遵循与其他扫描相同的时间表（见“数据保留与删除”）。你可随时在 draftproof.app/api-keys 撤销加载项的 API 密钥，撤销后即刻停止其访问。"
+          },
+          {
+            "title": "Google API 服务用户数据政策",
+            "body": "DraftProof 对从 Google API 获取的信息的使用遵守 Google API 服务用户数据政策，包括其中的有限使用（Limited Use）要求。"
+          }
+        ]
+      },
+      {
         "title": "数据保留与删除",
         "paragraphs": [
           "生成的扫描和改写报告会在 DraftProof 中保留 3 天，之后从系统中清理。启用邮件发送时，报告副本会发送到你的邮箱，方便你自行保存记录。",
