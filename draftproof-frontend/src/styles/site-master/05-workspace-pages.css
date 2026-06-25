@@ -1349,6 +1349,11 @@
 }
 .api-keys-addon-tab.is-active { background: var(--surface-mint); color: var(--green-dark); border-color: transparent; }
 .api-keys-tab-icon { width: 16px; height: 16px; flex: none; }
+.api-keys-store-block { margin-top: 14px; padding: 14px; border: 1px solid var(--green-200); border-radius: 10px; background: var(--surface-mint); }
+.api-keys-store-title { display: flex; align-items: center; gap: 7px; margin: 0 0 6px; font-weight: 700; font-size: .95rem; color: var(--green-dark); }
+.api-keys-store-step { margin: 0; font-size: .9rem; line-height: 1.55; }
+.api-keys-store-pending { margin: 8px 0 0; font-size: .82rem; }
+.api-keys-manual-title { margin: 18px 0 4px; font-weight: 700; font-size: .9rem; color: var(--ink); }
 
 .api-keys-panel {
   background: var(--surface);

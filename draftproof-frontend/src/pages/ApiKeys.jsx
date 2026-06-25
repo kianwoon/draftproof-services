@@ -271,6 +271,12 @@ export default function ApiKeys() {
               </div>
               {installOS === 'word' ? (
                 <>
+                  <div className="api-keys-store-block">
+                    <p className="api-keys-store-title"><AppIcon app="word" />{t('apiKeys.addon.wordStoreTitle')}</p>
+                    <p className="api-keys-store-step">{t('apiKeys.addon.wordStoreStep')}</p>
+                    <p className="api-keys-muted api-keys-store-pending">{t('apiKeys.addon.wordStorePending')}</p>
+                  </div>
+                  <p className="api-keys-manual-title">{t('apiKeys.addon.wordManualTitle')}</p>
                   <a className="btn btn-primary btn-small" href="/word-addin/manifest.xml" download="draftproof-manifest.xml">
                     {t('apiKeys.addon.download')}
                   </a>

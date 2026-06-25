@@ -14,6 +14,10 @@ export const apiKeys = {
     wordTab: "Microsoft Word",
     gdocsTab: "Google 文档",
     download: "下载清单文件",
+    wordStoreTitle: "最简单——从 Office 商店安装",
+    wordStoreStep: "在 Word 中：开始 → 加载项 → 搜索 “DraftProof” → 添加。无需文件、无需设置——Windows、Mac 与网页版均可。",
+    wordStorePending: "即将上线：我们的 Microsoft AppSource 上架正在审核中。上线前请使用下方的手动安装。",
+    wordManualTitle: "手动安装（目前可用）",
     // allow-hardcode: i18n install-step UI copy (human-written instructions), not scoring/matching logic.
     wordSteps: [
       { os: "web", text: "Word 网页版：开始 → 加载项 → 更多加载项 → 我的加载项 → 上传我的加载项 → 选择已下载的文件。" },

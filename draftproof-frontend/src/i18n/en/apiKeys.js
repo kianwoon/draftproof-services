@@ -14,6 +14,10 @@ export const apiKeys = {
     wordTab: "Microsoft Word",
     gdocsTab: "Google Docs",
     download: "Download manifest",
+    wordStoreTitle: "Easiest — install from the Office Store",
+    wordStoreStep: "In Word: Home → Add-ins → search “DraftProof” → Add. No files, no setup — works on Windows, Mac, and the web.",
+    wordStorePending: "Coming soon: our Microsoft AppSource listing is in review. Until it's live, use the manual install below.",
+    wordManualTitle: "Manual install (works today)",
     // allow-hardcode: i18n install-step UI copy (human-written instructions), not scoring/matching logic.
     wordSteps: [
       { os: "web", text: "Word on the web: Home → Add-ins → More Add-ins → My Add-ins → Upload My Add-in → pick the downloaded file." },
