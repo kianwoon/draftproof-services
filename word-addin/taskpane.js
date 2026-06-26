@@ -38,7 +38,7 @@
       "setup", "apiKey", "saveKey", "setupError",
       "scanner", "keyPrefix", "changeKey", "scanBtn", "status", "result",
       "selectionPreview", "wordCount", "docState", "headScores",
-      "versionRow", "versionSelect",
+      "versionRow", "versionSelect", "newScanBtn",
     ].forEach(function (id) { els[id] = document.getElementById(id); });
   }
 
@@ -47,6 +47,7 @@
     els.changeKey.addEventListener("click", onChangeKey);
     els.scanBtn.addEventListener("click", onScan);
     els.versionSelect.addEventListener("change", onVersionChange);
+    els.newScanBtn.addEventListener("click", onNewScan);
     // Click a finding's quoted/snippet text → jump to + highlight it in the doc.
     // Delegated because the result HTML is re-rendered on every scan.
     els.result.addEventListener("click", function (e) {
@@ -95,6 +96,17 @@
     clearResult();
     if (els.versionSelect) { els.versionSelect.innerHTML = ""; hide(els.versionRow); }
     render();
+  }
+
+  // Reset the pane to its clean scanning state, so it's obvious you can select
+  // new text and scan again. Past versions stay saved (the picker returns after
+  // the next scan / on reopen).
+  function onNewScan() {
+    clearResult();
+    if (els.versionRow) hide(els.versionRow);
+    setDocState(null);
+    updateSelectionPreview();
+    setStatus("Select text in your document, then tap Scan selected text.");
   }
 
   function onScan() {
