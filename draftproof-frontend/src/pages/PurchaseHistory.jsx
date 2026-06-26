@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getPurchaseHistory } from '../api/draftproofApi';
+import { getPurchaseHistory, isAuthExpiryError } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import CodeTexture from '../components/CodeTexture';
 import { TOKEN_CURRENCY_CODE } from '../pricingConfig';
@@ -97,6 +97,9 @@ export default function PurchaseHistory() {
       })
       .catch((err) => {
         if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
+        // Session expired → the global 401 interceptor is already redirecting to
+        // /signin; skip the ErrorReload countdown so the redirect is immediate.
+        if (isAuthExpiryError(err)) return;
         setError(err.response?.data?.detail || t('history.loadFailed'));
       })
       .finally(() => setLoading(false));

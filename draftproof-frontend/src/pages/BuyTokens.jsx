@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import api from '../api/draftproofApi';
+import api, { isAuthExpiryError } from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 import ErrorReload from '../components/ErrorReload';
 import CodeTexture from '../components/CodeTexture';
@@ -50,6 +50,9 @@ export default function BuyTokens() {
       const { data } = await api.post('/payments/checkout', { pack_id: packId });
       window.location.href = data.url;
     } catch (err) {
+      // Session expired → the global 401 interceptor is already redirecting to
+      // /signin; skip the ErrorReload countdown so the redirect is immediate.
+      if (isAuthExpiryError(err)) return;
       const msg = err.response?.data?.detail || t('buy.checkoutFailed');
       const status = err.response?.status;
       if (status >= 400) { setServerError(msg); } else { setMessage({ type: 'error', text: msg }); }

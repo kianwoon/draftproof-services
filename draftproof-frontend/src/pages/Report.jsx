@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, getRewriteDownload, getScanStatus, startScanWithText, translateText } from '../api/draftproofApi';
+import { getReport, createRewrite, cancelRewrite, getRewriteStatus, getRewriteReport, getRewriteDownload, getScanStatus, startScanWithText, translateText, isAuthExpiryError } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
@@ -505,6 +505,9 @@ export default function Report() {
       })
       .catch((err) => {
         if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
+        // Session expired → the global 401 interceptor is already redirecting to
+        // /signin; skip the ErrorReload countdown so the redirect is immediate.
+        if (isAuthExpiryError(err)) return;
         setError(err.response?.data?.detail || t('report.loadFailed'));
       })
       .finally(() => setLoading(false));

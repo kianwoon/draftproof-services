@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getRewriteStatus, getRewriteReport, getRewriteDownload } from '../api/draftproofApi';
+import { getRewriteStatus, getRewriteReport, getRewriteDownload, isAuthExpiryError } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import RewriteDraftEditor from './report/RewriteDraftEditor';
 import { useAuth } from '../context/AuthContext';
@@ -202,7 +202,9 @@ export default function Rewrite() {
         setReport(rewriteReport);
         refreshBalance();
       } catch (err) {
-        if (!cancelled) {
+        // Session expired → the global 401 interceptor is already redirecting to
+        // /signin; skip the ErrorReload countdown so the redirect is immediate.
+        if (!cancelled && !isAuthExpiryError(err)) {
           setError(err.response?.data?.detail || t('rewritePage.loadFailed'));
         }
       } finally {

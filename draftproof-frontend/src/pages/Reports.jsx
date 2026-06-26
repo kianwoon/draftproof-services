@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { listScans, deleteScan } from '../api/draftproofApi';
+import { listScans, deleteScan, isAuthExpiryError } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
 import ConfirmDialog from '../components/ConfirmDialog';
 import CodeTexture from '../components/CodeTexture';
@@ -75,6 +75,9 @@ export default function Reports() {
       })
       .catch((err) => {
         if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
+        // Session expired → the global 401 interceptor is already redirecting to
+        // /signin; skip the ErrorReload countdown so the redirect is immediate.
+        if (isAuthExpiryError(err)) return;
         setError(err.response?.data?.detail || t('reports.loadFailed'));
       })
       .finally(() => setLoading(false));

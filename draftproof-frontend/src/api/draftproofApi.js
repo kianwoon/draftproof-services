@@ -9,6 +9,51 @@ const api = axios.create({
   timeout: 300000, // 5 min — rewrite pipeline can take 3+ min
 });
 
+// --- Centralized session-expiry handling ----------------------------------
+// ProtectedRoute trusts the in-memory `user` (fetched once at app mount); the
+// auth cookie can expire while that state is still set, so a page renders fine
+// but its first data call comes back 401 "Not authenticated". Without this
+// interceptor each page reinvents the handling — and several (Reports, Report's
+// initial load, PurchaseHistory, Rewrite) fall through to ErrorReload's 10s
+// reload countdown instead of going to sign-in. Here we catch every 401 (and a
+// 403 whose detail is "not authenticated") in ONE place and hand it to a
+// handler registered by AuthContext, which clears auth state and redirects to
+// /signin immediately. Only the authenticated `api` instance carries this;
+// authApi (getMe/logout) deliberately does NOT, since getMe legitimately 401s
+// for anonymous visitors on every public page and would otherwise loop.
+let sessionExpiredHandler = null;
+let handlingSessionExpiry = false;
+
+export function registerSessionExpiredHandler(fn) {
+  sessionExpiredHandler = fn;
+}
+
+export function isAuthExpiryError(error) {
+  // Aborted/canceled requests carry no auth meaning — never treat them as expiry.
+  if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return false;
+  const status = error?.response?.status;
+  if (status === 401) return true;
+  const detail = String(error?.response?.data?.detail || '').toLowerCase();
+  return status === 403 && detail.includes('not authenticated');
+}
+
+api.interceptors.response.use(
+  (response) => {
+    // A successful authenticated call means we're signed in again — re-arm the
+    // guard so a future expiry (e.g. after re-login) is handled.
+    handlingSessionExpiry = false;
+    return response;
+  },
+  (error) => {
+    if (isAuthExpiryError(error) && sessionExpiredHandler && !handlingSessionExpiry) {
+      // Guard so parallel in-flight 401s trigger exactly one redirect.
+      handlingSessionExpiry = true;
+      sessionExpiredHandler();
+    }
+    return Promise.reject(error);
+  }
+);
+
 // Documents
 export const uploadDocument = (formData) =>
   api.post('/documents/upload', formData, {
