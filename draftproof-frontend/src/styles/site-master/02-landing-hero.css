@@ -337,6 +337,29 @@
   margin: 20px 0 14px;
 }
 
+.hero-free-credit {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 0 0 14px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(46, 204, 113, .12);
+  border: 1px solid rgba(46, 204, 113, .35);
+  color: rgba(255, 255, 255, .82);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.hero-free-credit-spark {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 4px rgba(46, 204, 113, .18);
+  flex-shrink: 0;
+}
+
 .landing-hero .btn-ghost,
 .landing-cta .btn-ghost {
   min-width: 204px;

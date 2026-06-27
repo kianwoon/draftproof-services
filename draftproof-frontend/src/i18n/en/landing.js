@@ -12,6 +12,9 @@ export const landing = {
   "heroLead": "DraftProof points to the claims you can’t yet back up and the passages that sound machine-written, then asks what you actually meant — so you ground every point with your own evidence and reasoning before submission.",
   "runCheck": "Review my content",
   "viewSample": "View sample report",
+  // allow-hardcode: i18n display copy. "5" mirrors the WELCOME_CREDITS default
+  // (draftproof-api/app/config.py); update if that env value changes. Not a scoring oracle.
+  "heroFreeCredits": "New here? Sign up and get 5 free credits to try — no card needed.",
   "trustNote": "Not a Turnitin replacement · Not a misconduct verdict · Prepare before submission, with evidence of responsible AI use.",
   // allow-hardcode: i18n display copy for the landing use-case carousel — UI text rendered to users,
   // never compared against document content or used as a scoring/matching oracle (same category as heroReviewSteps/anchorCards).
@@ -391,6 +394,8 @@ export const landing = {
   "ctaTitle": "DraftProof helps you ground the content before submission.",
   "ctaBody": "Before you submit, check that the work is original, properly cited, clearly written, and backed by sources or your own reasoning.",
   "ctaButton": "Review my content",
+  // allow-hardcode: i18n display copy. "5" mirrors the WELCOME_CREDITS default; not a scoring oracle.
+  "ctaFreeCredits": "New accounts get 5 free credits — no card needed.",
   "ctaSmall": "1 credit per 1,000 words · PDF report included · No bypass claims",
   "reportPreviewLabel": "DraftProof sample content review report preview",
   "reportPreviewTabsLabel": "Sample report sections",

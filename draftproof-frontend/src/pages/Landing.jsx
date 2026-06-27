@@ -138,6 +138,11 @@ export default function Landing() {
               <a href="#report" className="btn btn-ghost">{t('landing.viewSample')}</a>
             </div>
 
+            <p className="hero-free-credit">
+              <span className="hero-free-credit-spark" aria-hidden="true" />
+              {t('landing.heroFreeCredits')}
+            </p>
+
             <div className="trust-note">
               <span className="mini-shield" aria-hidden="true" />
               <span>{t('landing.trustNote')}</span>
@@ -261,6 +266,7 @@ export default function Landing() {
           <h2>{t('landing.ctaTitle')}</h2>
           <p>{t('landing.ctaBody')}</p>
           <Link to="/signin?next=/scan" className="btn btn-ghost">{t('landing.ctaButton')}</Link>
+          <p className="cta-free-credit">{t('landing.ctaFreeCredits')}</p>
           <small>{t('landing.ctaSmall')}</small>
         </div>
       </section>

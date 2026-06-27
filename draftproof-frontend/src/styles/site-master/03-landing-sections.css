@@ -1175,9 +1175,17 @@
   color: rgba(255, 255, 255, .52);
 }
 
+.landing-cta .cta-free-credit {
+  max-width: none;
+  margin: 18px auto 0;
+  color: var(--green);
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .landing-cta small {
   display: block;
-  margin-top: 22px;
+  margin-top: 10px;
   color: rgba(255, 255, 255, .32);
   font-size: 12px;
 }

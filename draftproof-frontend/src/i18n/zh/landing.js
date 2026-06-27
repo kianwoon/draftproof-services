@@ -12,6 +12,8 @@ export const landing = {
   "heroLead": "DraftProof 会指出你还无法支撑的论断，以及读起来像机器写的段落，再追问你真正想表达什么——让你在提交前用自己的证据和推理，为每一个观点立稳依据。",
   "runCheck": "审阅我的内容",
   "viewSample": "查看示例报告",
+  // allow-hardcode: i18n 展示文案。"5" 对应 WELCOME_CREDITS 默认值（config.py），若该环境变量变更需同步更新；非评分依据。
+  "heroFreeCredits": "新用户？注册即送 5 个免费积分，无需信用卡即可试用。",
   "trustNote": "不是 Turnitin 的替代品 · 不是学术不端判定 · 在提交前做好准备，并留存负责任使用 AI 的证据。",
   // allow-hardcode: i18n 展示文案，用于落地页用例轮播——仅作为界面文本呈现给用户，
   // 绝不与文档内容比对、也不作为评分/匹配判定（与上方 heroReviewSteps/anchorCards 同类）。
@@ -390,6 +392,8 @@ export const landing = {
   "ctaTitle": "DraftProof 帮助你在提交前补强内容依据。",
   "ctaBody": "提交前，检查作品是否原创、引用充分、表达清晰，并由来源或你自己的推理支撑。",
   "ctaButton": "审阅我的内容",
+  // allow-hardcode: i18n 展示文案。"5" 对应 WELCOME_CREDITS 默认值；非评分依据。
+  "ctaFreeCredits": "新账户注册即送 5 个免费积分，无需信用卡。",
   "ctaSmall": "每 1,000 词 1 个积分 · 包含 PDF 报告 · 不承诺绕过检测",
   "reportPreviewLabel": "DraftProof 示例内容审阅报告预览",
   "reportPreviewTabsLabel": "示例报告部分",
