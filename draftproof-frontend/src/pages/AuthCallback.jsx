@@ -19,7 +19,7 @@ export default function AuthCallback() {
       getMe()
         .then(({ data }) => {
           setUser(data);
-          const next = sessionStorage.getItem('auth_next') || '/dashboard';
+          const next = sessionStorage.getItem('auth_next') || '/scan';
           sessionStorage.removeItem('auth_next');
           navigate(next, { replace: true });
         })

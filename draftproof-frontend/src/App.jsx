@@ -9,7 +9,6 @@ import FeedbackWidget from './components/FeedbackWidget';
 import Seo from './components/Seo';
 import ProtectedRoute from './components/ProtectedRoute';
 import Landing from './pages/Landing';
-import Dashboard from './pages/Dashboard';
 import SignIn from './pages/SignIn';
 import AuthCallback from './pages/AuthCallback';
 import Scan from './pages/Scan';
@@ -38,7 +37,7 @@ function HomeRedirect() {
   const location = useLocation();
   if (loading) return null;
   // Allow hash anchors (e.g. #engine) to show landing page for signed-in users
-  if (user && !location.hash) return <Navigate to="/dashboard" replace />;
+  if (user && !location.hash) return <Navigate to="/scan" replace />;
   return (
     <>
       <Landing />
@@ -113,7 +112,8 @@ export default function App() {
           <Routes>
             <Route path="/" element={<HomeRedirect />} />
             <Route path="/zh" element={<HomeRedirect />} />
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            {/* Dashboard merged into the scan workspace — keep the old URL alive. */}
+            <Route path="/dashboard" element={<Navigate to="/scan" replace />} />
             <Route path="/pricing" element={<Pricing />} />
             <Route path="/zh/pricing" element={<Pricing />} />
             <Route path="/faq" element={<FAQ />} />

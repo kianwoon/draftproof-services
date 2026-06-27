@@ -1,10 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { startScanWithText, getScanStatus, buildApiEventUrl } from '../api/draftproofApi';
 import { useAuth } from '../context/AuthContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import CodeTexture from '../components/CodeTexture';
+import WorkspaceNav from '../components/WorkspaceNav';
+import WorkflowMap from '../components/WorkflowMap';
 import { countWords, paidScanTokens } from '../utils/scanBilling';
 
 const POLL_INTERVAL = 3000;
@@ -251,6 +253,7 @@ export default function Scan() {
             <span>{t('scan.balance')}</span>
             <strong>{balance === null ? t('common.checking') : t('common.token', { count: balance })}</strong>
             <small>{t('scan.freeThrough')}</small>
+            <Link to="/buy" className="btn btn-ghost btn-small">{t('scan.buyTokens')}</Link>
           </div>
         </section>
 
@@ -261,6 +264,15 @@ export default function Scan() {
               <span>{t('scan.documentHelp')}</span>
             </label>
             <p className="scan-pricing-note">{t('scan.pricingNote')}</p>
+            <div className="scan-checks">
+              <span className="scan-checks-label">{t('scan.checksTitle')}</span>
+              <ul>
+                <li>{t('scan.check1')}</li>
+                <li>{t('scan.check2')}</li>
+                <li>{t('scan.check3')}</li>
+                <li>{t('scan.check4')}</li>
+              </ul>
+            </div>
             <textarea
               id="scan-text"
               className="scan-textarea"
@@ -306,25 +318,10 @@ export default function Scan() {
             )}
           </form>
 
-          <aside className="scan-side-panel" aria-label={t('scan.scopeLabel')}>
-            <p className="eyebrow">{t('scan.reviewScope')}</p>
-            <h2>{t('scan.checksTitle')}</h2>
-            <ul>
-              <li><span>1</span>{t('scan.check1')}</li>
-              <li><span>2</span>{t('scan.check2')}</li>
-              <li><span>3</span>{t('scan.check3')}</li>
-              <li><span>4</span>{t('scan.check4')}</li>
-            </ul>
-            <div className="scan-side-divider" />
-            <h3>{t('scan.afterTitle')}</h3>
-            <ul>
-              <li><span>1</span>{t('scan.after1')}</li>
-              <li><span>2</span>{t('scan.after2')}</li>
-              <li><span>3</span>{t('scan.after3')}</li>
-              <li><span>4</span>{t('scan.after4')}</li>
-            </ul>
-          </aside>
+          <WorkspaceNav />
         </section>
+
+        <WorkflowMap />
 
         {error && <p className="error">{error}</p>}
         {serverError && <p className="error">{serverError}</p>}

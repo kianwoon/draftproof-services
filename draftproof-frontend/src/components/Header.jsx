@@ -47,8 +47,7 @@ export default function Header() {
       </Link>
 
       <nav className="nav-links" aria-label={t('nav.primary')}>
-        {user && <Link to="/dashboard">{t('nav.dashboard')}</Link>}
-        {user && <Link to="/scan">{t('nav.scanning')}</Link>}
+        {user && <Link to="/scan">{t('nav.dashboard')}</Link>}
         {user && <Link to="/reports">{t('nav.viewReports')}</Link>}
         {user && <Link to="/buy">{t('nav.buyTokens')}</Link>}
         {user && <Link to="/history">{t('nav.history')}</Link>}
@@ -117,8 +116,7 @@ export default function Header() {
           <div className="mobile-menu-inner" onClick={(e) => e.stopPropagation()}>
             <LanguageSwitcher />
             <Link to={publicPath('/')} className="mobile-link" onClick={() => setMenuOpen(false)}>{t('nav.homeLink')}</Link>
-            {user && <Link to="/dashboard" className="mobile-link">{t('nav.dashboard')}</Link>}
-            {user && <Link to="/scan" className="mobile-link">{t('nav.scanning')}</Link>}
+            {user && <Link to="/scan" className="mobile-link">{t('nav.dashboard')}</Link>}
             {user && <Link to="/reports" className="mobile-link">{t('nav.viewReports')}</Link>}
             {user && <Link to="/buy" className="mobile-link">{t('nav.buyTokens')}</Link>}
             {user && <Link to="/history" className="mobile-link">{t('nav.history')}</Link>}

@@ -132,7 +132,7 @@ export default function BuyTokens() {
         </div>
 
         <div className="page-actions-center">
-          <button className="buy-back-link" onClick={() => navigate('/dashboard')}>
+          <button className="buy-back-link" onClick={() => navigate('/scan')}>
             {t('buy.backDashboard')}
           </button>
         </div>
