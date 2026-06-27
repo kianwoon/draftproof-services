@@ -360,6 +360,17 @@
   flex-shrink: 0;
 }
 
+.hero-free-credit-link {
+  color: var(--green);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.hero-free-credit-link:hover {
+  color: #fff;
+}
+
 .landing-hero .btn-ghost,
 .landing-cta .btn-ghost {
   min-width: 204px;

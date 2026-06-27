@@ -140,7 +140,9 @@ export default function Landing() {
 
             <p className="hero-free-credit">
               <span className="hero-free-credit-spark" aria-hidden="true" />
-              {t('landing.heroFreeCredits')}
+              {t('landing.heroFreeCreditsPre')}
+              <Link to="/signin?next=/scan" className="hero-free-credit-link">{t('landing.heroFreeCreditsLink')}</Link>
+              {t('landing.heroFreeCreditsPost')}
             </p>
 
             <div className="trust-note">

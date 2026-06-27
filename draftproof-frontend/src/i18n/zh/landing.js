@@ -13,7 +13,10 @@ export const landing = {
   "runCheck": "审阅我的内容",
   "viewSample": "查看示例报告",
   // allow-hardcode: i18n 展示文案。"5" 对应 WELCOME_CREDITS 默认值（config.py），若该环境变量变更需同步更新；非评分依据。
-  "heroFreeCredits": "新用户？注册即送 5 个免费积分，无需信用卡即可试用。",
+  // 拆分为 pre/link/post，使“注册”渲染为指向登录页的链接。
+  "heroFreeCreditsPre": "新用户？",
+  "heroFreeCreditsLink": "注册",
+  "heroFreeCreditsPost": "即送 5 个免费积分，无需信用卡即可试用。",
   "trustNote": "不是 Turnitin 的替代品 · 不是学术不端判定 · 在提交前做好准备，并留存负责任使用 AI 的证据。",
   // allow-hardcode: i18n 展示文案，用于落地页用例轮播——仅作为界面文本呈现给用户，
   // 绝不与文档内容比对、也不作为评分/匹配判定（与上方 heroReviewSteps/anchorCards 同类）。

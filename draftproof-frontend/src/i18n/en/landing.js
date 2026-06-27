@@ -14,7 +14,10 @@ export const landing = {
   "viewSample": "View sample report",
   // allow-hardcode: i18n display copy. "5" mirrors the WELCOME_CREDITS default
   // (draftproof-api/app/config.py); update if that env value changes. Not a scoring oracle.
-  "heroFreeCredits": "New here? Sign up and get 5 free credits to try — no card needed.",
+  // Split into pre/link/post so "Sign up" renders as a link to the sign-in page.
+  "heroFreeCreditsPre": "New here? ",
+  "heroFreeCreditsLink": "Sign up",
+  "heroFreeCreditsPost": " and get 5 free credits to try — no card needed.",
   "trustNote": "Not a Turnitin replacement · Not a misconduct verdict · Prepare before submission, with evidence of responsible AI use.",
   // allow-hardcode: i18n display copy for the landing use-case carousel — UI text rendered to users,
   // never compared against document content or used as a scoring/matching oracle (same category as heroReviewSteps/anchorCards).
