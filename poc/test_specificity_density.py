@@ -34,3 +34,25 @@ def test_long_dense_doc_not_crushed_to_zero():
     # The bug collapsed a feature-rich long doc's specificity toward 0; it must now retain
     # real density rather than being penalised purely for length.
     assert _score(_GROUNDED * 6).details["specificity_score"] > 0.05
+
+
+def test_low_specificity_finding_is_anchored_to_a_real_sentence():
+    # Regression for the empty-evidence gap: the finding must point at a concrete vague
+    # sentence (flagged_excerpts) instead of surfacing an empty excerpt.
+    res = _score(_GENERIC * 6)
+    assert res.flagged_excerpts, "expected non-empty flagged_excerpts for generic text"
+    top = res.flagged_excerpts[0]
+    assert len(top.split()) >= 8              # a real sentence, not a fragment
+    assert "widely believed" in top.lower()   # drawn from the actual input text
+
+
+def test_anchored_sentence_is_not_flagged_as_vaguest():
+    # Vaguest-first ordering: a richly-anchored sentence must not appear among the flags
+    # when generic ones are present.
+    # allow-hardcode: test-fixture sentence (sample input), not detection logic.
+    anchored = ("In 2019, Maria Gomez at Box Hill Institute measured a 37% gain for 42 "
+                "students across 12 weeks in Melbourne.")
+    doc = (_GENERIC + " ") * 3 + anchored
+    res = _score(doc)
+    assert res.flagged_excerpts
+    assert all("Box Hill Institute" not in ex for ex in res.flagged_excerpts)

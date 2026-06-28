@@ -341,6 +341,33 @@ def _classify_domain_terms(
     }
 
 
+def _flagged_vague_sentences(
+    sentences: List[str], matched_domain_terms: List[str],
+    max_flags: int = 3, min_words: int = 8,
+) -> List[str]:
+    """Concrete examples for the low-specificity finding: the most generic/unanchored
+    sentences, so the report points at real passages to ground rather than an empty
+    excerpt. Structural only -- ranks sentences by how few specific anchors (named
+    entities, numbers, dates, quotes, domain terms) they carry per word, then by
+    abstract-noun density. No phrase/keyword matching, so it stays content-agnostic.
+    """
+    dterms = [t.lower() for t in (matched_domain_terms or []) if len(t) > 3]
+    scored = []
+    for sent in sentences:
+        s = sent.strip()
+        n = len(s.split())
+        if n < min_words:
+            continue
+        low = s.lower()
+        anchors = (_count_named_entities(s) + _count_numbers(s)
+                   + _count_dates(s) + _count_quotes(s)
+                   + sum(1 for t in dterms if t in low))
+        scored.append((anchors / n, _count_abstract_nouns(s) / n, s))
+    # vaguest first: fewest anchors per word, then highest abstract-noun density
+    scored.sort(key=lambda x: (x[0], -x[1]))
+    return [s for _, _, s in scored[:max_flags]]
+
+
 def score(
     content: str,
     *,
@@ -398,6 +425,10 @@ def score(
     # For scoring, only core+contextual terms count; reference metadata excluded
     domain_term_count = strong_domain_count + int(weak_domain_count * 0.2)
     matched_domain_terms = grounding_terms  # excludes reference_metadata
+
+    # Anchor the finding to real passages: the vaguest/least-anchored sentences, so the
+    # report shows the user WHICH sentences to ground (previously evidence was empty).
+    flagged = _flagged_vague_sentences(sentences, matched_domain_terms)
 
     # Weighted specificity score (higher = more specific = more human-like)
     # Genre-aware: for short/conceptual texts, domain terms carry more weight
@@ -491,4 +522,5 @@ def score(
             ),
             "word_count": word_count,
         },
+        flagged_excerpts=flagged,
     )
