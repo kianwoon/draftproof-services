@@ -142,8 +142,10 @@ def render_scan_lead(report, data) -> str:
         contribution = {}
 
     kpis: list[tuple[str, str]] = []
-    if isinstance(overall.get("risk"), (int, float)):
-        kpis.append((f"{round(overall['risk'])}%", "Submission risk score"))
+    # Submission-risk SCORE number intentionally omitted (web-page parity): a bare "19%"
+    # next to a "Low" level reads as "<20% = Turnitin pass". The web report shows the level
+    # word only; the PDF follows. The calibrated AI number stays below as the framed
+    # "Text-pattern trigger" (with its "NOT a Turnitin score" axis note).
     if isinstance(dp_band.get("score"), (int, float)):
         kpis.append((f"{round(dp_band['score'])}%", "Text-pattern trigger"))
     if isinstance(contribution.get("hcr"), (int, float)):

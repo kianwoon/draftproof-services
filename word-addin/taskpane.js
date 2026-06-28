@@ -400,7 +400,9 @@
 
     var sr = report.submission_risk;
     if (sr && (sr.label || sr.level)) {
-      var srHead = escapeHtml(sr.label || sr.level) + (sr.risk != null ? " · " + Math.round(sr.risk) + "%" : "");
+      // Show the LEVEL only (web-page parity): a raw "· 19%" next to "Low" reads as
+      // "<20% = Turnitin pass". The web report shows the level word with no number; match it.
+      var srHead = escapeHtml(sr.label || sr.level);
       // allow-hardcode: presentation note (the honest detector caveat), not scoring logic.
       // Pair the tier with the reality so a low level never reads as "I'll pass Turnitin":
       // this measures whether you can OWN the work, and detectors over-flag fluent writing.
