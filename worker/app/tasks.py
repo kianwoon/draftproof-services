@@ -1640,12 +1640,20 @@ def _serialize_effective_rewrite_plan(plan) -> dict:
 def scan_document(self, job_id: str, text: str) -> dict:
     """Run the full detect pipeline on text and store results."""
     try:
-        update_job_status(
+        claimed = update_job_status(
             job_id,
             "processing",
             progress_percent=10,
             progress_message="Preparing scan",
         )
+        if not claimed:
+            # The job is already resolved (failed/completed/canceled) — e.g. the API
+            # stale-recovery failed it, or this is a Celery redelivery (acks_late) of a
+            # run that already finished. Abort rather than re-run: redoing the work would
+            # waste the most expensive part of the pipeline, re-upload to R2, and re-send
+            # the completion email for a job the user has already seen resolved (H1).
+            logger.info("scan_document %s: job already resolved; skipping redelivered/raced run", job_id)
+            return {"status": "skipped", "reason": "already_resolved"}
         publish_scan_progress(
             job_id, status="processing",
             progress_percent=10, progress_message="Preparing scan",
@@ -1764,6 +1772,12 @@ def scan_document(self, job_id: str, text: str) -> dict:
                     )
                 else:
                     logger.warning("Paragraph explanation generation failed for %s", job_id, exc_info=True)
+
+            # Heartbeat after the (silent, possibly multi-minute) paragraph-explainer LLM
+            # call so stale-recovery sees a live worker before the next enrichment step.
+            # Without this the only beats in the tail are 96 (pre-enrichment) and 97
+            # (pre-upload); a slow enrichment could otherwise be reaped as stale (H1/M1).
+            report_progress(96, "Finalizing report")
 
             # Phase-2 LLM enrichment for Critical Thinking Control (kill-switch, DEFAULT OFF
             # via DRAFTPROOF_CRITICAL_THINKING_LLM). Adds the alternative_comparison +

@@ -16,8 +16,21 @@ from app.services import progress_stream
 
 DOCUMENT_TITLE_MAX_CHARS = 90
 CONTENT_PREVIEW_MAX_CHARS = 220
-_STALE_THRESHOLD = timedelta(minutes=10)
-_PROCESSING_HEARTBEAT_STALE_THRESHOLD = timedelta(minutes=5)
+def _stale_minutes(env_name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(env_name, str(default)) or default))
+    except (TypeError, ValueError):
+        return default
+
+
+# Hard wall-clock cap, measured from the worker's started_at (NOT enqueue created_at).
+_STALE_THRESHOLD = timedelta(minutes=_stale_minutes("SCAN_STALE_THRESHOLD_MINUTES", 10))
+# Heartbeat-gap cap. MUST exceed the worst-case SILENT tail: the paragraph-explainer LLM
+# call can stack provider retries (~3x90s + backoff ~= 4.5min) between the 96% and 97%
+# heartbeats, so a 5-min cap would reap a live worker mid-completion (findings H1/M1).
+_PROCESSING_HEARTBEAT_STALE_THRESHOLD = timedelta(
+    minutes=_stale_minutes("SCAN_HEARTBEAT_STALE_MINUTES", 8)
+)
 _ACTIVE_SCAN_STATUSES = ("pending", "processing", "retrying")
 _PROCESSING_SCAN_STATUSES = ("processing",)
 _MEANINGFUL_TEXT_RE = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]")
@@ -134,47 +147,136 @@ async def _processing_scan_is_stale(job: ScanJob, *, now: datetime | None = None
     unavailable or the stream is missing, keep the existing hard stale timeout
     so live scans are not killed incorrectly.
     """
-    if job.status not in _PROCESSING_SCAN_STATUSES or not job.created_at:
+    if job.status not in _PROCESSING_SCAN_STATUSES:
         return False
+    # Measure from started_at (worker task-start), NOT created_at (enqueue): a scan can
+    # sit queued for minutes behind a long rewrite, and aging it by enqueue time would
+    # reap a job that has not started yet (finding M1). A processing scan always has
+    # started_at (the worker sets it on its first 'processing' write); if it is somehow
+    # missing, treat it as not-started -> NOT stale rather than falling back to created_at.
+    started_at = job.started_at
+    if started_at is None:
+        return False
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
 
     now = now or datetime.now(timezone.utc)
-    age = now - job.created_at
-    if age > _STALE_THRESHOLD:
-        return True
 
+    # Heartbeat governs: a live worker republishes Redis progress, so a stopped heartbeat
+    # is the real death signal. The wall-clock age (from started_at) is only the
+    # conservative fallback when Redis is unavailable or the stream is missing.
     latest = await progress_stream.read_latest_scan_progress(str(job.id))
-    if latest is None:
-        return False
+    if latest is not None:
+        event_time = _redis_stream_event_time(latest[0])
+        if event_time is not None:
+            return now - event_time > _PROCESSING_HEARTBEAT_STALE_THRESHOLD
 
-    event_time = _redis_stream_event_time(latest[0])
-    if event_time is None:
-        return False
-
-    return now - event_time > _PROCESSING_HEARTBEAT_STALE_THRESHOLD
+    return now - started_at > _STALE_THRESHOLD
 
 
 async def _release_active_scan_reservations(session, job_id: uuid.UUID) -> int:
-    reservations = await session.execute(
-        select(CreditReservation).where(
-            CreditReservation.job_type == "scan",
-            CreditReservation.job_id == job_id,
-            CreditReservation.status == "active",
-        )
+    """Release a scan's active reservation back to available balance — a real CAS.
+
+    Mirrors the worker's release_scan_credits: a single guarded UPDATE flips only rows
+    still 'active' and decrements reserved_tokens ONLY for the rows it actually changed,
+    so a concurrent worker capture/release can never be overwritten and tokens are never
+    double-decremented (finding M2). The prior ORM read-modify-write had no status='active'
+    re-check at write time.
+    """
+    result = await session.execute(
+        sql_text(
+            """UPDATE credit_reservations
+               SET status = 'released'
+               WHERE job_id = :job_id AND job_type = 'scan' AND status = 'active'
+               RETURNING credit_account_id, tokens_reserved"""
+        ),
+        {"job_id": job_id},
     )
     released_tokens = 0
-    for reservation in reservations.scalars().all():
-        reservation.status = "released"
-        acct_result = await session.execute(
-            select(CreditAccount).where(CreditAccount.id == reservation.credit_account_id)
+    for credit_account_id, tokens_reserved in result.all():
+        await session.execute(
+            sql_text(
+                "UPDATE credit_accounts "
+                "SET reserved_tokens = GREATEST(reserved_tokens - :tok, 0) WHERE id = :acct"
+            ),
+            {"tok": tokens_reserved, "acct": credit_account_id},
         )
-        account = acct_result.scalar_one_or_none()
-        if account:
-            account.reserved_tokens = max(0, account.reserved_tokens - reservation.tokens_reserved)
-            released_tokens += reservation.tokens_reserved
+        released_tokens += tokens_reserved
     return released_tokens
 
 
+async def _capture_active_scan_reservations(session, job: ScanJob) -> int:
+    """Capture (charge) a recovered scan's active reservation — the API-side mirror of the
+    worker's capture_credits. Used when stale-recovery finds the report already in R2 (the
+    worker finished but was killed before its completion write). Real CAS: only an 'active'
+    row flips to 'captured', so it cannot double-charge a concurrent worker capture (M3)."""
+    result = await session.execute(
+        sql_text(
+            """UPDATE credit_reservations
+               SET status = 'captured'
+               WHERE job_id = :job_id AND job_type = 'scan' AND status = 'active'
+               RETURNING credit_account_id, tokens_reserved"""
+        ),
+        {"job_id": job.id},
+    )
+    captured_tokens = 0
+    for credit_account_id, tokens_reserved in result.all():
+        await session.execute(
+            sql_text(
+                "UPDATE credit_accounts "
+                "SET balance_tokens = balance_tokens - :tok, "
+                "reserved_tokens = GREATEST(reserved_tokens - :tok, 0) WHERE id = :acct"
+            ),
+            {"tok": tokens_reserved, "acct": credit_account_id},
+        )
+        await session.execute(
+            sql_text(
+                """INSERT INTO usage_events
+                   (user_id, credit_account_id, event_type, tokens_charged, job_id, word_count)
+                   VALUES (:uid, :acct, 'scan', :tok, :job_id, :wc)"""
+            ),
+            {
+                "uid": job.user_id,
+                "acct": credit_account_id,
+                "tok": tokens_reserved,
+                "job_id": job.id,
+                "wc": job.word_count or 0,
+            },
+        )
+        captured_tokens += tokens_reserved
+    return captured_tokens
+
+
+async def _scan_report_in_r2(scan_id: uuid.UUID) -> bool:
+    """True if a finished scan report already exists in R2 (the work completed before the
+    worker died). Lets stale-recovery mark such a job 'completed' + capture instead of
+    failing it for free (finding M3). Best-effort: any R2 error -> False (fail the job)."""
+    from app.services import report_service
+    try:
+        report = await asyncio.to_thread(
+            report_service._fetch_optional_report_json_sync, f"reports/{scan_id}/report.json"
+        )
+    except Exception:
+        return False
+    return isinstance(report, dict) and bool(report)
+
+
 async def _mark_scan_interrupted(session, job: ScanJob) -> int:
+    """Resolve a stale processing scan. If its report already reached R2 the work is done,
+    so recover it as completed + capture credits (M3); otherwise fail it and release/refund.
+
+    The R2 check is a single bounded GET per job (only stale jobs reach here). list_scans
+    runs this in an un-locked session; get_scan holds a single-row FOR UPDATE lock across
+    the one GET, which is acceptable for a single row.
+    """
+    if await _scan_report_in_r2(job.id):
+        job.status = "completed"
+        job.completed_at = datetime.now(timezone.utc)
+        job.progress_percent = 100
+        job.progress_message = "Scan recovered from saved report"
+        job.error = None
+        return await _capture_active_scan_reservations(session, job)
+
     job.status = "failed"
     job.error = "Scan interrupted during worker restart"
     job.progress_message = "Scan worker restarted. Please retry."
@@ -293,8 +395,7 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
         if active_jobs:
             now = datetime.now(timezone.utc)
             for active_job in active_jobs:
-                age = now - active_job.created_at if active_job.created_at else timedelta(0)
-                if age > _STALE_THRESHOLD or await _processing_scan_is_stale(active_job, now=now):
+                if await _processing_scan_is_stale(active_job, now=now):
                     await _mark_scan_interrupted(session, active_job)
             await session.commit()
 
@@ -387,12 +488,10 @@ async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
         if not job:
             return None
 
-        if job.status in _ACTIVE_SCAN_STATUSES and job.created_at:
-            age = datetime.now(timezone.utc) - job.created_at
-            if age > _STALE_THRESHOLD or await _processing_scan_is_stale(job):
-                await _mark_scan_interrupted(session, job)
-                await session.commit()
-                await session.refresh(job)
+        if await _processing_scan_is_stale(job):
+            await _mark_scan_interrupted(session, job)
+            await session.commit()
+            await session.refresh(job)
 
         return {
             "id": str(job.id),

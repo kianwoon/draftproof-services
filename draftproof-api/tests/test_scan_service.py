@@ -330,10 +330,12 @@ async def test_processing_scan_is_stale_when_heartbeat_stops(monkeypatch):
         id="00000000-0000-0000-0000-000000000001",
         status="processing",
         created_at=now - timedelta(minutes=8),
+        started_at=now - timedelta(minutes=8),
     )
 
     async def fake_latest(_scan_id):
-        return (_stream_id(now - timedelta(minutes=6)), {"status": "processing"})
+        # Heartbeat older than the 8-min heartbeat-stale threshold -> worker reaped.
+        return (_stream_id(now - timedelta(minutes=10)), {"status": "processing"})
 
     monkeypatch.setattr(
         scan_service.progress_stream,
@@ -351,6 +353,7 @@ async def test_processing_scan_is_not_stale_with_recent_heartbeat(monkeypatch):
         id="00000000-0000-0000-0000-000000000002",
         status="processing",
         created_at=now - timedelta(minutes=8),
+        started_at=now - timedelta(minutes=8),
     )
 
     async def fake_latest(_scan_id):
@@ -372,6 +375,7 @@ async def test_processing_scan_falls_back_to_hard_stale_threshold(monkeypatch):
         id="00000000-0000-0000-0000-000000000003",
         status="processing",
         created_at=now - scan_service._STALE_THRESHOLD - timedelta(seconds=1),
+        started_at=now - scan_service._STALE_THRESHOLD - timedelta(seconds=1),
     )
 
     async def fake_latest(_scan_id):
@@ -393,6 +397,7 @@ async def test_processing_scan_without_heartbeat_uses_conservative_fallback(monk
         id="00000000-0000-0000-0000-000000000004",
         status="processing",
         created_at=now - timedelta(minutes=8),
+        started_at=now - timedelta(minutes=8),
     )
 
     async def fake_latest(_scan_id):

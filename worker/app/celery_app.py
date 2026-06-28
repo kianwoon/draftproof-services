@@ -74,8 +74,9 @@ def _reconcile_interrupted_jobs_on_boot(**_kwargs):
     and must never block worker startup.
     """
     try:
-        from .recovery import reconcile_interrupted_rewrites
+        from .recovery import reconcile_interrupted_rewrites, reconcile_interrupted_scans
 
         reconcile_interrupted_rewrites()
+        reconcile_interrupted_scans()
     except Exception:
         logger.warning("Startup reconciler failed", exc_info=True)

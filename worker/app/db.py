@@ -132,23 +132,34 @@ def update_job_status(job_id: str, status: str, **fields):
     def _execute(include_progress: bool = True):
         sets, vals = _fields(include_progress)
         with get_conn() as conn:
+            cur = conn.cursor()
+            # CAS guard: 'failed'/'canceled'/'completed' are terminal for a scan. A late
+            # worker write — a redelivered task, or the completion write racing the
+            # API-side stale-recovery — therefore can NEVER resurrect or overwrite a
+            # resolved job. This is the core of finding H1: without it the unconditional
+            # UPDATE resolved last-writer-wins (free completed report, or a real report
+            # flipped to 'failed'). Returns True only when a row actually changed, so the
+            # worker can treat the first 'processing' write as a claim.
             if sets:
-                conn.cursor().execute(
-                    f"UPDATE scan_jobs SET status = %s, {', '.join(sets)} WHERE id = %s",
+                cur.execute(
+                    f"UPDATE scan_jobs SET status = %s, {', '.join(sets)} "
+                    "WHERE id = %s AND status NOT IN ('failed', 'canceled', 'completed')",
                     [status] + vals + [job_id],
                 )
             else:
-                conn.cursor().execute(
-                    "UPDATE scan_jobs SET status = %s WHERE id = %s",
+                cur.execute(
+                    "UPDATE scan_jobs SET status = %s "
+                    "WHERE id = %s AND status NOT IN ('failed', 'canceled', 'completed')",
                     [status, job_id],
                 )
+            return cur.rowcount > 0
 
     try:
-        _execute()
+        return _execute()
     except psycopg2.errors.UndefinedColumn as exc:
         if "progress_" not in str(exc):
             raise
-        _execute(include_progress=False)
+        return _execute(include_progress=False)
 
 
 def capture_credits(user_id: str, job_id: str, word_count: int):
@@ -178,7 +189,8 @@ def capture_credits(user_id: str, job_id: str, word_count: int):
         tokens_reserved = row["tokens_reserved"]
 
         cur.execute(
-            "UPDATE credit_accounts SET balance_tokens = balance_tokens - %s, reserved_tokens = reserved_tokens - %s WHERE id = %s",
+            "UPDATE credit_accounts SET balance_tokens = balance_tokens - %s, "
+            "reserved_tokens = GREATEST(reserved_tokens - %s, 0) WHERE id = %s",
             (tokens_reserved, tokens_reserved, acct_id),
         )
         cur.execute(
@@ -229,6 +241,24 @@ def list_processing_rewrite_jobs() -> list:
         cur.execute(
             """SELECT id, scan_id, user_id, created_at, status
                FROM rewrite_jobs
+               WHERE status = 'processing'"""
+        )
+        return cur.fetchall()
+
+
+def list_processing_scan_jobs() -> list:
+    """Return scan jobs currently in 'processing' (for the startup reconciler).
+
+    Scan equivalent of list_processing_rewrite_jobs. Unlike rewrites, a scan does
+    NOT resume from an R2 checkpoint, so a SIGKILL'd scan with no clean Celery
+    redelivery would otherwise leave its row 'processing' and its reservation
+    'active' forever (finding L4). The reconciler resolves these on worker boot.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, user_id, created_at, started_at, status
+               FROM scan_jobs
                WHERE status = 'processing'"""
         )
         return cur.fetchall()
@@ -312,7 +342,7 @@ def release_scan_credits(job_id: str):
         if not row:
             return
         cur.execute(
-            "UPDATE credit_accounts SET reserved_tokens = reserved_tokens - %s WHERE id = %s",
+            "UPDATE credit_accounts SET reserved_tokens = GREATEST(reserved_tokens - %s, 0) WHERE id = %s",
             (row["tokens_reserved"], row["credit_account_id"]),
         )
 
@@ -366,7 +396,7 @@ def release_rewrite_credits(job_id: str):
             return
 
         cur.execute(
-            "UPDATE credit_accounts SET reserved_tokens = reserved_tokens - %s WHERE id = %s",
+            "UPDATE credit_accounts SET reserved_tokens = GREATEST(reserved_tokens - %s, 0) WHERE id = %s",
             (row["tokens_reserved"], row["credit_account_id"]),
         )
 
@@ -397,7 +427,8 @@ def capture_rewrite_credits(user_id: str, job_id: str):
         tokens = row["tokens_reserved"]
 
         cur.execute(
-            "UPDATE credit_accounts SET balance_tokens = balance_tokens - %s, reserved_tokens = reserved_tokens - %s WHERE id = %s",
+            "UPDATE credit_accounts SET balance_tokens = balance_tokens - %s, "
+            "reserved_tokens = GREATEST(reserved_tokens - %s, 0) WHERE id = %s",
             (tokens, tokens, acct_id),
         )
         cur.execute(

@@ -166,3 +166,114 @@ def reconcile_interrupted_rewrites(now: datetime | None = None) -> dict:
 
     logger.info("Startup reconciler complete: %s", stats)
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Scan reconciler — mirror of the rewrite reconciler above.
+#
+# Scans do NOT resume from an R2 checkpoint (the rewrite rationale for leaving them
+# out of scope), so a SIGKILL'd scan whose Celery message is never cleanly redelivered
+# would otherwise sit 'processing' with its reservation 'active' forever (finding L4).
+# Resolve them on boot, mirroring the API-side scan recovery (scan_service.
+# _processing_scan_is_stale + _mark_scan_interrupted): R2-delivered -> completed+capture,
+# else failed+release. Staleness is measured from started_at (the worker task-start), not
+# enqueue time, so a scan that merely sat queued is never reaped (finding M1).
+# ---------------------------------------------------------------------------
+
+def _scan_stale_threshold() -> timedelta:
+    return timedelta(minutes=max(1, int(os.getenv("SCAN_STALE_THRESHOLD_MINUTES", "10") or "10")))
+
+
+def _scan_heartbeat_stale_threshold() -> timedelta:
+    return timedelta(minutes=max(1, int(os.getenv("SCAN_HEARTBEAT_STALE_MINUTES", "8") or "8")))
+
+
+def _latest_scan_heartbeat(scan_id: str) -> datetime | None:
+    try:
+        client = progress._redis_client()
+        entries = client.xrevrange(progress.scan_progress_key(scan_id), count=1)
+    except Exception:
+        return None
+    if not entries:
+        return None
+    return _stream_event_time(entries[0][0])
+
+
+def _scan_processing_is_stale(started_at, scan_id: str, now: datetime) -> bool:
+    if not started_at:
+        return False
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    event_time = _latest_scan_heartbeat(scan_id)
+    if event_time is not None:
+        return now - event_time > _scan_heartbeat_stale_threshold()
+    return now - started_at > _scan_stale_threshold()
+
+
+def _fetch_scan_report_json(scan_id: str) -> dict | None:
+    try:
+        from .storage import _client as r2_client
+
+        s3 = r2_client()
+        obj = s3.get_object(
+            Bucket=settings.R2_BUCKET_NAME,
+            Key=f"reports/{scan_id}/report.json",
+        )
+        return json.loads(obj["Body"].read())
+    except Exception:
+        return None
+
+
+def reconcile_interrupted_scans(now: datetime | None = None) -> dict:
+    """Resolve scan jobs orphaned in 'processing'. Best-effort; never raises."""
+    stats = {"scanned": 0, "completed": 0, "failed": 0, "skipped": 0}
+    if not _enabled():
+        return stats
+
+    now = now or datetime.now(timezone.utc)
+    try:
+        jobs = db.list_processing_scan_jobs()
+    except Exception:
+        logger.warning("Startup reconciler: could not list processing scan jobs", exc_info=True)
+        return stats
+
+    stats["scanned"] = len(jobs)
+    for job in jobs:
+        scan_id = str(job["id"])
+        user_id = job.get("user_id")
+        try:
+            if not _scan_processing_is_stale(job.get("started_at"), scan_id, now):
+                stats["skipped"] += 1
+                continue
+
+            report = _fetch_scan_report_json(scan_id)
+            if isinstance(report, dict) and report:
+                badge = report.get("ai_risk_badge") or {}
+                db.update_job_status(
+                    scan_id,
+                    "completed",
+                    tier=badge.get("tier"),
+                    ai_score=badge.get("ai_likelihood_score"),
+                    writing_score=badge.get("writing_quality_score"),
+                    progress_percent=100,
+                    progress_message="Scan recovered from saved report",
+                )
+                db.capture_credits(str(user_id) if user_id else "", scan_id, 0)
+                stats["completed"] += 1
+                logger.info("Startup reconciler: recovered scan %s from saved report", scan_id)
+            else:
+                db.update_job_status(
+                    scan_id,
+                    "failed",
+                    error="Scan interrupted during worker restart",
+                    progress_message="Scan worker restarted. Please retry.",
+                )
+                db.release_scan_credits(scan_id)
+                db.refund_free_scan(scan_id)
+                stats["failed"] += 1
+                logger.info("Startup reconciler: failed interrupted scan %s", scan_id)
+        except Exception:
+            logger.warning("Startup reconciler: error resolving scan %s", scan_id, exc_info=True)
+
+    logger.info("Startup scan reconciler complete: %s", stats)
+    return stats
