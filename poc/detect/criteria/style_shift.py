@@ -25,13 +25,13 @@ def _sentence_predictability(sentence: str) -> float:
     This is a fallback — the composite classifier should pass sentence_metrics when available.
     """
     text = sentence.lower()
-    ai_markers = [
-        "furthermore", "moreover", "additionally", "consequently",
-        "it is important to note", "it is worth noting",
-        "this demonstrates", "this highlights", "this underscores",
-        "plays a crucial role", "plays a vital role",
-        "in conclusion", "overall, this",
-    ]
+    # NO-HARDCODE (L2): the baked AI-marker content-phrase list was removed (emptied to a
+    # never-match sentinel, like the sibling criteria). Those transitions (furthermore,
+    # moreover, in conclusion...) are common in formal/ESL human writing, so matching them
+    # would false-flag humans. The real predictability signal comes from the GPT-2
+    # sentence_metrics, which the production DetectionRunner always supplies; this non-model
+    # fallback now abstains (returns 0.0) instead of guessing from content words.
+    ai_markers: list[str] = []
     count = sum(1 for m in ai_markers if m in text)
     return min(1.0, count * 0.3)
 
