@@ -38,7 +38,7 @@ _DRIVER_HERO = {
 # Plain-English "what it means" copy for the submission-risk axis table.
 # KEEP IN SYNC with render._SR_AXIS_ORDER and the frontend i18n.
 _SR_AXIS_MEANING = {
-    "text_pattern": "May draw external-detector attention, but it's a heads-up, not a verdict.",
+    "text_pattern": "NOT a Turnitin score — don't compare it to the 20% line. Detectors over-flag fluent writing, so treat it as a heads-up, not a verdict.",
     "ownership": "Higher means the draft needs more visible judgement so you can explain your choices.",
     "citation": "Whether claims are tied to named, checkable sources.",
     "defence_readiness": "Whether you could defend these claims, tools, and examples if asked.",
@@ -92,22 +92,29 @@ def render_scan_lead(report, data) -> str:
     out: list[str] = []
 
     # ── Hero "overall read" panel ──────────────────────────────────
-    read = f"Overall read: {sr_label}"
-    if hero_phrase:
-        read += f" — but the draft needs {hero_phrase} before submission"
-    read += "."
-    sub = ("The text-pattern signal is not the main problem. ")
-    if driver_action:
-        sub += f"The bigger issue: {driver_action[0].lower() + driver_action[1:]}."
+    # allow-hardcode: student-facing display copy (the report banner), not a scoring or
+    # matching word-list -- never compared against document text.
+    # Lead with what the tier ACTUALLY measures -- ownership -- so a low tier is never
+    # misread as "I'll pass Turnitin"; then the action. (Detector caveat lives in `sub`.)
+    if sr_level == "low":
+        read = "You can defend this as your own work"
     else:
-        sub += "The bigger issue is whether claims are tied to named evidence and your own judgement."
+        read = "Strengthen this before you can fully defend it as your own"
+    if hero_phrase:
+        read += f" — but before you submit, the draft needs {hero_phrase}"
+    read += "."
+    # Never let a low tier falsely reassure about external detectors: state the warning plainly.
+    sub = ("Heads-up: AI detectors (Turnitin, GPTZero) over-flag fluent writing, so they may "
+           "flag this even though it is your own work — a warning, not a verdict. Your "
+           "protection is grounding your claims and keeping your drafts.")
 
-    chips = [(f"{_SR_LEVEL_LABELS.get(sr_level, sr_level)} submission risk", _level_kind(sr_level))]
-    if dp_band.get("tier"):
-        sig = {"GREEN": "Low", "AMBER": "Moderate", "ORANGE": "Elevated", "RED": "Elevated"}.get(
-            str(dp_band["tier"]).upper(), "")
-        if sig:
-            chips.append((f"{sig} AI-writing signal", "good" if str(dp_band["tier"]).upper() == "GREEN" else "warn"))
+    # Chip 1: scope the tier to OWNERSHIP (not a Turnitin-pass prediction).
+    chips = [(f"{_SR_LEVEL_LABELS.get(sr_level, sr_level)} ownership risk", _level_kind(sr_level))]
+    # No AI-style tier chip in the hero. A "Low/Moderate" valence here clashed with the
+    # ownership chip and either over-alarmed (Moderate ~32% read as a Turnitin fail) OR
+    # falsely reassured (a GREEN tier read as "detectors will pass me", though they
+    # over-flag fluent writing -- raw top-k can be ~78%). The honest detector message lives
+    # in `sub`; the calibrated number stays in the axis table with its heads-up framing.
     if driver_label:
         chips.append((driver_label, "warn"))
     wc = doc_ctx.get("word_count") or 0
@@ -213,8 +220,16 @@ def render_scan_lead(report, data) -> str:
             current = "Unknown — self-declare"
         else:
             current = _SR_LEVEL_LABELS.get(ax.get("level"), "Unknown")
-            if key == "text_pattern" and isinstance(ax.get("display_score"), (int, float)):
-                current += f" — AI-likelihood ~{round(ax['display_score'])}%"
+            if key == "text_pattern":
+                # Use the SAME canonical AI-likelihood number as the KPI "Text-pattern
+                # trigger" (dp_band score = badge ai_likelihood_score) so the axis table
+                # can't disagree with it. Previously this used display_score, which
+                # diverged (e.g. 34% here vs the headline 32%).
+                ai_pct = dp_band.get("score")
+                if not isinstance(ai_pct, (int, float)):
+                    ai_pct = ax.get("display_score")
+                if isinstance(ai_pct, (int, float)):
+                    current += f" — DraftProof AI-likelihood ~{round(ai_pct)}%"
         meaning = _SR_AXIS_MEANING.get(key, "")
         axis_rows.append((label, current, meaning))
     if axis_rows:

@@ -549,7 +549,20 @@ def _render_submission_risk_headline(badge: dict | None) -> str:
     out.append(f"- **{headline}**")
     if overall.get("main_reason"):
         out.append(f"  - Main reason: {overall['main_reason']}")
+    # Pair the tier with the action so a LOW tier is never read as "nothing to do":
+    # surface the single most important thing to fix before submitting.
+    diag = (badge or {}).get("grounding_diagnosis") or {}
+    driver = diag.get("primary_driver_label")
+    if driver:
+        action = diag.get("primary_driver_action") or ""
+        fix_line = f"  - Before you submit, fix: **{driver}**"
+        if action:
+            fix_line += f" — {action}"
+        out.append(fix_line)
     out.append("")
+    # Canonical AI-likelihood number (badge ai_likelihood_score), shown identically
+    # wherever it appears so the text-pattern axis can't disagree with the AI-signal headline.
+    canonical_ai = (badge or {}).get("ai_likelihood_score")
     for key in _SR_AXIS_ORDER:
         ax = axes.get(key) or {}
         label = ax.get("label") or key
@@ -557,8 +570,10 @@ def _render_submission_risk_headline(badge: dict | None) -> str:
             out.append(f"- {label}: Unknown — self-declare")
             continue
         row = f"- {label}: {_SR_LEVEL_LABELS.get(ax.get('level'), 'Unknown')}"
-        if key == "text_pattern" and isinstance(ax.get("display_score"), (int, float)):
-            row += f" (AI-likelihood ~{round(ax['display_score'])}% — external trigger, not a verdict)"
+        if key == "text_pattern":
+            ai_pct = canonical_ai if isinstance(canonical_ai, (int, float)) else ax.get("display_score")
+            if isinstance(ai_pct, (int, float)):
+                row += f" (DraftProof AI-likelihood ~{round(ai_pct)}% — a heads-up, not a verdict)"
         out.append(row)
     out.append("")
     out.append(_SUBMISSION_RISK_WHY)

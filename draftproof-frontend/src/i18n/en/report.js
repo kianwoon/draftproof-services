@@ -22,7 +22,7 @@ export const report = {
     "kicker": "Submission risk",
     "mainReasonPrefix": "Main reason:",
     "selfDeclare": "Unknown — self-declare",
-    "externalTrigger": "AI-likelihood ~{{score}}% — external trigger, not a verdict",
+    "externalTrigger": "AI-likelihood ~{{score}}% — NOT a Turnitin score; don't compare it to the 20% line. Detectors over-flag fluent writing, so it's a heads-up, not a verdict.",
     "note": "This is about whether you can stand behind this as your own work — not whether it looks AI-written. Declaration, course policy, and group contribution aren't in the text; only you can declare those.",
     "levels": {
       "low": "Low",
@@ -591,9 +591,9 @@ export const report = {
       "red": "Elevated AI-writing signal"
     },
     "verdictFlag": {
-      "low": "unlikely to be flagged by external detectors",
-      "elevated": "may draw external-detector attention",
-      "high": "likely to be flagged by external detectors"
+      "low": "low on our scale — but detectors over-flag fluent writing, so they may still flag it (a warning, not a verdict)",
+      "elevated": "may draw external-detector attention (not a Turnitin score)",
+      "high": "likely to draw external-detector attention (a warning, not a verdict)"
     },
     "verdictFix": "The main writing issue to fix is the {{driver}}.",
     "draftproof": "DraftProof (conservative)",

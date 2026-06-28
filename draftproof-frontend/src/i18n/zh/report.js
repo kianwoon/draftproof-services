@@ -21,7 +21,7 @@ export const report = {
     "kicker": "提交风险",
     "mainReasonPrefix": "主要原因：",
     "selfDeclare": "未知 — 需自行声明",
-    "externalTrigger": "AI 可能性 ~{{score}}% — 外部触发信号，并非判定",
+    "externalTrigger": "AI 可能性 ~{{score}}% — 这不是 Turnitin 分数，请勿与 20% 线比较。检测器会过度标记流畅文字，因此这是提示，并非定论。",
     "note": "这关乎你能否把它作为自己的作品站得住脚 — 而不是它看起来是否像 AI 所写。AI 使用声明、课程政策和小组分工都不在文本中，只有你才能声明。",
     "levels": {
       "low": "低",
@@ -585,9 +585,9 @@ export const report = {
       "red": "AI 写作信号偏高"
     },
     "verdictFlag": {
-      "low": "外部检测器不太可能标记",
-      "elevated": "可能引起外部检测器注意",
-      "high": "外部检测器很可能标记"
+      "low": "在我们的标度上偏低——但检测器会过度标记流畅文字，因此仍可能标记它（这是提醒，并非定论）",
+      "elevated": "可能引起外部检测器注意（并非 Turnitin 分数）",
+      "high": "很可能引起外部检测器注意（这是提醒，并非定论）"
     },
     "verdictFix": "首要的写作问题是{{driver}}。",
     "draftproof": "DraftProof（保守估计）",

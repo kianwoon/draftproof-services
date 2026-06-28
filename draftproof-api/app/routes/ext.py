@@ -165,6 +165,10 @@ async def ext_scan_report(scan_id: str, user: dict = Depends(get_api_key_user)):
         "scan_id": scan_id,
         "tier": report.get("tier"),
         "ai_score": report.get("ai_score"),
+        # Decouple the % from the Turnitin mental model: students read any % as a Turnitin
+        # pass/fail (<20% = passed), so a bare number falsely alarms or reassures. It is NOT
+        # a Turnitin score, and detectors over-flag fluent writing -- a heads-up, not a verdict.
+        "ai_score_note": "Not a Turnitin score — don't compare it to the 20% line. Detectors over-flag fluent writing, so this is a heads-up, not a verdict.",
         "writing_score": report.get("writing_score"),
         "critical_thinking": {
             "score": ctc.get("score"),
