@@ -305,8 +305,8 @@ class DetectionRunner:
             return 0.65
         if has_high_predictability and has_unsupported_claims:
             return 0.55
-        if has_high_ai_likelihood:
-            return 0.5
+        # (No moderate-AI band rule: 'has_high_ai_likelihood' already returned 0.7 above,
+        # so the former 'return 0.5' here was unreachable dead code and was removed — L5.)
 
         # Structural guardrail: structural alone cannot produce HIGH tier
         if has_structural_high_only and not has_corroborating_signal:
@@ -379,7 +379,7 @@ class DetectionRunner:
                 name = c.get("name") if isinstance(c, dict) else getattr(c, "name", None)
                 value = c.get("value") if isinstance(c, dict) else getattr(c, "value", None)
                 if name and value is not None:
-                    scores[name] = c if isinstance(c, dict) else c
+                    scores[name] = c
             return scores
         return {}
 

@@ -1008,7 +1008,7 @@ _BADGE_TIER_LABELS = {
     "GREEN": "Low Risk",
     "AMBER": "Moderate Risk",
     "ORANGE": "High Risk",
-    "RED": "Very High Risk",
+    "RED": "Critical Risk",  # KEEP IN SYNC with reportHelpers.js + i18n red label (M7)
 }
 
 
