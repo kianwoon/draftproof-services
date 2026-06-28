@@ -58,6 +58,12 @@ cd worker && pytest                      # worker tests
 cd poc && python test_rewrite_v2.py     # POC integration tests (run individually)
 ```
 
+**Before shipping ANY change to the detection scoring (`poc/detect/`), run the ESL false-positive gate** — it scores the SCoCESLE corpus by proficiency and FAILS (exit 1) if ESL FPR rises, AUC drops, or the higher-vs-lower parity gap widens vs the committed baseline. The corpus is local-only (no redistribution), so this is a local gate, not CI. ~13 min for the full 272 essays.
+```bash
+cd poc && python calibration/fpr_subgroup_gate.py --compare   # GATE vs poc/calibration/fpr_subgroup_baseline.json
+cd poc && python calibration/fpr_subgroup_gate.py --limit 12  # quick smoke (~1 min)
+```
+
 ### Database Migrations
 ```bash
 cd draftproof-api

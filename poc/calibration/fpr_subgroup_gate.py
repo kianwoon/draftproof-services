@@ -15,8 +15,9 @@ shipping scorer changes), NOT a GitHub-CI gate. The numeric baseline it writes I
 committable (numbers only, no corpus text) and is the publishable claim.
 
 Usage:
-    python calibration/fpr_subgroup_gate.py --out PATH                 # write baseline
-    python calibration/fpr_subgroup_gate.py --compare PATH             # regression check
+    python calibration/fpr_subgroup_gate.py --compare                  # GATE: run + check vs committed baseline (exit 1 on regression)
+    python calibration/fpr_subgroup_gate.py --out PATH                 # write a fresh baseline
+    python calibration/fpr_subgroup_gate.py --compare PATH             # check vs a custom baseline
     python calibration/fpr_subgroup_gate.py --limit 12                 # quick subset
     python calibration/fpr_subgroup_gate.py --corpus "/path/to/SCoCESLE"
 """
@@ -44,6 +45,7 @@ HERE = Path(__file__).resolve().parent
 AI_CASES = HERE / "authorship_cases"
 DEFAULT_CORPUS = "/Users/kianwoonwong/Downloads/Small Corpus of Colombian English as a Second Language Essays (SCoCESLE)"
 DEFAULT_OUT = HERE.parent / "test_output" / "_fpr_subgroup_baseline.json"
+DEFAULT_BASELINE = HERE / "fpr_subgroup_baseline.json"  # committed reference for bare --compare
 
 # A human essay is a FALSE POSITIVE when its ai_likelihood reads as "AI-likely". 50% is the
 # natural line (validated: ~97% of SCoCESLE humans score <50%). Report several for context.
@@ -199,7 +201,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", default=DEFAULT_CORPUS)
     ap.add_argument("--out", default=str(DEFAULT_OUT))
-    ap.add_argument("--compare", default=None)
+    ap.add_argument(
+        "--compare", nargs="?", const=str(DEFAULT_BASELINE), default=None,
+        help="regression-check vs a baseline; bare --compare uses the committed reference",
+    )
     ap.add_argument("--limit", type=int, default=None)
     args = ap.parse_args()
 
