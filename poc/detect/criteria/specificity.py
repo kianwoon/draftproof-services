@@ -418,14 +418,21 @@ def score(
         quote_weight = 0.04
         fp_weight = 0.02
 
-    specificity = min(1.0, (
+    # Density of concrete/specific features per ~100 words, then clamp to [0, 1].
+    # NOTE: previously this did min(1.0, feature_sum) / (word_count/100) -- it clamped the
+    # RAW feature sum to 1.0 BEFORE length-normalising, which systematically crushed
+    # specificity for longer documents and INVERTED the signal (a heavily-grounded long
+    # essay scored as LESS specific than short generic AI text). Normalise first, clamp
+    # last so density is comparable across document lengths.
+    _feature_sum = (
         named_entities * ne_weight
         + numbers * num_weight
         + dates * date_weight
         + quotes * quote_weight
         + first_person * fp_weight
         + domain_term_count * dt_weight
-    )) / max(1.0, word_count / 100)
+    )
+    specificity = min(1.0, _feature_sum / max(1.0, word_count / 100))
 
     # Penalise high abstract noun ratio
     abstract_ratio = abstract_nouns / word_count
