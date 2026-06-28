@@ -149,8 +149,15 @@ class AIGenerationSignalDetector(BaseDetector):
 
     def _classify_by_rules(self, results: List[CriterionScore]) -> Optional[str]:
         """Multi-signal rule classification. Returns None if no rule matches."""
-        high_count = sum(1 for r in results if r.label == "high")
-        medium_count = sum(1 for r in results if r.label in ("high", "medium"))
+        # Only WEIGHTED criteria vote. Weight-0 entries are diagnostic-only — notably
+        # source_grounding, whose label='high' means WELL grounded (the opposite polarity
+        # to every risk criterion). Counting them let a well-grounded human doc gain
+        # spurious AI-classification pressure — the exact fluent/grounded-human false
+        # positive the product fights (M6). Gate the counts on weight > 0.
+        weights = self._custom_weights or {name: w for name, _, w in ALL_CRITERIA}
+        scored = [r for r in results if weights.get(r.name, 0) > 0]
+        high_count = sum(1 for r in scored if r.label == "high")
+        medium_count = sum(1 for r in scored if r.label in ("high", "medium"))
 
         for min_criteria, min_level, result_label in MULTI_SIGNAL_RULES:
             if min_level == "high" and high_count >= min_criteria:
@@ -179,9 +186,12 @@ class AIGenerationSignalDetector(BaseDetector):
             risk = "low"
             evidence = "weak"
 
-        # Describe contributing criteria
-        high_criteria = [r.name for r in results if r.label == "high"]
-        medium_criteria = [r.name for r in results if r.label == "medium"]
+        # Describe contributing criteria — weighted ones only, so the diagnostic-only
+        # source_grounding (label='high' == well grounded) is not listed as an AI "High
+        # signal" in the user-facing detail (M6).
+        weights = self._custom_weights or {name: w for name, _, w in ALL_CRITERIA}
+        high_criteria = [r.name for r in results if r.label == "high" and weights.get(r.name, 0) > 0]
+        medium_criteria = [r.name for r in results if r.label == "medium" and weights.get(r.name, 0) > 0]
 
         detail_parts = []
         if high_criteria:

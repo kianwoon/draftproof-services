@@ -1161,6 +1161,16 @@ class Layer3Scorer:
             "balanced_hedging_risk": balanced_hedging,
         }
 
+        # NOTE (M4 — deliberate, NOT pending cleanup): two components here
+        # (repeated_sentence_structure_risk, balanced_hedging_risk) are currently permanent
+        # 0.0 stubs (disabled generator / empty starter list). They stay in the denominator
+        # (~0.12 of weight), DEFLATING every ai_likelihood_score by ~0.88. This is RETAINED
+        # ON PURPOSE: the AMBER/ORANGE/RED boundaries and the validated human mean (~31% on
+        # SCoCESLE) were calibrated WITH this deflation. Removing the dead weight is a uniform
+        # ~x1.14 scale-up that does NOT improve AUC (ranking is unchanged) but shifts humans
+        # UP against fixed boundaries -> more false-accusation, the exact failure the product
+        # avoids. Only remove these together with a corpus-gated boundary recalibration; the
+        # under-flag is the safe direction.
         score = weighted_average({
             k: (v, AI_WEIGHTS[k])
             for k, v in components.items()
@@ -1321,10 +1331,14 @@ class Layer3Scorer:
             "formulaic_conclusion_risk": conclusion,
         }
 
+        # Keep GENUINE zeros in the denominator (filter None, not >0), matching the AI
+        # phase's is-not-None filter. Dropping zeros inflated the average toward the few
+        # non-zero components and over-judged thin/clean docs into HIGH_REVIEW (M5). This
+        # only lowers scores (safe direction for human writing).
         score = weighted_average({
             k: (v, QUALITY_WEIGHTS[k])
             for k, v in components.items()
-            if v > 0
+            if v is not None and k in QUALITY_WEIGHTS
         })
 
         source_strength = clamp(data.source_grounding_strength)
