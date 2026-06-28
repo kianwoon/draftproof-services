@@ -47,13 +47,32 @@ def test_bucket_weighted_average_math():
     assert round(sum(x["contribution"] for x in b.values()), 2) == 38.25
 
 
-def test_primary_driver_is_argmax_contribution_not_score():
+def test_primary_driver_is_highest_score_actionable_gap():
+    # Headline driver leads with the most SEVERE actionable gap (by gap score), NOT the
+    # weight*score contribution. Under the old contribution rule concrete_grounding
+    # (29*45=13.05) led; now authorship_trace (raw score 70, the biggest real gap and a
+    # fixable content/authorship driver) leads. worst_dimension is unchanged.
     d = _diag()
-    # authorship has the highest raw score (70) -> worst_dimension
     assert d["worst_dimension"] == "authorship_trace"
-    # concrete_grounding has the highest weighted contribution (29*45=13.05) -> primary driver
-    assert d["primary_driver"] == "concrete_grounding"
-    assert d["primary_driver_label"] == DRIVER_LABELS["concrete_grounding"][0] == "grounding gap"
+    assert d["primary_driver"] == "authorship_trace"
+    assert d["primary_driver_label"] == DRIVER_LABELS["authorship_trace"][0] == "authorship trace"
+
+
+def test_llm_patterning_never_leads_headline_when_content_present():
+    # Regression: surface AI-patterning ("vary structure and phrasing") is NOT a
+    # mitigation per the project objective, so it must never LEAD the headline while a
+    # content/authorship driver is active -- even when it is the single highest-scoring
+    # bucket. Force every llm_patterning signal to 90 (the highest raw score) and assert
+    # the headline still leads with the top actionable gap instead.
+    d = _diag(
+        ai={"predictability": 90, "topk_pattern": 90,
+            "repeated_sentence_structure_risk": 90, "balanced_hedging_risk": 90},
+        writing={"paragraph_uniformity_risk": 90, "signpost_paragraph_risk": 90},
+    )
+    assert d["buckets"]["llm_patterning"]["score"] == 90.0
+    assert d["worst_dimension"] == "llm_patterning"      # it IS the highest raw score
+    assert d["primary_driver"] != "llm_patterning"        # but it does NOT lead the headline
+    assert d["primary_driver"] == "authorship_trace"      # the top actionable gap (70) leads
 
 
 def test_abstraction_omitted_and_renormalized():

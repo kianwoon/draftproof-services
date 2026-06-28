@@ -38,6 +38,14 @@ DRIVER_LABELS = {
     "language_texture": ("language texture", "cut padding, add concrete meaning"),
 }
 
+# Drivers that describe surface AI-patterning rather than a fixable content gap.
+# Per the project objective (CLAUDE.md): content lacking is the real risk and ADDING
+# content is the fix — "vary structure and phrasing" is explicitly NOT a mitigation.
+# So these never LEAD the headline diagnosis while any content/authorship driver is
+# active; they stay visible as secondary contributors (buckets/contribution).
+# Keyed by bucket CODE — a structural policy, never matched against document text.
+HEADLINE_INELIGIBLE_DRIVERS = {"llm_patterning"}
+
 LIKELY_HUMAN_MAX = 20.0
 SOME_TEXTURE_MAX = 40.0
 MODERATE_MAX = 60.0
@@ -199,7 +207,17 @@ def diagnose_grounding_gap(
     for name, b in buckets.items():
         b["contribution"] = round(b["weight"] * b["score"] / weight_sum, 2) if (weight_sum and b["available"]) else 0.0
     worst_dimension = max(active, key=lambda n: active[n]["score"], default=None)
-    primary_driver = max(active, key=lambda n: buckets[n]["contribution"], default=None)
+    # Headline driver = the most severe ACTIONABLE gap, chosen by gap SCORE (not by
+    # weight*score contribution, which let the heavily-weighted llm_patterning bucket
+    # lead the headline with "vary structure and phrasing" even when a higher-scoring
+    # content gap existed — advice the project objective says does not work). Surface-
+    # patterning drivers are excluded from the headline while any content/authorship
+    # driver is active; we fall back to the full set only if patterning is the sole
+    # active bucket.
+    _headline_pool = {n: b for n, b in active.items()
+                      if n not in HEADLINE_INELIGIBLE_DRIVERS} or active
+    primary_driver = max(_headline_pool, key=lambda n: _headline_pool[n]["score"],
+                         default=None)
 
     band = _band(final)
     low_coverage = scored_sentence_count is not None and scored_sentence_count < LOW_COVERAGE_MIN_SENTENCES
