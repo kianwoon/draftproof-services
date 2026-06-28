@@ -32,20 +32,37 @@ TOPICS = [
     "why critical thinking matters more than memorization",
     "the trade-offs of renewable energy adoption",
     "how reading fiction shapes empathy",
+    # Argumentative IELTS/PERSUADE-style prompts to match the SCoCESLE human ESL genre.
+    "whether governments should make public transport free",
+    "whether homework should be abolished in schools",
+    "whether a university degree is still worth its cost",
+    "whether social media does more harm than good for teenagers",
+    "whether voting should be made mandatory",
+    "whether children should be allowed smartphones in school",
+    "whether developed countries should accept more refugees",
+    "whether zoos do more good than harm",
 ]
 
-# (model, base_url, api_key_env) — both are LLMs, so all output is authorship='ai'.
+# (model, base_url, api_key_env) — all are LLMs, so every passage is authorship='ai'.
+# Use DIVERSE FRONTIER models (the realistic cheating threat) so the AUC is honest, not
+# inflated by a weak 7B model, and not biased by a single generator. All via OpenRouter.
 PROVIDERS = [
-    ("openai/gpt-oss-120b", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY"),
-    ("qwen/qwen-2.5-7b-instruct", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+    ("openai/gpt-4o-mini", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+    ("anthropic/claude-haiku-4.5", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+    ("google/gemini-2.5-flash", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
 ]
 
 SYSTEM = "You are a student writing a short academic essay. Write naturally and clearly."
 
 
 def _load_env() -> None:
-    env = REPO / ".env"
-    if env.exists():
+    # In a git worktree the .env lives in the MAIN repo root, not the worktree, so walk up
+    # from REPO and load the first .env(s) found (setdefault => the closest one wins, and an
+    # already-exported key is never overwritten).
+    candidates = [REPO / ".env"] + [up / ".env" for up in REPO.parents]
+    for env in candidates:
+        if not env.exists():
+            continue
         for line in env.read_text().splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
