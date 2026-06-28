@@ -186,7 +186,13 @@ def resolve_frontend_file(root_path: str, path: str) -> tuple[str, str | None, i
 
     file_path = os.path.join(root_path, normalized)
     if normalized and os.path.isfile(file_path):
-        return file_path, None, 200, {}
+        # Add-in files (word-addin/*) have FIXED names (no content hash), so without an
+        # explicit directive Office/Word heuristically caches stale copies indefinitely
+        # (the "I refreshed, nothing changed" bug). Force revalidation so updates show on
+        # reload; the ETag/Last-Modified make this a cheap 304 when unchanged. Hashed
+        # frontend assets are mounted separately at /assets and keep long caching.
+        cache_control = "no-cache" if normalized.startswith("word-addin/") else None
+        return file_path, cache_control, 200, {}
 
     route_index_path = os.path.join(file_path, "index.html")
     if normalized and os.path.isfile(route_index_path):

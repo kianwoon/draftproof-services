@@ -43,6 +43,22 @@ def test_resolve_frontend_file_keeps_exact_static_file(tmp_path):
     assert headers == {}
 
 
+def test_resolve_frontend_file_forces_revalidation_for_word_addin(tmp_path):
+    # Add-in files have FIXED names (no content hash); without no-cache, Office/Word
+    # heuristically caches stale copies forever ("I refreshed, nothing changed").
+    root = tmp_path
+    addin = root / "word-addin"
+    addin.mkdir()
+    (addin / "taskpane.js").write_text("// addin", encoding="utf-8")
+
+    file_path, cache_control, status_code, headers = resolve_frontend_file(str(root), "word-addin/taskpane.js")
+
+    assert Path(file_path) == addin / "taskpane.js"
+    assert cache_control == "no-cache"
+    assert status_code == 200
+    assert headers == {}
+
+
 def test_legacy_content_checker_routes_redirect_to_canonical_paths():
     assert legacy_frontend_redirect_target("essay-checker") == "/content-checker"
     assert legacy_frontend_redirect_target("zh/essay-checker") == "/zh/content-checker"
