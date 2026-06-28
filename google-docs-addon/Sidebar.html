@@ -281,11 +281,11 @@
         var wq = rep && rep.writing_score != null ? pct(rep.writing_score) : null;
         if (ai == null && wq == null) { els.headScores.hidden = true; els.headScores.innerHTML = ''; return; }
         var h = '';
-        if (ai != null) h += badge('AI', ai);
+        if (ai != null) h += badge('AI', ai, rep.ai_score_note || 'Not a Turnitin score — a heads-up, not a verdict; detectors over-flag fluent writing');
         if (wq != null) h += badge('Writing', wq);
         els.headScores.innerHTML = h; els.headScores.hidden = false;
       }
-      function badge(lbl, val) { return '<span class="score-badge"><span class="lbl">' + esc(lbl) + '</span><span class="val">' + esc(val) + '</span></span>'; }
+      function badge(lbl, val, title) { return '<span class="score-badge"' + (title ? ' title="' + escAttr(title) + '"' : '') + '><span class="lbl">' + esc(lbl) + '</span><span class="val">' + esc(val) + '</span></span>'; }
       function humanize(s) { return String(s || '').replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); }); }
       // Robust search needle from a finding's verbatim text: collapse whitespace, cap length.
       function findNeedle(t, max) {
@@ -329,7 +329,12 @@
         var sr = rep.submission_risk;
         if (sr && (sr.label || sr.level)) {
           var head = esc(sr.label || sr.level) + (sr.risk != null ? ' · ' + Math.round(sr.risk) + '%' : '');
-          p.push('<div class="section"><div class="section-title">Submitted content</div><div>' + head + '</div>' + (sr.reason ? '<p class="section-note">' + esc(sr.reason) + '</p>' : '') + '</div>');
+          // allow-hardcode: presentation note (honest detector caveat), not scoring logic.
+          var srNote = 'Whether you can defend this as your own work — not a prediction of your ' +
+            'Turnitin result. Detectors over-flag fluent writing and may flag this even though it\'s ' +
+            'yours (a warning, not a verdict). The AI % above is NOT a Turnitin score.';
+          if (sr.reason) srNote = sr.reason + ' ' + srNote;
+          p.push('<div class="section"><div class="section-title">Submitted content</div><div>' + head + '</div><p class="section-note">' + esc(srNote) + '</p></div>');
         }
 
         var pis = rep.paragraph_issues || [];

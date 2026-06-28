@@ -312,7 +312,11 @@
       return;
     }
     var html = "";
-    if (ai != null) html += scoreBadge("AI", "AI-likelihood", ai);
+    // allow-hardcode: presentation tooltip (the honest decoupling), not scoring logic.
+    // Use the API's ai_score_note when present so the bare "AI 32%" isn't read as a
+    // Turnitin pass/fail (<20% = passed); detectors over-flag fluent writing.
+    if (ai != null) html += scoreBadge("AI", report.ai_score_note ||
+      "Not a Turnitin score — don't compare to the 20% line. A heads-up, not a verdict.", ai);
     if (wq != null) html += scoreBadge("Writing", "Writing quality", wq);
     els.headScores.innerHTML = html;
     els.headScores.hidden = false;
@@ -397,7 +401,14 @@
     var sr = report.submission_risk;
     if (sr && (sr.label || sr.level)) {
       var srHead = escapeHtml(sr.label || sr.level) + (sr.risk != null ? " · " + Math.round(sr.risk) + "%" : "");
-      p.push(section("Submitted content", srHead, "dp-level-" + escapeAttr(sr.level || "unknown"), sr.reason));
+      // allow-hardcode: presentation note (the honest detector caveat), not scoring logic.
+      // Pair the tier with the reality so a low level never reads as "I'll pass Turnitin":
+      // this measures whether you can OWN the work, and detectors over-flag fluent writing.
+      var srNote = "Whether you can defend this as your own work — not a prediction of your " +
+        "Turnitin result. Detectors over-flag fluent writing and may flag this even though it's " +
+        "yours (a warning, not a verdict). The AI % above is NOT a Turnitin score.";
+      if (sr.reason) srNote = sr.reason + " " + srNote;
+      p.push(section("Submitted content", srHead, "dp-level-" + escapeAttr(sr.level || "unknown"), srNote));
     }
 
     // allow-hardcode: HTML render templates + CSS class names (presentation); all
