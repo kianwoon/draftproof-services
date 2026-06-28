@@ -26,8 +26,6 @@ between the service's signals and its charter.
 - **The user owns the final words.** They review the before/after, learn what grounding
   looks like, and re-express it in their own real content.
 
-DraftProof is an **integrity & grounding-coaching tool.** It is **not** a "lower your
-Turnitin score" service, a "humanizer," or a detection-evasion tool.
 
 ---
 
