@@ -227,12 +227,13 @@ def _auto_extract_domain_terms(text: str, min_freq: int = 1) -> List[str]:
     #    Conservative: only words > 9 chars OR repeated domain-suffix words > 7 chars.
     #    This catches "scaffolding", "vocational", "pedagogy" without catching
     #    "learning", "students", "teachers", "important".
-    _COMMON_WORDS = frozenset({
-        "learning", "students", "teachers", "teaching", "important",
-        "different", "following", "understand", "something", "someone",
-        "education", "knowledge", "including", "therefore", "development",
-        "techniques", "structure", "students", "correction", "demonstration",
-    })
+    # NO-HARDCODE (L1): the curated education content-word stoplist was removed. It was
+    # domain-overfit and stripped exactly the long domain anchors ESL/education writers use
+    # (development, techniques, demonstration, correction all clear the len>9 gate below),
+    # lowering their domain_term_count and inflating specificity risk -> false positives.
+    # Short common words (learning, students, teaching...) are already excluded by the
+    # content-agnostic length/suffix gate, so emptying this only stops over-stripping.
+    _COMMON_WORDS = frozenset()
     _DOMAIN_SUFFIXES_STRICT = {
         "tion", "sion", "ling", "ping", "ting", "city",
     }

@@ -1117,13 +1117,16 @@ class Layer3Scorer:
             qualifying_density,
             balanced_hedging,
         )
+        # Treat a truly empty doc (word_count == 0) as the tiniest sample too — the former
+        # '0 <' lower bound skipped it (L7). Effect is nil in practice (an empty doc already
+        # scores 0) but it removes the boundary inconsistency.
         sample_tiny = (
-            (0 < data.word_count < 50)
-            or (0 < data.sentence_count < 3)
+            (data.word_count < 50)
+            or (data.sentence_count < 3)
         )
         sample_limited = sample_tiny or (
-            (0 < data.word_count < 150)
-            or (0 < data.sentence_count < 6)
+            (data.word_count < 150)
+            or (data.sentence_count < 6)
         )
 
         if raw_topk <= 0:

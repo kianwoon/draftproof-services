@@ -108,8 +108,12 @@ def render_scan_lead(report, data) -> str:
            "flag this even though it is your own work — a warning, not a verdict. Your "
            "protection is grounding your claims and keeping your drafts.")
 
-    # Chip 1: scope the tier to OWNERSHIP (not a Turnitin-pass prediction).
-    chips = [(f"{_SR_LEVEL_LABELS.get(sr_level, sr_level)} ownership risk", _level_kind(sr_level))]
+    # Chip 1: scope the tier to what ACTUALLY drove it. Normally that's ownership, but when
+    # the level was floored UP by the detector text-pattern axis (main_reason_code ==
+    # 'text_pattern') ownership was NOT the driver, so don't mislabel it (L9; matches the
+    # React band's reason-code attribution).
+    chip_axis = "detector-pattern risk" if overall.get("main_reason_code") == "text_pattern" else "ownership risk"
+    chips = [(f"{_SR_LEVEL_LABELS.get(sr_level, sr_level)} {chip_axis}", _level_kind(sr_level))]
     # No AI-style tier chip in the hero. A "Low/Moderate" valence here clashed with the
     # ownership chip and either over-alarmed (Moderate ~32% read as a Turnitin fail) OR
     # falsely reassured (a GREEN tier read as "detectors will pass me", though they

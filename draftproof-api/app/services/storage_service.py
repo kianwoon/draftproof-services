@@ -28,10 +28,18 @@ async def save_upload(file: UploadFile) -> DocumentOut:
     doc_id = str(uuid.uuid4())
     dest = os.path.join(UPLOAD_DIR, f"{doc_id}{ext}")
 
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise ValueError(f"File exceeds {MAX_FILE_SIZE // (1024*1024)}MB limit")
-    await asyncio.to_thread(_write_file_sync, dest, content)
+    # Read in 1 MiB chunks and abort as soon as the limit is exceeded, so a grossly
+    # oversized upload cannot force us to buffer the entire body before the size check
+    # (L12). Bounds memory/temp pressure to ~MAX_FILE_SIZE + one chunk.
+    buf = bytearray()
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        if len(buf) > MAX_FILE_SIZE:
+            raise ValueError(f"File exceeds {MAX_FILE_SIZE // (1024*1024)}MB limit")
+    await asyncio.to_thread(_write_file_sync, dest, bytes(buf))
 
     return DocumentOut(id=doc_id, filename=safe_filename, created_at=datetime.now(timezone.utc))
 
