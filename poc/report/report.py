@@ -1767,15 +1767,27 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             domain_terms = metrics.get("domain_terms", [])
             matched_domain_term_count = len(domain_terms) if isinstance(domain_terms, list) else 0
             weighted_domain_term_count = int(metrics.get("domain_term_count", 0))
+            # Anchored examples: the vaguest sentences to ground. Threaded through the
+            # finding metadata (the report rebuilds `evidence`, dropping the criterion's).
+            examples = [s for s in (metrics.get("flagged_excerpts") or [])
+                        if isinstance(s, str) and s.strip()][:3]
+            if not examples and isinstance(f.evidence, str) and f.evidence.strip():
+                examples = [f.evidence.strip()]
+            # allow-hardcode: display-only summary template (the metric labels rendered to
+            # the user), not detection logic — never matched against document text.
+            summary = (f"{int(metrics.get('word_count', 0))} words, "
+                       f"{int(metrics.get('named_entities', 0))} named entities, "
+                       f"{int(metrics.get('numbers', 0))} numbers, "
+                       f"{int(metrics.get('dates', 0))} dates, "
+                       f"{matched_domain_term_count} matched domain terms "
+                       f"({weighted_domain_term_count} weighted)")
+            if examples:
+                summary += f". Vaguest sentence to ground: “{examples[0][:140]}”"
             result_evidence = {
                 "type": "document_level",
-                "summary": (f"{int(metrics.get('word_count', 0))} words, "
-                            f"{int(metrics.get('named_entities', 0))} named entities, "
-                            f"{int(metrics.get('numbers', 0))} numbers, "
-                            f"{int(metrics.get('dates', 0))} dates, "
-                            f"{matched_domain_term_count} matched domain terms "
-                            f"({weighted_domain_term_count} weighted)"),
+                "summary": summary,
                 "affected_span": "full_document",
+                "example_sentences": examples,
                 "metrics": metrics,
                 "matched_domain_term_count": matched_domain_term_count,
                 "weighted_domain_term_count": weighted_domain_term_count,

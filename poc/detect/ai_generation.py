@@ -231,7 +231,11 @@ class AIGenerationSignalDetector(BaseDetector):
                     evidence=r.flagged_excerpts[0][:200] if r.flagged_excerpts else "",
                     recommendation=self._recommendation_for_criterion(r.name),
                     suggested_action_type=self._action_for_criterion(r.name),
-                    metadata=r.details,
+                    # Carry the anchored excerpts in metadata so the report builder can
+                    # surface them (the report rebuilds `evidence`, so passing them via
+                    # metadata is the only way they survive to the user-facing report).
+                    metadata={**(r.details or {}),
+                              "flagged_excerpts": list(r.flagged_excerpts or [])[:3]},
                 ))
 
         return findings
