@@ -101,6 +101,16 @@ def _rewrite_cost(word_count: int) -> int:
 
 def _read_document_text_sync(document_id: str) -> str:
     """Read uploaded document text from disk (sync — call via to_thread)."""
+    # document_id is attacker-controllable (ScanRequest.document_id) and is
+    # interpolated straight into a filesystem path, so anything other than a UUID
+    # (e.g. "../../../../etc/passwd") is a path-traversal / arbitrary-file-read
+    # vector — the file contents get echoed back into the scan report. Documents
+    # are always created with uuid4 ids; a string that parses as a UUID cannot
+    # contain "/" or "..", so the join is guaranteed to stay inside UPLOAD_DIR.
+    try:
+        uuid.UUID(str(document_id))
+    except (ValueError, TypeError):
+        return ""
     for ext in (".txt", ".pdf", ".docx"):
         path = os.path.join(UPLOAD_DIR, f"{document_id}{ext}")
         if os.path.isfile(path):
