@@ -120,7 +120,10 @@ def measure(corpus: str, limit: int | None) -> dict:
     runner = DetectionRunner()
     groups = _proficiency_groups(corpus)
     if not groups["higher"] and not groups["lower"]:
-        raise SystemExit(f"No SCoCESLE essays found under {corpus!r} — pass --corpus.")
+        # Exit 2 = setup/corpus unavailable (distinct from 1 = regression) so the pre-push
+        # hook can treat a missing local corpus as "skip", not "block".
+        print(f"No SCoCESLE essays found under {corpus!r} — set --corpus / $SCOCESLE_CORPUS.", file=sys.stderr)
+        raise SystemExit(2)
 
     scores = {}
     for g in ("higher", "lower"):

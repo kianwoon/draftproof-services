@@ -63,6 +63,11 @@ cd poc && python test_rewrite_v2.py     # POC integration tests (run individuall
 cd poc && python calibration/fpr_subgroup_gate.py --compare   # GATE vs poc/calibration/fpr_subgroup_baseline.json
 cd poc && python calibration/fpr_subgroup_gate.py --limit 12  # quick smoke (~1 min)
 ```
+This gate is **auto-enforced** by the `pre-push` hook in `maintenances/githooks/` (active via
+`core.hooksPath`; set it once on a fresh clone with `git config core.hooksPath maintenances/githooks`).
+The hook runs the gate **only when a push touches `poc/detect/`**, blocks on a regression, and skips
+gracefully if the corpus / ML stack is absent. Bypass an intentional, re-baselined change with
+`git push --no-verify`.
 
 ### Database Migrations
 ```bash
