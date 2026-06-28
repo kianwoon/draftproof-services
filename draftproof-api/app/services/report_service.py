@@ -134,7 +134,11 @@ def _normalize_rewrite_progress_message(message: str | None) -> str | None:
 async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
     """Fetch a completed scan report by scan job ID, optionally scoped to a user."""
     async with async_session() as session:
-        q = select(ScanJob).where(ScanJob.id == uuid.UUID(report_id))
+        try:
+            report_uuid = uuid.UUID(report_id)
+        except (ValueError, TypeError):
+            return None  # malformed id -> not found (404), not a 500 (L13)
+        q = select(ScanJob).where(ScanJob.id == report_uuid)
         if user_id:
             q = q.where(ScanJob.user_id == uuid.UUID(user_id))
         result = await session.execute(q)

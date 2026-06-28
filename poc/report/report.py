@@ -1031,9 +1031,10 @@ class ReportBuilder:
         AMBER (observed: test_content11 -> badge AMBER 42%, generic_assertion 90,
         overall LOW). A LOW headline under an amber+ badge contradicts the badge and
         under-warns the user, so floor it to MEDIUM. GREEN badges (genuinely low AI
-        signal) may stay LOW. Only LOW is lifted; higher tiers are never altered.
+        signal) may stay LOW. LOW and CLEAN are both lifted — a CLEAN internal tier under
+        an amber+ badge under-warns identically (L8); higher tiers are never altered.
         """
-        if adjusted_tier == Tier.LOW and str(badge_tier_value or "").upper() in ("AMBER", "ORANGE", "RED"):
+        if adjusted_tier in (Tier.LOW, Tier.CLEAN) and str(badge_tier_value or "").upper() in ("AMBER", "ORANGE", "RED"):
             return Tier.MEDIUM
         return adjusted_tier
 

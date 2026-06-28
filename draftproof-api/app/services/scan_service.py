@@ -479,7 +479,11 @@ async def get_scan(scan_id: str, user_id: str | None = None) -> dict | None:
     Redis progress heartbeat so deploy-killed workers do not leave scans stuck.
     """
     async with async_session() as session:
-        q = select(ScanJob).where(ScanJob.id == uuid.UUID(scan_id))
+        try:
+            scan_uuid = uuid.UUID(scan_id)
+        except (ValueError, TypeError):
+            return None  # malformed id -> not found (404), not a 500 (L13)
+        q = select(ScanJob).where(ScanJob.id == scan_uuid)
         if user_id:
             q = q.where(ScanJob.user_id == uuid.UUID(user_id))
         q = q.with_for_update()
@@ -512,8 +516,12 @@ async def delete_scan(scan_id: str, user_id: str) -> bool:
     import logging
     log = logging.getLogger("scan_service.delete")
     async with async_session() as session:
+        try:
+            scan_uuid = uuid.UUID(scan_id)
+        except (ValueError, TypeError):
+            return False  # malformed id -> not found (404) (L13)
         q = select(ScanJob).where(
-            ScanJob.id == uuid.UUID(scan_id),
+            ScanJob.id == scan_uuid,
             ScanJob.user_id == uuid.UUID(user_id),
         )
         result = await session.execute(q)

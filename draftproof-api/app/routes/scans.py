@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import re
 
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -30,8 +31,10 @@ async def create_scan_route(req: ScanRequest, user: dict = Depends(get_current_u
         return ScanOut(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Scan failed: {e}")
+    except Exception:
+        # Log server-side; never leak the raw exception text to the client (L11).
+        logging.getLogger(__name__).exception("Scan creation failed")
+        raise HTTPException(status_code=500, detail="Scan could not be started. Please try again.")
 
 
 @router.get("/{scan_id}/events")
