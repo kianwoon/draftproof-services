@@ -18,6 +18,15 @@ export default function SubmissionRiskBand({ t, sr }) {
         <strong className={`submission-risk-level is-${level}`}>
           {t(`report.submissionRisk.levels.${level}`)}
         </strong>
+        {/* Lead with ownership + an honest detector warning so a low level is never read
+            as "I'll pass Turnitin" -- detectors over-flag fluent writing (page parity with
+            the PDF reframe). */}
+        <p className="submission-risk-reason submission-risk-ownership-lead">
+          {t(`report.submissionRisk.ownershipLead.${level}`, { defaultValue: '' })}
+        </p>
+        <p className="submission-risk-reason submission-risk-detector-warning">
+          {t('report.submissionRisk.detectorWarning')}
+        </p>
         {reasonCode && (
           <p className="submission-risk-reason">
             {t('report.submissionRisk.mainReasonPrefix')} {t(`report.submissionRisk.reasons.${reasonCode}`)}

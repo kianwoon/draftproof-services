@@ -24,6 +24,12 @@ export const report = {
     "selfDeclare": "Unknown — self-declare",
     "externalTrigger": "AI-likelihood ~{{score}}% — NOT a Turnitin score; don't compare it to the 20% line. Detectors over-flag fluent writing, so it's a heads-up, not a verdict.",
     "note": "This is about whether you can stand behind this as your own work — not whether it looks AI-written. Declaration, course policy, and group contribution aren't in the text; only you can declare those.",
+    "ownershipLead": {
+      "low": "You can defend this as your own work.",
+      "medium": "Strengthen this before you can fully defend it as your own.",
+      "high": "Strengthen this before you can fully defend it as your own."
+    },
+    "detectorWarning": "Heads-up: AI detectors over-flag fluent writing, so they may flag this even though it's your own work — a warning, not a verdict. Your protection is grounding your claims and keeping your drafts.",
     "levels": {
       "low": "Low",
       "medium": "Medium",
