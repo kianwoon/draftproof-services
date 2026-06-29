@@ -95,6 +95,12 @@ Tiles never silently show 100 on no-data.
 ## Phase 2 (out of scope for v1)
 - **Real Reasoning Consistency**: per-paragraph claim→conclusion entailment / sign-flip check, OR enable + variance-validate the existing LLM dims (`critical_thinking_llm.py`, default OFF).
 - **True CI**: per-paragraph composite via `Layer3Scorer.calculate_ai_likelihood` (pure-Python, no LLM) for a real dispersion of the band metric.
+  - **VERIFIED DEFERRED (2026-06-29, adversarially traced end-to-end — NOT cheaply/additively shippable as written):**
+    1. `calculate_ai_likelihood` runs **once, document-level** (`layer3_scoring.py:1431` ← `report.py:1471`). `build_layer3_input_from_text` takes `predictability`/`topk_pattern` as **parameters** (it does not compute them — it only runs cheap text-statistic `estimate_*` calls). So a per-paragraph call either **omits the dominant signals** (predictability/topk — the ~71 AI floor), or must **recompute the GPT-2 model per paragraph** (~N× the ~4s scan, and statistically noisy on short paragraphs).
+    2. `report.py:466` stamps the **same doc-level** `ai_generation` `result.likelihood_score` onto every finding; `report.py:916`'s `max(...)` is therefore **not discarding a distribution — there is no per-paragraph distribution to recover.**
+    3. The dominant signals are **already composited per-sentence** in `predictability.all_sentences[]` (`predictability_risk` = `0.45·top10 + 0.25·top50 + 0.20·(1/(1+surprisal)) + 0.10·generic`, per `report.py:4628`), at **finer-than-paragraph granularity, for free** — and the shipped `_ai_ci` already dispersions that composite.
+    - **Conclusion:** a literal per-paragraph composite is **inferior** to the shipped proxy (weaker if cheap, expensive+noisy if faithful); no richer per-unit signal exists without recompute. The only honest "True CI" is a perf+noise project (per-unit GPT-2 recompute) that the detector's ~0.75 AUC ceiling does not justify. **Keep the tentative proxy; do not relabel it "True CI."**
+    - Open micro-fix (separate concern, not Phase 2 #2): the `<2-sentence` fallback invents a `_CI_DEFAULT_SPREAD = 12.0` magic-constant half-spread (false precision on short docs) → should **abstain** (`ci: null`, "not enough text to estimate a range") to match the dashboard's abstention UX and drop a hardcoded number.
 - **Revision Evidence**: provenance capture (draft snapshots / paste / time) in the add-ins.
 
 ## Decisions for your review (defaults chosen; change any)
