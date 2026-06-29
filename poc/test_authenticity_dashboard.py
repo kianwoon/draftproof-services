@@ -67,8 +67,8 @@ def test_ai_assistance_ci_is_tentative_and_bounded():
     assert 0.0 <= ci["low"] <= ci["high"] <= 100.0
 
 
-def test_overall_weakest_link_floor():
-    # one failing axis must drag the headline down, not be averaged away
+def test_overall_blends_mean_and_weakest_link():
+    # one failing axis must drag the headline down without alone dictating it
     badge = _badge(
         critical_thinking_control={"score": 90.0},
         grounding_diagnosis={"buckets": {"concrete_grounding": {"score": 90.0, "available": 3}}},  # grounding=10
@@ -76,8 +76,9 @@ def test_overall_weakest_link_floor():
         ai_likelihood_score=10.0,  # ai_assistance=90
     )
     d = compose(ai_risk_badge=badge)
-    assert d["overall"]["score"] == 10.0     # floored to worst available dim (grounding=10)
-    assert d["overall"]["band"] == "High"
+    # weighted=67.25, worst=10 -> 0.5*67.25 + 0.5*10 = 38.625
+    assert d["overall"]["score"] == 38.6
+    assert d["overall"]["band"] == "Medium"
 
 
 def test_overall_abstains_under_two_dims():
