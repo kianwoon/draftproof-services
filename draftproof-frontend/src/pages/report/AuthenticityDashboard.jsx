@@ -14,7 +14,9 @@
 const AUTH_GOOD_MIN = 66;
 const AUTH_FAIR_MIN = 38;
 
-const TILES = ['learning_ownership', 'grounding', 'citation_quality', 'reasoning_consistency'];
+// Reasoning Consistency is a phase-2 placeholder with no data yet — don't render an empty
+// tile for it; AI Assistance takes the 4th slot as a real peer (one clean row, no orphan).
+const TILES = ['learning_ownership', 'grounding', 'citation_quality'];
 
 // RISK vocabulary → tone. Low = good (green), High = bad (red).
 const BAND_TONE = { Low: 'good', Medium: 'fair', Moderate: 'fair', High: 'weak' };
@@ -57,7 +59,7 @@ export default function AuthenticityDashboard({ t, dashboard }) {
       </div>
       <div className="authn-grid">
         {TILES.map((k) => <Tile key={k} t={t} keyName={k} tile={dashboard[k]} />)}
-        <div className={`authn-tile authn-ai is-${aiTone}`}>
+        <div className={`authn-tile is-${aiTone}`}>
           <span className="authn-tile-label">{t('report.authenticityDashboard.tiles.ai_assistance')}</span>
           <strong className="authn-tile-score">{ai.band ? t(`report.authenticityDashboard.bands.${ai.band}`) : t('report.authenticityDashboard.na')}</strong>
           {ai.ci ? (

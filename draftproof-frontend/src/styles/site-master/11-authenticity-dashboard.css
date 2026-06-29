@@ -96,24 +96,14 @@
   letter-spacing: -.02em;
 }
 .authn-tile-caveat {
-  font-size: .72rem;
+  font-size: .78rem;
   font-style: normal;
   color: #64748b;
-  line-height: 1.3;
+  line-height: 1.4;
 }
 
-/* Full-width AI-emphasis tile (carries the tentative CI; needs room to breathe). */
-.authn-ai {
-  grid-column: 1 / -1;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  background: #fff;
-  border-left-width: 4px;
-}
-.authn-ai .authn-tile-score { font-size: 1.05rem; }
+/* AI Assistance renders as a peer grid tile (same card shape as the others), keeping its
+   band as the value and the tentative CI as its caveat. No full-width / strip treatment. */
 
 /* Tone accent colors — one source of truth. */
 .authn-tile.is-good,
@@ -133,7 +123,4 @@
   line-height: 1.45;
 }
 
-/* Tablet / mobile: stack the AI tile's inline row. */
-@media (max-width: 640px) {
-  .authn-ai { flex-direction: column; align-items: flex-start; }
-}
+/* Mobile reflow is handled by the grid's auto-fit minmax(150px, 1fr). */
