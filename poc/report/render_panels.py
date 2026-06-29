@@ -60,6 +60,28 @@ def _level_kind(level: str) -> str:
     return "info"  # medium / moderate / unknown
 
 
+def render_authenticity_dashboard(report_data: dict) -> str:
+    """HTML panel for the authenticity dashboard; '' when absent (flag off / old report)."""
+    badge = (report_data or {}).get("ai_risk_badge") or {}
+    dash = badge.get("authenticity_dashboard")
+    if not dash:
+        return ""
+    rows = []
+    for key, label in (("learning_ownership", "Learning Ownership"), ("grounding", "Grounding"),
+                       ("citation_quality", "Citation Quality")):
+        tile = dash.get(key) or {}
+        val = round(tile["score"]) if isinstance(tile.get("score"), (int, float)) else "—"
+        rows.append(f'<div class="dp-kpi"><b>{escape(str(val))}</b><span>{escape(label)}</span></div>')
+    ai = dash.get("ai_assistance") or {}
+    rows.append(f'<div class="dp-kpi"><b>{escape(str(ai.get("band") or "—"))}</b><span>AI Assistance</span></div>')
+    overall = dash.get("overall") or {}
+    head = f'Authenticity — Overall {escape(str(overall.get("band") or "—"))}'
+    return (f'<div class="dp-hero"><p class="dp-hero-read">{escape(head)}</p>'
+            f'<div class="dp-kpi-row">{"".join(rows)}</div>'
+            '<p class="dp-hero-sub">Guidance for your review — overlapping dimensions, not independent '
+            'measurements or a Turnitin prediction.</p></div>')
+
+
 def render_scan_lead(report, data) -> str:
     """Hero + KPI row + priority fixes + '1. Submission and policy view'.
 

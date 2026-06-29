@@ -106,3 +106,17 @@ def test_report_attach_respects_killswitch(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_AUTHENTICITY_DASHBOARD", "1")
     out = ad.maybe_attach(badge, predictability=None)
     assert out is not None and out["version"] == ad.MODEL_VERSION
+
+
+def test_pdf_panel_renders_html_when_present():
+    from report.render_panels import render_authenticity_dashboard
+    dash = {"overall": {"score": 80.0, "band": "Low"},
+            "grounding": {"score": 81.0, "available": True, "caveat": None},
+            "ai_assistance": {"band": "Moderate", "score": 68.0, "ci": {"low": 55, "high": 80, "tentative": True}}}
+    html = render_authenticity_dashboard({"ai_risk_badge": {"authenticity_dashboard": dash}})
+    assert "Authenticity" in html and "Low" in html
+
+
+def test_pdf_panel_empty_when_absent():
+    from report.render_panels import render_authenticity_dashboard
+    assert render_authenticity_dashboard({"ai_risk_badge": {}}) == ""
