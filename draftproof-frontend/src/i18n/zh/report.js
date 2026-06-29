@@ -617,13 +617,19 @@ export const report = {
     "overall": "综合",
     "ciTentative": "AI 辅助估计 {{low}}–{{high}}（参考值——并非检测器定论）",
     "note": "这些维度相互重叠，仅供参考，不代表独立测量结果，亦非 Turnitin 预测。",
-    "bands": { "Low": "低", "Moderate": "中等", "High": "高" },
+    "bands": { "Low": "低", "Moderate": "中等", "Medium": "中等", "High": "高" },
     "tiles": {
       "learning_ownership": "学习自主性",
       "grounding": "内容支撑",
       "citation_quality": "引用质量",
       "reasoning_consistency": "论证一致性（即将推出）",
       "ai_assistance": "AI 辅助程度"
+    },
+    // allow-hardcode: i18n 展示文案——按维度名称索引的提示字符串，不是评分或匹配规则
+    "caveats": {
+      "learning_ownership": "你在多大程度上主导思考——源自批判性思维信号。",
+      "grounding": "参考值——提交内容较短。",
+      "reasoning_consistency": "将在后续版本推出。"
     }
   }
 };

@@ -623,13 +623,19 @@ export const report = {
     "overall": "Overall",
     "ciTentative": "AI-assistance estimate {{low}}–{{high}} (tentative — not a detector verdict)",
     "note": "These dimensions overlap and are guidance for your review, not independent measurements or a Turnitin prediction.",
-    "bands": { "Low": "Low", "Moderate": "Moderate", "High": "High" },
+    "bands": { "Low": "Low", "Moderate": "Moderate", "Medium": "Medium", "High": "High" },
     "tiles": {
       "learning_ownership": "Learning Ownership",
       "grounding": "Grounding",
       "citation_quality": "Citation Quality",
       "reasoning_consistency": "Reasoning Consistency (coming soon)",
       "ai_assistance": "AI Assistance"
+    },
+    // allow-hardcode: i18n display copy keyed by dimension name — UI caveat strings, not a scoring/matching oracle
+    "caveats": {
+      "learning_ownership": "How much you steer the thinking — derived from the critical-thinking signal.",
+      "grounding": "Tentative — short submission.",
+      "reasoning_consistency": "Coming in a later release."
     }
   }
 };

@@ -10,7 +10,7 @@ function Tile({ t, keyName, tile }) {
     <div className={`authn-tile ${score === null ? 'is-na' : ''}`}>
       <span className="authn-tile-label">{t(`report.authenticityDashboard.tiles.${keyName}`)}</span>
       <strong className="authn-tile-score">{score === null ? t('report.authenticityDashboard.na') : score}</strong>
-      {tile && tile.caveat && <em className="authn-tile-caveat">{tile.caveat}</em>}
+      {tile && tile.caveat && <em className="authn-tile-caveat">{t(`report.authenticityDashboard.caveats.${keyName}`)}</em>}
     </div>
   );
 }
