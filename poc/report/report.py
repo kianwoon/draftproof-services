@@ -1579,6 +1579,11 @@ class ReportBuilder:
             },
         }
 
+        from detect.authenticity_dashboard import maybe_attach as _attach_dashboard
+        _dash = _attach_dashboard(ai_risk_badge, predictability=None)  # predictability added read-time (Task 7)
+        if _dash is not None:
+            ai_risk_badge["authenticity_dashboard"] = _dash
+
         badge_ai_score = ai_risk_badge.get("ai_likelihood_score", 0.0) / 100
         if ai_val > 0 and badge_ai_score > 0:
             overall_tier_reason = overall_tier_reason.replace(

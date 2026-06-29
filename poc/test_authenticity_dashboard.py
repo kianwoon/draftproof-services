@@ -90,3 +90,19 @@ def test_placeholders_present():
     d = compose(ai_risk_badge=_badge())
     assert d["reasoning_consistency"]["available"] is False
     assert d["revision_evidence"]["status"] == "placeholder"
+
+
+import os
+import importlib
+
+
+def test_report_attach_respects_killswitch(monkeypatch):
+    import detect.authenticity_dashboard as ad
+    badge = {"ai_likelihood_score": 32.0, "tier": "AMBER", "confidence": "high",
+             "critical_thinking_control": {"score": 90.0}}
+    # helper that report.py will call:
+    monkeypatch.setenv("DRAFTPROOF_AUTHENTICITY_DASHBOARD", "0")
+    assert ad.maybe_attach(badge, predictability=None) is None  # OFF -> no attach
+    monkeypatch.setenv("DRAFTPROOF_AUTHENTICITY_DASHBOARD", "1")
+    out = ad.maybe_attach(badge, predictability=None)
+    assert out is not None and out["version"] == ad.MODEL_VERSION

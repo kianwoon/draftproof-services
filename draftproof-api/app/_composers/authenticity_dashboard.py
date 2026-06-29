@@ -10,6 +10,7 @@ AI confidence interval is a clearly-tentative proxy (not a statistical interval)
 """
 from __future__ import annotations
 
+import os
 import statistics
 
 MODEL_VERSION = "authenticity_dashboard_v1"
@@ -127,3 +128,17 @@ def compose_authenticity_dashboard(*, ai_risk_badge: dict, predictability: dict 
         "revision_evidence": revision_evidence,
         "overall": overall,
     }
+
+
+def _enabled() -> bool:
+    return os.getenv("DRAFTPROOF_AUTHENTICITY_DASHBOARD", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def maybe_attach(ai_risk_badge: dict, predictability: dict | None = None) -> dict | None:
+    """Return the dashboard dict if the kill-switch is on, else None. Never raises."""
+    if not _enabled():
+        return None
+    try:
+        return compose_authenticity_dashboard(ai_risk_badge=ai_risk_badge, predictability=predictability)
+    except Exception:
+        return None
