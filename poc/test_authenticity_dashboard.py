@@ -65,3 +65,27 @@ def test_ai_assistance_ci_is_tentative_and_bounded():
     ci = d["ai_assistance"]["ci"]
     assert ci["tentative"] is True
     assert 0.0 <= ci["low"] <= ci["high"] <= 100.0
+
+
+def test_overall_weakest_link_floor():
+    # one failing axis must drag the headline down, not be averaged away
+    badge = _badge(
+        critical_thinking_control={"score": 90.0},
+        grounding_diagnosis={"buckets": {"concrete_grounding": {"score": 90.0, "available": 3}}},  # grounding=10
+        writing_components={"citation_weakness_risk": 5.0, "source_grounding_risk": 5.0},  # citation=95
+        ai_likelihood_score=10.0,  # ai_assistance=90
+    )
+    d = compose(ai_risk_badge=badge)
+    assert d["overall"]["score"] == 10.0     # floored to worst available dim (grounding=10)
+    assert d["overall"]["band"] == "High"
+
+
+def test_overall_abstains_under_two_dims():
+    d = compose(ai_risk_badge={"critical_thinking_control": {"score": 80.0}})  # only 1 dim
+    assert d["overall"] is None
+
+
+def test_placeholders_present():
+    d = compose(ai_risk_badge=_badge())
+    assert d["reasoning_consistency"]["available"] is False
+    assert d["revision_evidence"]["status"] == "placeholder"

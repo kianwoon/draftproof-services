@@ -82,10 +82,33 @@ def compose_authenticity_dashboard(*, ai_risk_badge: dict, predictability: dict 
         "ci": _ai_ci(ai_score, badge.get("confidence"), predictability),
     }
 
+    # Phase-2 placeholders (no genuine signal yet / needs provenance).
+    reasoning_consistency = {"score": None, "available": False, "caveat": "Coming in a later release."}
+    revision_evidence = {"status": "placeholder", "caveat": "Requires your revision history."}
+
+    # Overall = weakest-link-floored, overlap-aware weighted mean over AVAILABLE real dims.
+    dim_scores = {
+        "grounding": grounding["score"],
+        "citation_quality": citation_quality["score"],
+        "ai_assistance": ai_assistance["score"],
+        "learning_ownership": learning_ownership["score"],
+    }
+    avail = {k: v for k, v in dim_scores.items() if isinstance(v, (int, float))}
+    overall = None
+    if len(avail) >= 2:
+        wsum = sum(WEIGHTS[k] for k in avail)
+        weighted = sum(WEIGHTS[k] * v for k, v in avail.items()) / wsum
+        floored = min(weighted, min(avail.values()))
+        band = "Low" if floored >= 66 else ("Medium" if floored >= 38 else "High")
+        overall = {"score": round(floored, 1), "band": band}
+
     return {
         "version": MODEL_VERSION,
         "learning_ownership": learning_ownership,
         "grounding": grounding,
         "citation_quality": citation_quality,
+        "reasoning_consistency": reasoning_consistency,
         "ai_assistance": ai_assistance,
+        "revision_evidence": revision_evidence,
+        "overall": overall,
     }
