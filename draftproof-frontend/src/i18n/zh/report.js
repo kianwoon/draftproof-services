@@ -616,6 +616,7 @@ export const report = {
     "na": "—",
     "overall": "综合",
     "ciTentative": "AI 辅助估计 {{low}}–{{high}}（参考值——并非检测器定论）",
+    "ciUnavailable": "无法估计 AI 辅助范围（文本不足）",
     "note": "这些维度相互重叠，仅供参考，不代表独立测量结果，亦非 Turnitin 预测。",
     "bands": { "Low": "低", "Moderate": "中等", "Medium": "中等", "High": "高" },
     "tiles": {

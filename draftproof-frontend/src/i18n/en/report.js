@@ -622,6 +622,7 @@ export const report = {
     "na": "—",
     "overall": "Overall",
     "ciTentative": "AI-assistance estimate {{low}}–{{high}} (tentative — not a detector verdict)",
+    "ciUnavailable": "AI-assistance range unavailable (not enough text to estimate)",
     "note": "These dimensions overlap and are guidance for your review, not independent measurements or a Turnitin prediction.",
     "bands": { "Low": "Low", "Moderate": "Moderate", "Medium": "Medium", "High": "High" },
     "tiles": {

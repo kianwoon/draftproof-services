@@ -60,7 +60,11 @@ export default function AuthenticityDashboard({ t, dashboard }) {
         <div className={`authn-tile authn-ai is-${aiTone}`}>
           <span className="authn-tile-label">{t('report.authenticityDashboard.tiles.ai_assistance')}</span>
           <strong className="authn-tile-score">{ai.band ? t(`report.authenticityDashboard.bands.${ai.band}`) : t('report.authenticityDashboard.na')}</strong>
-          {ai.ci && <em className="authn-tile-caveat">{t('report.authenticityDashboard.ciTentative', { low: Math.round(ai.ci.low), high: Math.round(ai.ci.high) })}</em>}
+          {ai.ci ? (
+            <em className="authn-tile-caveat">{t('report.authenticityDashboard.ciTentative', { low: Math.round(ai.ci.low), high: Math.round(ai.ci.high) })}</em>
+          ) : ai.band ? (
+            <em className="authn-tile-caveat">{t('report.authenticityDashboard.ciUnavailable')}</em>
+          ) : null}
         </div>
       </div>
       <p className="authn-note">{t('report.authenticityDashboard.note')}</p>
