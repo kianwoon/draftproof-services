@@ -46,3 +46,22 @@ def test_citation_quality_null_when_no_components():
     d = compose(ai_risk_badge=_badge(writing_components={}))
     assert d["citation_quality"]["score"] is None
     assert d["citation_quality"]["available"] is False
+
+
+def test_ai_assistance_band_from_tier():
+    for tier, band in [("GREEN", "Low"), ("AMBER", "Moderate"), ("ORANGE", "High"), ("RED", "High")]:
+        d = compose(ai_risk_badge=_badge(tier=tier))
+        assert d["ai_assistance"]["band"] == band
+
+
+def test_ai_assistance_score_is_inverted_likelihood():
+    d = compose(ai_risk_badge=_badge(ai_likelihood_score=32.0))
+    assert d["ai_assistance"]["score"] == 68.0  # 100 - 32
+
+
+def test_ai_assistance_ci_is_tentative_and_bounded():
+    pred = {"all_sentences": [{"predictability_risk": r} for r in (0.2, 0.4, 0.6, 0.8)]}
+    d = compose(ai_risk_badge=_badge(confidence="low"), predictability=pred)
+    ci = d["ai_assistance"]["ci"]
+    assert ci["tentative"] is True
+    assert 0.0 <= ci["low"] <= ci["high"] <= 100.0

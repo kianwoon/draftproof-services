@@ -17,6 +17,9 @@ MODEL_VERSION = "authenticity_dashboard_v1"
 # Thinking score (which Grounding feeds), so it is down-weighted to avoid double-counting.
 WEIGHTS = {"grounding": 0.30, "citation_quality": 0.25, "ai_assistance": 0.30, "learning_ownership": 0.15}
 
+_BAND_FROM_TIER = {"GREEN": "Low", "AMBER": "Moderate", "ORANGE": "High", "RED": "High"}
+_CI_WIDEN = {"high": 1.0, "medium": 1.5, "low": 2.0}
+
 
 def _clamp(v: float) -> float:
     return max(0.0, min(100.0, v))
@@ -25,6 +28,20 @@ def _clamp(v: float) -> float:
 def _tile(score, available: bool, caveat=None) -> dict:
     ok = available and isinstance(score, (int, float))
     return {"score": round(float(score), 1) if ok else None, "available": bool(ok), "caveat": caveat}
+
+
+def _ai_ci(ai_score, confidence, predictability) -> dict | None:
+    """Tentative proxy interval on the authenticity scale (100 - ai_score). Half-width from
+    per-sentence predictability spread, widened by categorical confidence. NOT a statistical
+    interval over the composite ai_likelihood — labeled tentative; the true CI is phase 2."""
+    if not isinstance(ai_score, (int, float)):
+        return None
+    auth = _clamp(100.0 - ai_score)
+    risks = [s.get("predictability_risk") for s in ((predictability or {}).get("all_sentences") or [])
+             if isinstance(s.get("predictability_risk"), (int, float))]
+    spread = statistics.pstdev(risks) * 100.0 if len(risks) >= 2 else 12.0
+    half = min(40.0, spread * _CI_WIDEN.get(str(confidence or "").lower(), 1.5))
+    return {"low": round(_clamp(auth - half), 1), "high": round(_clamp(auth + half), 1), "tentative": True}
 
 
 def compose_authenticity_dashboard(*, ai_risk_badge: dict, predictability: dict | None = None) -> dict:
@@ -56,9 +73,19 @@ def compose_authenticity_dashboard(*, ai_risk_badge: dict, predictability: dict 
         caveat=None,
     )
 
+    # AI Assistance: band reuses the tier (can never contradict the headline); score = 100 - likelihood.
+    ai_score = badge.get("ai_likelihood_score")
+    ai_auth = _clamp(100.0 - ai_score) if isinstance(ai_score, (int, float)) else None
+    ai_assistance = {
+        "band": _BAND_FROM_TIER.get(str(badge.get("tier") or "").upper()),
+        "score": round(ai_auth, 1) if ai_auth is not None else None,
+        "ci": _ai_ci(ai_score, badge.get("confidence"), predictability),
+    }
+
     return {
         "version": MODEL_VERSION,
         "learning_ownership": learning_ownership,
         "grounding": grounding,
         "citation_quality": citation_quality,
+        "ai_assistance": ai_assistance,
     }
