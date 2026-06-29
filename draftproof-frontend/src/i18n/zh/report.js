@@ -608,5 +608,22 @@ export const report = {
     "whyDiffer": "这是对严格第三方检测器（Turnitin、GPTZero）可能如何评分的校准估计——基于有限数据且并不精确，因为这些检测器会过度标记流畅的文字（包括真人写作）。请将其视为提示而非定论；你的保障是让内容有据可依，并用自己的话完成稿件。",
     "externalDemoted": "第三方 AI 检测器（Turnitin、GPTZero）并不完美，会过度标记流畅的文字——包括真人写作——因此预测分数并不能可靠反映你的实际结果，我们在此不再显示该分数。你的保障是让内容有据可依、用自己的话完成稿件，并保留草稿作为作者身份证据。",
     "calibrateHeading": "DraftProof 如何校准此结果"
+  },
+  // allow-hardcode: i18n 展示标签——按维度名称索引的界面字符串，不是评分或匹配规则
+  "authenticityDashboard": {
+    "ariaLabel": "真实性仪表板",
+    "title": "真实性",
+    "na": "—",
+    "overall": "综合",
+    "ciTentative": "AI 辅助估计 {{low}}–{{high}}（参考值——并非检测器定论）",
+    "note": "这些维度相互重叠，仅供参考，不代表独立测量结果，亦非 Turnitin 预测。",
+    "bands": { "Low": "低", "Moderate": "中等", "High": "高" },
+    "tiles": {
+      "learning_ownership": "学习自主性",
+      "grounding": "内容支撑",
+      "citation_quality": "引用质量",
+      "reasoning_consistency": "论证一致性（即将推出）",
+      "ai_assistance": "AI 辅助程度"
+    }
   }
 };

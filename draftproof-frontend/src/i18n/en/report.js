@@ -614,5 +614,22 @@ export const report = {
     "whyDiffer": "This is a calibrated estimate of how strict third-party detectors (Turnitin, GPTZero) may rate your text — based on limited data and imperfect, since these detectors over-flag fluent writing (even genuine human writing). Treat it as a heads-up, not a verdict; your safeguard is grounding the content and finishing it in your own words.",
     "externalDemoted": "Third-party AI detectors (Turnitin, GPTZero) are imperfect and over-flag fluent writing — including genuine human writing — so a predicted score is not a reliable signal of your result, and we don't surface one here. Your safeguard is grounding the content, finishing it in your own words, and keeping your drafts as authorship evidence.",
     "calibrateHeading": "How DraftProof calibrates this"
+  },
+  // allow-hardcode: i18n display labels — UI strings keyed by dimension name, not a scoring/matching oracle
+  "authenticityDashboard": {
+    "ariaLabel": "Authenticity dashboard",
+    "title": "Authenticity",
+    "na": "—",
+    "overall": "Overall",
+    "ciTentative": "AI-assistance estimate {{low}}–{{high}} (tentative — not a detector verdict)",
+    "note": "These dimensions overlap and are guidance for your review, not independent measurements or a Turnitin prediction.",
+    "bands": { "Low": "Low", "Moderate": "Moderate", "High": "High" },
+    "tiles": {
+      "learning_ownership": "Learning Ownership",
+      "grounding": "Grounding",
+      "citation_quality": "Citation Quality",
+      "reasoning_consistency": "Reasoning Consistency (coming soon)",
+      "ai_assistance": "AI Assistance"
+    }
   }
 };

@@ -15,6 +15,7 @@ import RewriteNoticeDialog from './report/RewriteNoticeDialog';
 import SignalHighlights from './report/SignalHighlights';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import CriticalThinkingControl from './report/CriticalThinkingControl';
+import AuthenticityDashboard from './report/AuthenticityDashboard';
 import ReportHero from './report/ReportHero';
 import PolicyRiskView from './report/PolicyRiskView';
 import useTextareaCaretOverlay from './report/useTextareaCaretOverlay';
@@ -2196,6 +2197,7 @@ export default function Report() {
           repairActionHint={t('report.repairSummary.editDraftHint')}
           onRepairAction={showSubmittedEditEntry ? () => openSubmittedEditorForParagraph() : null}
         />
+        <AuthenticityDashboard t={t} dashboard={(badge && badge.authenticity_dashboard) || null} />
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>
             <div className="scan-progress" role="status" aria-live="polite">
