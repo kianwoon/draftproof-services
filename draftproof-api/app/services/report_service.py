@@ -185,6 +185,16 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
                 writing_score = badge.get("writing_quality_score")
                 ai_badge_tier = badge.get("tier", "").lower()
 
+        # Read-time authenticity dashboard backfill: recompute with full predictability so the
+        # page gets the rich CI (scan-time stored a degraded copy with predictability=None).
+        if results_json:
+            from app._composers.authenticity_dashboard import maybe_attach as _attach_dashboard
+            _badge = results_json.get("ai_risk_badge")
+            if isinstance(_badge, dict):
+                _dash = _attach_dashboard(_badge, predictability=results_json.get("predictability"))
+                if _dash is not None:
+                    _badge["authenticity_dashboard"] = _dash
+
         # Prefer AI badge tier over findings-based tier (matches PDF)
         display_tier = ai_badge_tier or job.tier
 
