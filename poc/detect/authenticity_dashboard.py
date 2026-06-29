@@ -130,7 +130,7 @@ def compose_authenticity_dashboard(*, ai_risk_badge: dict, predictability: dict 
 
 
 def _enabled() -> bool:
-    return os.getenv("DRAFTPROOF_AUTHENTICITY_DASHBOARD", "0").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("DRAFTPROOF_AUTHENTICITY_DASHBOARD", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def maybe_attach(ai_risk_badge: dict, predictability: dict | None = None) -> dict | None:
