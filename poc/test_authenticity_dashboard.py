@@ -67,6 +67,15 @@ def test_ai_assistance_ci_is_tentative_and_bounded():
     assert 0.0 <= ci["low"] <= ci["high"] <= 100.0
 
 
+def test_ai_assistance_ci_abstains_when_fewer_than_two_sentences():
+    # <2 per-sentence predictability values admit no dispersion: abstain (ci is None) instead
+    # of fabricating a spread — no false precision on short documents. Replaces the former
+    # _CI_DEFAULT_SPREAD=12 magic-constant fallback.
+    for pred in ({"all_sentences": []}, {"all_sentences": [{"predictability_risk": 0.5}]}):
+        d = compose(ai_risk_badge=_badge(confidence="low"), predictability=pred)
+        assert d["ai_assistance"]["ci"] is None
+
+
 def test_overall_blends_mean_and_weakest_link():
     # one failing axis must drag the headline down without alone dictating it
     badge = _badge(

@@ -33,7 +33,6 @@ _AUTH_MED_MIN = 38.0    # 100 − submission_risk LOW_RISK_MAX (34)
 
 _BAND_FROM_TIER = {"GREEN": "Low", "AMBER": "Moderate", "ORANGE": "High", "RED": "High"}
 _CI_WIDEN = {"high": 1.0, "medium": 1.5, "low": 2.0}
-_CI_DEFAULT_SPREAD = 12.0   # fallback half-spread when <2 per-sentence predictability values
 _CI_MAX_HALF = 40.0         # cap on the CI half-width
 
 
@@ -48,14 +47,20 @@ def _tile(score, available: bool, caveat=None) -> dict:
 
 def _ai_ci(ai_score, confidence, predictability) -> dict | None:
     """Tentative proxy interval on the authenticity scale (100 - ai_score). Half-width from
-    per-sentence predictability spread, widened by categorical confidence. NOT a statistical
-    interval over the composite ai_likelihood — labeled tentative; the true CI is phase 2."""
+    the per-sentence predictability spread, widened by categorical confidence. NOT a statistical
+    interval over the composite ai_likelihood — labeled tentative.
+
+    Abstains (returns None) when fewer than two per-sentence predictability values are
+    available: a single point admits no dispersion, so we show no range rather than
+    fabricate one (no false precision on short documents)."""
     if not isinstance(ai_score, (int, float)):
         return None
-    auth = _clamp(100.0 - ai_score)
     risks = [s["predictability_risk"] for s in ((predictability or {}).get("all_sentences") or [])
              if isinstance(s, dict) and isinstance(s.get("predictability_risk"), (int, float))]
-    spread = statistics.pstdev(risks) * 100.0 if len(risks) >= 2 else _CI_DEFAULT_SPREAD
+    if len(risks) < 2:
+        return None
+    auth = _clamp(100.0 - ai_score)
+    spread = statistics.pstdev(risks) * 100.0
     half = min(_CI_MAX_HALF, spread * _CI_WIDEN.get(str(confidence or "").lower(), 1.5))
     return {"low": round(_clamp(auth - half), 1), "high": round(_clamp(auth + half), 1), "tentative": True}
 
