@@ -1,0 +1,139 @@
+/* ── Authenticity Dashboard ─────────────────────────
+   Additive multi-dimension panel. Reuses the report-card design language
+   (border-top accent, surface bg, shadow) and the submission-risk-band tile
+   shape (border-left tone accent) so it reads as a sibling panel.
+
+   POLARITY (critical — do not invert):
+   - Score tiles (learning_ownership / grounding / citation_quality) are on the
+     AUTHENTICITY scale: higher = better → is-good (green). Cuts mirror the
+     composer _AUTH_HIGH_MIN (66) / _AUTH_MED_MIN (38).
+   - Band tiles (overall / ai_assistance) use the RISK vocabulary: Low = good,
+     High = bad → is-good green, is-weak red. Map by band name, not score.
+   One `tone` (good|fair|weak|na) drives all color; never reuse is-high/is-low
+   directly on a score tile (a 92 ownership score would otherwise render red). */
+
+.authenticity-dashboard {
+  margin: clamp(.9rem, 1.6vw, 1.2rem) 0;
+  padding: clamp(1rem, 1.8vw, 1.35rem);
+  border: 1px solid var(--border, #e2e8f0);
+  border-top: 4px solid var(--green, #3aa876);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  box-shadow: 0 18px 42px rgba(13, 27, 42, .08);
+}
+
+/* Header row: eyebrow title (left) + overall chip (right). */
+.authn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  margin-bottom: .9rem;
+}
+.authn-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .35rem .75rem;
+  border-radius: 999px;
+  background: rgba(58, 168, 118, .1);
+  color: var(--green-dark, #0f6e56);
+  font-size: .82rem;
+  font-weight: 600;
+  letter-spacing: .01em;
+}
+.authn-eyebrow h3 {
+  margin: 0;
+  font-size: .95rem;
+  font-weight: 700;
+  color: var(--navy-950, #0d1b2a);
+}
+.authn-overall-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .3rem .7rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: var(--navy-800, #243b53);
+  font-size: .8rem;
+  font-weight: 600;
+}
+.authn-overall-chip .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* Tile grid — matches .submission-risk-axis layout rhythm. */
+.authn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: .55rem;
+}
+
+.authn-tile {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  padding: .7rem .75rem;
+  border-radius: 10px;
+  background: #f8fafc;
+  border-left: 3px solid var(--authn-tone, #94a3b8);
+}
+.authn-tile-label {
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--navy-700, #334155);
+  line-height: 1.25;
+}
+.authn-tile-score {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--authn-tone, var(--navy-950, #0d1b2a));
+  line-height: 1.1;
+  letter-spacing: -.02em;
+}
+.authn-tile-caveat {
+  font-size: .72rem;
+  font-style: normal;
+  color: #64748b;
+  line-height: 1.3;
+}
+
+/* Full-width AI-emphasis tile (carries the tentative CI; needs room to breathe). */
+.authn-ai {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  background: #fff;
+  border-left-width: 4px;
+}
+.authn-ai .authn-tile-score { font-size: 1.05rem; }
+
+/* Tone accent colors — one source of truth. */
+.authn-tile.is-good,
+.authn-overall-chip.is-good { --authn-tone: #16a34a; border-left-color: #16a34a; color: #15803d; }
+.authn-tile.is-fair         { --authn-tone: #d97706; border-left-color: #d97706; }
+.authn-tile.is-fair .authn-tile-score,
+.authn-overall-chip.is-fair { color: #b45309; }
+.authn-tile.is-weak,
+.authn-overall-chip.is-weak { --authn-tone: #dc2626; border-left-color: #dc2626; color: #b91c1c; }
+.authn-tile.is-na,
+.authn-overall-chip.is-na   { --authn-tone: #94a3b8; border-left-color: #94a3b8; color: #475569; }
+
+.authn-note {
+  margin: .85rem 0 0;
+  font-size: .74rem;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+/* Tablet / mobile: stack the AI tile's inline row. */
+@media (max-width: 640px) {
+  .authn-ai { flex-direction: column; align-items: flex-start; }
+}
