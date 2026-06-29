@@ -46,8 +46,19 @@ def compose_authenticity_dashboard(*, ai_risk_badge: dict, predictability: dict 
         caveat="Tentative — short submission." if gd.get("low_coverage") else None,
     )
 
+    # Citation Quality = 100 - mean(citation_weakness_risk, source_grounding_risk).
+    wc = badge.get("writing_components") or {}
+    cite_parts = [wc.get("citation_weakness_risk"), wc.get("source_grounding_risk")]
+    cite_parts = [p for p in cite_parts if isinstance(p, (int, float))]
+    citation_quality = _tile(
+        _clamp(100.0 - sum(cite_parts) / len(cite_parts)) if cite_parts else None,
+        bool(cite_parts),
+        caveat=None,
+    )
+
     return {
         "version": MODEL_VERSION,
         "learning_ownership": learning_ownership,
         "grounding": grounding,
+        "citation_quality": citation_quality,
     }
