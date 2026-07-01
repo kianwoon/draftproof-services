@@ -144,7 +144,7 @@ New additive field on the report:
 {
   "ai_signal_deberta": {
     "score": 34.0,            // 0–100, AI-like writing signal %
-    "band": "clean"|"acceptable"|"concerning"|"strong",  // SAME 4-tier legend as composite, so the two scores are directly comparable
+    "band": "green"|"amber"|"orange"|"red",  // SAME traffic-light legend the composite renders (frontend reportHelpers.js + i18n tiers: Low/Moderate/High/Critical Risk), so the two scores are directly comparable
     "confidence": "low"|"medium"|"high",
     "model_version": "deberta_signal_v1 (<checkpoint-repo>)",
     "calibrated": true,       // true if isotonic fitted on SCoCESLE; false = raw, demoted advisory
@@ -159,10 +159,13 @@ prevents the "61% reads as accusation" misread the source doc warns against (§1
 Raw checkpoint probability is internal only.
 
 **Band comparability:** the two scores must be on the **same %→band scale** for the side-by-side
-to be meaningful. After the checkpoint is chosen (Phase 0), the DeBERTa score's %→tier cutoffs
-are calibrated to match the composite's existing tier thresholds (from `layer3_scoring` /
-`thresholds.py`) — not invented separately. If a checkpoint cannot be mapped onto the shared scale
-without distorting its ESL FPR, that is a Phase-0 failure for that candidate.
+to be meaningful. The composite's displayed legend is the traffic-light **green/amber/orange/red**
+(Low/Moderate/High/Critical Risk), with `ai_score` cutoffs **0.32 / 0.48 / 0.65** (×100 = 32/48/65),
+anchored in `layer3_scoring._derive_ai_tier` and `draftproof-frontend/.../reportHelpers.js`. The
+DeBERTa module uses these **exact same cutoffs and keys** (`poc/detect/deberta_calibrate.map_to_band`)
+so its band is directly comparable with zero new frontend band i18n. If a checkpoint cannot be
+mapped onto this shared scale without distorting its ESL FPR, that is a Phase-0 failure for that
+candidate.
 
 ---
 
