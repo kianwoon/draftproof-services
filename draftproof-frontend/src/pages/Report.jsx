@@ -1712,33 +1712,6 @@ export default function Report() {
             </div>
           </div>
         )}
-        {summary && (
-          <details className="ai-likelihood-calibration" open={hasRewriteSignalComparison}>
-            <summary>{t('report.aiLikelihood.calibrateHeading')}</summary>
-            <div className="transformation-ratio-summary">
-              <div className="transformation-ratio-copy">
-                <span>{t('report.transformation.estimatedContribution')}</span>
-                <p>{summary.summary}</p>
-                {renderSignalGaugeStrip(summary)}
-              </div>
-              <div className="transformation-ratio-bars" aria-label={t('report.transformation.contributionEstimate', { variant: variant === 'rewritten' ? t('report.transformation.rewritten') : t('report.transformation.original') })}>
-                <div className="transformation-ratio-row">
-                  <span>{t('report.transformation.humanContribution')}</span>
-                  <strong>{summary.humanContribution}%</strong>
-                  <div className="transformation-ratio-track">
-                    <div className="transformation-ratio-fill is-human" style={{ width: `${summary.humanContribution}%` }} />
-                  </div>
-                </div>
-                <div className="transformation-ratio-row">
-                  <span>{t('report.transformation.aiTransformation')}</span>
-                  <strong>{summary.aiTransformation}%</strong>
-                  <div className="transformation-ratio-track">
-                    <div className="transformation-ratio-fill is-ai" style={{ width: `${summary.aiTransformation}%` }} />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </details>
         )}
       </div>
     );
@@ -1867,10 +1840,6 @@ export default function Report() {
             ))}
           </div>
         )}
-        <details className="transformation-reference-details">
-          <summary>{t('report.transformation.turnitinReferenceSummary')}</summary>
-          <p className="transformation-reference-note">{t('report.transformation.turnitinReferenceNote')}</p>
-        </details>
       </div>
     </section>
   ) : null;

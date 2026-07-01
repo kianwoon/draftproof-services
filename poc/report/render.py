@@ -907,7 +907,10 @@ def _executive_signal_chart_html(
     # Authorship rating (label/detail/tone) is no longer rendered here — the seal was removed to
     # mirror the web page mesh. The rating is shown once in the report header ("Authorship Rating:").
     doc_ctx = data.get("document_context", {}) if isinstance(data, dict) else {}
-    contribution = _transformation_contribution_summary(features, rows, badge)
+    # Contribution summary / chips / ratio bars were removed to match the web page mesh (the
+    # 0%/100% bars were a flat-subtraction artifact that contradicted the calibrated AI risk).
+    # `contribution` is no longer computed here; the pattern label + confidence pill + evidence
+    # + sample-confidence note remain.
 
     confidence = transformation.get("confidence")
     pills = []
@@ -915,13 +918,6 @@ def _executive_signal_chart_html(
         pills.append(f"{str(confidence).title()} Confidence")
     # "Not A Verdict" disclaimer is stated once in the repair plan / AI-likelihood note now,
     # mirroring the web page mesh — no longer repeated here.
-
-    adjustment_chips = [
-        f"Calibrated AI risk {contribution['calibrated_ai_risk']}%",
-        f"Human anchor discount {contribution['human_anchor_discount']}%",
-        f"Calibration confidence {contribution['calibration_confidence']}%",
-        f"Reporting suppression {contribution['reporting_suppression']}%",
-    ]
 
     evidence = transformation.get("evidence") or []
     confidence_note = ""
@@ -962,29 +958,10 @@ def _executive_signal_chart_html(
         '</header>',
         # "Original Scan" + pattern label removed: it just repeats the card header above (the AI
         # score is already in the AI Likelihood headline). Mirrors the web page mesh.
-        '<div class="dp-ratio-card">',
-        '<div class="dp-ratio-copy">',
-        '<span>Estimated Contribution</span>',
-        f'<p>{escape(contribution["summary"])}</p>',
-        '<div class="dp-chip-row">',
-        ''.join(f'<strong>{escape(chip)}</strong>' for chip in adjustment_chips),
-        '</div>',
-        '</div>',
-        '<div class="dp-ratio-bars">',
-        '<div class="dp-ratio-row">',
-        '<span>Human Contribution</span>',
-        f'<strong>{contribution["hcr"]}%</strong>',
-        '<div class="dp-bar-track">',
-        f'<div class="dp-ratio-fill dp-human" style="width:{contribution["hcr"]}%"></div>',
-        '</div></div>',
-        '<div class="dp-ratio-row">',
-        '<span>AI Transformation</span>',
-        f'<strong>{contribution["atr"]}%</strong>',
-        '<div class="dp-bar-track">',
-        f'<div class="dp-ratio-fill dp-ai" style="width:{contribution["atr"]}%"></div>',
-        '</div></div>',
-        '</div>',
-        '</div>',
+        # Estimated Contribution / chips / ratio bars + the Turnitin reference note removed to
+        # match the web page mesh: the 0%/100% ratio bars (a flat-subtraction artifact that
+        # contradicts the calibrated AI risk) and the "low external estimate" reference were
+        # trimmed from the section. The pattern label + confidence pill + evidence remain.
     ]
     if evidence:
         html.extend([
@@ -994,7 +971,6 @@ def _executive_signal_chart_html(
         ])
     if confidence_note:
         html.append(f'<p class="dp-confidence-note">{escape(confidence_note)}</p>')
-    html.append(f'<p class="dp-ai-reference-note">{escape(_TURNITIN_AI_REFERENCE_NOTE)}</p>')
     html.extend([
         '</section>',
         '</div>',
