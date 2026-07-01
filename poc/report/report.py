@@ -1633,11 +1633,15 @@ class ReportBuilder:
             )
             _deberta = None
             try:
+                # Build canonical sentences via the same structured_sentence_segments that
+                # _source_segments (in report_to_dict) uses — NOT _source_segments itself,
+                # which is a nested function out of scope here. This guarantees the tile and
+                # the map share identical sentence boundaries.
                 _canon = [
                     {"sentence_id": it.get("sentence_id"),
                      "paragraph_id": it.get("paragraph_id") or "p001",
                      "text": it.get("sentence", "")}
-                    for it in _source_segments(complete=True)
+                    for it in structured_sentence_segments(self._original_text or "")
                 ]
                 if _canon:
                     _heat = _compose_heatmap(_canon)
