@@ -285,6 +285,10 @@ export default function Landing() {
             <a href="#engine">{t('footer.howItWorks')}</a>
             <a href="#report">{t('footer.sampleReport')}</a>
             <Link to={publicPath('/content-checker')}>{t('footer.essayChecker')}</Link>
+            <Link to={publicPath('/academic-integrity-ai')}>{t('footer.academicIntegrity')}</Link>
+            <Link to={publicPath('/turnitin-ai-score')}>{t('footer.turnitinScore')}</Link>
+            <Link to={publicPath('/ai-declaration')}>{t('footer.aiDeclaration')}</Link>
+            <Link to={publicPath('/reduce-ai-detection')}>{t('footer.reduceDetection')}</Link>
             <Link to={publicPath('/pricing')}>{t('footer.pricing')}</Link>
             <Link to={publicPath('/faq')}>{t('footer.faq')}</Link>
             <Link to={publicPath('/privacy')}>{t('footer.privacy')}</Link>

@@ -56,5 +56,24 @@ export const essayChecker = {
     }
   ],
   "ctaTitle": "在内容变成提交问题前先审阅。",
-  "ctaBody": "使用 DraftProof 理解你的写作正在传递什么信号，以及提交前哪里需要注意。"
+  "ctaBody": "使用 DraftProof 理解你的写作正在传递什么信号，以及提交前哪里需要注意。",
+  "relatedEyebrow": "了解更多",
+  "relatedTitle": "提交前先理解这些检查。",
+  "related": [
+    {
+      "to": "/turnitin-ai-score",
+      "label": "你的 Turnitin AI 分数代表什么",
+      "body": "这个百分比不是抄袭判定。在慌张之前先如实读懂它。"
+    },
+    {
+      "to": "/ai-declaration",
+      "label": "声明你的 AI 使用",
+      "body": "适用于 ChatGPT、Grammarly、Copilot 等工具的声明模板，可直接复制。"
+    },
+    {
+      "to": "/academic-integrity-ai",
+      "label": "学术诚信与 AI",
+      "body": "AI 使用在哪里可以接受——又在哪里越界。"
+    }
+  ]
 };

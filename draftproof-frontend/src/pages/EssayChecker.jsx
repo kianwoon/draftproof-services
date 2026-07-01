@@ -11,6 +11,7 @@ export default function EssayChecker() {
   const publicPath = (path) => localizePath(path, locale);
   const checks = t('essayChecker.checks', { returnObjects: true });
   const steps = t('essayChecker.steps', { returnObjects: true });
+  const related = t('essayChecker.related', { returnObjects: true });
 
   return (
     <main className="content-checker-shell">
@@ -76,6 +77,23 @@ export default function EssayChecker() {
           <p>{t('essayChecker.ctaBody')}</p>
           <Link to={publicPath('/signin?next=/scan')} className="btn btn-primary">{t('essayChecker.startReview')}</Link>
         </section>
+
+        {Array.isArray(related) && related.length > 0 && (
+          <section className="content-checker-section content-checker-related">
+            <p className="eyebrow">{t('essayChecker.relatedEyebrow')}</p>
+            <h2>{t('essayChecker.relatedTitle')}</h2>
+            <div className="content-checker-grid">
+              {related.map((link) => (
+                <article key={link.to}>
+                  <Link to={publicPath(link.to)}>
+                    <h3>{link.label}</h3>
+                    <p>{link.body}</p>
+                  </Link>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         <PageFreshness path="/content-checker" />
       </div>

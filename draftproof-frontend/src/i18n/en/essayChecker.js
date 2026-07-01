@@ -56,5 +56,24 @@ export const essayChecker = {
     }
   ],
   "ctaTitle": "Review the content before it becomes a submission problem.",
-  "ctaBody": "Use DraftProof to understand what your writing is signalling and what needs attention before you submit."
+  "ctaBody": "Use DraftProof to understand what your writing is signalling and what needs attention before you submit.",
+  "relatedEyebrow": "Learn more",
+  "relatedTitle": "Understand the checks before you submit.",
+  "related": [
+    {
+      "to": "/turnitin-ai-score",
+      "label": "What your Turnitin AI score means",
+      "body": "The percentage isn't a plagiarism verdict. Read it honestly before you panic."
+    },
+    {
+      "to": "/ai-declaration",
+      "label": "Declare your AI use",
+      "body": "Copy-paste acknowledgement templates for ChatGPT, Grammarly, Copilot and more."
+    },
+    {
+      "to": "/academic-integrity-ai",
+      "label": "Academic integrity & AI",
+      "body": "Where AI use is acceptable — and where it crosses the line."
+    }
+  ]
 };
