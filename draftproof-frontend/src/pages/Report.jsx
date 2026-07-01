@@ -1712,7 +1712,6 @@ export default function Report() {
             </div>
           </div>
         )}
-        )}
       </div>
     );
   };
