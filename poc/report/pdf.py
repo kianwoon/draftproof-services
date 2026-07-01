@@ -518,6 +518,14 @@ img[src^="https://img.shields.io"] { height: 18px; }
     text-transform: uppercase;
 }
 
+.dp-method-note {
+    margin: 4pt 0 0;
+    color: #64748b;
+    font-size: 7pt;
+    line-height: 1.4;
+    max-width: 60ch;
+}
+
 .dp-signal-header h3 {
     margin: 3pt 0 7pt;
     color: #0f172a;

@@ -1808,6 +1808,11 @@ export default function Report() {
                 {t(`report.transformation.subtitles.${transformation.code}`)}
               </p>
             )}
+            {!hasRewriteSignalComparison && (
+              <p className="transformation-method-note" style={{ margin: '6px 0 0', color: 'var(--color-text-secondary, #64748b)', fontSize: '12.5px', lineHeight: 1.5, maxWidth: '58ch' }}>
+                {t('report.transformation.methodNote')}
+              </p>
+            )}
           </div>
         </div>
         {(showTransformationConfidence || hasRewriteSignalComparison) && (

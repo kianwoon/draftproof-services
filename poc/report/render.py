@@ -945,11 +945,18 @@ def _executive_signal_chart_html(
         '<div class="dp-signal-title-row">',
         '<div class="dp-signal-icon">⇄</div>',
         '<div>',
-        '<span class="dp-kicker">Transformation Pattern</span>',
+        '<span class="dp-kicker">Writing-signal pattern</span>',
         f'<h3>{escape(transformation.get("label") or "Pattern analysis")}</h3>',
         '<div class="dp-pill-row">',
         ''.join(f'<span>{escape(pill)}</span>' for pill in pills),
         '</div>',
+        # Honest method note: this is a statistical (perplexity/uniformity) read — the older
+        # class of detector that modern tools (Turnitin) moved beyond for learned classifiers.
+        # Included for transparency, not as a Turnitin prediction; over-flags fluent/ESL writing.
+        '<p class="dp-method-note">A statistical read of perplexity and rhythm uniformity — '
+        'the older class of detector that modern tools like Turnitin have moved beyond in favour '
+        'of learned classifiers. Included for transparency, not as a Turnitin prediction: it '
+        'over-flags fluent and ESL writing, so treat it as a coarse signal, not a verdict.</p>',
         '</div>',
         '</div>',
         # Rating seal removed to match the web page mesh: the authorship rating is shown once in
