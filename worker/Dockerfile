@@ -15,6 +15,17 @@ COPY worker/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
+# DeBERTa second-opinion checkpoint — BAKE into the image at build time. The worker's runtime
+# cannot reach huggingface.co (egress blocked), so lazy-load and boot warm-download both fail.
+# Saved OUTSIDE the HF volume mount (/app/hf_cache is a volume overlay) at /app/prebuilt/..., so
+# it ships with the image and is always present. DRAFTPROOF_DEBERTA_MODEL points the loader here;
+# from_pretrained on a local dir loads with local_files_only — zero runtime network.
+RUN python3 -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; \
+    import os; os.makedirs('/app/prebuilt/deberta-fakespot', exist_ok=True); \
+    AutoModelForSequenceClassification.from_pretrained('fakespot-ai/roberta-base-ai-text-detection-v1').save_pretrained('/app/prebuilt/deberta-fakespot'); \
+    AutoTokenizer.from_pretrained('fakespot-ai/roberta-base-ai-text-detection-v1').save_pretrained('/app/prebuilt/deberta-fakespot')"
+ENV DRAFTPROOF_DEBERTA_MODEL=/app/prebuilt/deberta-fakespot
+
 # HF cache — Koyeb volume mounts here so model persists across deploys
 ENV HF_HOME=/app/hf_cache
 ENV PREDICTABILITY_MODEL=gpt2
