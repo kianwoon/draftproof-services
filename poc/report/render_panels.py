@@ -98,8 +98,13 @@ def render_deberta_signal(report_data: dict) -> str:
     score_txt = f"{round(score)}%" if isinstance(score, (int, float)) else "—"
     band = str(sig.get("band") or "—")
     calibrated = "calibrated" if sig.get("calibrated") else "raw, uncalibrated — advisory only"
-    composite_tier = str(badge.get("tier") or "—")
-    agree = bool(sig.get("band")) and bool(badge.get("tier")) and sig["band"] == badge["tier"]
+    # Case-insensitive band vs tier comparison. The composite stores tier as an
+    # uppercase enum (e.g. "GREEN"); the DeBERTa band is lowercase ("green"). They
+    # use the same traffic-light legend, so compare on the lowercased value —
+    # otherwise GREEN==green always reads as a disagreement (mirrors the React
+    # DebertaSignal.jsx, which lowercases the tier before comparing).
+    composite_tier = str(badge.get("tier") or "")
+    agree = bool(band) and bool(composite_tier) and band.lower() == composite_tier.lower()
     note = (f"Both detection methods place this in the {band} band." if agree
             else f"Two detection methods disagree (DraftProof {composite_tier}, second detector {band}). "
                  f"This is common — they use different signals. Review the flagged passages yourself.")
