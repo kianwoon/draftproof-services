@@ -26,9 +26,30 @@ def test_aggregate_weighted_mean_by_sentence():
     sents = ["a.", "b."]
     windows = build_windows(sents, size=1, step=1)
     probs = [0.9, 0.3]
-    agg = aggregate(sents, windows, probs)
+    agg = aggregate(sents, windows, probs, size=1, step=1)
     assert abs(agg["document_score"] - 0.6) < 1e-6
     assert len(agg["sentence_scores"]) == 2
+
+
+def test_aggregate_repeated_sentences_index_arithmetic():
+    # Three identical sentences — substring-membership would mis-attribute.
+    # size=1, step=1: each window covers exactly one sentence.
+    sents = ["a.", "a.", "a."]
+    windows = build_windows(sents, size=1, step=1)
+    probs = [0.9, 0.5, 0.1]
+    agg = aggregate(sents, windows, probs, size=1, step=1)
+    assert agg["sentence_scores"] == [0.9, 0.5, 0.1]
+    assert abs(agg["document_score"] - 0.5) < 1e-6
+
+
+def test_aggregate_substring_sentence_no_leak():
+    # "is." must NOT leak into the "this is." window. size=2, step=1.
+    sents = ["this is.", "is."]
+    windows = build_windows(sents, size=2, step=1)  # len<=size -> single window covering both
+    probs = [0.7]
+    agg = aggregate(sents, windows, probs, size=2, step=1)
+    # both sentences covered by the one window
+    assert agg["sentence_scores"] == [0.7, 0.7]
 
 
 if __name__ == "__main__":
@@ -36,4 +57,6 @@ if __name__ == "__main__":
     test_build_windows_overlap_step_two()
     test_build_windows_short_doc_single_window()
     test_aggregate_weighted_mean_by_sentence()
+    test_aggregate_repeated_sentences_index_arithmetic()
+    test_aggregate_substring_sentence_no_leak()
     print("ALL TESTS PASSED")

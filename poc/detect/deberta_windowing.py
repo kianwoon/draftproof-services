@@ -11,6 +11,8 @@ _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
 def split_sentences(text: str) -> List[str]:
+    # TODO: does not handle abbreviations/initials ("Dr.", "U.S.", "e.g.") — over-splits
+    # on the period. The downstream composer may need to pre-segment for those.
     text = re.sub(r"\s+", " ", text or "").strip()
     parts = [p.strip() for p in _SENT_SPLIT.split(text) if p.strip()]
     return parts or ([text] if text else [])
@@ -40,26 +42,20 @@ def aggregate(
 ) -> dict:
     """Map window probs back to sentences (mean of covering windows), then mean -> document.
 
-    Coverage is re-derived by substring membership: sentence k is "covered" by a window if
-    that window's text contains sentence k's text. This is robust to arbitrary size/step
-    (the windowing that actually built `windows`), so callers do not need to thread size/step
-    through — they just pass the windows they built and the per-window probabilities.
+    Coverage is derived by index arithmetic matching build_windows: window j starts at
+    sentence j*step and covers [j*step, j*step+size). size/step are AUTHORITATIVE — callers
+    must pass the same size/step used to build the windows. Uncovered sentences return None
+    (not a silent 0.0) to surface coverage gaps; the document mean ignores None entries.
     """
-    norm_sentences = [(s or "").strip() for s in sentences]
-    coverage: List[List[float]] = [[] for _ in norm_sentences]
-    for wi, w in enumerate(windows):
-        if wi >= len(window_probs):
+    n = len(sentences)
+    coverage: List[List[float]] = [[] for _ in range(n)]
+    for j, prob in enumerate(window_probs):
+        if j >= len(windows):
             break
-        p = window_probs[wi]
-        w_norm = (w or "").strip()
-        for ki, s in enumerate(norm_sentences):
-            if not s:
-                continue
-            # a sentence is covered if it appears verbatim inside the window text
-            if s in w_norm:
-                coverage[ki].append(p)
-    sentence_scores = [
-        (sum(c) / len(c)) if c else 0.0 for c in coverage
-    ]
-    doc = (sum(sentence_scores) / len(sentence_scores)) if sentence_scores else 0.0
+        start = j * step
+        for k in range(start, min(start + size, n)):
+            coverage[k].append(prob)
+    sentence_scores = [(sum(c) / len(c)) if c else None for c in coverage]
+    valid = [s for s in sentence_scores if s is not None]
+    doc = (sum(valid) / len(valid)) if valid else 0.0
     return {"document_score": doc, "sentence_scores": sentence_scores}
