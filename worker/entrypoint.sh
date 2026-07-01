@@ -35,7 +35,7 @@ export DRAFTPROOF_CRITICAL_THINKING_QUESTIONS="${DRAFTPROOF_CRITICAL_THINKING_QU
 # fallback). Set =0 on Koyeb to disable. DRAFTPROOF_DEBERTA_MODEL is the research leading
 # candidate; confirmed/replaced by the SCoCESLE ESL-FPR gate (Phase 0) before production.
 export DRAFTPROOF_DEBERTA_SIGNAL="${DRAFTPROOF_DEBERTA_SIGNAL:-1}"
-export DRAFTPROOF_DEBERTA_MODEL="${DRAFTPROOF_DEBERTA_MODEL:-fakespot-ai/roberta-base-ai-text-detection-v1}"
+export DRAFTPROOF_DEBERTA_MODEL="${DRAFTPROOF_DEBERTA_MODEL:-/app/hf_cache/deberta-fakespot}"
 # Optional: path to a fitted isotonic calibrator (Phase 0 Task 0.5). Default = the SCoCESLE-fit
 # calibrator shipped in the image (ESL FPR@50% 20.5% raw -> 1.1% calibrated). Set ="" for raw.
 export DRAFTPROOF_DEBERTA_CALIBRATOR="${DRAFTPROOF_DEBERTA_CALIBRATOR:-/app/poc/calibration/deberta_isotonic.pkl}"
@@ -139,16 +139,25 @@ else
     touch "${SEMANTIC_MARKER}"
 fi
 
-# DeBERTa checkpoint is BAKED into the image at build time (the worker's runtime cannot reach
-# huggingface.co, so a volume/warm download is impossible). No boot download needed — just
-# confirm it's present at the configured path.
-DEBERTA_MODEL_W="${DRAFTPROOF_DEBERTA_MODEL:-fakespot-ai/roberta-base-ai-text-detection-v1}"
+# DeBERTa second-opinion checkpoint — SAVE TO THE VOLUME like gpt2/MiniLM. The worker's runtime
+# cannot reach huggingface.co (egress blocked), so the model tarball is staged in R2 (reachable —
+# the same object store reports use) and pulled onto the persistent HF volume at first boot.
+# BEST-EFFORT: advisory model, so a failed download logs a warning instead of crashing boot;
+# scans fail-open without the score and the next boot retries.
+DEBERTA_MODEL_W="${DRAFTPROOF_DEBERTA_MODEL:-/app/hf_cache/deberta-fakespot}"
+DEBERTA_MARKER="${CACHE_DIR}/.deberta_model_ready"
 if [ "${DRAFTPROOF_DEBERTA_SIGNAL}" = "0" ]; then
-    echo "[entrypoint] DeBERTa signal disabled (DRAFTPROOF_DEBERTA_SIGNAL=0)"
-elif [ -e "${DEBERTA_MODEL_W}" ]; then
-    echo "[entrypoint] DeBERTa model present (baked): ${DEBERTA_MODEL_W}"
+    echo "[entrypoint] DeBERTa signal disabled (DRAFTPROOF_DEBERTA_SIGNAL=0), skipping"
+elif [ -f "${DEBERTA_MARKER}" ] && [ -e "${DEBERTA_MODEL_W}" ]; then
+    echo "[entrypoint] DeBERTa model already on volume, skipping download"
 else
-    echo "[entrypoint] WARNING: DeBERTa model not found at ${DEBERTA_MODEL_W} — second-opinion score will be unavailable (fail-open)"
+    echo "[entrypoint] Fetching DeBERTa model from R2 to volume (first run, best-effort)..."
+    if python3 /app/worker/app/download_deberta.py --out "${DEBERTA_MODEL_W}"; then
+        echo "[entrypoint] DeBERTa model saved to volume at ${DEBERTA_MODEL_W}"
+        touch "${DEBERTA_MARKER}"
+    else
+        echo "[entrypoint] WARNING: DeBERTa R2 download failed — score stays unavailable (fail-open) until next boot retries"
+    fi
 fi
 
 echo "[entrypoint] Model cache ready. Celery worker child will lazy-load cached scan models unless preload env flags are enabled."
