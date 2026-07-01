@@ -226,6 +226,11 @@ class DraftReport:
     false_positives: Optional[List[Dict[str, str]]] = None
     raw_overall_tier: str = ""
     adjusted_overall_tier: str = ""
+    # Cached canonical-sentence DeBERTa heatmap. Shared between the tile headline and the
+    # Signal-highlights map so both use IDENTICAL per-sentence scores (no splitter mismatch).
+    # Populated in build(); read in report_to_dict()._compute_deberta_heatmap. None when the
+    # signal is off/unavailable (the map falls back to the legacy perplexity color path).
+    deberta_heatmap: Optional[Dict[str, Any]] = None
     overall_tier_reason: str = ""
     rewrite_priority_tier: str = ""
     rewrite_priority_reason: str = ""
@@ -380,6 +385,7 @@ class ReportBuilder:
         self._original_text = ""
         self._rewritten_text = ""
         self._scan_time = 0.0
+        self._deberta_heatmap: dict | None = None  # cached canonical-sentence heatmap (map+tile share it)
         self._summaries: Dict[str, Any] = {}
         self._false_positives: List[Dict[str, str]] = []
         self._sentence_id_map: Dict[str, str] = {}
@@ -1613,9 +1619,34 @@ class ReportBuilder:
         # never feeds tier/ai_likelihood/external/gate; advisory comparison score only.
         # Fail-open: maybe_attach already catches/logs internally and returns available=False;
         # this outer guard is defense-in-depth against an import error so the report never breaks.
+        #
+        # IMPORTANT: the headline is built from the CANONICAL sentence heatmap (the same
+        # per-sentence scores the Signal-highlights map uses), NOT from compose()'s own naive
+        # splitter. This guarantees the tile and the map agree on which passages are flagged —
+        # two different sentence splitters previously caused the tile to flag passages the map
+        # colored differently. Falls back to compose(text) if the heatmap is unavailable.
         try:
-            from detect.deberta_signal import maybe_attach as _attach_deberta
-            _deberta = _attach_deberta(self._original_text)
+            from detect.deberta_signal import (  # noqa: E402
+                maybe_attach as _attach_deberta,
+                compose_from_sentences as _compose_heatmap,
+                headline_from_heatmap as _headline_from_heatmap,
+            )
+            _deberta = None
+            try:
+                _canon = [
+                    {"sentence_id": it.get("sentence_id"),
+                     "paragraph_id": it.get("paragraph_id") or "p001",
+                     "text": it.get("sentence", "")}
+                    for it in _source_segments(complete=True)
+                ]
+                if _canon:
+                    _heat = _compose_heatmap(_canon)
+                    _deberta = _headline_from_heatmap(_heat, _canon)
+                    self._deberta_heatmap = _heat  # stash for the DraftReport constructor below
+            except Exception:
+                _deberta = None
+            if _deberta is None:
+                _deberta = _attach_deberta(self._original_text)
             if _deberta is not None:
                 ai_risk_badge["ai_signal_deberta"] = _deberta
         except Exception:
@@ -1684,6 +1715,7 @@ class ReportBuilder:
             false_positives=self._false_positives or None,
             raw_overall_tier=raw_tier.value,
             adjusted_overall_tier=adjusted_tier.value,
+            deberta_heatmap=getattr(self, "_deberta_heatmap", None),
             overall_tier_reason=overall_tier_reason,
             rewrite_priority_tier=rp_tier,
             rewrite_priority_reason=rp_reason,
@@ -2999,14 +3031,17 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     # DeBERTa heatmap band → color/label/tier via the module-level _DEBERTA_HEAT_* maps.
     # Drives the Signal-highlights color; perplexity findings ride as secondary signals.
     def _compute_deberta_heatmap() -> list:
-        """Run the DeBERTa learned classifier over the document's canonical sentences and return
-        a per-sentence {sentence_id, paragraph_id, score, band} list. Fail-open: [] on any error
-        or when the kill-switch is off (caller falls back to the legacy perplexity primary)."""
+        """Return the per-sentence DeBERTa heatmap ({sentence_id, paragraph_id, score, band}, ...).
+        Reuses the heatmap cached at badge-build time (self._deberta_heatmap) so the map and the
+        tile headline share IDENTICAL per-sentence scores — eliminating the tile-vs-map mismatch.
+        Falls back to recomputing if the cache is missing, then to [] (legacy perplexity color)."""
+        cached = getattr(report, "deberta_heatmap", None)
+        if cached and cached.get("available"):
+            return cached.get("sentence_scores") or []
         try:
-            from detect.deberta_signal import compose_from_sentences, band_for_sentence  # noqa: E402
+            from detect.deberta_signal import compose_from_sentences  # noqa: E402
         except Exception:
             return []
-        # Build canonical sentence inputs from the same source _document_segments uses.
         sens = []
         for item in _source_segments(complete=True):
             sens.append({

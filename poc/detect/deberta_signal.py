@@ -104,19 +104,33 @@ def compose(text: str) -> dict:
     agg = aggregate(sents, windows, probs, size=3, step=1)
     sentence_scores = agg["sentence_scores"]
 
-    # Proportion signal + flagged passages. sentence_scores may contain None for
-    # uncovered sentences; ignore those in both the denominator and the flag list.
-    scored = [(i, s) for i, s in enumerate(sentence_scores) if s is not None]
-    n_scored = len(scored)
-    flagged = [(i, s) for i, s in scored if s >= SENT_THRESHOLD]
+    # Build the headline from per-sentence scores via the SHARED helper. The naive splitter
+    # here produces integer-indexed sentences (no canonical sNNN); the helper accepts any
+    # (sentence_id, score, text) tuples, so we pass the integer index as the id.
+    scored_tuples = [
+        (i, s, sents[i])
+        for i, s in enumerate(sentence_scores) if s is not None
+    ]
+    return _build_headline(scored_tuples)
+
+
+def _build_headline(scored_sentences: list[tuple]) -> dict:
+    """Shared headline builder. Takes [(sentence_id, score, text), ...] and returns the full
+    ai_signal_deberta dict (signal_pct, flagged_passages, band, caveat, ...). Used by both
+    compose() (naive-splitter sentences) and the report's canonical-sentence path, so the
+    headline math is IDENTICAL regardless of which sentence splitter produced the inputs —
+    eliminating the tile-vs-map inconsistency that arose from two different splitters."""
+    n_scored = len(scored_sentences)
+    flagged = [(sid, s, txt) for sid, s, txt in scored_sentences if s >= SENT_THRESHOLD]
     n_flagged = len(flagged)
     signal_pct = round(100.0 * n_flagged / n_scored) if n_scored else 0
 
-    # Flagged passages: highest score first, capped. These are the actionable detail.
-    flagged_sorted = sorted(flagged, key=lambda i_s: i_s[1], reverse=True)[:_MAX_FLAGGED_PERSISTED]
+    # Flagged passages: highest score first, capped. Carry the sentence_id the caller passed
+    # (canonical sNNN from the report, or an integer index from compose()'s naive split).
+    flagged_sorted = sorted(flagged, key=lambda t: t[1], reverse=True)[:_MAX_FLAGGED_PERSISTED]
     flagged_passages = [
-        {"sentence_id": i, "score": round(float(s), 3), "text": sents[i]}
-        for i, s in flagged_sorted
+        {"sentence_id": sid, "score": round(float(s), 3), "text": txt}
+        for sid, s, txt in flagged_sorted
     ]
 
     band = _band_for(signal_pct)
@@ -233,4 +247,30 @@ def compose_from_sentences(sentences: list[dict]) -> dict | None:
     except Exception as e:  # noqa: BLE001 — fail-open, never break the report
         logger.warning("[deberta] compose_from_sentences failed (fail-open): %s", e)
         return None
+
+
+def headline_from_heatmap(heatmap: dict | None, sentences: list[dict]) -> dict | None:
+    """Build the ai_signal_deberta HEADLINE dict from the canonical-sentence heatmap, so the
+    tile and the map share ONE sentence segmentation (no naive-splitter mismatch).
+
+    `heatmap` is the output of compose_from_sentences(); `sentences` is the same canonical
+    sentence list passed to it (needed to recover the text for flagged_passages). Returns the
+    full headline dict via the shared _build_headline helper, or None if the heatmap is
+    unavailable (caller falls back to compose(text))."""
+    if not heatmap or not heatmap.get("available"):
+        return None
+    rows = heatmap.get("sentence_scores") or []
+    by_sid = {r.get("sentence_id"): r for r in rows}
+    scored_tuples = []
+    for sent in sentences:
+        sid = sent.get("sentence_id")
+        row = by_sid.get(sid)
+        if not row:
+            continue
+        score = row.get("score")
+        if score is not None:  # skip clean/None (short stubs, uncovered)
+            scored_tuples.append((sid, score, sent.get("text", "")))
+    if not scored_tuples:
+        return None
+    return _build_headline(scored_tuples)
 
