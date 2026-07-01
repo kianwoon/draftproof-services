@@ -1584,6 +1584,18 @@ class ReportBuilder:
         if _dash is not None:
             ai_risk_badge["authenticity_dashboard"] = _dash
 
+        # Additive second-opinion DeBERTa AI signal (spec 2026-07-01). STRICTLY ADDITIVE —
+        # never feeds tier/ai_likelihood/external/gate; advisory comparison score only.
+        # Fail-open: maybe_attach already catches/logs internally and returns available=False;
+        # this outer guard is defense-in-depth against an import error so the report never breaks.
+        try:
+            from detect.deberta_signal import maybe_attach as _attach_deberta
+            _deberta = _attach_deberta(self._original_text)
+            if _deberta is not None:
+                ai_risk_badge["ai_signal_deberta"] = _deberta
+        except Exception:
+            pass
+
         badge_ai_score = ai_risk_badge.get("ai_likelihood_score", 0.0) / 100
         if ai_val > 0 and badge_ai_score > 0:
             overall_tier_reason = overall_tier_reason.replace(
