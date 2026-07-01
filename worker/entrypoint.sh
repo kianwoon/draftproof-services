@@ -29,6 +29,16 @@ export DRAFTPROOF_V6_GRAMMAR_BASE_URL="${DRAFTPROOF_V6_GRAMMAR_BASE_URL:-https:/
 # (OPENROUTER/CEREBRAS); fail-open without one. Set =0 on Koyeb to disable.
 export DRAFTPROOF_CRITICAL_THINKING_QUESTIONS="${DRAFTPROOF_CRITICAL_THINKING_QUESTIONS:-1}"
 
+# DeBERTa second-opinion AI signal ON in production (code default ON). STRICTLY ADDITIVE —
+# never feeds tier/ai_likelihood/external/gate; an advisory comparison score only. Loads an
+# off-the-shelf AI-text-detection checkpoint from the HF volume (local_files_only then
+# fallback). Set =0 on Koyeb to disable. DRAFTPROOF_DEBERTA_MODEL is the research leading
+# candidate; confirmed/replaced by the SCoCESLE ESL-FPR gate (Phase 0) before production.
+export DRAFTPROOF_DEBERTA_SIGNAL="${DRAFTPROOF_DEBERTA_SIGNAL:-1}"
+export DRAFTPROOF_DEBERTA_MODEL="${DRAFTPROOF_DEBERTA_MODEL:-fakespot-ai/roberta-base-ai-text-detection-v1}"
+# Optional: path to a fitted isotonic calibrator (Phase 0 Task 0.5). Unset = raw/uncalibrated.
+export DRAFTPROOF_DEBERTA_CALIBRATOR="${DRAFTPROOF_DEBERTA_CALIBRATOR:-}"
+
 echo "[entrypoint] ============================================"
 echo "[entrypoint] DraftProof Worker Startup"
 echo "[entrypoint] HF_HOME=${HF_HOME}"
