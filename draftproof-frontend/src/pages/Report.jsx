@@ -16,6 +16,7 @@ import SignalHighlights from './report/SignalHighlights';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import CriticalThinkingControl from './report/CriticalThinkingControl';
 import AuthenticityDashboard from './report/AuthenticityDashboard';
+import DebertaSignal from './report/DebertaSignal';
 import ReportHero from './report/ReportHero';
 import PolicyRiskView from './report/PolicyRiskView';
 import useTextareaCaretOverlay from './report/useTextareaCaretOverlay';
@@ -2198,6 +2199,7 @@ export default function Report() {
           onRepairAction={showSubmittedEditEntry ? () => openSubmittedEditorForParagraph() : null}
         />
         <AuthenticityDashboard t={t} dashboard={(badge && badge.authenticity_dashboard) || null} />
+        <DebertaSignal t={t} signal={(badge && badge.ai_signal_deberta) || null} compositeTier={badge.tier || report.tier} />
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>
             <div className="scan-progress" role="status" aria-live="polite">

@@ -1568,7 +1568,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     # ── LEAD: enhanced hero + KPI row + priority fixes + policy view ──
     # (Submitted Text is moved to an appendix before the footer; the verdict +
     #  policy view + findings lead instead.)
-    from .render_panels import render_scan_lead, render_authenticity_dashboard
+    from .render_panels import render_scan_lead, render_authenticity_dashboard, render_deberta_signal
     _lead = render_scan_lead(report, data) if report.ai_risk_badge else ""
     if _lead:
         lines.append(_lead)
@@ -1591,6 +1591,11 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         _authn_panel = render_authenticity_dashboard({"ai_risk_badge": report.ai_risk_badge})
         if _authn_panel:
             lines.append(_authn_panel)
+            lines.append("")
+        # ── Second-opinion DeBERTa AI signal (additive, advisory only) ──────────
+        _deberta_panel = render_deberta_signal({"ai_risk_badge": report.ai_risk_badge})
+        if _deberta_panel:
+            lines.append(_deberta_panel)
             lines.append("")
 
     # ── 2. CALIBRATION SUMMARY ────────────────────────────────────

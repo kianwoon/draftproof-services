@@ -638,5 +638,15 @@ export const report = {
       "grounding": "Tentative — short submission.",
       "reasoning_consistency": "Coming in a later release."
     }
+  },
+  "debertaSignal": {
+    "ariaLabel": "Second-opinion AI signal",
+    "title": "Second-opinion AI signal",
+    "scoreLabel": "of the document shows AI-like writing signal under a separate detector",
+    "calibrated": "Calibrated on the DraftProof ESL corpus.",
+    "raw": "Raw detector probability — advisory only.",
+    "unavailable": "Second-opinion detector not available for this scan.",
+    "noteAgree": "Both detection methods place this in the {{band}} band.",
+    "noteDisagree": "Two detection methods disagree (DraftProof: {{composite}}, second detector: {{deberta}}). This is common — they use different signals. Review the flagged passages yourself."
   }
 };

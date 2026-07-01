@@ -632,5 +632,15 @@ export const report = {
       "grounding": "参考值——提交内容较短。",
       "reasoning_consistency": "将在后续版本推出。"
     }
+  },
+  "debertaSignal": {
+    "ariaLabel": "第二意见 AI 信号",
+    "title": "第二意见 AI 信号",
+    "scoreLabel": "的文档在另一个独立检测器下显示 AI 风格写作信号",
+    "calibrated": "已基于 DraftProof ESL 语料库校准。",
+    "raw": "原始检测器概率——仅供参考。",
+    "unavailable": "本次扫描无法获取第二意见检测器结果。",
+    "noteAgree": "两种检测方法都将本文档归为{{band}}等级。",
+    "noteDisagree": "两种检测方法结果不一致（DraftProof：{{composite}}，第二检测器：{{deberta}}）。这很常见——它们使用不同的信号。请自行复核被标记的段落。"
   }
 };

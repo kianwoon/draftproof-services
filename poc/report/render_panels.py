@@ -82,6 +82,32 @@ def render_authenticity_dashboard(report_data: dict) -> str:
             'measurements or a Turnitin prediction.</p></div>')
 
 
+def render_deberta_signal(report_data: dict) -> str:
+    """HTML panel for the second-opinion DeBERTa AI signal; '' when absent (flag off / old report).
+
+    STRICTLY ADVISORY — never feeds the tier or any gate. Band uses the composite's traffic-light
+    legend so the two are directly comparable; disagreement is the point of a second opinion."""
+    badge = (report_data or {}).get("ai_risk_badge") or {}
+    sig = badge.get("ai_signal_deberta")
+    if not sig:
+        return ""
+    if sig.get("available") is False:
+        return (f'<div class="dp-hero"><p class="dp-hero-read">Second-opinion AI signal — '
+                f'unavailable ({escape(str(sig.get("caveat") or ""))})</p></div>')
+    score = sig.get("score")
+    score_txt = f"{round(score)}%" if isinstance(score, (int, float)) else "—"
+    band = str(sig.get("band") or "—")
+    calibrated = "calibrated" if sig.get("calibrated") else "raw, uncalibrated — advisory only"
+    composite_tier = str(badge.get("tier") or "—")
+    agree = bool(sig.get("band")) and bool(badge.get("tier")) and sig["band"] == badge["tier"]
+    note = (f"Both detection methods place this in the {band} band." if agree
+            else f"Two detection methods disagree (DraftProof {composite_tier}, second detector {band}). "
+                 f"This is common — they use different signals. Review the flagged passages yourself.")
+    head = f"Second-opinion AI signal — {score_txt} ({band}, {calibrated})"
+    return (f'<div class="dp-hero"><p class="dp-hero-read">{escape(head)}</p>'
+            f'<p class="dp-hero-sub">{escape(note)}</p></div>')
+
+
 def render_scan_lead(report, data) -> str:
     """Hero + KPI row + priority fixes + '1. Submission and policy view'.
 
