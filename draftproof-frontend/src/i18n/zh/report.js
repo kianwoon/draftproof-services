@@ -133,6 +133,7 @@ export const report = {
   },
   "summary": {
     "riskTier": "风险等级",
+    "lowConfidence": "置信度较低——分数接近等级边界，或样本较短，因此请将此等级视为临时结果，并在依赖之前进行复核。",
     "totalFindings": "发现总数",
     "authorshipRating": "作者身份评级",
     "rawAiSignal": "原始 AI 风格信号",

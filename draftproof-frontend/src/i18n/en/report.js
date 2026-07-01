@@ -136,6 +136,7 @@ export const report = {
   },
   "summary": {
     "riskTier": "Risk Tier",
+    "lowConfidence": "Low confidence — the score sits near a band boundary or the sample is short, so treat this tier as provisional and review before relying on it.",
     "totalFindings": "Total Findings",
     "authorshipRating": "Authorship Rating",
     "rawAiSignal": "Raw AI-Style Signal",

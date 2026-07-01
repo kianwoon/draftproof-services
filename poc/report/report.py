@@ -1566,6 +1566,7 @@ class ReportBuilder:
             # Combined
             "review_priority": layer3.review_priority,
             "confidence": layer3.confidence.value,
+            "verdict_low_confidence": getattr(layer3, "verdict_low_confidence", False),
             "reasons": layer3.reasons,
             "guardrails": layer3.guardrails,
             "red_flags": n_high + n_critical,

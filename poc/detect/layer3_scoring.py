@@ -122,6 +122,13 @@ class Layer3Result:
     guardrails: list[str]
     review_priority: str
     debug: dict[str, Any]
+    # True when the tier verdict sits near a boundary cutoff or on a thin sample — i.e. the
+    # verdict is unstable and small input changes could flip it. STRICTLY DISPLAY-ONLY: never
+    # alters the tier/score; surfaces as a "low confidence" qualifier to the user (mirrors the
+    # reliability-floor concept the DeBERTa advisory layer and mature detectors like Turnitin
+    # apply to near-boundary / short-sample results). Distinct from `confidence` (signal
+    # coverage); this is verdict stability.
+    verdict_low_confidence: bool = False
 
 
 def clamp(value: Optional[float], low: float = 0.0, high: float = 1.0, default: float = 0.0) -> float:
@@ -1402,6 +1409,16 @@ class Layer3Scorer:
         else:
             return Tier.GREEN
 
+    # Width (in score units) below each cutoff that counts as "near boundary" — unstable,
+    # easily flipped by small input changes. Tuned to 0.07 (e.g. a GREEN score of 0.25-0.32
+    # is one re-scan away from AMBER). MUST stay < the smallest gap between cutoffs (0.16)
+    # so the band never spans two tiers.
+    _BOUNDARY_BAND = 0.07
+    _TIER_CUTOFFS = (0.32, 0.48, 0.65)
+
+    def _near_boundary(self, ai_score: float) -> bool:
+        return any(c - self._BOUNDARY_BAND <= ai_score < c for c in self._TIER_CUTOFFS)
+
     def _derive_review_priority(
         self,
         ai_tier: Tier,
@@ -1457,6 +1474,14 @@ class Layer3Scorer:
         if data.verified_ai_provenance:
             guardrails.append("verified_ai_provenance_override")
 
+        # Display-only reliability flag: near a tier boundary OR thin sample. Never alters the
+        # tier/score (see Layer3Result.verdict_low_confidence docstring).
+        verdict_low_confidence = bool(
+            self._near_boundary(ai_phase.score)
+            or data.word_count < 150
+            or data.sentence_count < 6
+        )
+
         return Layer3Result(
             tier=ai_tier,
             ai_likelihood_score=ai_phase.score,
@@ -1471,6 +1496,7 @@ class Layer3Scorer:
             reasons=reasons,
             guardrails=guardrails,
             review_priority=review_priority,
+            verdict_low_confidence=verdict_low_confidence,
             debug={
                 "ai_likelihood_raw": ai_phase.score,
                 "writing_quality_raw": writing_phase.score,

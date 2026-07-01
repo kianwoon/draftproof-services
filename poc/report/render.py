@@ -417,6 +417,11 @@ def _ai_signal_verdict(badge: dict) -> str:
     if flag:
         verdict += f" — {flag}"
     verdict += "."
+    # Reliability qualifier: a near-boundary or thin-sample score is unstable — surface it
+    # honestly rather than as a confident verdict (mirrors Turnitin's suppression of the
+    # unstable band). The tier itself is unchanged.
+    if (badge or {}).get("verdict_low_confidence"):
+        verdict += " Low confidence — the score sits near a band boundary or the sample is short, so treat this as provisional and review before relying on it."
     if driver:
         verdict += f" The main writing issue to fix is the {driver}."
     return verdict
@@ -916,6 +921,10 @@ def _executive_signal_chart_html(
     pills = []
     if confidence:
         pills.append(f"{str(confidence).title()} Confidence")
+    # Reliability qualifier pill (display-only): near-boundary or thin-sample verdicts are
+    # unstable. Mirrors Turnitin's suppression of the unreliable band; the tier is unchanged.
+    if (badge or {}).get("verdict_low_confidence"):
+        pills.append("Low Confidence — provisional")
     # "Not A Verdict" disclaimer is stated once in the repair plan / AI-likelihood note now,
     # mirroring the web page mesh — no longer repeated here.
 
