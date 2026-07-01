@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { supportedLanguages } from '../i18n';
+import { supportedLanguages } from '../i18n/resources';
 import {
   isLocalizablePublicPath,
   localizePath,

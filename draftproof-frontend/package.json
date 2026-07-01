@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/prerender-seo.mjs",
+    "build": "vite build && vite build --ssr src/entry-server.jsx --config vite.ssr.config.js --outDir dist/server && node scripts/prerender-seo.mjs && node scripts/prerender-render.mjs",
+    "build:client": "vite build && node scripts/prerender-seo.mjs",
     "check:i18n": "node scripts/check-i18n-resources.mjs",
     "update:ticker": "node scripts/update-ticker-message.mjs",
     "preview": "vite preview"

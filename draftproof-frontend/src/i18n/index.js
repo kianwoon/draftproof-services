@@ -1,12 +1,10 @@
 import i18n from 'i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
 import { initReactI18next } from 'react-i18next';
-import { resources } from './resources';
+import { resources, supportedLanguages } from './resources';
 
-export const supportedLanguages = [
-  { code: 'en', labelKey: 'nav.english' },
-  { code: 'zh', labelKey: 'nav.chinese' },
-];
+// Re-exported for backwards compatibility (some modules import { supportedLanguages } from '../i18n').
+export { supportedLanguages };
 
 i18n
   .use(LanguageDetector)

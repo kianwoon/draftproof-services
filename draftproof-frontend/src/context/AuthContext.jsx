@@ -8,7 +8,12 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // SSR-aware: on the server there is no session to resolve, so we render as
+  // "loaded" so the Landing page prerenders with content (HomeRedirect returns
+  // null while loading). On the client we still start in the loading state and
+  // resolve via the effect below — identical to prior behavior. Safe because the
+  // client mounts with createRoot (no hydration), so there is nothing to mismatch.
+  const [loading, setLoading] = useState(() => typeof window !== 'undefined');
   const [balance, setBalance] = useState(null);
   const [reservedBalance, setReservedBalance] = useState(0);
 
