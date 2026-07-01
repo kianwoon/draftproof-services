@@ -65,11 +65,14 @@ def main() -> int:
 
     os.makedirs(out, exist_ok=True)
 
-    # Stream to a temp file on disk (avoids holding the full tarball in RAM).
+    # Stream to a temp file on disk (avoids holding the full tarball in RAM). NamedTemporaryFile
+    # creates the file atomically with a random name — race-free (a predictable-name temp path
+    # would be vulnerable to a TOCTOU symlink swap before the open).
     print(f"[deberta-download] fetching s3://{bucket}/{R2_KEY} ...", flush=True)
-    tmp_path = tempfile.mktemp(prefix="deberta-", suffix=".tar.gz")
+    tmp_path = None
     try:
-        with open(tmp_path, "wb") as tf:
+        with tempfile.NamedTemporaryFile(prefix="deberta-", suffix=".tar.gz", delete=False) as tf:
+            tmp_path = tf.name
             s3.download_fileobj(bucket, R2_KEY, tf)
 
         # Hash in 8MB chunks (constant RAM) + size check.
@@ -98,7 +101,7 @@ def main() -> int:
                 member.name = member.name  # already a clean basename
                 tar.extract(member, path=out)
     finally:
-        if os.path.exists(tmp_path):
+        if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
     print(f"[deberta-download] done: {out}", flush=True)
