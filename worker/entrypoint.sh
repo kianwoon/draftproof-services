@@ -139,6 +139,31 @@ else
     touch "${SEMANTIC_MARKER}"
 fi
 
+# DeBERTa second-opinion checkpoint — warm onto the volume at BOOT (best-effort).
+# WHY: the worker cannot reliably reach huggingface.co mid-scan, so the lazy load in
+# deberta_model.py fails open and the score goes unavailable. Pre-warming here (same pattern
+# as gpt2/MiniLM above) means every scan finds the checkpoint local. BEST-EFFORT: a flaky HF
+# must NOT crash boot — the DeBERTa field is strictly advisory, so scans fail-open without it
+# and the next boot retries the download.
+DEBERTA_MODEL_W="${DRAFTPROOF_DEBERTA_MODEL:-fakespot-ai/roberta-base-ai-text-detection-v1}"
+SAFE_DEBERTA_MODEL_W="${DEBERTA_MODEL_W//\//_}"
+DEBERTA_MARKER="${CACHE_DIR}/.deberta_model_ready_${SAFE_DEBERTA_MODEL_W}"
+if [ "${DRAFTPROOF_DEBERTA_SIGNAL}" = "0" ]; then
+    echo "[entrypoint] DeBERTa signal disabled (DRAFTPROOF_DEBERTA_SIGNAL=0), skipping warmup"
+elif [ -f "${DEBERTA_MARKER}" ]; then
+    echo "[entrypoint] DeBERTa model ${DEBERTA_MODEL_W} already cached on volume, skipping download"
+else
+    echo "[entrypoint] Downloading DeBERTa model ${DEBERTA_MODEL_W} to volume (first run, best-effort)..."
+    if python3 -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; \
+        AutoModelForSequenceClassification.from_pretrained('${DEBERTA_MODEL_W}'); \
+        AutoTokenizer.from_pretrained('${DEBERTA_MODEL_W}')" 2>/dev/null; then
+        echo "[entrypoint] DeBERTa model ${DEBERTA_MODEL_W} cached and marker set"
+        touch "${DEBERTA_MARKER}"
+    else
+        echo "[entrypoint] WARNING: DeBERTa warm-download failed (HF unreachable?) — the second-opinion score will stay unavailable (fail-open) until a future boot retries"
+    fi
+fi
+
 echo "[entrypoint] Model cache ready. Celery worker child will lazy-load cached scan models unless preload env flags are enabled."
 
 echo "[entrypoint] Starting Celery worker..."
