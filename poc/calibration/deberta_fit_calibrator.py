@@ -1,17 +1,19 @@
 """Fit + evaluate an isotonic calibrator for the chosen DeBERTa checkpoint on SCoCESLE.
 
-Phase 0 Task 0.5: the raw checkpoint's ESL FPR was unacceptable (fakespot-ai/roberta-base
-~20.5% @50% vs the composite's ~3%). This fits isotonic regression on (raw_score, label)
-with label = 1 for AI / 0 for human, so the calibrated score = P(AI). Then it re-measures
-ESL FPR + AUC on the calibrated scores and prints a raw-vs-calibrated comparison so we can
-decide ship-calibrated / demote-advisory / reject.
+SUPERSEDED IN PRODUCTION (2026-07). The v2 signal (deberta_signal_v2) uses a
+threshold-proportion design with NO calibrator — see deberta_signal.py. This script is
+retained for offline analysis / model comparison only. Do NOT point
+DRAFTPROOF_DEBERTA_CALIBRATOR at its output — compose() ignores that env var in v2.
 
-Saves the calibrator to poc/calibration/deberta_isotonic.pkl (point DRAFTPROOF_DEBERTA_CALIBRATOR at it).
+Historical note (the document-level fit this performs collapses to a step function because
+AI/human document scores barely overlap on SCoCESLE; it was the source of the production
+0%-bug). See deberta_fit_calibrator_windows.py for the full history of why calibration was
+abandoned in favor of threshold-proportion.
 
-Usage:
+Usage (offline analysis only):
     python calibration/deberta_fit_calibrator.py \\
         --model fakespot-ai/roberta-base-ai-text-detection-v1 \\
-        --out calibration/deberta_isotonic.pkl
+        --out calibration/deberta_isotonic_offline.pkl
 """
 from __future__ import annotations
 

@@ -1,31 +1,28 @@
 """Fit a WINDOW-LEVEL isotonic calibrator for the DeBERTa checkpoint on SCoCESLE.
 
-This supersedes ``deberta_fit_calibrator.py``, which fit at the DOCUMENT level
-(the mean of per-window probs). That document-level fit collapsed to a step
+SUPERSEDED IN PRODUCTION (2026-07). The v2 signal (deberta_signal_v2) uses a
+threshold-proportion design with NO calibrator — see deberta_signal.py. This
+script is retained for offline analysis / model comparison only; it no longer
+produces a calibrator that any production path loads. Do NOT point
+DRAFTPROOF_DEBERTA_CALIBRATOR at its output — compose() ignores that env var in v2.
+
+Historical context (why the calibrator approach was abandoned):
+This originally superseded ``deberta_fit_calibrator.py``, which fit at the DOCUMENT
+level (the mean of per-window probs). That document-level fit collapsed to a step
 function because the corpus's AI and human distributions barely overlap at the
-document level (humans <0.70, AI >0.86): isotonic regression has no support
-inside the gap, so every document mean below ~0.854 calibrated to exactly 0.0,
-silently zeroing mixed human/AI documents (the production 0%-bug).
+document level (humans <0.70, AI >0.86): isotonic regression had no support inside
+the gap, so every document mean below ~0.854 calibrated to exactly 0.0, silently
+zeroing mixed human/AI documents (the production 0%-bug). The window-level fit
+here fixed that — but its curve still collapsed to a cliff at the TOP (everything
+below raw=1.000 floored to ~0-8%), because AI windows also pile up at exactly 1.0.
+Isotonic regression cannot calibrate this model well on SCoCESLE at either level:
+the AI/human distributions are too cleanly separated. The v2 design sidesteps the
+problem entirely with threshold-proportion aggregation and no calibration.
 
-At the WINDOW level the distributions span the full 0-1 range with genuine
-overlap, so isotonic regression learns a smooth, well-supported curve. The
-calibrator is then applied per-window at inference time and the calibrated
-windows are aggregated (mean) into the document score.
-
-Measured on SCoCESLE, window-level calibration strictly dominates document-level:
-  - ESL FPR @>=50% drops 1.1% -> 0.0%
-  - AUC (AI vs human) rises 0.9917 -> 0.9999
-  - AI p10 (worst-case AI score) rises 0.0% -> 42.8%  (fixes the silent zero)
-  - human max (worst false-flag) drops 75.0% -> 46.2%
-
-Output schema of the fitted calibrator is unchanged — an IsotonicRegression
-pickle loaded by detect.deberta_calibrate.load_calibrator — so the only consumer
-change is in compose(): calibrate windows BEFORE aggregate(), not after.
-
-Usage:
+Usage (offline analysis only):
     python calibration/deberta_fit_calibrator_windows.py \\
         --model fakespot-ai/roberta-base-ai-text-detection-v1 \\
-        --out calibration/deberta_isotonic.pkl
+        --out calibration/deberta_isotonic_offline.pkl
 """
 from __future__ import annotations
 

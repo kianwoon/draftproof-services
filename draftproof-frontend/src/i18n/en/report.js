@@ -642,11 +642,14 @@ export const report = {
   "debertaSignal": {
     "ariaLabel": "Second-opinion AI signal",
     "title": "Second-opinion AI signal",
-    "scoreLabel": "of the document shows AI-like writing signal under a separate detector",
-    "calibrated": "Calibrated on the DraftProof ESL corpus.",
-    "raw": "Raw detector probability — advisory only.",
+    "scoreLabel": "of passages read as AI-like under a separate detector",
     "unavailable": "Second-opinion detector not available for this scan.",
-    "noteAgree": "Both detection methods place this in the {{band}} band.",
-    "noteDisagree": "Two detection methods disagree (DraftProof: {{composite}}, second detector: {{deberta}}). This is common — they use different signals. Review the flagged passages yourself."
+    "aboveFloor": "{{pct}}% of passages score at the detector's high-confidence AI threshold. Advisory only — post-hoc detectors miss paraphrased text and carry residual ESL bias. Review the flagged passages rather than treating the number as a verdict.",
+    "belowFloor": "Below the 20% reliability floor — too few high-confidence passages for an overall verdict.",
+    "passagesFlaggedForReview": "{{n}} of {{total}} passages flagged for review",
+    "flaggedPassages": "Flagged passages",
+    "reviewPassages": "Review these passages",
+    "noteAgree": "Both detection methods flag this document for review.",
+    "noteDisagree": "The two detection methods read this document differently. This is common — they use different signals. Review the flagged passages yourself."
   }
 };

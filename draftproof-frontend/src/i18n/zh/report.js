@@ -636,11 +636,14 @@ export const report = {
   "debertaSignal": {
     "ariaLabel": "第二意见 AI 信号",
     "title": "第二意见 AI 信号",
-    "scoreLabel": "的文档在另一个独立检测器下显示 AI 风格写作信号",
-    "calibrated": "已基于 DraftProof ESL 语料库校准。",
-    "raw": "原始检测器概率——仅供参考。",
+    "scoreLabel": "的段落在另一个独立检测器下读作 AI 风格",
     "unavailable": "本次扫描无法获取第二意见检测器结果。",
-    "noteAgree": "两种检测方法都将本文档归为{{band}}等级。",
-    "noteDisagree": "两种检测方法结果不一致（DraftProof：{{composite}}，第二检测器：{{deberta}}）。这很常见——它们使用不同的信号。请自行复核被标记的段落。"
+    "aboveFloor": "{{pct}}% 的段落达到检测器的高置信 AI 阈值。仅供参考——事后检测器会漏掉改写文本，且存在残余的 ESL 偏差。请复核被标记的段落，而非将此数字视为定论。",
+    "belowFloor": "低于 20% 的可靠性门槛——高置信段落过少，无法给出整体判定。",
+    "passagesFlaggedForReview": "已标记 {{n}} / {{total}} 个段落供复核",
+    "flaggedPassages": "被标记的段落",
+    "reviewPassages": "请复核这些段落",
+    "noteAgree": "两种检测方法都标记本文档供复核。",
+    "noteDisagree": "两种检测方法对本文档的判断不同。这很常见——它们使用不同的信号。请自行复核被标记的段落。"
   }
 };

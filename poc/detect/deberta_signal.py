@@ -2,13 +2,34 @@
 
 STRICTLY ADDITIVE: it never feeds back into the tier, ai_likelihood_score, the external
 estimate, or any gate — same contract as ``authenticity_dashboard.py`` and ``submission_risk.py``.
-The off-the-shelf checkpoint runs locally on the worker (no third-party text upload). The score
-is optionally calibrated (isotonic on SCoCESLE) and band-mapped onto the composite's traffic-light
-legend (green/amber/orange/red) so the two scores are directly comparable.
+The off-the-shelf checkpoint runs locally on the worker (no third-party text upload).
 
-Output schema (always present when the kill-switch is on; ``available=False`` on any failure):
-  score (0-100 float|int|None), band (green|amber|orange|red|None),
-  confidence (low|medium), model_version (str), calibrated (bool), available (bool), caveat (str)
+DESIGN (v2, threshold-proportion — derived from the Turnitin AI-detection technical breakdown):
+  The document is broken into overlapping sentence windows; each window is scored 0-1 by
+  the checkpoint; each sentence inherits the mean of its covering windows. A sentence is
+  "AI-like" if its score >= SENT_THRESHOLD (0.99 — the model's high-confidence band where
+  ESL false-positives are rare: ~3.3% doc-level ESL FPR at this threshold on SCoCESLE).
+  The document signal = the PROPORTION of sentences that are AI-like, expressed as a %.
+
+  Below DOC_FLOOR_PCT (20) the signal is reported as "insufficient" — no verdict, only the
+  flagged passages. This mirrors Turnitin's suppression of the unreliable 1-19% band: a
+  low proportion of high-confidence sentences is not stable enough to call "green/safe",
+  and the honest output is "here are the few passages to review", not a confident verdict.
+
+Why threshold-proportion, not mean+calibration: averaging window scores (the v1 approach)
+let a degenerate isotonic calibrator collapse any non-perfect score to ~0 (the production
+0%/14% bugs). Proportion-over-threshold has no averaging and no calibration to degenerate;
+the number is explainable ("N% of your sentences the detector is >=99% sure are AI") and
+structurally cannot produce that failure mode.
+
+Honest limit: this is a post-hoc statistical detector. It localizes obvious/clean AI text
+well but, like all such detectors, misses paraphrased/humanized text and carries residual
+ESL bias. It is advisory only.
+
+Output schema (always present when the kill-switch is on; ``available=False`` on failure):
+  signal_pct (int 0-100|None), sentences_scored (int), sentences_flagged (int),
+  flagged_passages (list[{sentence_id,score,text}]), band (insufficient|amber|orange|red|None),
+  confidence (low|medium), model_version (str), available (bool), caveat (str)
 """
 from __future__ import annotations
 
@@ -17,12 +38,24 @@ import os
 
 logger = logging.getLogger(__name__)
 
-MODEL_VERSION = "deberta_signal_v1"
+MODEL_VERSION = "deberta_signal_v2"
 _MIN_WORDS = 150
+
+# A sentence is "AI-like" if its window-mean probability >= this. 0.99 is the model's
+# high-confidence band: on SCoCESLE it yields ~3.3% document-level ESL FPR (vs ~21% at
+# 0.80), because clean AI text piles up at ~1.0 while humans rarely produce a sentence
+# this confident. Tightening this lowers ESL FPR and AI recall together.
+SENT_THRESHOLD = 0.99
+# Below this proportion of AI-like sentences, the signal is "insufficient" for a verdict
+# (band = "insufficient"); only the flagged passages are surfaced. Mirrors Turnitin's
+# suppression of the 1-19% band (unreliable). >= floor -> a real band (amber/orange/red).
+DOC_FLOOR_PCT = 20
+# Cap on the number of flagged passages persisted, to bound payload size. Highest-scoring
+# first; the count fields always reflect the true total even when the list is truncated.
+_MAX_FLAGGED_PERSISTED = 10
 
 from .deberta_model import score_windows  # module-level so tests can monkeypatch
 from .deberta_windowing import split_sentences, build_windows, aggregate
-from .deberta_calibrate import map_to_band, apply_isotonic, load_calibrator
 
 
 def _enabled() -> bool:
@@ -33,18 +66,27 @@ def _word_count(text: str) -> int:
     return len((text or "").split())
 
 
-def _calibrated_path() -> str | None:
-    """Path to a fitted isotonic calibrator (set in Phase 0 after the SCoCESLE fit), or None = raw."""
-    return os.getenv("DRAFTPROOF_DEBERTA_CALIBRATOR")
+def _band_for(signal_pct: float) -> str:
+    """Map the proportion signal to a band. No "green": a signal that fires is never
+    declared "safe" — below floor is explicitly "insufficient evidence", not "clean"."""
+    if signal_pct is None:
+        return "insufficient"
+    if signal_pct < DOC_FLOOR_PCT:
+        return "insufficient"
+    if signal_pct < 40:
+        return "amber"
+    if signal_pct < 65:
+        return "orange"
+    return "red"
 
 
 def compose(text: str) -> dict:
-    """Score one document end-to-end. Always returns a schema dict; available=False on any failure."""
+    """Score one document end-to-end. Always returns a schema dict; available=False on failure."""
     if _word_count(text) < _MIN_WORDS:
         return {
-            "score": None, "band": None, "confidence": "low",
-            "model_version": MODEL_VERSION, "calibrated": False,
-            "available": False,
+            "signal_pct": None, "sentences_scored": 0, "sentences_flagged": 0,
+            "flagged_passages": [], "band": "insufficient",
+            "confidence": "low", "model_version": MODEL_VERSION, "available": False,
             "caveat": f"too short (need >= {_MIN_WORDS} words for windowed signal)",
         }
 
@@ -53,65 +95,47 @@ def compose(text: str) -> dict:
     probs = score_windows(windows)
     if probs is None:
         return {
-            "score": None, "band": None, "confidence": "low",
-            "model_version": MODEL_VERSION, "calibrated": False,
-            "available": False,
+            "signal_pct": None, "sentences_scored": 0, "sentences_flagged": 0,
+            "flagged_passages": [], "band": "insufficient",
+            "confidence": "low", "model_version": MODEL_VERSION, "available": False,
             "caveat": "detector unavailable (model load or inference failed)",
         }
 
-    # Calibrate at the WINDOW level, then aggregate — NOT the reverse. A document-
-    # level fit collapses to a step function because AI/human scores barely overlap
-    # at the document level (the production 0%-bug); at the window level the
-    # distributions span 0-1 with overlap, so the calibrator is well-supported.
-    # doc_raw (mean of raw windows) is kept for the floor guard below.
     agg = aggregate(sents, windows, probs, size=3, step=1)
-    doc_raw = agg["document_score"]
+    sentence_scores = agg["sentence_scores"]
 
-    cal_path = _calibrated_path()
-    calibrated = False
-    floor_guarded = False  # set when a broken calibrator is bypassed (see guard below)
-    try:
-        if cal_path and os.path.exists(cal_path):
-            iso = load_calibrator(cal_path)
-            cal_windows = apply_isotonic(probs, iso)
-            doc_cal = sum(cal_windows) / len(cal_windows) if cal_windows else 0.0
-            calibrated = True
-        else:
-            doc_cal = doc_raw
-    except Exception as e:  # noqa: BLE001 — fall back to raw rather than fail the field
-        logger.warning("[deberta] calibration apply failed, using raw: %s", e)
-        doc_cal = doc_raw
+    # Proportion signal + flagged passages. sentence_scores may contain None for
+    # uncovered sentences; ignore those in both the denominator and the flag list.
+    scored = [(i, s) for i, s in enumerate(sentence_scores) if s is not None]
+    n_scored = len(scored)
+    flagged = [(i, s) for i, s in scored if s >= SENT_THRESHOLD]
+    n_flagged = len(flagged)
+    signal_pct = round(100.0 * n_flagged / n_scored) if n_scored else 0
 
-    # CALIBRATOR FLOOR GUARD — defense in depth. Never let a broken calibrator
-    # silently zero out a document the raw model clearly flags. If the raw doc
-    # mean crosses the model's AI threshold (>=0.5) but the calibrated doc score
-    # flattened to ~0, trust the raw model instead and mark it. This catches a
-    # degenerate window-level fit (or a document-level pkl loaded by an older
-    # deployment) where the calibration curve has no support in the flagged band.
-    if calibrated and doc_raw >= 0.5 and doc_cal <= 0.001:
-        logger.warning(
-            "[deberta] calibrator floor guard tripped: raw=%.3f cal=%.3f — using raw "
-            "(calibrator has no training support below the AI/human separation gap)",
-            doc_raw, doc_cal,
-        )
-        doc_cal = doc_raw
-        floor_guarded = True
+    # Flagged passages: highest score first, capped. These are the actionable detail.
+    flagged_sorted = sorted(flagged, key=lambda i_s: i_s[1], reverse=True)[:_MAX_FLAGGED_PERSISTED]
+    flagged_passages = [
+        {"sentence_id": i, "score": round(float(s), 3), "text": sents[i]}
+        for i, s in flagged_sorted
+    ]
 
-    score_100 = max(0.0, min(100.0, doc_cal * 100.0))
-    band = map_to_band(score_100)
-    if calibrated and not floor_guarded:
-        caveat = "calibrated on DraftProof ESL corpus"
-        confidence = "medium"
-    elif floor_guarded:
-        caveat = "raw detector probability — calibrator bypassed (advisory only)"
-        confidence = "low"
-    else:
-        caveat = "raw checkpoint probability, uncalibrated — advisory only"
-        confidence = "low"
+    band = _band_for(signal_pct)
+    above_floor = band != "insufficient"
+    confidence = "medium" if above_floor else "low"
+    caveat = (
+        f"{signal_pct}% of sentences score >= {SENT_THRESHOLD:.2f} under a second detector. "
+        "Advisory only — post-hoc detectors miss paraphrased text and carry residual ESL bias; "
+        "review the flagged passages rather than treating the number as a verdict."
+        if above_floor else
+        f"{n_flagged} of {n_scored} sentences score >= {SENT_THRESHOLD:.2f} under a second "
+        f"detector — below the {DOC_FLOOR_PCT}% reliability floor, so no overall verdict. "
+        "Review the flagged passages; the count is too low to call the document AI-written."
+    )
 
     return {
-        "score": round(score_100, 1), "band": band, "confidence": confidence,
-        "model_version": MODEL_VERSION, "calibrated": calibrated,
+        "signal_pct": signal_pct, "sentences_scored": n_scored,
+        "sentences_flagged": n_flagged, "flagged_passages": flagged_passages,
+        "band": band, "confidence": confidence, "model_version": MODEL_VERSION,
         "available": True, "caveat": caveat,
     }
 
@@ -125,7 +149,8 @@ def maybe_attach(text: str) -> dict | None:
     except Exception as e:  # noqa: BLE001 — never break the scan
         logger.warning("[deberta] compose failed (fail-open): %s", e)
         return {
-            "score": None, "band": None, "confidence": "low",
-            "model_version": MODEL_VERSION, "calibrated": False,
-            "available": False, "caveat": f"error: {type(e).__name__}",
+            "signal_pct": None, "sentences_scored": 0, "sentences_flagged": 0,
+            "flagged_passages": [], "band": "insufficient",
+            "confidence": "low", "model_version": MODEL_VERSION, "available": False,
+            "caveat": f"error: {type(e).__name__}",
         }

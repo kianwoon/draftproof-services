@@ -36,9 +36,12 @@ export DRAFTPROOF_CRITICAL_THINKING_QUESTIONS="${DRAFTPROOF_CRITICAL_THINKING_QU
 # candidate; confirmed/replaced by the SCoCESLE ESL-FPR gate (Phase 0) before production.
 export DRAFTPROOF_DEBERTA_SIGNAL="${DRAFTPROOF_DEBERTA_SIGNAL:-1}"
 export DRAFTPROOF_DEBERTA_MODEL="${DRAFTPROOF_DEBERTA_MODEL:-/app/hf_cache/deberta-fakespot}"
-# Optional: path to a fitted isotonic calibrator (Phase 0 Task 0.5). Default = the SCoCESLE-fit
-# calibrator shipped in the image (ESL FPR@50% 20.5% raw -> 1.1% calibrated). Set ="" for raw.
-export DRAFTPROOF_DEBERTA_CALIBRATOR="${DRAFTPROOF_DEBERTA_CALIBRATOR:-/app/poc/calibration/deberta_isotonic.pkl}"
+# v2 (2026-07) uses a threshold-proportion signal with NO calibrator — the isotonic
+# calibrator (Phase 0 Task 0.5) was removed because its fit collapsed to a step function
+# (a degenerate cliff that silently zeroed/deflated flagged documents). The signal is now
+# "X% of sentences the detector is >=0.99 sure are AI" — raw, explainable, no calibration
+# math to degenerate. Leave this empty; kept as an env var only for backwards compatibility.
+export DRAFTPROOF_DEBERTA_CALIBRATOR="${DRAFTPROOF_DEBERTA_CALIBRATOR:-}"
 
 echo "[entrypoint] ============================================"
 echo "[entrypoint] DraftProof Worker Startup"

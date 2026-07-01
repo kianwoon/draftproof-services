@@ -85,8 +85,11 @@ def render_authenticity_dashboard(report_data: dict) -> str:
 def render_deberta_signal(report_data: dict) -> str:
     """HTML panel for the second-opinion DeBERTa AI signal; '' when absent (flag off / old report).
 
-    STRICTLY ADVISORY — never feeds the tier or any gate. Band uses the composite's traffic-light
-    legend so the two are directly comparable; disagreement is the point of a second opinion."""
+    STRICTLY ADVISORY — never feeds the tier or any gate.
+    Renders the v2 schema (threshold-proportion): above the 20% floor it shows a band
+    (amber/orange/red) + the proportion + flagged passages; below the floor it shows NO
+    verdict, only the flagged passages (mirrors how mature detectors treat the low-reliability
+    band). Legacy v1 reports (calibrated score) fall back to a simple headline read."""
     badge = (report_data or {}).get("ai_risk_badge") or {}
     sig = badge.get("ai_signal_deberta")
     if not sig:
@@ -94,23 +97,55 @@ def render_deberta_signal(report_data: dict) -> str:
     if sig.get("available") is False:
         return (f'<div class="dp-hero"><p class="dp-hero-read">Second-opinion AI signal — '
                 f'unavailable ({escape(str(sig.get("caveat") or ""))})</p></div>')
-    score = sig.get("score")
-    score_txt = f"{round(score)}%" if isinstance(score, (int, float)) else "—"
-    band = str(sig.get("band") or "—")
-    calibrated = "calibrated" if sig.get("calibrated") else "raw, uncalibrated — advisory only"
-    # Case-insensitive band vs tier comparison. The composite stores tier as an
-    # uppercase enum (e.g. "GREEN"); the DeBERTa band is lowercase ("green"). They
-    # use the same traffic-light legend, so compare on the lowercased value —
-    # otherwise GREEN==green always reads as a disagreement (mirrors the React
-    # DebertaSignal.jsx, which lowercases the tier before comparing).
-    composite_tier = str(badge.get("tier") or "")
-    agree = bool(band) and bool(composite_tier) and band.lower() == composite_tier.lower()
-    note = (f"Both detection methods place this in the {band} band." if agree
-            else f"Two detection methods disagree (DraftProof {composite_tier}, second detector {band}). "
-                 f"This is common — they use different signals. Review the flagged passages yourself.")
-    head = f"Second-opinion AI signal — {score_txt} ({band}, {calibrated})"
+
+    is_v2 = sig.get("model_version") == "deberta_signal_v2"
+
+    # --- Legacy v1 (calibrated score) fallback for old reports in R2 -----------------
+    if not is_v2:
+        score = sig.get("score")
+        score_txt = f"{round(score)}%" if isinstance(score, (int, float)) else "—"
+        band = str(sig.get("band") or "—")
+        calibrated = "calibrated" if sig.get("calibrated") else "raw, uncalibrated — advisory only"
+        return (f'<div class="dp-hero"><p class="dp-hero-read">'
+                f'Second-opinion AI signal — {score_txt} ({band}, {calibrated})</p></div>')
+
+    # --- v2 threshold-proportion ----------------------------------------------------
+    pct = sig.get("signal_pct")
+    band = str(sig.get("band") or "insufficient")
+    above_floor = band != "insufficient"
+    flagged = sig.get("flagged_passages") or []
+    n_flagged = sig.get("sentences_flagged") if isinstance(sig.get("sentences_flagged"), int) else len(flagged)
+    n_scored = sig.get("sentences_scored") if isinstance(sig.get("sentences_scored"), int) else 0
+
+    # Flagged passages list (capped; highest-score first as built by compose).
+    flagged_html = ""
+    if flagged:
+        items = "".join(
+            f'<li><b>{round(float(p.get("score") or 0) * 100)}%</b> — {escape(_truncate(p.get("text") or ""))}</li>'
+            for p in flagged
+        )
+        flagged_html = f'<ul class="dp-flagged">{items}</ul>'
+
+    if above_floor:
+        head = (f"Second-opinion AI signal — {pct}% of passages read as AI-like under a "
+                f"separate detector ({band}). Advisory only — review the flagged passages.")
+        return (f'<div class="dp-hero"><p class="dp-hero-read">{escape(head)}</p>'
+                f'{flagged_html}</div>')
+
+    # Below floor — no verdict, only the flagged passages (if any) + the floor note.
+    if n_flagged:
+        head = (f"Second-opinion AI signal — {n_flagged} of {n_scored} passages flagged for "
+                f"review. Below the 20% reliability floor, so no overall verdict.")
+    else:
+        head = "Second-opinion AI signal — no high-confidence AI passages detected."
     return (f'<div class="dp-hero"><p class="dp-hero-read">{escape(head)}</p>'
-            f'<p class="dp-hero-sub">{escape(note)}</p></div>')
+            f'{flagged_html}</div>')
+
+
+def _truncate(text: str, limit: int = 220) -> str:
+    """Truncate a flagged passage for the PDF list cell."""
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def render_scan_lead(report, data) -> str:

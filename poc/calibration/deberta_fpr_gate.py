@@ -3,7 +3,8 @@
 Mirrors ``calibration/fpr_subgroup_gate.py`` (SCoCESLE ESL corpus + in-repo AI set) but scores
 through ``detect.deberta_signal.compose()`` — i.e. the DeBERTa checkpoint ONLY, not the full
 composite detector — which is ~10-50x faster and is what we actually need to judge the
-checkpoint in isolation. Reads ``ai_signal_deberta.score``.
+checkpoint in isolation. Reads ``ai_signal_deberta.signal_pct`` (the v2 threshold-proportion
+signal: % of sentences scoring >= SENT_THRESHOLD under the detector).
 
 Use to PICK a checkpoint (Phase 0): loop candidates with --candidates, compare ESL FPR +
 human-score distribution + AUC(AI vs human), then choose the one with acceptable ESL FPR and
@@ -53,11 +54,15 @@ def _reset_model() -> None:
 
 
 def _score_texts(texts):
-    """Score via compose() directly — runs ONLY the DeBERTa model, not the full composite."""
+    """Score via compose() directly — runs ONLY the DeBERTa model, not the full composite.
+
+    Reads signal_pct (v2): the % of sentences scoring >= SENT_THRESHOLD. For the ESL FPR
+    measurement that's the document-level signal on the 0-100 scale, comparable across the
+    FPR_THRESHOLDS the same way the old calibrated `score` was."""
     out = []
     for t in texts:
         sig = deberta_signal.compose(t) or {}
-        s = sig.get("score")
+        s = sig.get("signal_pct")
         out.append(float(s) if s is not None else None)
     return out
 

@@ -97,4 +97,58 @@
   line-height: 1.5;
 }
 
+/* BELOW-FLOOR ("insufficient") state — no verdict band, no risk color. Neutral grey accent
+   so it never reads as "green/safe": the signal is "not enough evidence", not "clean". */
+.deberta-signal.is-insufficient {
+  --deberta-tone: #94a3b8;
+  border-top-color: #94a3b8;
+  background: var(--surface, #fff);
+}
+
+/* Flagged passages list — the actionable detail. Rendered in both above- and below-floor
+   states. Muted, review-oriented, not alarmist. */
+.deberta-flagged-list {
+  margin: .7rem 0 .2rem;
+}
+.deberta-flagged-list-label {
+  display: block;
+  margin-bottom: .35rem;
+  font-size: .74rem;
+  font-weight: 600;
+  color: var(--navy-700, #334155);
+  letter-spacing: .01em;
+}
+.deberta-flagged-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+}
+.deberta-flagged-item {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  padding: .45rem .55rem;
+  border-radius: 8px;
+  background: #f8fafc;
+  border-left: 3px solid var(--deberta-tone, #94a3b8);
+}
+.deberta-flagged-score {
+  flex: none;
+  padding: .15rem .4rem;
+  border-radius: 6px;
+  background: var(--deberta-tone, #94a3b8);
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.deberta-flagged-text {
+  font-size: .8rem;
+  color: var(--navy-700, #334155);
+  line-height: 1.45;
+}
+
 /* Mobile: the score row already reflows gracefully (flex, wrap-friendly gap). */

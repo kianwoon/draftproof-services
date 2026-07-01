@@ -81,8 +81,10 @@ def test_additive_invariant():
     assert "ai_signal_deberta" not in off_badge
     sig = on_badge["ai_signal_deberta"]
     assert sig["available"] is True
-    assert sig["band"] in {"green", "amber", "orange", "red"}
-    assert sig["calibrated"] in (True, False)
+    # v2 schema: band is insufficient|amber|orange|red (no green); model_version present.
+    assert sig["band"] in {"insufficient", "amber", "orange", "red"}
+    assert sig["model_version"] == "deberta_signal_v2"
+    assert isinstance(sig.get("flagged_passages"), list)
 
 
 if __name__ == "__main__":
