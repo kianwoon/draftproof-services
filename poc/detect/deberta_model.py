@@ -63,8 +63,10 @@ def _load():
     except (OSError, EnvironmentError):
         logger.warning("[deberta] %s not in HF cache; downloading into HF_HOME", name)
         cache = os.environ.get("HF_HOME")
-        tok = AutoTokenizer.from_pretrained(name, cache_folder=cache)
-        mdl = AutoModelForSequenceClassification.from_pretrained(name, cache_folder=cache)
+        # NOTE: transformers from_pretrained uses `cache_dir` (NOT `cache_folder`, which is
+        # the sentence-transformers convention and raises TypeError on AutoModel).
+        tok = AutoTokenizer.from_pretrained(name, cache_dir=cache)
+        mdl = AutoModelForSequenceClassification.from_pretrained(name, cache_dir=cache)
     mdl.eval()
     _AI_INDEX = _resolve_ai_index(mdl.config)
     _TOKENIZER, _MODEL = tok, mdl
