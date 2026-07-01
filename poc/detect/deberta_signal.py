@@ -156,3 +156,81 @@ def maybe_attach(text: str) -> dict | None:
             "confidence": "low", "model_version": MODEL_VERSION, "available": False,
             "caveat": f"error: {type(e).__name__}",
         }
+
+
+# ─── Per-sentence heatmap (for the Signal-highlights paragraph map) ───────────
+#
+# The headline compose() collapses to one document number + the few ≥0.99 flags. But the
+# "Submitted Content / Signal highlights" map needs a RELATIVE intensity per sentence — a
+# graduated heatmap — so the user can see which passages read more AI-like than others, not
+# just the binary top-confidence flags (Turnitin's graduated per-sentence scoring, doc lines
+# 82-87). compose_from_sentences() returns that per-sentence score map, keyed to the report's
+# CANONICAL sentence ids (sNNN/pNNN), so the highlight layer can join without fragile text-match.
+
+# Graduated heatmap bands (per-sentence DeBERTa score -> band). Distinct from the document
+# _band_for() above: that maps the headline proportion; this maps a single sentence's score.
+# clean = neutral (most human writing), low/moderate = graduated amber/orange (AI-like but
+# below the high-confidence bar), high = the ≥0.99 band (same threshold as the headline).
+_HEAT_BAND_CUTOFFS = [(0.50, "clean"), (0.80, "low"), (0.99, "moderate")]  # >=0.99 -> high
+
+
+def band_for_sentence(score: float) -> str:
+    """Map a per-sentence DeBERTa score to a heatmap band: clean|low|moderate|high.
+
+    Distinct from _band_for() (which maps the document-level proportion signal). This is the
+    graduated per-sentence scale used to color the Signal-highlights paragraph map."""
+    if score is None:
+        return "clean"
+    for cutoff, band in _HEAT_BAND_CUTOFFS:
+        if score < cutoff:
+            return band
+    return "high"
+
+
+def compose_from_sentences(sentences: list[dict]) -> dict | None:
+    """Score pre-segmented sentences and return a per-sentence heatmap, keyed to canonical ids.
+
+    Each input dict carries {sentence_id (sNNN), paragraph_id (pNNN), text}. We window/aggregate
+    THOSE exact sentences (no re-splitting) so the returned scores align 1:1 with the report's
+    sentence structure — avoiding the naive-splitter id mismatch. Returns None on any failure
+    (fail-open; the caller falls back to no heatmap).
+
+    Output: {"sentence_scores": [{sentence_id, paragraph_id, score, band}, ...],
+             "available": bool, "model_version": str}
+    The score is the mean of covering windows (same aggregate() as compose); band is via
+    band_for_sentence(). Sentences too short to window are returned with score None / band clean.
+    """
+    if not _enabled() or not sentences:
+        return None
+    try:
+        texts = [str(s.get("text") or "").strip() for s in sentences]
+        if not any(texts):
+            return None
+        windows = build_windows(texts, size=3, step=1)
+        probs = score_windows(windows)
+        if probs is None:
+            return {"sentence_scores": [], "available": False,
+                    "model_version": MODEL_VERSION, "caveat": "detector unavailable"}
+        agg = aggregate(texts, windows, probs, size=3, step=1)
+        out = []
+        for i, sent in enumerate(sentences):
+            raw = agg["sentence_scores"][i]  # may be None for uncovered
+            # Skip the heatmap on stubs: a short sentence (e.g. a 3-word bridge) scores as
+            # noise in isolation, and downstream contracts expect plain (signal-less) segments
+            # for unscored spans. Floor matches the predictability scanner's >=8-word convention.
+            too_short = len(texts[i].split()) < 8
+            if raw is None or too_short:
+                score = None
+            else:
+                score = round(float(raw), 3)
+            out.append({
+                "sentence_id": sent.get("sentence_id"),
+                "paragraph_id": sent.get("paragraph_id"),
+                "score": score,
+                "band": band_for_sentence(score) if score is not None else "clean",
+            })
+        return {"sentence_scores": out, "available": True, "model_version": MODEL_VERSION}
+    except Exception as e:  # noqa: BLE001 — fail-open, never break the report
+        logger.warning("[deberta] compose_from_sentences failed (fail-open): %s", e)
+        return None
+

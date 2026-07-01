@@ -160,3 +160,109 @@ if __name__ == "__main__":
                 print(f"{name} FAILED: {e}")
                 raise
     print("ALL TESTS PASSED")
+
+
+# ─── Heatmap (compose_from_sentences + band_for_sentence) tests ────────────────
+
+def test_band_for_sentence_graduated_scale():
+    """clean < 0.50 < low < 0.80 < moderate < 0.99 <= high."""
+    b = deberta_signal.band_for_sentence
+    assert b(0.0) == "clean"
+    assert b(0.49) == "clean"
+    assert b(0.50) == "low"        # boundary: 0.50 is NOT clean (>= 0.50 cutoff)
+    assert b(0.79) == "low"
+    assert b(0.80) == "moderate"
+    assert b(0.98) == "moderate"
+    assert b(0.99) == "high"       # >= SENT_THRESHOLD
+    assert b(1.0) == "high"
+    assert b(None) == "clean"
+
+
+def test_compose_from_sentences_returns_per_sentence_scores_keyed_by_input_ids():
+    """The heatmap entry point must score the EXACT sentences passed in and key results by
+    THEIR sentence_id/paragraph_id (not its own naive index). This is the alignment guarantee
+    that lets the report join DeBERTa scores to canonical sNNN/pNNN segments."""
+    os.environ["DRAFTPROOF_DEBERTA_SIGNAL"] = "1"
+    # Stub score_windows to deterministic values so we test the join/shape, not the model.
+    deberta_signal.score_windows = lambda _w: [0.95] * len(_w)
+    sens = [
+        {"sentence_id": "s001", "paragraph_id": "p001", "text": "First sentence here with enough words to clear the floor."},
+        {"sentence_id": "s002", "paragraph_id": "p001", "text": "Second sentence here with enough words to clear the floor."},
+        {"sentence_id": "s003", "paragraph_id": "p002", "text": "Third sentence in paragraph two with enough words to clear."},
+    ]
+    try:
+        out = deberta_signal.compose_from_sentences(sens)
+        assert out is not None
+        assert out["available"] is True
+        assert out["model_version"] == "deberta_signal_v2"
+        rows = out["sentence_scores"]
+        assert len(rows) == 3
+        # keyed by the INPUT ids, in order
+        assert [r["sentence_id"] for r in rows] == ["s001", "s002", "s003"]
+        assert [r["paragraph_id"] for r in rows] == ["p001", "p001", "p002"]
+        # score + band present
+        for r in rows:
+            assert "score" in r and "band" in r
+            assert r["band"] in {"clean", "low", "moderate", "high"}
+    finally:
+        os.environ.pop("DRAFTPROOF_DEBERTA_SIGNAL", None)
+
+
+def test_compose_from_sentences_high_score_maps_to_high_band():
+    """A sentence the model scores >=0.99 lands in the 'high' band (red on the heatmap).
+    Sentence must clear the >=8-word floor (short stubs return score None to avoid noise)."""
+    os.environ["DRAFTPROOF_DEBERTA_SIGNAL"] = "1"
+    deberta_signal.score_windows = lambda _w: [1.0] * len(_w)  # every window max
+    sens = [{"sentence_id": "s001", "paragraph_id": "p001",
+             "text": "This is a fully AI generated sentence with enough words to clear the floor."}]
+    try:
+        out = deberta_signal.compose_from_sentences(sens)
+        row = out["sentence_scores"][0]
+        assert row["score"] == 1.0
+        assert row["band"] == "high"
+    finally:
+        os.environ.pop("DRAFTPROOF_DEBERTA_SIGNAL", None)
+
+
+def test_compose_from_sentences_short_stub_returns_clean_no_score():
+    """A short stub (<8 words) returns score None / band clean — no noise heatmap signal.
+    This respects the downstream contract that unscored spans render plain (no highlight)."""
+    os.environ["DRAFTPROOF_DEBERTA_SIGNAL"] = "1"
+    deberta_signal.score_windows = lambda _w: [0.999] * len(_w)  # model says high
+    sens = [{"sentence_id": "s001", "paragraph_id": "p001", "text": "Short stub."}]  # 2 words
+    try:
+        out = deberta_signal.compose_from_sentences(sens)
+        row = out["sentence_scores"][0]
+        assert row["score"] is None
+        assert row["band"] == "clean"
+    finally:
+        os.environ.pop("DRAFTPROOF_DEBERTA_SIGNAL", None)
+
+
+def test_compose_from_sentences_fail_open_on_inference_none():
+    """If the model returns None (load/inference failed), the heatmap is unavailable, not a crash."""
+    os.environ["DRAFTPROOF_DEBERTA_SIGNAL"] = "1"
+    deberta_signal.score_windows = lambda _w: None
+    sens = [{"sentence_id": "s001", "paragraph_id": "p001", "text": "Some text here."}]
+    try:
+        out = deberta_signal.compose_from_sentences(sens)
+        assert out is not None
+        assert out["available"] is False
+        assert out["sentence_scores"] == []
+    finally:
+        os.environ.pop("DRAFTPROOF_DEBERTA_SIGNAL", None)
+
+
+def test_compose_from_sentences_returns_none_when_disabled_or_empty():
+    os.environ["DRAFTPROOF_DEBERTA_SIGNAL"] = "0"
+    try:
+        assert deberta_signal.compose_from_sentences(
+            [{"sentence_id": "s1", "paragraph_id": "p1", "text": "x"}]) is None
+    finally:
+        os.environ.pop("DRAFTPROOF_DEBERTA_SIGNAL", None)
+    # empty input
+    os.environ["DRAFTPROOF_DEBERTA_SIGNAL"] = "1"
+    try:
+        assert deberta_signal.compose_from_sentences([]) is None
+    finally:
+        os.environ.pop("DRAFTPROOF_DEBERTA_SIGNAL", None)

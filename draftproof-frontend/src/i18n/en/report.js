@@ -310,7 +310,8 @@ export const report = {
       "reporting_suppression": "Reporting suppression",
       "predictability": "Predictability",
       "writing_quality": "Writing quality",
-      "genericity": "Genericity"
+      "genericity": "Genericity",
+      "ai_signal_deberta": "Learned-classifier AI signal"
     },
     "descriptions": {
       "topk_pattern": "How often the writing chooses very expected words. A very high score means the wording follows common predictable paths. Lower is better.",
@@ -333,7 +334,8 @@ export const report = {
       "citation_grounding_risk": "Whether claims are backed by real citations or sources. The rewrite cannot add real citations for you, so this stays high until you add your own — it is separate from the concrete, lived-detail grounding the rewrite improves. An integrity signal, not proof of AI.",
       "signal_agreement_score": "How much the different DraftProof checks point in the same direction. Higher means the result is more consistent.",
       "calibration_confidence": "How confident DraftProof is that the available evidence is strong enough to report. Higher means more confidence.",
-      "reporting_suppression": "DraftProof is being cautious because some evidence is uncertain or not strong enough. Higher means more caution was applied."
+      "reporting_suppression": "DraftProof is being cautious because some evidence is uncertain or not strong enough. Higher means more caution was applied.",
+      "ai_signal_deberta": "Heatmap of a second, learned AI-writing detector's per-passage score. Graduated: clean (human-like), mild, strong, and high-confidence (>=99%). Advisory only — it over-flags fluent/ESL writing at the high end, so review the passage rather than treating the color as a verdict."
     }
   },
   "authorship": {

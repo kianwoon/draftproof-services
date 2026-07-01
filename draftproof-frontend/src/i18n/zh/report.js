@@ -306,7 +306,8 @@ export const report = {
       "reporting_suppression": "报告抑制",
       "predictability": "可预测性",
       "writing_quality": "写作质量",
-      "genericity": "泛化程度"
+      "genericity": "泛化程度",
+      "ai_signal_deberta": "学习型分类器 AI 信号"
     },
     "descriptions": {
       "topk_pattern": "写作选择高度预期词语的频率。分数很高表示措辞遵循常见可预测路径。越低越好。",
@@ -329,7 +330,8 @@ export const report = {
       "citation_grounding_risk": "论断是否有真实的引用或来源支撑。改写无法替你添加真实引用，因此在你补上自己的来源前它会保持偏高——这与改写所改善的具体、亲历细节的依据是两回事。这是完整性信号，不是 AI 证明。",
       "signal_agreement_score": "不同 DraftProof 检查指向同一方向的程度。越高表示结果越一致。",
       "calibration_confidence": "DraftProof 对可用证据足以报告的信心。越高表示置信度越高。",
-      "reporting_suppression": "由于部分证据不确定或不够强，DraftProof 正在保持谨慎。越高表示应用了更多谨慎。"
+      "reporting_suppression": "由于部分证据不确定或不够强，DraftProof 正在保持谨慎。越高表示应用了更多谨慎。",
+      "ai_signal_deberta": "第二个学习型 AI 写作检测器的逐段分数热力图。分级：无信号（类人）、轻微、较强、高置信（>=99%）。仅供参考——高端会过度标记流利/ESL 写作，因此请复核段落，而非将颜色视为判定。"
     }
   },
   "authorship": {

@@ -45,6 +45,9 @@ const SIGNAL_COLORS = {
   predictability: '#d97706',
   writing_quality: '#7c3aed',
   genericity: '#7c3aed',
+  // DeBERTa learned-classifier heatmap (drives the Signal-highlights paragraph colors).
+  // Backend carries the per-band color on each signal; this is a fallback only.
+  ai_signal_deberta: '#dc2626',
 };
 
 function signalClassName(key) {

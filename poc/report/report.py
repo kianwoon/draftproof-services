@@ -343,6 +343,30 @@ def determine_actionability(f: "Finding", all_findings: list = None) -> str:
     return "review_only"
 
 
+# DeBERTa learned-classifier heatmap: band → color/label/description/tier. Drives the
+# Signal-highlights paragraph colors (replacing the perplexity-family signals). Distinct colors
+# per band carried on the signal so the frontend's --signal-color mechanism needs no new CSS.
+_DEBERTA_HEAT_COLORS = {
+    "clean": "#94a3b8",     # neutral slate — human-like; not surfaced in the legend
+    "low": "#f59e0b",       # amber — mild AI-like reading (0.50-0.80)
+    "moderate": "#f97316",  # orange — strong AI-like reading, below high-confidence (0.80-0.99)
+    "high": "#dc2626",      # red — the >=0.99 high-confidence AI band
+}
+_DEBERTA_HEAT_TIERS = {"clean": "", "low": "low", "moderate": "medium", "high": "high"}
+_DEBERTA_HEAT_LABELS = {
+    "clean": "No AI signal",
+    "low": "Mild AI signal",
+    "moderate": "Strong AI signal",
+    "high": "High-confidence AI signal",
+}
+_DEBERTA_HEAT_DESCRIPTIONS = {
+    "clean": "The learned classifier reads this passage as human.",
+    "low": "The second-opinion detector sees mild AI-like signal here.",
+    "moderate": "The second-opinion detector sees strong AI-like signal (below its high-confidence bar).",
+    "high": "The second-opinion detector is >=99% confident this passage is AI-like.",
+}
+
+
 class ReportBuilder:
     """Builds a DraftReport from detect + rewrite results."""
 
@@ -2972,13 +2996,87 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "recommendation": f.recommendation,
         }
 
+    # DeBERTa heatmap band → color/label/tier via the module-level _DEBERTA_HEAT_* maps.
+    # Drives the Signal-highlights color; perplexity findings ride as secondary signals.
+    def _compute_deberta_heatmap() -> list:
+        """Run the DeBERTa learned classifier over the document's canonical sentences and return
+        a per-sentence {sentence_id, paragraph_id, score, band} list. Fail-open: [] on any error
+        or when the kill-switch is off (caller falls back to the legacy perplexity primary)."""
+        try:
+            from detect.deberta_signal import compose_from_sentences, band_for_sentence  # noqa: E402
+        except Exception:
+            return []
+        # Build canonical sentence inputs from the same source _document_segments uses.
+        sens = []
+        for item in _source_segments(complete=True):
+            sens.append({
+                "sentence_id": item.get("sentence_id"),
+                "paragraph_id": item.get("paragraph_id") or "p001",
+                "text": item.get("sentence", ""),
+            })
+        if not sens:
+            return []
+        result = compose_from_sentences(sens)
+        if not result or not result.get("available"):
+            return []
+        return result.get("sentence_scores") or []
+
+    def _deberta_primary_signal(heat_row: dict) -> dict | None:
+        """Build a primary_signal dict (the shape _segment_signal returns) from a DeBERTa
+        heatmap row. Drives the highlight color/label; the perplexity findings ride as secondary."""
+        band = heat_row.get("band") or "clean"
+        score = heat_row.get("score")
+        return {
+            "finding_id": f"deberta_{heat_row.get('sentence_id')}",
+            "key": "ai_signal_deberta",
+            "label": _DEBERTA_HEAT_LABELS.get(band, "AI signal"),
+            "description": _DEBERTA_HEAT_DESCRIPTIONS.get(band, ""),
+            "color": _DEBERTA_HEAT_COLORS.get(band, "#94a3b8"),
+            "category": "ai_detection",
+            "scanner": "deberta",
+            "title": f"deberta_{band}",
+            "tier": _DEBERTA_HEAT_TIERS.get(band, ""),
+            "score": round(float(score) * 100) if score is not None else 0,
+            "actionability": "review",
+            "rewrite_permission": "advisory",
+            "recommendation": None,
+        }
+
     def _document_segments(complete: bool = False) -> list:
         segments = []
+        # DeBERTa learned-classifier heatmap: per-sentence score keyed to canonical sNNN ids.
+        # Replaces the perplexity-family signals (predictability/top-k) as the HIGHLIGHT COLOR
+        # source — the methodology the Turnitin breakdown says was abandoned. The perplexity
+        # findings remain as secondary signals (for guidance text) but no longer set the color.
+        # Fail-open: if DeBERTa unavailable, fall back to the legacy perplexity-driven primary.
+        deberta_heat = _compute_deberta_heatmap()
+        deberta_by_sid = {row["sentence_id"]: row for row in deberta_heat} if deberta_heat else {}
         for item in _source_segments(complete):
             sid = item.get("sentence_id")
             signals = [_segment_signal(f) for f in findings_by_sentence.get(sid, [])]
             signals.sort(key=lambda entry: entry.get("score", 0), reverse=True)
-            primary = signals[0] if signals else None
+            perplexity_primary = signals[0] if signals else None
+
+            # Color source: DeBERTa band if available AND non-clean, else legacy perplexity
+            # primary. A "clean" band (score None or < 0.50) means the learned classifier reads
+            # the sentence as human — it should NOT attach a DeBERTa signal (so plain/clean
+            # segments stay signal-less, matching the contract that unscored spans render plain).
+            heat_row = deberta_by_sid.get(sid)
+            heat_band = (heat_row or {}).get("band")
+            if heat_row is not None and heat_band and heat_band != "clean":
+                primary = _deberta_primary_signal(heat_row)
+                # Keep perplexity findings as SECONDARY signals (guidance), but the color/label
+                # come from the learned classifier. De-dup the deberta key if a finding mapped to it.
+                secondary = [s for s in signals if s.get("key") != "ai_signal_deberta"]
+                segment_signals = ([primary] + secondary) if primary else secondary
+                primary = segment_signals[0] if segment_signals else None
+            else:
+                # No DeBERTa AI signal on this sentence. Keep the perplexity findings as
+                # guidance signals (so issue-card text still works), but they no longer set
+                # the HIGHLIGHT color — a perplexity flag alone does not color the paragraph.
+                segment_signals = [s for s in signals if s.get("key") != "ai_likelihood"]
+                primary = None  # no highlight color without a learned-classifier signal
+
             segment = {
                 "segment_id": sid,
                 "type": "sentence",
@@ -2988,7 +3086,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "start_char": item.get("start_char", 0),
                 "end_char": item.get("end_char", 0),
                 "text": item.get("sentence", ""),
-                "signals": signals,
+                "signals": segment_signals,
                 "primary_signal": primary,
                 "highlight": {
                     "enabled": bool(primary),
