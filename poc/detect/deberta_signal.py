@@ -59,15 +59,22 @@ def compose(text: str) -> dict:
             "caveat": "detector unavailable (model load or inference failed)",
         }
 
+    # Calibrate at the WINDOW level, then aggregate — NOT the reverse. A document-
+    # level fit collapses to a step function because AI/human scores barely overlap
+    # at the document level (the production 0%-bug); at the window level the
+    # distributions span 0-1 with overlap, so the calibrator is well-supported.
+    # doc_raw (mean of raw windows) is kept for the floor guard below.
     agg = aggregate(sents, windows, probs, size=3, step=1)
     doc_raw = agg["document_score"]
 
     cal_path = _calibrated_path()
     calibrated = False
+    floor_guarded = False  # set when a broken calibrator is bypassed (see guard below)
     try:
         if cal_path and os.path.exists(cal_path):
             iso = load_calibrator(cal_path)
-            doc_cal = apply_isotonic([doc_raw], iso)[0]
+            cal_windows = apply_isotonic(probs, iso)
+            doc_cal = sum(cal_windows) / len(cal_windows) if cal_windows else 0.0
             calibrated = True
         else:
             doc_cal = doc_raw
@@ -75,14 +82,32 @@ def compose(text: str) -> dict:
         logger.warning("[deberta] calibration apply failed, using raw: %s", e)
         doc_cal = doc_raw
 
+    # CALIBRATOR FLOOR GUARD — defense in depth. Never let a broken calibrator
+    # silently zero out a document the raw model clearly flags. If the raw doc
+    # mean crosses the model's AI threshold (>=0.5) but the calibrated doc score
+    # flattened to ~0, trust the raw model instead and mark it. This catches a
+    # degenerate window-level fit (or a document-level pkl loaded by an older
+    # deployment) where the calibration curve has no support in the flagged band.
+    if calibrated and doc_raw >= 0.5 and doc_cal <= 0.001:
+        logger.warning(
+            "[deberta] calibrator floor guard tripped: raw=%.3f cal=%.3f — using raw "
+            "(calibrator has no training support below the AI/human separation gap)",
+            doc_raw, doc_cal,
+        )
+        doc_cal = doc_raw
+        floor_guarded = True
+
     score_100 = max(0.0, min(100.0, doc_cal * 100.0))
     band = map_to_band(score_100)
-    caveat = (
-        "calibrated on DraftProof ESL corpus"
-        if calibrated
-        else "raw checkpoint probability, uncalibrated — advisory only"
-    )
-    confidence = "medium" if calibrated else "low"
+    if calibrated and not floor_guarded:
+        caveat = "calibrated on DraftProof ESL corpus"
+        confidence = "medium"
+    elif floor_guarded:
+        caveat = "raw detector probability — calibrator bypassed (advisory only)"
+        confidence = "low"
+    else:
+        caveat = "raw checkpoint probability, uncalibrated — advisory only"
+        confidence = "low"
 
     return {
         "score": round(score_100, 1), "band": band, "confidence": confidence,
