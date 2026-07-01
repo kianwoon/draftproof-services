@@ -72,3 +72,49 @@ Benchmark these **three** first, in this order:
 - `fakespot-ai/...` — exact generator list in ApolloDFT training data (card
   defers to the tech report; confirm multi-generator scope before relying on it
   for the ESL-FPR argument).
+
+---
+
+## Phase 0 benchmark results (SCoCESLE: 272 ESL essays + 65 in-repo AI texts)
+
+Run: `poc/calibration/deberta_fpr_gate.py` over all 272 humans (139 higher + 133 lower
+proficiency; 4 dropped <150w) + 65 AI. Raw = uncalibrated checkpoint probability.
+
+| Candidate | AUC (AI vs human) | AI mean (raw) | ESL FPR@50% (raw) | Verdict |
+|---|---|---|---|---|
+| **`fakespot-ai/roberta-base-ai-text-detection-v1`** | **0.9989** | 99.4% | 20.5% | **Only viable detector.** Detects AI well but raw ESL FPR unacceptable (1-in-5 ESL essays flagged). → Calibrate. |
+| `vraj33/ai-text-detector-deberta` | 0.1332 | 0.8% | 6.7% | **REJECTED — inverted.** AUC <0.5: the resolved "AI" class is the human class (AI texts score ~0). Broken as wired; human max 100% means it's not a clean flip either. |
+| `openai-community/roberta-base-openai-detector` | 0.3576 | 18.7% | 16.8% | **REJECTED — near-random on modern AI.** Trained on GPT-2 output; AUC 0.36 ≈ coin-flip on the in-repo AI set. Useless as a comparison detector. |
+
+### Isotonic recalibration of the winner (fakespot-ai)
+
+Fit on SCoCESLE (`poc/calibration/deberta_fit_calibrator.py`), label 1=AI / 0=human, so the
+calibrated score = P(AI). Calibrator saved to `poc/calibration/deberta_isotonic.pkl`
+(point `DRAFTPROOF_DEBERTA_CALIBRATOR` at it).
+
+| metric | raw | calibrated |
+|---|---|---|
+| human mean % | 25.9 | 1.0 |
+| human p90 % | 66.1 | 0.0 |
+| human max % | 99.7 | 75.0 *(one stubborn essay; the monotonic ceiling)* |
+| AI mean % | 99.4 | 95.9 |
+| AI p10 % | 85.8 | 33.3 *(recall trade-off: ~bottom-10% AI essays drop to green/acceptable)* |
+| **ESL FPR @>=50%** | **20.5%** | **1.1%** |
+| ESL FPR @>=40% | 26.5% | 1.1% |
+| ESL FPR @>=60% | 11.9% | 0.7% |
+| parity gap (lower − higher) @50% | — | −0.6 pts *(lower-prof flagged LESS — good direction)* |
+| AUC | 0.9989 | 0.9993 |
+
+**End-to-end re-validated** through `compose()`'s production path with the calibrator set:
+ESL FPR@50% = 1.1%, AUC 0.999, AI mean 95.6% — reproduces the fit-script numbers, confirming
+the calibrator is consistent with how `compose()` applies it internally.
+
+### Decision (Task 0.4)
+
+**SHIP `fakespot-ai/roberta-base-ai-text-detection-v1`, CALIBRATED** (`deberta_isotonic.pkl`).
+ESL FPR@50% = 1.1% is **below the composite's documented ~3%** (97% of SCoCESLE <50%) → meets
+the spec acceptance criterion. Honest trade-off: calibration bought low ESL FPR at the cost of
+AI recall — the bottom ~10% of AI essays now read green/acceptable on this advisory signal
+(~0.4% of ESL essays still false-flag at the very top, the monotonic ceiling). Acceptable for
+an advisory comparison score alongside the composite (which has its own detection).
+

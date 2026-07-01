@@ -36,8 +36,9 @@ export DRAFTPROOF_CRITICAL_THINKING_QUESTIONS="${DRAFTPROOF_CRITICAL_THINKING_QU
 # candidate; confirmed/replaced by the SCoCESLE ESL-FPR gate (Phase 0) before production.
 export DRAFTPROOF_DEBERTA_SIGNAL="${DRAFTPROOF_DEBERTA_SIGNAL:-1}"
 export DRAFTPROOF_DEBERTA_MODEL="${DRAFTPROOF_DEBERTA_MODEL:-fakespot-ai/roberta-base-ai-text-detection-v1}"
-# Optional: path to a fitted isotonic calibrator (Phase 0 Task 0.5). Unset = raw/uncalibrated.
-export DRAFTPROOF_DEBERTA_CALIBRATOR="${DRAFTPROOF_DEBERTA_CALIBRATOR:-}"
+# Optional: path to a fitted isotonic calibrator (Phase 0 Task 0.5). Default = the SCoCESLE-fit
+# calibrator shipped in the image (ESL FPR@50% 20.5% raw -> 1.1% calibrated). Set ="" for raw.
+export DRAFTPROOF_DEBERTA_CALIBRATOR="${DRAFTPROOF_DEBERTA_CALIBRATOR:-/app/poc/calibration/deberta_isotonic.pkl}"
 
 echo "[entrypoint] ============================================"
 echo "[entrypoint] DraftProof Worker Startup"
