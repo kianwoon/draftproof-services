@@ -128,8 +128,10 @@ def compose(text: str) -> dict:
         "review the flagged passages rather than treating the number as a verdict."
         if above_floor else
         f"{n_flagged} of {n_scored} sentences score >= {SENT_THRESHOLD:.2f} under a second "
-        f"detector — below the {DOC_FLOOR_PCT}% reliability floor, so no overall verdict. "
-        "Review the flagged passages; the count is too low to call the document AI-written."
+        f"detector — below the {DOC_FLOOR_PCT}% reliability floor, so this signal offers no "
+        "overall verdict. A high bar was set to avoid unfairly flagging fluent ESL writing; "
+        "other detectors with a lower bar may read the flagged passages (and the document) "
+        "differently. Review the flagged passages rather than treating 'no verdict' as clean."
     )
 
     return {

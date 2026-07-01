@@ -645,7 +645,7 @@ export const report = {
     "scoreLabel": "of passages read as AI-like under a separate detector",
     "unavailable": "Second-opinion detector not available for this scan.",
     "aboveFloor": "{{pct}}% of passages score at the detector's high-confidence AI threshold. Advisory only — post-hoc detectors miss paraphrased text and carry residual ESL bias. Review the flagged passages rather than treating the number as a verdict.",
-    "belowFloor": "Below the 20% reliability floor — too few high-confidence passages for an overall verdict.",
+    "belowFloor": "Below our 20% reliability floor, so this signal offers no overall verdict. We set a high bar to avoid unfairly flagging fluent ESL writing — other detectors with a lower bar may read the flagged passages (and the document) differently. Treat 'no verdict' as 'review the flagged passages', not as 'clean'.",
     "passagesFlaggedForReview": "{{n}} of {{total}} passages flagged for review",
     "flaggedPassages": "Flagged passages",
     "reviewPassages": "Review these passages",
