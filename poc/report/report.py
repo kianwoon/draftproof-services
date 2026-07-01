@@ -1624,33 +1624,12 @@ class ReportBuilder:
         # per-sentence scores the Signal-highlights map uses), NOT from compose()'s own naive
         # splitter. This guarantees the tile and the map agree on which passages are flagged —
         # two different sentence splitters previously caused the tile to flag passages the map
-        # colored differently. Falls back to compose(text) if the heatmap is unavailable.
+        # colored differently. The headline here is a PLACEHOLDER — report_to_dict rebuilds it
+        # from the SAME _source_segments heatmap the map renders, so the tile and map always agree.
+        # compose(text) is used now purely so the badge field exists; report_to_dict overrides it.
         try:
-            from detect.deberta_signal import (  # noqa: E402
-                maybe_attach as _attach_deberta,
-                compose_from_sentences as _compose_heatmap,
-                headline_from_heatmap as _headline_from_heatmap,
-            )
-            _deberta = None
-            try:
-                # Build canonical sentences via the same structured_sentence_segments that
-                # _source_segments (in report_to_dict) uses — NOT _source_segments itself,
-                # which is a nested function out of scope here. This guarantees the tile and
-                # the map share identical sentence boundaries.
-                _canon = [
-                    {"sentence_id": it.get("sentence_id"),
-                     "paragraph_id": it.get("paragraph_id") or "p001",
-                     "text": it.get("sentence", "")}
-                    for it in structured_sentence_segments(self._original_text or "")
-                ]
-                if _canon:
-                    _heat = _compose_heatmap(_canon)
-                    _deberta = _headline_from_heatmap(_heat, _canon)
-                    self._deberta_heatmap = _heat  # stash for the DraftReport constructor below
-            except Exception:
-                _deberta = None
-            if _deberta is None:
-                _deberta = _attach_deberta(self._original_text)
+            from detect.deberta_signal import maybe_attach as _attach_deberta  # noqa: E402
+            _deberta = _attach_deberta(self._original_text)
             if _deberta is not None:
                 ai_risk_badge["ai_signal_deberta"] = _deberta
         except Exception:
@@ -3035,13 +3014,12 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     # DeBERTa heatmap band → color/label/tier via the module-level _DEBERTA_HEAT_* maps.
     # Drives the Signal-highlights color; perplexity findings ride as secondary signals.
     def _compute_deberta_heatmap() -> list:
-        """Return the per-sentence DeBERTa heatmap ({sentence_id, paragraph_id, score, band}, ...).
-        Reuses the heatmap cached at badge-build time (self._deberta_heatmap) so the map and the
-        tile headline share IDENTICAL per-sentence scores — eliminating the tile-vs-map mismatch.
-        Falls back to recomputing if the cache is missing, then to [] (legacy perplexity color)."""
-        cached = getattr(report, "deberta_heatmap", None)
-        if cached and cached.get("available"):
-            return cached.get("sentence_scores") or []
+        """Return the per-sentence DeBERTa heatmap, computed from _source_segments(complete=True) —
+        the EXACT sentence list the map renders. This is the single source of truth: the map colors
+        from it AND the tile headline is rebuilt from it, so the two sections can never disagree on
+        which passages are flagged. (build()'s structured_sentence_segments cache is deliberately
+        NOT used: it splits sentences differently than _source_segments, which caused the
+        tile-vs-map flag mismatch in production. See _sync_deberta_headline_from_heatmap.)"""
         try:
             from detect.deberta_signal import compose_from_sentences  # noqa: E402
         except Exception:
@@ -3059,6 +3037,32 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         if not result or not result.get("available"):
             return []
         return result.get("sentence_scores") or []
+
+    def _sync_deberta_headline_from_heatmap(heatmap_rows: list) -> None:
+        """Rebuild the badge's ai_signal_deberta headline from the SAME heatmap the map uses, so
+        the tile's flagged_passages / signal_pct are derived from _source_segments — identical
+        sentence boundaries to the map. Without this, the tile would carry build()'s headline
+        (from structured_sentence_segments, a different split) and disagree with the map."""
+        if not heatmap_rows:
+            return
+        try:
+            from detect.deberta_signal import headline_from_heatmap  # noqa: E402
+        except Exception:
+            return
+        # Reconstruct the canonical sentence list the heatmap was built from, so
+        # headline_from_heatmap can recover each flagged passage's text.
+        sens = [
+            {"sentence_id": r.get("sentence_id"),
+             "paragraph_id": r.get("paragraph_id"),
+             "text": next((it.get("sentence", "") for it in _source_segments(complete=True)
+                           if it.get("sentence_id") == r.get("sentence_id")), "")}
+            for r in heatmap_rows
+        ]
+        heat = {"available": True, "sentence_scores": heatmap_rows, "model_version": "deberta_signal_v2"}
+        new_headline = headline_from_heatmap(heat, sens)
+        badge = getattr(report, "ai_risk_badge", None) or {}
+        if new_headline and badge.get("ai_signal_deberta") is not None:
+            report.ai_risk_badge["ai_signal_deberta"] = new_headline
 
     def _deberta_primary_signal(heat_row: dict) -> dict | None:
         """Build a primary_signal dict (the shape _segment_signal returns) from a DeBERTa
@@ -3088,7 +3092,14 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         # source — the methodology the Turnitin breakdown says was abandoned. The perplexity
         # findings remain as secondary signals (for guidance text) but no longer set the color.
         # Fail-open: if DeBERTa unavailable, fall back to the legacy perplexity-driven primary.
+        #
+        # SINGLE SOURCE OF TRUTH: the heatmap is computed from _source_segments(complete=True) —
+        # the EXACT sentence list the map renders — and is also used to rebuild the tile's
+        # ai_signal_deberta headline so the two sections can never disagree on sentence boundaries.
+        # (build()'s structured_sentence_segments cache is NOT used here, because it can split
+        # sentences differently than _source_segments, causing a tile-vs-map flag mismatch.)
         deberta_heat = _compute_deberta_heatmap()
+        _sync_deberta_headline_from_heatmap(deberta_heat)
         deberta_by_sid = {row["sentence_id"]: row for row in deberta_heat} if deberta_heat else {}
         for item in _source_segments(complete):
             sid = item.get("sentence_id")
