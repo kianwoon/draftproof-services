@@ -1044,10 +1044,7 @@ export default function Report() {
   // this section; the old explanation (reader_summary/main_issue/why_flagged/rewrite_hint over
   // perplexity findings) leaked "predictable, generic phrasing" advice next to a DeBERTa highlight.
   const selectedReaderSummary = selectedParagraph?.readerSummary || '';
-  const selectedMainIssue = '';
-  const selectedWhyFlagged = [];
   const selectedRecommendation = selectedParagraph?.recommendation || '';
-  const selectedRewriteHint = '';
   // Per-paragraph Critical Thinking tag (deterministic; from the scan report).
   const selectedCriticalThinking = (() => {
     const rows = badge?.critical_thinking_control?.paragraphs;
@@ -2503,32 +2500,10 @@ export default function Report() {
                           <span>{t('report.submitted.editor.signal')}</span>
                           <p>{selectedReaderSummary}</p>
                         </div>
-                        {selectedWhyFlagged.length > 0 && (
-                          <div className="submitted-panel-note">
-                            <span>{t('report.submitted.whyFlagged')}</span>
-                            <ul>
-                              {selectedWhyFlagged.map((reason) => (
-                                <li key={reason}>{reason}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                        {selectedMainIssue && (
-                          <div className="submitted-panel-note">
-                            <span>{t('report.submitted.mainIssue')}</span>
-                            <p>{selectedMainIssue}</p>
-                          </div>
-                        )}
                         {selectedRecommendation && (
                           <div className="submitted-panel-note">
                             <span>{t('report.submitted.recommendation')}</span>
                             <p>{selectedRecommendation}</p>
-                          </div>
-                        )}
-                        {selectedRewriteHint && (
-                          <div className="submitted-panel-note">
-                            <span>{t('report.submitted.rewriteHint')}</span>
-                            <p>{selectedRewriteHint}</p>
                           </div>
                         )}
                         {selectedSecondarySignals.length > 0 && (
