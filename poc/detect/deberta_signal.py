@@ -134,7 +134,7 @@ def _build_headline(scored_sentences: list[tuple]) -> dict:
     set — they can never point at different paragraphs. The high-confidence bar (>=0.99) is
     still reported (n_high_confidence) for the caveat, but it no longer defines "flagged"."""
     n_scored = len(scored_sentences)
-    # Flagged = any non-clean band (>= the HEAT clean cutoff 0.50). This is the SAME set the
+    # Flagged = any non-clean band (>= the HEAT clean cutoff 0.80). This is the SAME set the
     # map colors/highlights, so tile and map always agree on WHICH passages.
     flagged = [(sid, s, txt) for sid, s, txt in scored_sentences
                if s is not None and band_for_sentence(s) != "clean"]
@@ -157,12 +157,13 @@ def _build_headline(scored_sentences: list[tuple]) -> dict:
     above_floor = band != "insufficient"
     confidence = "medium" if above_floor else "low"
     caveat = (
-        f"{signal_pct}% of sentences read as AI-like under a second detector. "
+        f"{signal_pct}% of passages ({n_flagged} of {n_scored}) read as AI-like under a second "
+        f"detector — {n_high_confidence} at high confidence (>= {SENT_THRESHOLD:.0%}). "
         "Advisory only — post-hoc detectors miss paraphrased text and carry residual ESL bias; "
         "review the flagged passages rather than treating the number as a verdict."
         if above_floor else
-        f"{n_flagged} of {n_scored} sentences read as AI-like under a second detector "
-        f"({n_high_confidence} at high confidence, >= {SENT_THRESHOLD:.2f}). Below the "
+        f"{n_flagged} of {n_scored} passages read as AI-like under a second detector "
+        f"({n_high_confidence} at high confidence, >= {SENT_THRESHOLD:.0%}). Below the "
         f"{DOC_FLOOR_PCT}% reliability floor, so this signal offers no overall verdict. "
         "The passages below are worth reviewing; 'no verdict' is not the same as 'clean'."
     )
