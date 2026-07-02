@@ -28,12 +28,29 @@ export default function SignalHighlights({
 
   if (!submittedContent?.paragraphs?.length) return null;
 
+  // DeBERTa score -> severity class for the per-sentence heatmap in the full-document view.
+  // Graduated so a 100% sentence reads visibly hotter than an 80% one (not one flat color).
+  const debertaSeverityClass = (score) => {
+    const s = Number(score);
+    if (!Number.isFinite(s) || s < 80) return '';          // clean — plain, no highlight
+    if (s >= 99) return 'is-severity-critical';             // >=0.99 high-confidence (red)
+    if (s >= 90) return 'is-severity-high';                 // 90-98 (deep orange)
+    return 'is-severity-medium';                            // 80-89 (amber)
+  };
+
   const FullDocument = (
     <div className="submitted-document" aria-label={t('report.submitted.documentText')}>
       {submittedContent.paragraphs.map((paragraph) => {
-        const signal = paragraph.primarySignal;
         const isSelected = selectedParagraphId === paragraph.id;
-        if (!signal) {
+        // Render per-sentence so each is colored by its OWN DeBERTa score (graduated severity),
+        // not one flat color for the whole paragraph. Map sentence_id -> its DeBERTa signal.
+        const debertaBySid = new Map();
+        paragraph.segments.forEach((segment) => {
+          const deb = (segment.signals || []).find((sg) => sg.key === 'ai_signal_deberta');
+          if (deb) debertaBySid.set(segment.sentence_id, deb);
+        });
+        const hasAny = debertaBySid.size > 0;
+        if (!hasAny) {
           return (
             <p key={paragraph.id}>
               <button type="button" data-paragraph-id={paragraph.id}
@@ -47,15 +64,26 @@ export default function SignalHighlights({
           );
         }
         return (
-          <p key={paragraph.id}>
+          <p key={paragraph.id} className="submitted-paragraph-heatmap">
             <button type="button" data-paragraph-id={paragraph.id}
-              className={`submitted-highlight submitted-paragraph-highlight signal-style-${signalClassName(signal.key)}${isSelected ? ' is-selected' : ''}`}
-              style={{ '--signal-color': signal.color }}
-              title={signalDescription(signal.key, signal.description, t)}
+              className={`submitted-paragraph-heatmap-btn${isSelected ? ' is-selected' : ''}`}
               onMouseEnter={() => onPreviewParagraph(paragraph.id)}
               onFocus={() => onPreviewParagraph(paragraph.id)}
               onClick={() => { onSelectParagraph(paragraph.id); setTab('issues'); }}>
-              {paragraph.text}
+              {paragraph.segments.map((segment, i) => {
+                const deb = debertaBySid.get(segment.sentence_id);
+                const sev = deb ? debertaSeverityClass(deb.score) : '';
+                if (!sev) {
+                  return <span key={i} className="submitted-sentence-plain">{segment.text} </span>;
+                }
+                return (
+                  <span key={i}
+                    className={`submitted-sentence-highlight ${sev}`}
+                    title={signalDescription(deb.key, deb.description, t)}>
+                    {segment.text}
+                  </span>
+                );
+              })}
             </button>
           </p>
         );
