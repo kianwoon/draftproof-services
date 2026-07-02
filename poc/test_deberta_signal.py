@@ -48,11 +48,12 @@ def test_fail_open_when_inference_returns_none():
         os.environ.pop("DRAFTPROOF_DEBERTA_SIGNAL", None)
 
 
-def test_schema_and_proportion_signal_all_below_threshold():
-    """All sentences score 0.9 (< SENT_THRESHOLD 0.99) -> signal 0%, band insufficient.
-    Confirms the proportion math + schema shape on the clean human-like path."""
+def test_schema_and_proportion_signal_all_clean():
+    """All sentences score 0.2 (clean band, < 0.50) -> 0% flagged, band insufficient.
+    Confirms the proportion math + schema shape on the clean human-like path. Note: "flagged"
+    means non-clean band (>= 0.50), NOT >=0.99 — a 0.9 sentence is moderate-band and IS flagged."""
     os.environ["DRAFTPROOF_DEBERTA_SIGNAL"] = "1"
-    deberta_signal.score_windows = lambda _w: [0.9] * len(_w)
+    deberta_signal.score_windows = lambda _w: [0.2] * len(_w)  # below the 0.50 clean cutoff
     try:
         out = deberta_signal.maybe_attach(LONG_TEXT)
         assert out is not None
@@ -100,10 +101,10 @@ def test_proportion_signal_above_floor_and_flagged_passages():
         assert out["signal_pct"] >= 20, f"expected >=20% signal, got {out['signal_pct']}"
         assert out["band"] in {"amber", "orange", "red"}, out["band"]
         assert out["confidence"] == "medium"  # above floor
-        # flagged_passages shape
+        # flagged_passages shape — flagged = non-clean band (>= 0.50), same definition as the map
         for p in out["flagged_passages"]:
             assert set(p) == {"sentence_id", "score", "text"}
-            assert p["score"] >= deberta_signal.SENT_THRESHOLD
+            assert p["score"] >= 0.50  # non-clean band cutoff (NOT the 0.99 high-confidence bar)
             assert isinstance(p["text"], str) and p["text"]
     finally:
         os.environ.pop("DRAFTPROOF_DEBERTA_SIGNAL", None)
@@ -131,10 +132,11 @@ def test_flagged_passages_capped_and_sorted():
 def test_below_floor_state_has_no_verdict_band():
     """A small fraction lands below the 20% floor -> band 'insufficient', confidence 'low',
     no green/amber/orange/red verdict, but the few flagged passages ARE surfaced for review.
-    This is the confirmed below-floor UI contract."""
+    This is the confirmed below-floor UI contract. Note: "flagged" = non-clean band (>=0.50);
+    the high-confidence bar (>=0.99) is reported separately, not the flag definition."""
     os.environ["DRAFTPROOF_DEBERTA_SIGNAL"] = "1"
-    # One small block of 3 high windows at the start (sentences 0-1 clear 0.99), then a long
-    # run of low windows. With ~40 sentences, 1-2 flagged is well below the 20% floor.
+    # One small block of 3 high windows at the start (sentences 0-1 read AI-like), then a long
+    # run of clean windows (< 0.50). With ~40 sentences, 1-2 flagged is well below the 20% floor.
     def stub(windows):
         return [1.0 if i < 3 else 0.1 for i in range(len(windows))]
     deberta_signal.score_windows = stub

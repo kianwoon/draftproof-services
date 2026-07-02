@@ -7,20 +7,26 @@ The off-the-shelf checkpoint runs locally on the worker (no third-party text upl
 DESIGN (v2, threshold-proportion — derived from the Turnitin AI-detection technical breakdown):
   The document is broken into overlapping sentence windows; each window is scored 0-1 by
   the checkpoint; each sentence inherits the mean of its covering windows. A sentence is
-  "AI-like" if its score >= SENT_THRESHOLD (0.99 — the model's high-confidence band where
-  ESL false-positives are rare: ~3.3% doc-level ESL FPR at this threshold on SCoCESLE).
-  The document signal = the PROPORTION of sentences that are AI-like, expressed as a %.
+  "flagged" (AI-like) iff its band is non-clean (score >= 0.50) — the SAME cutoff the
+  Signal-highlights map uses to color a sentence. This makes the tile's flagged_passages and
+  the map's highlighted sentences the SAME set: the two sections can never point at different
+  paragraphs. The document signal = the PROPORTION of sentences flagged, as a %.
+
+  SENT_THRESHOLD (0.99) is the HIGH-CONFIDENCE bar (the model's band where ESL
+  false-positives are rare: ~3.3% doc-level ESL FPR on SCoCESLE). It is reported in the
+  caveat (n at high confidence) but does NOT define "flagged" — a 0.50-0.98 sentence is
+  moderate/low-band AI-like and is flagged too, matching the map.
 
   Below DOC_FLOOR_PCT (20) the signal is reported as "insufficient" — no verdict, only the
   flagged passages. This mirrors Turnitin's suppression of the unreliable 1-19% band: a
-  low proportion of high-confidence sentences is not stable enough to call "green/safe",
-  and the honest output is "here are the few passages to review", not a confident verdict.
+  low proportion of AI-like sentences is not stable enough to call "green/safe", and the
+  honest output is "here are the passages to review", not a confident verdict.
 
 Why threshold-proportion, not mean+calibration: averaging window scores (the v1 approach)
 let a degenerate isotonic calibrator collapse any non-perfect score to ~0 (the production
 0%/14% bugs). Proportion-over-threshold has no averaging and no calibration to degenerate;
-the number is explainable ("N% of your sentences the detector is >=99% sure are AI") and
-structurally cannot produce that failure mode.
+the number is explainable ("N% of your sentences read as AI-like under a second detector")
+and structurally cannot produce that failure mode.
 
 Honest limit: this is a post-hoc statistical detector. It localizes obvious/clean AI text
 well but, like all such detectors, misses paraphrased/humanized text and carries residual
@@ -41,10 +47,11 @@ logger = logging.getLogger(__name__)
 MODEL_VERSION = "deberta_signal_v2"
 _MIN_WORDS = 150
 
-# A sentence is "AI-like" if its window-mean probability >= this. 0.99 is the model's
-# high-confidence band: on SCoCESLE it yields ~3.3% document-level ESL FPR (vs ~21% at
-# 0.80), because clean AI text piles up at ~1.0 while humans rarely produce a sentence
-# this confident. Tightening this lowers ESL FPR and AI recall together.
+# The HIGH-CONFIDENCE bar: a sentence scoring >= this is in the model's high-confidence AI
+# band. On SCoCESLE it yields ~3.3% document-level ESL FPR (vs ~21% at 0.80), because clean
+# AI text piles up at ~1.0 while humans rarely produce a sentence this confident. NOTE: this
+# does NOT define "flagged" — that is the non-clean band (>= 0.50, see band_for_sentence),
+# so the tile and the map flag the SAME sentences. This bar is reported in the caveat only.
 SENT_THRESHOLD = 0.99
 # Below this proportion of AI-like sentences, the signal is "insufficient" for a verdict
 # (band = "insufficient"); only the flagged passages are surfaced. Mirrors Turnitin's
@@ -119,10 +126,21 @@ def _build_headline(scored_sentences: list[tuple]) -> dict:
     ai_signal_deberta dict (signal_pct, flagged_passages, band, caveat, ...). Used by both
     compose() (naive-splitter sentences) and the report's canonical-sentence path, so the
     headline math is IDENTICAL regardless of which sentence splitter produced the inputs —
-    eliminating the tile-vs-map inconsistency that arose from two different splitters."""
+    eliminating the tile-vs-map inconsistency that arose from two different splitters.
+
+    SINGLE FLAG DEFINITION: a sentence is "flagged" iff its band is non-clean, i.e. score
+    >= the same 0.50 clean cutoff the Signal-highlights map uses (band_for_sentence). This
+    guarantees the tile's flagged_passages and the map's highlighted sentences are the SAME
+    set — they can never point at different paragraphs. The high-confidence bar (>=0.99) is
+    still reported (n_high_confidence) for the caveat, but it no longer defines "flagged"."""
     n_scored = len(scored_sentences)
-    flagged = [(sid, s, txt) for sid, s, txt in scored_sentences if s >= SENT_THRESHOLD]
+    # Flagged = any non-clean band (>= the HEAT clean cutoff 0.50). This is the SAME set the
+    # map colors/highlights, so tile and map always agree on WHICH passages.
+    flagged = [(sid, s, txt) for sid, s, txt in scored_sentences
+               if s is not None and band_for_sentence(s) != "clean"]
     n_flagged = len(flagged)
+    # High-confidence count (>=0.99) — kept for the caveat, not the "flagged" definition.
+    n_high_confidence = sum(1 for _, s, _ in flagged if s >= SENT_THRESHOLD)
     signal_pct = round(100.0 * n_flagged / n_scored) if n_scored else 0
 
     # Flagged passages: highest score first, capped. Carry the sentence_id the caller passed
@@ -137,15 +155,14 @@ def _build_headline(scored_sentences: list[tuple]) -> dict:
     above_floor = band != "insufficient"
     confidence = "medium" if above_floor else "low"
     caveat = (
-        f"{signal_pct}% of sentences score >= {SENT_THRESHOLD:.2f} under a second detector. "
+        f"{signal_pct}% of sentences read as AI-like under a second detector. "
         "Advisory only — post-hoc detectors miss paraphrased text and carry residual ESL bias; "
         "review the flagged passages rather than treating the number as a verdict."
         if above_floor else
-        f"{n_flagged} of {n_scored} sentences score >= {SENT_THRESHOLD:.2f} under a second "
-        f"detector — below the {DOC_FLOOR_PCT}% reliability floor, so this signal offers no "
-        "overall verdict. A high bar was set to avoid unfairly flagging fluent ESL writing; "
-        "other detectors with a lower bar may read the flagged passages (and the document) "
-        "differently. Review the flagged passages rather than treating 'no verdict' as clean."
+        f"{n_flagged} of {n_scored} sentences read as AI-like under a second detector "
+        f"({n_high_confidence} at high confidence, >= {SENT_THRESHOLD:.2f}). Below the "
+        f"{DOC_FLOOR_PCT}% reliability floor, so this signal offers no overall verdict. "
+        "The passages below are worth reviewing; 'no verdict' is not the same as 'clean'."
     )
 
     return {
