@@ -302,6 +302,11 @@ def determine_actionability(f: "Finding", all_findings: list = None) -> str:
     # The rewrite pipeline is intentionally limited to medium findings.
     if "high_predictability" in title or "high_topk_predictability" in title:
         return "review_only"
+    # DeBERTa authoritative findings: the learned classifier flagged this sentence as
+    # high-confidence AI. It's an auto-fix target (revoice the sentence) under the
+    # authoritative flag — replaces the perplexity 'medium_predictability' edit targets.
+    if title == "high_confidence_ai_sentence" and f.scanner == "deberta":
+        return "auto_fixable"
     # Document-level low_specificity: auto-fixable only if NOT already downgraded
     # If AI likelihood is low and domain grounding is strong, specificity is review-level
     if title == "low_specificity":
@@ -1225,6 +1230,48 @@ class ReportBuilder:
                     }
                     break
 
+        # DeBERTa authoritative findings synthesis (gated). Must run BEFORE findings_by_tier so
+        # the synthesized findings enter the actionability/repair pipeline. Synthesizes a Finding
+        # per high-confidence (>=0.99) sentence so the actionable_summary + repair_units have
+        # DeBERTa-native edit targets instead of perplexity 'medium_predictability' findings.
+        try:
+            from detect.deberta_signal import (  # noqa: E402
+                _authoritative_enabled,
+                compose_from_sentences as _compose_heatmap_syn,
+            )
+            if _authoritative_enabled():
+                _canon_syn = [
+                    {"sentence_id": it.get("sentence_id"),
+                     "paragraph_id": it.get("paragraph_id") or "p001",
+                     "text": it.get("sentence", "")}
+                    for it in structured_sentence_segments(self._original_text or "")
+                ]
+                if _canon_syn:
+                    _heat_syn = _compose_heatmap_syn(_canon_syn)
+                    _heat_rows_syn = {r.get("sentence_id"): r
+                                      for r in ((_heat_syn or {}).get("sentence_scores") or [])}
+                    for _sent_syn in _canon_syn:
+                        _row_syn = _heat_rows_syn.get(_sent_syn.get("sentence_id"))
+                        _sc_syn = (_row_syn or {}).get("score")
+                        if _sc_syn is None or _sc_syn < 0.99:
+                            continue
+                        self._findings.append(Finding(
+                            tier=Tier.HIGH,
+                            category="ai_generation",
+                            scanner="deberta",
+                            title="high_confidence_ai_sentence",
+                            detail=f"Learned classifier >=99% confident this sentence is AI-generated (score {_sc_syn:.2f}).",
+                            evidence=_sent_syn.get("text", ""),
+                            recommendation="Revoice this sentence in your own words with concrete, verifiable detail from your work.",
+                            metadata={"deberta_score": round(_sc_syn, 3), "source": "deberta_authoritative"},
+                            finding_id=f"deberta_{_sent_syn.get('sentence_id')}",
+                            adjusted_risk="high",
+                            sentence_id=_sent_syn.get("sentence_id", ""),
+                            signal_category="authorship_risk",
+                        ))
+        except Exception:
+            pass
+
         findings_by_tier: Dict[str, List[Finding]] = {t.value: [] for t in Tier}
         for f in self._findings:
             findings_by_tier[f.tier.value].append(f)
@@ -1591,6 +1638,9 @@ class ReportBuilder:
                         "model_version": _headline.get("model_version"),
                         "available": True,
                     }
+                    # NOTE: DeBERTa findings synthesis moved to BEFORE findings_by_tier (above)
+                    # so they enter the actionability/repair pipeline. This block only computes
+                    # the authoritative SCORE; the findings are synthesized earlier.
         except Exception:
             authoritative_score = None
         if authoritative_score and authoritative_score.get("available"):
@@ -2391,7 +2441,9 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     elif auto_fixable:
         rewrite_mode = "targeted" if len(auto_fixable) <= 3 else "comprehensive"
         top = auto_fixable[0]
-        if top["title"] == "low_specificity":
+        if top["title"] == "high_confidence_ai_sentence":
+            overall_action = "ai_voice_revision"
+        elif top["title"] == "low_specificity":
             overall_action = "specificity_revision"
         else:
             overall_action = "predictability_revision"
@@ -2418,7 +2470,9 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     for cr in citation_repairs:
         primary_goals.append(f"Add citation for {cr.get('title', 'claim').replace('_', ' ')} ({cr.get('finding_id', '')})")
     for af in auto_fixable:
-        if af["action"] == "add_concrete_domain_context":
+        if af["title"] == "high_confidence_ai_sentence":
+            primary_goals.append(f"Revoice high-confidence AI sentence ({af['finding_id']})")
+        elif af["action"] == "add_concrete_domain_context":
             primary_goals.append("Add domain-specific context and concrete examples")
         elif af["action"] == "rewrite_with_personal_voice":
             primary_goals.append(f"Rewrite high-predictability sentence ({af['finding_id']})")
@@ -2454,6 +2508,8 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     # specificity only promoted if NOT already downgraded to review-level
     if citation_goals or citation_manual:
         primary_action = "add_citations"
+    elif any("revoice" in g.lower() for g in primary_goals):
+        primary_action = "revoice_ai_sentences"
     elif (any("specificity" in g.lower() for g in primary_goals)
           and not specificity_is_review):
         primary_action = "improve_specificity"
