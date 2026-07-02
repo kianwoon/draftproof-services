@@ -670,52 +670,6 @@
 .upload-zone input[type="file"] { margin-bottom: .5rem; }
 .file-name { display: block; color: var(--muted); font-size: .85rem; margin-top: .5rem; }
 
-/* ── Global Footer ──────────────────────────── */
-
-.global-footer-wrap {
-  position: relative;
-  flex-shrink: 0;
-  background: var(--navy-950);
-  color: #fff;
-  padding: 0 clamp(1.25rem, 4vw, 4rem) 2rem;
-  border-top: 0;
-  overflow: hidden;
-  isolation: isolate;
-}
-
-.global-footer-wrap .site-footer {
-  position: relative;
-  z-index: 2;
-  max-width: var(--max-w);
-  margin: 0 auto;
-  padding: 2.5rem 0 1rem;
-  border-top: 1px solid rgba(255, 255, 255, .10);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.25rem;
-}
-
-.global-footer-wrap .footer-brand { color: #fff; }
-
-.global-footer-wrap .footer-links {
-  display: flex;
-  gap: 1.5rem;
-  font-size: .88rem;
-  color: rgba(255, 255, 255, .70);
-  justify-content: center;
-}
-
-.global-footer-wrap .footer-links a:hover { color: #fff; }
-
-.global-footer-wrap .site-footer p {
-  text-align: center;
-  color: rgba(255, 255, 255, .68);
-  font-size: .82rem;
-  line-height: 1.5;
-  max-width: 540px;
-}
-
 /* ── View Reports Page ──────────────────────── */
 
 .reports-page-shell .container {

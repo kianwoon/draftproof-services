@@ -129,10 +129,6 @@
   .report-body td:nth-child(2)::before { content: "Evidence issue"; }
   .report-body td:nth-child(3)::before { content: "Severity"; }
   .report-body td:nth-child(4)::before { content: "Suggested fix"; }
-  .footer-links {
-    flex-wrap: wrap;
-    row-gap: .8rem;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
