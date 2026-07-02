@@ -49,11 +49,11 @@ def test_fail_open_when_inference_returns_none():
 
 
 def test_schema_and_proportion_signal_all_clean():
-    """All sentences score 0.2 (clean band, < 0.50) -> 0% flagged, band insufficient.
+    """All sentences score 0.2 (clean band, < 0.80) -> 0% flagged, band insufficient.
     Confirms the proportion math + schema shape on the clean human-like path. Note: "flagged"
-    means non-clean band (>= 0.50), NOT >=0.99 — a 0.9 sentence is moderate-band and IS flagged."""
+    means non-clean band (>= 0.80), NOT >=0.99 — a 0.9 sentence is moderate-band and IS flagged."""
     os.environ["DRAFTPROOF_DEBERTA_SIGNAL"] = "1"
-    deberta_signal.score_windows = lambda _w: [0.2] * len(_w)  # below the 0.50 clean cutoff
+    deberta_signal.score_windows = lambda _w: [0.2] * len(_w)  # below the 0.80 clean cutoff
     try:
         out = deberta_signal.maybe_attach(LONG_TEXT)
         assert out is not None
@@ -101,10 +101,10 @@ def test_proportion_signal_above_floor_and_flagged_passages():
         assert out["signal_pct"] >= 20, f"expected >=20% signal, got {out['signal_pct']}"
         assert out["band"] in {"amber", "orange", "red"}, out["band"]
         assert out["confidence"] == "medium"  # above floor
-        # flagged_passages shape — flagged = non-clean band (>= 0.50), same definition as the map
+        # flagged_passages shape — flagged = non-clean band (>= 0.80), same definition as the map
         for p in out["flagged_passages"]:
             assert set(p) == {"sentence_id", "score", "text"}
-            assert p["score"] >= 0.50  # non-clean band cutoff (NOT the 0.99 high-confidence bar)
+            assert p["score"] >= 0.80  # non-clean band cutoff (NOT the 0.99 high-confidence bar)
             assert isinstance(p["text"], str) and p["text"]
     finally:
         os.environ.pop("DRAFTPROOF_DEBERTA_SIGNAL", None)
@@ -167,13 +167,13 @@ if __name__ == "__main__":
 # ─── Heatmap (compose_from_sentences + band_for_sentence) tests ────────────────
 
 def test_band_for_sentence_graduated_scale():
-    """clean < 0.50 < low < 0.80 < moderate < 0.99 <= high."""
+    """clean < 0.80 < moderate < 0.99 <= high. The 0.80 clean cutoff avoids flagging
+    borderline-ambiguous sentences (0.50-0.79) as 'AI signal' next to genuine 1.0 readings."""
     b = deberta_signal.band_for_sentence
     assert b(0.0) == "clean"
-    assert b(0.49) == "clean"
-    assert b(0.50) == "low"        # boundary: 0.50 is NOT clean (>= 0.50 cutoff)
-    assert b(0.79) == "low"
-    assert b(0.80) == "moderate"
+    assert b(0.59) == "clean"      # 0.59 is clean now (was 'low' — too noisy to flag)
+    assert b(0.79) == "clean"
+    assert b(0.80) == "moderate"   # boundary: 0.80 is NOT clean
     assert b(0.98) == "moderate"
     assert b(0.99) == "high"       # >= SENT_THRESHOLD
     assert b(1.0) == "high"

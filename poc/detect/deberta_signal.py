@@ -202,9 +202,10 @@ def maybe_attach(text: str) -> dict | None:
 
 # Graduated heatmap bands (per-sentence DeBERTa score -> band). Distinct from the document
 # _band_for() above: that maps the headline proportion; this maps a single sentence's score.
-# clean = neutral (most human writing), low/moderate = graduated amber/orange (AI-like but
-# below the high-confidence bar), high = the ≥0.99 band (same threshold as the headline).
-_HEAT_BAND_CUTOFFS = [(0.50, "clean"), (0.80, "low"), (0.99, "moderate")]  # >=0.99 -> high
+# clean = neutral — reads as human (score < 0.80). The 0.80 clean cutoff (not 0.50) avoids
+# flagging borderline-ambiguous sentences (e.g. 0.59) as "AI signal" next to genuine 1.0
+# readings, which reads as noise. moderate = clear AI-like (0.80-0.99); high = >=0.99.
+_HEAT_BAND_CUTOFFS = [(0.80, "clean"), (0.99, "moderate")]  # >=0.99 -> high
 
 
 def band_for_sentence(score: float) -> str:

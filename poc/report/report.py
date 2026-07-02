@@ -353,33 +353,28 @@ def determine_actionability(f: "Finding", all_findings: list = None) -> str:
 # per band carried on the signal so the frontend's --signal-color mechanism needs no new CSS.
 _DEBERTA_HEAT_COLORS = {
     "clean": "#94a3b8",     # neutral slate — human-like; not surfaced in the legend
-    "low": "#f59e0b",       # amber — mild AI-like reading (0.50-0.80)
-    "moderate": "#f97316",  # orange — strong AI-like reading, below high-confidence (0.80-0.99)
+    "moderate": "#f97316",  # orange — clear AI-like reading (0.80-0.99)
     "high": "#dc2626",      # red — the >=0.99 high-confidence AI band
 }
-_DEBERTA_HEAT_TIERS = {"clean": "", "low": "low", "moderate": "medium", "high": "high"}
+_DEBERTA_HEAT_TIERS = {"clean": "", "moderate": "medium", "high": "high"}
 _DEBERTA_HEAT_LABELS = {
     "clean": "No AI signal",
-    "low": "Mild AI signal",
     "moderate": "Strong AI signal",
     "high": "High-confidence AI signal",
 }
 _DEBERTA_HEAT_DESCRIPTIONS = {
     "clean": "The learned classifier reads this passage as human.",
-    "low": "The second-opinion detector sees mild AI-like signal here.",
     "moderate": "The second-opinion detector sees strong AI-like signal (below its high-confidence bar).",
     "high": "The second-opinion detector is >=99% confident this passage is AI-like.",
 }
 # Band-specific, student-facing edit guidance. Drives the issue-card "recommendation" so the
 # advice is native to the learned-classifier signal (not the abandoned perplexity family).
 _DEBERTA_HEAT_RECOMMENDATIONS = {
-    "low": "This sentence reads as mildly formulaic under the learned classifier. Ground it in a concrete detail from your own work — a specific student, a measured outcome, a moment — so it sounds like you rather than a template.",
     "moderate": "This sentence reads as strongly AI-like under the learned classifier. Rewrite it around a specific, verifiable detail from your experience, and vary the sentence rhythm so it does not follow a common template.",
     "high": "The learned classifier is highly confident this sentence is AI-generated. Revoice it entirely in your own words and tie every claim to a concrete detail only you would know (a name, a number, an observation).",
 }
 # Plain-language reader summary per band — what a human reviewer would notice.
 _DEBERTA_HEAT_READER_SUMMARY = {
-    "low": "A reader may notice this sentence sounds polished but slightly generic.",
     "moderate": "A reader may notice this sentence follows a familiar, template-like structure common in AI-assisted writing.",
     "high": "A reader may notice this sentence reads as machine-generated — fluent but generic, without the texture of personal experience.",
 }
