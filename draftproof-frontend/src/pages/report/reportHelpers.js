@@ -1364,48 +1364,33 @@ const PARAGRAPH_SEVERITY_TIER_RANK = { critical: 4, high: 3, medium: 2, low: 1, 
 // scan data (findings tier via signal.tier) -- no new backend computation, works on existing reports.
 function buildParagraphSeverityBar(paragraphs) {
   if (!Array.isArray(paragraphs) || paragraphs.length === 0) return null;
-  const rows = paragraphs.map((paragraph, index) => {
-    const signals = (paragraph.segments || []).flatMap((segment) => segment.signals || []);
-    let weight = 0;
-    let topTier = '';
-    let topRank = -1;
-    let maxDebertaScore = 0;
-    signals.forEach((signal) => {
-      const tier = String(signal.tier || '').toLowerCase();
-      weight += PARAGRAPH_SEVERITY_TIER_WEIGHT[tier] ?? 1;
-      const rank = PARAGRAPH_SEVERITY_TIER_RANK[tier] ?? 0;
-      if (rank > topRank) {
-        topRank = rank;
-        topTier = tier;
-      }
-      // Track the highest DeBERTa sentence score so the bar color matches the full-document
-      // heatmap (amber/orange/red by score), not just the generic tier color.
-      if (signal.key === 'ai_signal_deberta') {
-        maxDebertaScore = Math.max(maxDebertaScore, Number(signal.score) || 0);
-      }
+  // Per-SENTENCE segments (not per-paragraph) so the bar shows graduated color across the whole
+  // document — matching the "Read full document" heatmap. Each sentence = one colored segment,
+  // width proportional to its text length, color from its DeBERTa score (green/amber/orange/red).
+  const rows = [];
+  paragraphs.forEach((paragraph) => {
+    (paragraph.segments || []).forEach((segment) => {
+      const deberta = (segment.signals || []).find((sg) => sg.key === 'ai_signal_deberta');
+      rows.push({
+        id: segment.sentence_id || segment.id || rows.length,
+        paragraphId: paragraph.id,
+        length: Math.max(1, (segment.text || '').length),
+        findingCount: (segment.signals || []).length,
+        maxDebertaScore: deberta ? (Number(deberta.score) || 0) : 0,
+        topTier: deberta ? (deberta.tier || '') : '',
+      });
     });
-    const length = Math.max(1, (paragraph.text || '').length);
-    return {
-      id: paragraph.id,
-      index: index + 1,
-      length,
-      findingCount: signals.length,
-      topTier,
-      maxDebertaScore,
-      density: weight / length,
-    };
   });
   const totalLength = rows.reduce((sum, row) => sum + row.length, 0) || 1;
-  const maxDensity = rows.reduce((max, row) => Math.max(max, row.density), 0);
-  return rows.map((row) => ({
+  return rows.map((row, index) => ({
     id: row.id,
-    index: row.index,
+    paragraphId: row.paragraphId,
+    index: index + 1,
     findingCount: row.findingCount,
     topTier: row.topTier,
     maxDebertaScore: row.maxDebertaScore,
     widthPct: (row.length / totalLength) * 100,
-    // 0..1 relative heatmap: the most finding-dense paragraph reaches full intensity.
-    intensity: maxDensity > 0 ? row.density / maxDensity : 0,
+    intensity: 1,
   }));
 }
 

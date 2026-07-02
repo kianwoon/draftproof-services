@@ -40,7 +40,7 @@ export default function ParagraphSeverityBar({ bar, selectedId = null, onSelect 
                 count: segment.findingCount,
                 tier: tierLabel,
               });
-          const className = `paragraph-severity-seg${selectedId === segment.id ? ' is-selected' : ''}`;
+          const className = `paragraph-severity-seg${(selectedId === segment.id || selectedId === segment.paragraphId) ? ' is-selected' : ''}`;
           const style = {
             width: `${segment.widthPct}%`,
             backgroundColor: clean ? '#22c55e' : tierColor,
@@ -55,7 +55,7 @@ export default function ParagraphSeverityBar({ bar, selectedId = null, onSelect 
                 style={style}
                 title={title}
                 aria-label={title}
-                onClick={() => onSelect(segment.id)}
+                onClick={() => onSelect(segment.paragraphId || segment.id)}
               />
             );
           }
