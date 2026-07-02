@@ -1680,13 +1680,14 @@ class ReportBuilder:
             ai_components["deberta_n_high_confidence"] = authoritative_score["n_high_confidence"]
             ai_components["deberta_n_scored"] = authoritative_score["n_scored"]
             # Override the perplexity keys that feed the grounding diagnosis's llm_patterning
-            # bucket (and through it, policy_risk). Without this, policy_risk shows ~33%
-            # 'Moderate' from perplexity predictability/topk while the badge reads DeBERTa.
-            # The DeBERTa high-confidence proportion (0-100) replaces them on the same scale.
-            ai_components["predictability"] = _deb_pct
-            ai_components["topk_pattern"] = _deb_pct
-            ai_components["topk_pattern_raw"] = _deb_pct
-            ai_components["topk_calibrated_risk"] = _deb_pct
+            # bucket (and through it, policy_risk). When the score is suppressed (<20% → green,
+            # Turnitin-style), set them to 0 so policy_risk's surface_ai_text_signal reads 0
+            # (the AI text is too thin to count as a policy concern). Above 20%, use the real %.
+            _policy_pct = 0.0 if _deb_score < 0.20 else _deb_pct
+            ai_components["predictability"] = _policy_pct
+            ai_components["topk_pattern"] = _policy_pct
+            ai_components["topk_pattern_raw"] = _policy_pct
+            ai_components["topk_calibrated_risk"] = _policy_pct
 
         writing_components = {k: round(v * 100, 2) for k, v in layer3.writing_phase.components.items()}
 
@@ -1840,18 +1841,25 @@ class ReportBuilder:
         # Badge floor: the headline tier must not read LOW when the AI-likelihood badge
         # is AMBER+ (the badge aggregates generic_assertion/topk/etc.; the weighted
         # derivation does not). Lifts only LOW -> MEDIUM; never lowers a higher tier.
-        pre_floor_tier = adjusted_tier
-        adjusted_tier = self._floor_tier_to_badge(adjusted_tier, ai_risk_badge.get("tier"))
-        if adjusted_tier != pre_floor_tier:
-            # Self-contained reason (do NOT append the stale pre-floor text, which still
-            # asserts the LOW tier). Signal detail remains available in ai_components/findings.
-            overall_tier_reason = (
-                f"Overall tier is {adjusted_tier.value.upper()} (raised from "
-                f"{pre_floor_tier.value.upper()}): the AI-likelihood badge is "
-                f"{str(ai_risk_badge.get('tier') or '').upper()} at {badge_ai_score:.1%}. A document "
-                f"with amber-or-higher AI-likelihood is not rated below {adjusted_tier.value.upper()}; "
-                f"see the AI signal breakdown for the contributing signals."
-            )
+        # UNDER DEBERTA AUTHORITATIVE: skip the floor entirely. The tier IS the DeBERTa badge
+        # tier — no perplexity-finding inflation. A 14% document reads green/low, not medium.
+        is_deberta_authoritative = ai_risk_badge.get("signal_source") == "deberta_authoritative"
+        if is_deberta_authoritative and authoritative_score and authoritative_score.get("available"):
+            # Tier follows DeBERTa directly: green->LOW, amber->MEDIUM, orange->HIGH, red->CRITICAL
+            _deb_tier_map = {"green": Tier.LOW, "amber": Tier.MEDIUM,
+                             "orange": Tier.HIGH, "red": Tier.CRITICAL}
+            adjusted_tier = _deb_tier_map.get(authoritative_tier or "", adjusted_tier)
+        else:
+            pre_floor_tier = adjusted_tier
+            adjusted_tier = self._floor_tier_to_badge(adjusted_tier, ai_risk_badge.get("tier"))
+            if adjusted_tier != pre_floor_tier:
+                overall_tier_reason = (
+                    f"Overall tier is {adjusted_tier.value.upper()} (raised from "
+                    f"{pre_floor_tier.value.upper()}): the AI-likelihood badge is "
+                    f"{str(ai_risk_badge.get('tier') or '').upper()} at {badge_ai_score:.1%}. A document "
+                    f"with amber-or-higher AI-likelihood is not rated below {adjusted_tier.value.upper()}; "
+                    f"see the AI signal breakdown for the contributing signals."
+                )
 
         # ── Reason codes: structured tier explanation ──
         reason_codes = []

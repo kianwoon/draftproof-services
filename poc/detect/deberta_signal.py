@@ -301,10 +301,11 @@ def headline_from_heatmap(heatmap: dict | None, sentences: list[dict]) -> dict |
 # This is gated behind DRAFTPROOF_DEBERTA_AUTHORITATIVE (default off) and fail-opens to None
 # (caller falls back to the existing perplexity Layer3 path) on short text or model error.
 
-# Tier cutoffs for the >=0.99 proportion score. Tuned for the PROPORTION scale (0-1), distinct
-# from Layer3's 0.32/0.48/0.65 (which were calibrated to a deflated perplexity weighted average).
-# These are PROVISIONAL pending Phase 3 SCoCESLE validation — the flag stays off until gated.
-_AUTHORITATIVE_CUTOFFS = (0.10, 0.25, 0.50)  # green / amber / orange / red
+# Tier cutoffs for the >=0.99 proportion score — Turnitin-aligned.
+# < 20% suppressed to GREEN (the 1-19% band is too unreliable to verdict; SCoCESLE FPR at <10%
+# is 7.8%, so suppressing the whole <20% band is conservative). Above 20%, the actual % is shown
+# and the tier follows it directly (no floor-up, no inflation). SCoCESLE FPR @ 25% = 2.6%.
+_AUTHORITATIVE_CUTOFFS = (0.20, 0.50, 0.80)  # <20 green / <50 amber / <80 orange / >=80 red
 
 
 def _authoritative_enabled() -> bool:
@@ -312,12 +313,15 @@ def _authoritative_enabled() -> bool:
 
 
 def _derive_ai_tier_deberta(score: float) -> str:
-    """Map the >=0.99 high-confidence PROPORTION (0-1) to a tier name.
+    """Map the >=0.99 high-confidence PROPORTION (0-1) to a tier name — Turnitin-aligned.
 
-    Distinct from Layer3._derive_ai_tier (0.32/0.48/0.65 on a deflated weighted average). The
-    proportion of >=0.99 sentences reads on a different scale: a document where 1 in 7 sentences
-    is high-confidence AI is already notable, so the cutoffs are tighter. PROVISIONAL — validate
-    against SCoCESLE before enabling the flag."""
+    < 20% -> GREEN (suppressed; the 1-19% band is too unreliable to verdict)
+    < 50% -> AMBER
+    < 80% -> ORANGE
+    >= 80% -> RED
+
+    SCoCESLE ESL FPR: <10% = 7.8%, <25% = 2.6%, <50% = 1.1%. The 20% suppression line is
+    conservative relative to the gate (gate passes at 25%)."""
     if score is None:
         return "green"
     if score >= _AUTHORITATIVE_CUTOFFS[2]:
