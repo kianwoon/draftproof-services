@@ -14,7 +14,7 @@ from typing import Optional
 from detect.transformation import TRANSFORMATION_SIGNAL_METADATA, transformation_signal_metadata
 from detect.turnitin_like import turnitin_like_ai_profile
 
-from .report import DraftReport, Tier, TIER_ICON, report_to_dict, determine_actionability
+from .report import DraftReport, Finding, Tier, TIER_ICON, report_to_dict, determine_actionability
 from .paragraph_explainer import explanations_by_paragraph
 
 # ── Scanner & Signal legend codes ──────────────────────────────────────
@@ -1528,6 +1528,62 @@ def _paragraph_finding_groups(findings: list, data: dict) -> list[dict]:
     return sorted((groups[key] for key in ordered_keys), key=group_start)
 
 
+def _deberta_paragraph_groups(data: dict) -> list[dict]:
+    """Build finding groups from DeBERTa segment signals (>=0.80) — one card per flagged
+    paragraph, matching the web page's Signal highlights section. Each sentence with an
+    ai_signal_deberta signal becomes a pseudo-Finding so the existing _render_finding_card
+    pipeline works unchanged."""
+    segments = ((data.get("scan_intelligence") or {}).get("document") or {}).get("segments") or []
+    paragraphs = ((data.get("scan_intelligence") or {}).get("document") or {}).get("paragraphs") or []
+    paragraph_by_id = {
+        str(p.get("paragraph_id") or ""): p
+        for p in paragraphs if p.get("paragraph_id")
+    }
+    groups = {}
+    ordered_keys = []
+    for seg in segments:
+        deberta = next((s for s in (seg.get("signals") or []) if s.get("key") == "ai_signal_deberta"), None)
+        if not deberta:
+            continue
+        pid = str(seg.get("paragraph_id") or "")
+        if pid not in groups:
+            p = paragraph_by_id.get(pid, {})
+            groups[pid] = {
+                "paragraph_id": pid,
+                "sentence_ids": list(p.get("sentence_ids") or []),
+                "text": p.get("text") or seg.get("text") or "",
+                "findings": [],
+                "explanation": None,
+                "deberta_reader_summary": p.get("reader_summary"),
+                "deberta_recommendation": p.get("recommendation"),
+                "deberta_flagged_sentences": p.get("flagged_sentences") or [],
+            }
+            ordered_keys.append(pid)
+        score = deberta.get("score", 0)
+        tier_map = {"low": Tier.LOW, "medium": Tier.MEDIUM, "high": Tier.HIGH}
+        groups[pid]["findings"].append(Finding(
+            tier=tier_map.get(deberta.get("tier", ""), Tier.MEDIUM),
+            category="ai_generation",
+            scanner="deberta",
+            title="high_confidence_ai_sentence" if score >= 99 else "ai_signal_deberta",
+            detail=f"Learned classifier AI signal (score {score:.0f}%).",
+            evidence=seg.get("text") or "",
+            recommendation=deberta.get("recommendation") or "",
+            metadata={"deberta_score": score, "source": "deberta_authoritative"},
+            finding_id=f"deberta_{seg.get('sentence_id', '')}",
+            adjusted_risk="high" if score >= 99 else "medium",
+            sentence_id=seg.get("sentence_id", ""),
+            signal_category="authorship_risk",
+        ))
+
+    def group_start(group: dict) -> int:
+        if group.get("paragraph_id") and group.get("paragraph_id") in paragraph_by_id:
+            return int(paragraph_by_id[group["paragraph_id"]].get("start_char") or 0)
+        return 10**9
+
+    return sorted((groups[k] for k in ordered_keys), key=group_start)
+
+
 # ── Main render function (Markdown) ──────────────────────────────────
 
 def render_report(report: DraftReport, verbose: bool = False) -> str:
@@ -1677,9 +1733,16 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     _tier_order = [Tier.CRITICAL, Tier.HIGH, Tier.MEDIUM, Tier.LOW, Tier.CLEAN]
 
     if all_findings_flat:
-        paragraph_groups = _paragraph_finding_groups(all_findings_flat, data)
+        if _is_deberta_auth:
+            # DeBERTa authoritative: build finding groups from the SEGMENT SIGNALS (the same
+            # >=0.80 paragraphs the web page shows), not the findings tree (which only has the
+            # >=0.99 high-confidence findings). This gives one card per flagged paragraph,
+            # matching the web page's Signal highlights section.
+            paragraph_groups = _deberta_paragraph_groups(data)
+        else:
+            paragraph_groups = _paragraph_finding_groups(all_findings_flat, data)
         paragraph_count = len(paragraph_groups)
-        total_findings = len(all_findings_flat)
+        total_findings = sum(len(g.get("findings") or []) for g in paragraph_groups)
         group_label = "paragraph" if paragraph_count == 1 else "paragraphs"
         finding_label = "finding" if total_findings == 1 else "findings"
         lines.append(f"*{paragraph_count} {group_label}, {total_findings} {finding_label}*")
