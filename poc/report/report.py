@@ -380,6 +380,51 @@ _DEBERTA_HEAT_READER_SUMMARY = {
 }
 
 
+def _deberta_authorship_rating(authoritative_score: dict | None, layer3: Any) -> dict:
+    """Build a DeBERTa-derived authorship rating (the same shape as Layer3.authorship_rating)
+    so the rating's score/label match the DeBERTa badge instead of the perplexity components.
+
+    Maps the authoritative >=0.99-proportion score to a label/code the frontend understands, and
+    carries the writing-quality fields from Layer3 (those are perplexity-independent)."""
+    if not authoritative_score or not authoritative_score.get("available"):
+        return layer3.authorship_rating
+    score_pct = round(authoritative_score["ai_likelihood_score"] * 100, 2)
+    n_hc = authoritative_score.get("n_high_confidence", 0)
+    n_sc = authoritative_score.get("n_scored", 0)
+    if score_pct >= 50:
+        label, short, code, level = "High AI-writing signal", "High AI signal", "likely_ai", "high"
+        action = "Revoice the flagged passages in your own words with concrete, verifiable detail."
+        summary = f"The learned classifier is >=99% confident that {n_hc} of {n_sc} sentences are AI-generated."
+    elif score_pct >= 25:
+        label, short, code, level = "Moderate AI-writing signal", "Moderate AI signal", "possibly_ai", "moderate"
+        action = "Review the high-confidence sentences and revoice any that read as template-like."
+        summary = f"{n_hc} of {n_sc} sentences read as high-confidence AI under the learned classifier."
+    elif score_pct >= 10:
+        label, short, code, level = "Low AI-writing signal", "Low AI signal", "unlikely_ai", "low"
+        action = "A few sentences flagged for review; mostly reads as human."
+        summary = f"A small number of sentences ({n_hc} of {n_sc}) read as high-confidence AI."
+    else:
+        label, short, code, level = "Minimal AI signal", "Minimal AI signal", "minimal_ai", "low"
+        action = "The learned classifier reads this as human writing."
+        summary = "No sentences reached the high-confidence AI bar."
+    return {
+        "label": label,
+        "short_label": short,
+        "risk_level": level,
+        "summary": summary,
+        "recommended_action": action,
+        "code": code,
+        "score": score_pct,
+        "confidence": authoritative_score.get("confidence", "low"),
+        "ai_tier": authoritative_score.get("tier", "green").upper(),
+        "writing_quality_score": round(layer3.writing_quality_score * 100, 2),
+        "writing_quality_tier": layer3.writing_quality_tier.value,
+        "is_verdict": False,
+        "disclaimer": "This rating summarizes DraftProof detector signals. It is not proof of authorship.",
+        "caution_notes": [],
+    }
+
+
 class ReportBuilder:
     """Builds a DraftReport from detect + rewrite results."""
 
@@ -1635,9 +1680,19 @@ class ReportBuilder:
             "critical_thinking_control": critical_thinking_control,
             "submission_risk": submission_risk,
             "policy_risk": policy_risk,
-            "authorship_rating": layer3.authorship_rating,
-            "authorship_rating_label": layer3.authorship_rating.get("label"),
-            "authorship_rating_code": layer3.authorship_rating.get("code"),
+            # Authorship rating: DeBERTa-derived when the authoritative flag is on (so the rating's
+            # score/label match the DeBERTa badge, not the perplexity Layer3 components); else the
+            # perplexity Layer3 rating. Without this override the gauges show ~33% 'Moderate'
+            # (perplexity) next to an 18.75% amber DeBERTa badge — two verdicts on one page.
+            "authorship_rating": (_deberta_authorship_rating(authoritative_score, layer3)
+                                  if authoritative_score and authoritative_score.get("available")
+                                  else layer3.authorship_rating),
+            "authorship_rating_label": (_deberta_authorship_rating(authoritative_score, layer3).get("label")
+                                        if authoritative_score and authoritative_score.get("available")
+                                        else layer3.authorship_rating.get("label")),
+            "authorship_rating_code": (_deberta_authorship_rating(authoritative_score, layer3).get("code")
+                                       if authoritative_score and authoritative_score.get("available")
+                                       else layer3.authorship_rating.get("code")),
             "ai_cluster_boost": round(layer3.ai_cluster_boost * 100, 2) if layer3.ai_cluster_boost else 0,
             "ai_cluster_name": layer3.ai_cluster_name,
             "ai_components": ai_components,
