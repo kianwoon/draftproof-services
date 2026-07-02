@@ -919,12 +919,8 @@ def _executive_signal_chart_html(
 
     confidence = transformation.get("confidence")
     pills = []
-    if confidence:
-        pills.append(f"{str(confidence).title()} Confidence")
-    # Reliability qualifier pill (display-only): near-boundary or thin-sample verdicts are
-    # unstable. Mirrors Turnitin's suppression of the unreliable band; the tier is unchanged.
-    if (badge or {}).get("verdict_low_confidence"):
-        pills.append("Low Confidence — provisional")
+    # Confidence + Low-Confidence pills removed to match the web page (which shows just the
+    # pattern label). The perplexity methodology note + evidence tags are also removed.
     # "Not A Verdict" disclaimer is stated once in the repair plan / AI-likelihood note now,
     # mirroring the web page mesh — no longer repeated here.
 
@@ -956,16 +952,6 @@ def _executive_signal_chart_html(
         '<div>',
         '<span class="dp-kicker">Writing-signal pattern</span>',
         f'<h3>{escape(transformation.get("label") or "Pattern analysis")}</h3>',
-        '<div class="dp-pill-row">',
-        ''.join(f'<span>{escape(pill)}</span>' for pill in pills),
-        '</div>',
-        # Honest method note: this is a statistical (perplexity/uniformity) read — the older
-        # class of detector that modern tools (Turnitin) moved beyond for learned classifiers.
-        # Included for transparency, not as a Turnitin prediction; over-flags fluent/ESL writing.
-        '<p class="dp-method-note">A statistical read of perplexity and rhythm uniformity — '
-        'the older class of detector that modern tools like Turnitin have moved beyond in favour '
-        'of learned classifiers. Included for transparency, not as a Turnitin prediction: it '
-        'over-flags fluent and ESL writing, so treat it as a coarse signal, not a verdict.</p>',
         '</div>',
         '</div>',
         # Rating seal removed to match the web page mesh: the authorship rating is shown once in
@@ -979,12 +965,6 @@ def _executive_signal_chart_html(
         # contradicts the calibrated AI risk) and the "low external estimate" reference were
         # trimmed from the section. The pattern label + confidence pill + evidence remain.
     ]
-    if evidence:
-        html.extend([
-            '<div class="dp-evidence-row">',
-            ''.join(f'<span>{escape(str(item))}</span>' for item in evidence[:3]),
-            '</div>',
-        ])
     if confidence_note:
         html.append(f'<p class="dp-confidence-note">{escape(confidence_note)}</p>')
     html.extend([
@@ -1685,10 +1665,14 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     finding_num = 0
 
     # Collect all findings across tiers into one list, then group by paragraph
-    # in document order — mirrors the /report page layout.
+    # in document order — mirrors the /report page layout. When the DeBERTa authoritative flag
+    # is on (signal_source), filter to DeBERTa findings only so the PDF matches the web page
+    # (no perplexity 'AI Likelihood' / 'Generic Phrasing' cards leaking through).
+    _is_deberta_auth = (data.get("ai_risk_badge") or {}).get("signal_source") == "deberta_authoritative"
     all_findings_flat = [
         f for tier_level in [Tier.CRITICAL, Tier.HIGH, Tier.MEDIUM, Tier.LOW]
         for f in fb.get(tier_level.value, [])
+        if not _is_deberta_auth or getattr(f, "scanner", "") == "deberta"
     ]
     _tier_order = [Tier.CRITICAL, Tier.HIGH, Tier.MEDIUM, Tier.LOW, Tier.CLEAN]
 
