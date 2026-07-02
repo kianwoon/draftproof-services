@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { SEVERITY_CONFIG } from '../pages/report/reportHelpers';
+import { SEVERITY_CONFIG, debertaSeverityColor } from '../pages/report/reportHelpers';
 
 // allow-hardcode: the string literals below are i18n translation KEYS (report.severityBar.*) and CSS
 // class names, not a detect/scoring/matching word-list. Paragraph severity is computed by the
@@ -24,7 +24,10 @@ export default function ParagraphSeverityBar({ bar, selectedId = null, onSelect 
       >
         {bar.map((segment) => {
           const clean = segment.findingCount === 0;
-          const tierColor = SEVERITY_CONFIG[segment.topTier]?.color || '#94a3b8';
+          // Prefer DeBERTa severity color (matches the full-document heatmap scale) when a
+          // DeBERTa score is present; fall back to the tier color for non-DeBERTa reports.
+          const debertaColor = debertaSeverityColor(segment.maxDebertaScore || 0);
+          const tierColor = debertaColor || SEVERITY_CONFIG[segment.topTier]?.color || '#94a3b8';
           // Density -> opacity: faint at low concentration, solid at the doc's densest paragraph.
           const opacity = clean ? 1 : 0.35 + 0.65 * Math.min(1, Math.max(0, segment.intensity));
           const tierLabel = segment.topTier

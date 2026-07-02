@@ -1369,6 +1369,7 @@ function buildParagraphSeverityBar(paragraphs) {
     let weight = 0;
     let topTier = '';
     let topRank = -1;
+    let maxDebertaScore = 0;
     signals.forEach((signal) => {
       const tier = String(signal.tier || '').toLowerCase();
       weight += PARAGRAPH_SEVERITY_TIER_WEIGHT[tier] ?? 1;
@@ -1376,6 +1377,11 @@ function buildParagraphSeverityBar(paragraphs) {
       if (rank > topRank) {
         topRank = rank;
         topTier = tier;
+      }
+      // Track the highest DeBERTa sentence score so the bar color matches the full-document
+      // heatmap (amber/orange/red by score), not just the generic tier color.
+      if (signal.key === 'ai_signal_deberta') {
+        maxDebertaScore = Math.max(maxDebertaScore, Number(signal.score) || 0);
       }
     });
     const length = Math.max(1, (paragraph.text || '').length);
@@ -1385,6 +1391,7 @@ function buildParagraphSeverityBar(paragraphs) {
       length,
       findingCount: signals.length,
       topTier,
+      maxDebertaScore,
       density: weight / length,
     };
   });
@@ -1395,10 +1402,26 @@ function buildParagraphSeverityBar(paragraphs) {
     index: row.index,
     findingCount: row.findingCount,
     topTier: row.topTier,
+    maxDebertaScore: row.maxDebertaScore,
     widthPct: (row.length / totalLength) * 100,
     // 0..1 relative heatmap: the most finding-dense paragraph reaches full intensity.
     intensity: maxDensity > 0 ? row.density / maxDensity : 0,
   }));
+}
+
+// DeBERTa score -> color, matching the full-document per-sentence heatmap scale exactly:
+// amber (80-89) < deep orange (90-98) < red (>=99). Below 80 = no color (clean).
+const DEBERTA_SEVERITY_COLORS = [
+  { min: 99, color: '#dc2626' },
+  { min: 90, color: '#f97316' },
+  { min: 80, color: '#f59e0b' },
+];
+
+function debertaSeverityColor(score) {
+  for (const { min, color } of DEBERTA_SEVERITY_COLORS) {
+    if (score >= min) return color;
+  }
+  return null;
 }
 
 function formatRewriteStatus(status, t) {
@@ -1737,6 +1760,7 @@ export {
   buildRewriteContributionOverride,
   buildSubmittedContentModel,
   buildParagraphSeverityBar,
+  debertaSeverityColor,
   isRewriteActive,
   normalizeRewriteProgressMessage,
   normalizeRewriteJob,
