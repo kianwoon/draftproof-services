@@ -1597,10 +1597,18 @@ class ReportBuilder:
         # ai_components so downstream consumers (audit, UI) can see the basis of the score. The
         # perplexity component keys are retained for fallback continuity.
         if authoritative_score and authoritative_score.get("available"):
-            ai_components["deberta_high_confidence_proportion"] = round(
-                authoritative_score["ai_likelihood_score"] * 100, 2)
+            _deb_pct = round(authoritative_score["ai_likelihood_score"] * 100, 2)
+            ai_components["deberta_high_confidence_proportion"] = _deb_pct
             ai_components["deberta_n_high_confidence"] = authoritative_score["n_high_confidence"]
             ai_components["deberta_n_scored"] = authoritative_score["n_scored"]
+            # Override the perplexity keys that feed the grounding diagnosis's llm_patterning
+            # bucket (and through it, policy_risk). Without this, policy_risk shows ~33%
+            # 'Moderate' from perplexity predictability/topk while the badge reads DeBERTa.
+            # The DeBERTa high-confidence proportion (0-100) replaces them on the same scale.
+            ai_components["predictability"] = _deb_pct
+            ai_components["topk_pattern"] = _deb_pct
+            ai_components["topk_pattern_raw"] = _deb_pct
+            ai_components["topk_calibrated_risk"] = _deb_pct
 
         writing_components = {k: round(v * 100, 2) for k, v in layer3.writing_phase.components.items()}
 
