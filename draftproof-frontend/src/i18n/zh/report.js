@@ -446,7 +446,7 @@ export const report = {
   },
   // allow-hardcode: i18n UI strings for the per-paragraph severity bar, not a detect/scoring word-list.
   "severityBar": {
-    "caption": "各段落的问题密度",
+    "caption": "全文问题密度",
     "ariaLabel": "覆盖 {{count}} 个段落的问题严重度热力图",
     "tooltip": "第 {{index}} 段：{{count}} 个问题，最严重：{{tier}}",
     "tooltipClean": "第 {{index}} 段：无问题",

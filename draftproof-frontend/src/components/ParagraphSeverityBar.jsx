@@ -43,7 +43,7 @@ export default function ParagraphSeverityBar({ bar, selectedId = null, onSelect 
           const className = `paragraph-severity-seg${selectedId === segment.id ? ' is-selected' : ''}`;
           const style = {
             width: `${segment.widthPct}%`,
-            backgroundColor: clean ? '#e2e8f0' : tierColor,
+            backgroundColor: clean ? '#22c55e' : tierColor,
             opacity,
           };
           if (interactive) {

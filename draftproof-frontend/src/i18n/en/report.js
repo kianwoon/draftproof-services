@@ -450,7 +450,7 @@ export const report = {
   },
   // allow-hardcode: i18n UI strings for the per-paragraph severity bar, not a detect/scoring word-list.
   "severityBar": {
-    "caption": "Finding density by paragraph",
+    "caption": "Finding density by document",
     "ariaLabel": "Finding-severity heatmap across {{count}} paragraphs",
     "tooltip": "Paragraph {{index}}: {{count}} finding(s), worst: {{tier}}",
     "tooltipClean": "Paragraph {{index}}: no findings",
