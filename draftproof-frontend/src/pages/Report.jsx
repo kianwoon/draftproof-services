@@ -1830,13 +1830,6 @@ export default function Report() {
         ) : (
           renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore)
         )}
-        {Array.isArray(transformation.evidence) && transformation.evidence.length > 0 && (
-          <div className="transformation-evidence">
-            {transformation.evidence.slice(0, 3).map((item) => (
-              <span key={item}>{evidenceLabel(item, t)}</span>
-            ))}
-          </div>
-        )}
       </div>
     </section>
   ) : null;
