@@ -1561,8 +1561,36 @@ class ReportBuilder:
         # existing perplexity path — zero regression.
         authoritative_score = None
         try:
-            from detect.deberta_signal import compose_authoritative  # noqa: E402
-            authoritative_score = compose_authoritative(self._original_text or "")
+            from detect.deberta_signal import (  # noqa: E402
+                _authoritative_enabled,
+                compose_from_sentences as _compose_heatmap,
+                headline_from_heatmap as _headline_from_heatmap,
+                _derive_ai_tier_deberta as _derive_deb_tier,
+            )
+            if not _authoritative_enabled():
+                raise ImportError  # skip to the except → authoritative_score stays None
+            # Compute from the SAME canonical sentences the tile/map use (structured_sentence_segments),
+            # not the naive splitter — so the badge and the tile share one sentence source and can
+            # never disagree on the proportion (the tile-vs-badge 18.75-vs-14 mismatch).
+            _canon = [
+                {"sentence_id": it.get("sentence_id"),
+                 "paragraph_id": it.get("paragraph_id") or "p001",
+                 "text": it.get("sentence", "")}
+                for it in structured_sentence_segments(self._original_text or "")
+            ]
+            if _canon:
+                _heat = _compose_heatmap(_canon)
+                _headline = _headline_from_heatmap(_heat, _canon)
+                if _headline and _headline.get("available"):
+                    authoritative_score = {
+                        "ai_likelihood_score": round(_headline["signal_pct"] / 100, 4),
+                        "tier": _derive_deb_tier(_headline["signal_pct"] / 100),
+                        "n_high_confidence": _headline.get("sentences_flagged", 0),
+                        "n_scored": _headline.get("sentences_scored", 0),
+                        "confidence": _headline.get("confidence", "low"),
+                        "model_version": _headline.get("model_version"),
+                        "available": True,
+                    }
         except Exception:
             authoritative_score = None
         if authoritative_score and authoritative_score.get("available"):

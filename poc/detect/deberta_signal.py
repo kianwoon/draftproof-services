@@ -128,26 +128,20 @@ def _build_headline(scored_sentences: list[tuple]) -> dict:
     headline math is IDENTICAL regardless of which sentence splitter produced the inputs —
     eliminating the tile-vs-map inconsistency that arose from two different splitters.
 
-    SINGLE FLAG DEFINITION: a sentence is "flagged" iff its band is non-clean, i.e. score
-    >= the same 0.50 clean cutoff the Signal-highlights map uses (band_for_sentence). This
-    guarantees the tile's flagged_passages and the map's highlighted sentences are the SAME
-    set — they can never point at different paragraphs. The high-confidence bar (>=0.99) is
-    still reported (n_high_confidence) for the caveat, but it no longer defines "flagged"."""
+    SINGLE FLAG DEFINITION: a sentence is "flagged" iff score >= SENT_THRESHOLD (0.99 — the
+    high-confidence band). This MATCHES the authoritative badge's signal_pct so the tile and
+    the badge never show different numbers for the same classifier. The Signal-highlights MAP
+    uses a different lens (the >=0.80 graduated heatmap) for visualization — that's a separate
+    purpose and does not feed this number."""
     n_scored = len(scored_sentences)
-    # Flagged = any non-clean band (>= the HEAT clean cutoff 0.80). This is the SAME set the
-    # map colors/highlights, so tile and map always agree on WHICH passages.
     flagged = [(sid, s, txt) for sid, s, txt in scored_sentences
-               if s is not None and band_for_sentence(s) != "clean"]
+               if s is not None and s >= SENT_THRESHOLD]
     n_flagged = len(flagged)
-    # High-confidence count (>=0.99) — kept for the caveat, not the "flagged" definition.
-    n_high_confidence = sum(1 for _, s, _ in flagged if s >= SENT_THRESHOLD)
+    n_high_confidence = n_flagged  # by definition, all flagged are high-confidence now
     signal_pct = round(100.0 * n_flagged / n_scored) if n_scored else 0
 
-    # DISPLAYED passages: only the high-confidence ones (>= SENT_THRESHOLD). The count fields
-    # above stay unified with the map (all non-clean); the passages list surfaces the few the
-    # classifier is most sure about, not a wall of every mildly-flagged sentence.
-    high_confidence = [(sid, s, txt) for sid, s, txt in flagged if s >= SENT_THRESHOLD]
-    flagged_sorted = sorted(high_confidence, key=lambda t: t[1], reverse=True)[:_MAX_FLAGGED_PERSISTED]
+    # DISPLAYED passages: all flagged (all are high-confidence >= SENT_THRESHOLD).
+    flagged_sorted = sorted(flagged, key=lambda t: t[1], reverse=True)[:_MAX_FLAGGED_PERSISTED]
     flagged_passages = [
         {"sentence_id": sid, "score": round(float(s), 3), "text": txt}
         for sid, s, txt in flagged_sorted
@@ -157,15 +151,15 @@ def _build_headline(scored_sentences: list[tuple]) -> dict:
     above_floor = band != "insufficient"
     confidence = "medium" if above_floor else "low"
     caveat = (
-        f"{signal_pct}% of passages ({n_flagged} of {n_scored}) read as AI-like under a second "
-        f"detector — {n_high_confidence} at high confidence (>= {SENT_THRESHOLD:.0%}). "
+        f"{signal_pct}% of passages ({n_flagged} of {n_scored}) read as high-confidence AI "
+        f"(>= {SENT_THRESHOLD:.0%}) under a second detector. "
         "Advisory only — post-hoc detectors miss paraphrased text and carry residual ESL bias; "
         "review the flagged passages rather than treating the number as a verdict."
         if above_floor else
-        f"{n_flagged} of {n_scored} passages read as AI-like under a second detector "
-        f"({n_high_confidence} at high confidence, >= {SENT_THRESHOLD:.0%}). Below the "
-        f"{DOC_FLOOR_PCT}% reliability floor, so this signal offers no overall verdict. "
-        "The passages below are worth reviewing; 'no verdict' is not the same as 'clean'."
+        f"{n_flagged} of {n_scored} passages read as high-confidence AI (>= {SENT_THRESHOLD:.0%}) "
+        f"under a second detector. Below the {DOC_FLOOR_PCT}% reliability floor, so this signal "
+        "offers no overall verdict. The passages below are worth reviewing; 'no verdict' is not "
+        "the same as 'clean'."
     )
 
     return {
