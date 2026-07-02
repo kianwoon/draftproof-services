@@ -1220,19 +1220,26 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
     )
     action_label = _ACTIONABILITY_LABELS.get(primary_action, primary_action.replace("_", " ").title())
 
-    # Explanation fields
+    # Guidance fields — DeBERTa-native first (consistent with the web UI's learned-classifier
+    # methodology), falling back to the perplexity-fed LLM explanation only when DeBERTa is absent
+    # (e.g. older reports). main_issue/why_flagged/rewrite_hint have no DeBERTa equivalent, so they
+    # surface only from the LLM and are intentionally left empty under the DeBERTa-only contract.
+    deberta_summary = group.get("deberta_reader_summary") or ""
+    deberta_rec = group.get("deberta_recommendation") or ""
     expl = group.get("explanation") or {}
     if isinstance(expl, dict):
-        summary = expl.get("reader_summary") or expl.get("summary") or ""
+        llm_summary = expl.get("reader_summary") or expl.get("summary") or ""
         main_issue = expl.get("main_issue") or ""
         why_flagged = expl.get("why_flagged") or []
-        recommendation = expl.get("recommendation") or ""
+        llm_rec = expl.get("recommendation") or ""
         rewrite_hint = expl.get("rewrite_hint") or ""
     else:
-        summary = main_issue = recommendation = rewrite_hint = ""
+        llm_summary = main_issue = llm_rec = rewrite_hint = ""
         why_flagged = []
+    summary = deberta_summary or llm_summary
+    recommendation = deberta_rec or llm_rec
 
-    # Fallbacks when explainer hasn't run
+    # Fallbacks when no guidance is available at all
     if not summary:
         summary = "; ".join(
             _translate_detail(f.detail) for f in group_findings if f.detail
@@ -1242,6 +1249,13 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
             _translate_recommendation(f.recommendation)
             for f in group_findings if f.recommendation
         )[:300]
+
+    # When DeBERTa-native guidance is active, suppress the LLM-only fields (main_issue/why_flagged/
+    # rewrite_hint) so the card doesn't mix perplexity advice next to learned-classifier text.
+    if deberta_summary or deberta_rec:
+        main_issue = ""
+        why_flagged = []
+        rewrite_hint = ""
 
     def _e(text: str) -> str:
         from html import escape
@@ -1515,6 +1529,12 @@ def _paragraph_finding_groups(findings: list, data: dict) -> list[dict]:
                 "text": paragraph.get("text") or (segment or {}).get("text") or finding.evidence,
                 "findings": [],
                 "explanation": explanation_map.get(paragraph_id),
+                # DeBERTa-native guidance (the same source the web UI uses). Preferred over the
+                # perplexity-fed LLM explanation for consistency with the learned-classifier
+                # methodology; the LLM fields below remain only as a fallback when DeBERTa is absent.
+                "deberta_reader_summary": paragraph.get("reader_summary"),
+                "deberta_recommendation": paragraph.get("recommendation"),
+                "deberta_flagged_sentences": paragraph.get("flagged_sentences") or [],
             }
             groups[key] = group
             ordered_keys.append(key)
