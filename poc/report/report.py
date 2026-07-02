@@ -1507,18 +1507,13 @@ class ReportBuilder:
         )
 
         layer3 = Layer3Scorer().score(layer3_input)
-        transformation = classify_transformation_from_scan(
-            layer3_input,
-            layer3,
-            similarity_summary=self._sim_summary,
-        )
 
         # DeBERTa authoritative override (gated, fail-open). When the flag is ON and DeBERTa
         # returns a score, the authoritative ai_likelihood_score + tier come from the learned
         # classifier's >=0.99 high-confidence proportion (the FAIR operating point, ~1-3% ESL FPR),
         # NOT the perplexity Layer3 math. When the flag is off or DeBERTa is unavailable (short
         # text / model error), authoritative_score stays None and everything falls through to the
-        # existing perplexity path — zero regression. Flag default OFF until SCoCESLE Phase 3 gates.
+        # existing perplexity path — zero regression.
         authoritative_score = None
         try:
             from detect.deberta_signal import compose_authoritative  # noqa: E402
@@ -1530,9 +1525,22 @@ class ReportBuilder:
             _deb_tier = authoritative_score["tier"]
             authoritative_ai_likelihood = round(_deb_score * 100, 2)
             authoritative_tier = _deb_tier
+            # Override the Layer3 result's score so EVERY downstream consumer — the transformation
+            # classification, submission risk, badge, reason codes — all see the SAME DeBERTa
+            # authoritative score. Without this, the Writing-signal pattern would still read the
+            # perplexity score (0.318) while the badge reads DeBERTa (0.1875) — two verdicts on
+            # one page. The tier is left to _derive_ai_tier_deberta at badge-build time.
+            from dataclasses import replace as _dc_replace
+            layer3 = _dc_replace(layer3, ai_likelihood_score=_deb_score)
         else:
             authoritative_ai_likelihood = None
             authoritative_tier = None
+
+        transformation = classify_transformation_from_scan(
+            layer3_input,
+            layer3,
+            similarity_summary=self._sim_summary,
+        )
 
         ai_components = {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()}
         ai_components["topk_authorship_component"] = ai_components.get("topk_pattern")
