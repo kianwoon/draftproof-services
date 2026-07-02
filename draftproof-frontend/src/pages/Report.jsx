@@ -936,14 +936,23 @@ export default function Report() {
     badge.ai_components,
     badge.writing_components
   ) || {};
-  const authorshipRating = translateAuthorshipRating(deriveCalibratedAuthorshipRating(
-    calibratedAuthorshipRisk,
-    topkPatternScore,
-    topkCalibratedRisk,
-    authorshipFeatures,
-    originalDocumentContext,
-    originalComparisonBadge.ai_components?.topk_calibration_eligible
-  ) || storedAuthorshipRating, t);
+  // When the backend produced a DeBERTa-authoritative rating, use it directly — the frontend's
+  // deriveCalibratedAuthorshipRating recomputes from perplexity components (calibratedAuthorshipRisk),
+  // which would override the DeBERTa score with a perplexity one (~33% Moderate vs 18.75 amber).
+  const isDebertaAuthoritative = badge.signal_source === 'deberta_authoritative';
+  const authorshipRating = translateAuthorshipRating(
+    isDebertaAuthoritative
+      ? (badge.authorship_rating || storedAuthorshipRating)
+      : (deriveCalibratedAuthorshipRating(
+          calibratedAuthorshipRisk,
+          topkPatternScore,
+          topkCalibratedRisk,
+          authorshipFeatures,
+          originalDocumentContext,
+          originalComparisonBadge.ai_components?.topk_calibration_eligible
+        ) || storedAuthorshipRating),
+    t,
+  );
   const authorshipTone = getAuthorshipTone(authorshipRating);
   const authorshipRatingFullLabel = authorshipRating.label || badge.authorship_rating_label || null;
   const authorshipRatingLabel = authorshipRating.short_label || authorshipRatingFullLabel;
