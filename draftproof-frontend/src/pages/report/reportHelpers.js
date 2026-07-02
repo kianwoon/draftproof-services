@@ -1183,11 +1183,22 @@ function mergeParagraphSignals(segments) {
         recommendations: [],
       };
       current.count += 1;
-      current.score = Math.max(current.score || 0, signal.score || 0);
       current.finding_ids.push(signal.finding_id);
       current.sentence_ids.push(segment.sentence_id);
       current.descriptions.push(signal.description);
       current.recommendations.push(signal.recommendation);
+      // The dominant (highest-score) sentence of this key drives the tier/label/summary so the
+      // merged signal is coherent — a paragraph with a 100% sentence must read "high", not "low".
+      // The FIRST encountered signal seeded {tier,label,...} above; adopt the stronger one's.
+      if ((signal.score || 0) > (current.score || 0)) {
+        current.score = signal.score;
+        current.tier = signal.tier;
+        current.label = signal.label;
+        current.color = signal.color;
+        current.description = signal.description;
+        current.reader_summary = signal.reader_summary;
+        current.recommendation = signal.recommendation;
+      }
       grouped.set(signal.key, current);
     });
   });
