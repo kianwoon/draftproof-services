@@ -74,11 +74,6 @@ export default function ReportHero({
               <div className="report-hero-stat">
                 <span>{t('report.summary.riskTier')}</span>
                 <strong style={{ color: tier.color }}>{t(`report.tiers.${report.tier}`, { defaultValue: tier.label })}</strong>
-                {report?.ai_risk_badge?.verdict_low_confidence && (
-                  <em className="report-hero-low-confidence" style={{ display: 'block', marginTop: '4px', fontStyle: 'normal', fontSize: '12px', lineHeight: 1.4, color: 'var(--color-text-secondary, #64748b)', maxWidth: '34ch' }}>
-                    {t('report.summary.lowConfidence')}
-                  </em>
-                )}
               </div>
               <div className="report-hero-stat">
                 <span>{t('report.summary.writingScore')}</span>
