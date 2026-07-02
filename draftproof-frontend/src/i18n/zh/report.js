@@ -158,7 +158,6 @@ export const report = {
   "transformation": {
     "scorecard": "转换模式评分卡",
     "kicker": "写作信号模式",
-    "methodNote": "对困惑度（perplexity）与节奏均一性的统计分析——这是较早期的一类检测方法，现代工具（如 Turnitin）已转向学习型分类器。此处出于透明度展示，并非 Turnitin 预测：它会对流利写作和 ESL 写作过度标记，因此请将其视为粗略信号，而非判定。",
     "originalVsRewritten": "原始与改写模式对比",
     "patternAnalysis": "模式分析",
     "rewrittenOutcome": "改写结果",

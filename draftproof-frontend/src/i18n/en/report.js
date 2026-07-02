@@ -161,7 +161,6 @@ export const report = {
   "transformation": {
     "scorecard": "Transformation pattern scorecard",
     "kicker": "Writing-signal pattern",
-    "methodNote": "A statistical read of perplexity and rhythm uniformity — the older class of detector that modern tools like Turnitin have moved beyond in favour of learned classifiers. Included for transparency, not as a Turnitin prediction: it over-flags fluent and ESL writing, so treat it as a coarse signal, not a verdict.",
     "originalVsRewritten": "Original vs rewritten pattern",
     "patternAnalysis": "Pattern analysis",
     "rewrittenOutcome": "Rewritten Outcome",
