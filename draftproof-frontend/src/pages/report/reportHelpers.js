@@ -1245,11 +1245,16 @@ function buildSubmittedContentModel(report) {
     segments = rawSegments
       .map((segment, index) => {
         const sentenceId = segment.sentence_id || segment.segment_id || `s${index + 1}`;
+        // DeBERTa-only contract: the Signal-highlights section shows ONLY the learned-
+        // classifier signal on each segment (the backend emits ai_signal_deberta as the sole
+        // signal). The legacy perplexity/genericity issues must NOT be injected here — doing so
+        // made the legend mix "Learned-classifier AI signal" + "Predictability" + "Genericity"
+        // chips (three methodologies) and contradict the Second-opinion tile. Those legacy
+        // findings remain available elsewhere (issue-card guidance), not as highlight signals.
         const directSignals = Array.isArray(segment.signals) ? segment.signals : [];
-        const fallbackSignals = issuesBySentence.get(sentenceId) || [];
-        const signals = directSignals.length
-          ? directSignals.map((signal) => normalizeSignal(signal, issueById.get(String(signal.finding_id)) || {}))
-          : fallbackSignals.map((issue) => normalizeSignal({}, issue));
+        const signals = directSignals
+          .map((signal) => normalizeSignal(signal, issueById.get(String(signal.finding_id)) || {}))
+          .filter((signal) => signal.key === 'ai_signal_deberta');
         const primarySignal = signals[0] || null;
         return {
           id: segment.segment_id || sentenceId,
@@ -1263,20 +1268,18 @@ function buildSubmittedContentModel(report) {
       })
       .filter((segment) => segment.text);
   } else if (results.sentence_map && typeof results.sentence_map === 'object') {
+    // Legacy reports predate segment-level DeBERTa signals. Leave these plain rather than
+    // resurrecting perplexity issues as highlight colors (same DeBERTa-only contract).
     segments = Object.entries(results.sentence_map)
-      .map(([sentenceId, sentence], index) => {
-        const fallbackSignals = issuesBySentence.get(sentenceId) || [];
-        const signals = fallbackSignals.map((issue) => normalizeSignal({}, issue));
-        return {
-          id: sentenceId,
-          sentence_id: sentenceId,
-          paragraph_id: sentence.paragraph_id || 'p001',
-          start_char: sentence.start_char ?? index,
-          text: sentence.text || '',
-          signals,
-          primarySignal: signals[0] || null,
-        };
-      })
+      .map(([sentenceId, sentence], index) => ({
+        id: sentenceId,
+        sentence_id: sentenceId,
+        paragraph_id: sentence.paragraph_id || 'p001',
+        start_char: sentence.start_char ?? index,
+        text: sentence.text || '',
+        signals: [],
+        primarySignal: null,
+      }))
       .filter((segment) => segment.text)
       .sort((a, b) => a.start_char - b.start_char);
   }
