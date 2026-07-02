@@ -217,7 +217,15 @@ def render_scan_lead(report, data) -> str:
         f'<div class="dp-hero dp-hero--{_level_kind(sr_level)}">'
         f'<p class="dp-hero-read">{escape(read)}</p>'
         f'<p class="dp-hero-sub">{escape(sub)}</p>'
-        '<div class="dp-chip-strip">'
+        + (
+            # Tier reason (matches the web page's overall_tier_reason): explains WHY the tier
+            # is what it is — e.g. "the learned classifier is >=99% confident that 2 of 14
+            # sentences are AI-generated (14% high-confidence)". Only shown when present.
+            f'<p class="dp-hero-reason">{escape(tier_reason)}</p>'
+            if (tier_reason := str(data.get("overall_tier_reason") or "").strip())
+            else ""
+        )
+        + '<div class="dp-chip-strip">'
         + "".join(_statchip(t, k) for t, k in chips)
         + "</div></div>"
     )
