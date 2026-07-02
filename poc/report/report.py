@@ -1513,12 +1513,41 @@ class ReportBuilder:
             similarity_summary=self._sim_summary,
         )
 
+        # DeBERTa authoritative override (gated, fail-open). When the flag is ON and DeBERTa
+        # returns a score, the authoritative ai_likelihood_score + tier come from the learned
+        # classifier's >=0.99 high-confidence proportion (the FAIR operating point, ~1-3% ESL FPR),
+        # NOT the perplexity Layer3 math. When the flag is off or DeBERTa is unavailable (short
+        # text / model error), authoritative_score stays None and everything falls through to the
+        # existing perplexity path — zero regression. Flag default OFF until SCoCESLE Phase 3 gates.
+        authoritative_score = None
+        try:
+            from detect.deberta_signal import compose_authoritative  # noqa: E402
+            authoritative_score = compose_authoritative(self._original_text or "")
+        except Exception:
+            authoritative_score = None
+        if authoritative_score and authoritative_score.get("available"):
+            _deb_score = authoritative_score["ai_likelihood_score"]
+            _deb_tier = authoritative_score["tier"]
+            authoritative_ai_likelihood = round(_deb_score * 100, 2)
+            authoritative_tier = _deb_tier
+        else:
+            authoritative_ai_likelihood = None
+            authoritative_tier = None
+
         ai_components = {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()}
         ai_components["topk_authorship_component"] = ai_components.get("topk_pattern")
         ai_components.update(topk_calibration)
         # Compatibility: topk_pattern remains the raw scanner score. The
         # calibrated risk is a separate safe-band gate.
         ai_components["topk_pattern"] = topk_calibration.get("topk_pattern_raw", raw_topk_pattern)
+        # When the DeBERTa authoritative path is active, record its high-confidence counts in
+        # ai_components so downstream consumers (audit, UI) can see the basis of the score. The
+        # perplexity component keys are retained for fallback continuity.
+        if authoritative_score and authoritative_score.get("available"):
+            ai_components["deberta_high_confidence_proportion"] = round(
+                authoritative_score["ai_likelihood_score"] * 100, 2)
+            ai_components["deberta_n_high_confidence"] = authoritative_score["n_high_confidence"]
+            ai_components["deberta_n_scored"] = authoritative_score["n_scored"]
 
         writing_components = {k: round(v * 100, 2) for k, v in layer3.writing_phase.components.items()}
 
@@ -1564,8 +1593,10 @@ class ReportBuilder:
         # estimate, or any gate (see detect.submission_risk). Declaration/policy stay
         # 'unknown -- self-declare' (text cannot reveal them).
         submission_risk = score_submission_risk(
-            ai_likelihood_score=round(layer3.ai_likelihood_score * 100, 2),
-            ai_tier=layer3.tier.value,
+            ai_likelihood_score=(authoritative_ai_likelihood
+                                 if authoritative_ai_likelihood is not None
+                                 else round(layer3.ai_likelihood_score * 100, 2)),
+            ai_tier=(authoritative_tier or layer3.tier.value),
             critical_thinking_control=critical_thinking_control,
             axis_scores=axis_scores,
             scored_sentence_count=len(_pred_sentences) if _pred_sentences else None,
@@ -1581,9 +1612,16 @@ class ReportBuilder:
         )
 
         ai_risk_badge = {
-            # AI Generation (Phase 1)
-            "tier": layer3.tier.value,
-            "ai_likelihood_score": round(layer3.ai_likelihood_score * 100, 2),
+            # AI Generation (Phase 1). When the DeBERTa authoritative flag is on, tier + score
+            # come from the learned classifier's >=0.99 proportion (fair operating point); else
+            # the perplexity Layer3 math. The signal_source field records which path produced
+            # the authoritative numbers so the UI / audit can tell.
+            "tier": authoritative_tier or layer3.tier.value,
+            "ai_likelihood_score": (authoritative_ai_likelihood
+                                    if authoritative_ai_likelihood is not None
+                                    else round(layer3.ai_likelihood_score * 100, 2)),
+            "signal_source": ("deberta_authoritative" if authoritative_ai_likelihood is not None
+                              else "perplexity_layer3"),
             "external_detector_estimate": external_detector_estimate,
             "grounding_diagnosis": grounding_diagnosis,
             "critical_thinking_control": critical_thinking_control,
@@ -1670,18 +1708,42 @@ class ReportBuilder:
         reason_codes = []
         rewrite_decision = self._summaries.get("rewrite_decision") or {}
         rewrite_is_recommended = bool(rewrite_decision.get("run_rewrite"))
-        if not has_high_critical:
-            reason_codes.append("no_high_or_critical_findings")
-        if badge_ai_score < 0.25:
-            reason_codes.append("low_ai_pattern_score")
-        if axis_scores.get("domain_grounding") == "strong":
-            reason_codes.append("strong_domain_grounding")
-        if len(review_only) > len(auto_fixable) + len(manual_required):
-            reason_codes.append("mostly_review_only_findings")
-        if pred_meta_risk < 0.40:
-            reason_codes.append("predictability_unconfirmed")
-        if not rewrite_is_recommended:
-            reason_codes.append("rewrite_not_recommended")
+        # When the DeBERTa authoritative path produced the score, the reason text/codes must
+        # reflect THAT signal (high-confidence sentence counts), not the perplexity findings
+        # (pred_meta_risk / predictability_unconfirmed), so the explanation matches the score.
+        is_deberta_authoritative = ai_risk_badge.get("signal_source") == "deberta_authoritative"
+        if is_deberta_authoritative and authoritative_score and authoritative_score.get("available"):
+            n_hc = authoritative_score["n_high_confidence"]
+            n_sc = authoritative_score["n_scored"]
+            overall_tier_reason = (
+                f"Overall tier is {adjusted_tier.value.upper()}: the learned classifier is "
+                f">=99% confident that {n_hc} of {n_sc} sentences are AI-generated "
+                f"({badge_ai_score:.0%} high-confidence). The perplexity-family signal is "
+                f"retained as a secondary read but does not set this score."
+            )
+            if not has_high_critical:
+                reason_codes.append("no_high_or_critical_findings")
+            if axis_scores.get("domain_grounding") == "strong":
+                reason_codes.append("strong_domain_grounding")
+            if len(review_only) > len(auto_fixable) + len(manual_required):
+                reason_codes.append("mostly_review_only_findings")
+            if n_hc == 0:
+                reason_codes.append("deberta_no_high_confidence_sentences")
+            if not rewrite_is_recommended:
+                reason_codes.append("rewrite_not_recommended")
+        else:
+            if not has_high_critical:
+                reason_codes.append("no_high_or_critical_findings")
+            if badge_ai_score < 0.25:
+                reason_codes.append("low_ai_pattern_score")
+            if axis_scores.get("domain_grounding") == "strong":
+                reason_codes.append("strong_domain_grounding")
+            if len(review_only) > len(auto_fixable) + len(manual_required):
+                reason_codes.append("mostly_review_only_findings")
+            if pred_meta_risk < 0.40:
+                reason_codes.append("predictability_unconfirmed")
+            if not rewrite_is_recommended:
+                reason_codes.append("rewrite_not_recommended")
 
         # Inject detect scan scores into the rewrite summary so the rewrite report shows
         # the same risk scores the user sees in the scan report. Must run BEFORE the

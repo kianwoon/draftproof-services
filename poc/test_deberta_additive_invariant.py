@@ -68,13 +68,16 @@ def test_additive_invariant():
                json.dumps(on.get("rewrite_decision"), sort_keys=True, default=str), \
                "rewrite_decision changed"
 
-    # 4. The ONLY new badge key is ai_signal_deberta (nothing else added/removed).
+    # 4. The ONLY new badge key is ai_signal_deberta (signal_source is always present, both paths).
     assert set(on_badge) - set(off_badge) == {"ai_signal_deberta"}, (
         f"unexpected new keys: {set(on_badge) - set(off_badge)}"
     )
     assert set(off_badge) - set(on_badge) == set(), (
         f"keys dropped: {set(off_badge) - set(on_badge)}"
     )
+    # Both paths carry signal_source; with the authoritative flag off it must read perplexity.
+    assert off_badge.get("signal_source") == "perplexity_layer3", off_badge.get("signal_source")
+    assert on_badge.get("signal_source") == "perplexity_layer3", on_badge.get("signal_source")
 
     # 5. The new field is a valid schema and present only when ON.
     assert "ai_signal_deberta" in on_badge
@@ -87,7 +90,30 @@ def test_additive_invariant():
     assert isinstance(sig.get("flagged_passages"), list)
 
 
+def test_authoritative_flag_feeds_tier():
+    """With DRAFTPROOF_DEBERTA_AUTHORITATIVE on, DeBERTa DOES feed ai_likelihood_score + tier
+    (the >=0.99 high-confidence proportion). This proves the wiring; fairness is the Phase-3
+    SCoCESLE gate's job, not this test's. Stubs every window at 1.0 so 100% of sentences clear
+    the >=0.99 bar → score ~1.0, tier 'red' — unambiguous."""
+    runner = DetectionRunner()
+    # Stub so every window scores 1.0 → every sentence >=0.99 → proportion ~1.0.
+    deberta_signal.score_windows = lambda _w: [1.0] * len(_w)
+    os.environ["DRAFTPROOF_DEBERTA_SIGNAL"] = "1"
+    os.environ["DRAFTPROOF_DEBERTA_AUTHORITATIVE"] = "1"
+    try:
+        result = _scan(runner)
+        badge = result.get("ai_risk_badge") or {}
+        assert badge.get("signal_source") == "deberta_authoritative", badge.get("signal_source")
+        assert badge.get("tier") == "red", badge.get("tier")
+        assert badge["ai_likelihood_score"] >= 90, badge.get("ai_likelihood_score")
+    finally:
+        os.environ.pop("DRAFTPROOF_DEBERTA_AUTHORITATIVE", None)
+
+
 if __name__ == "__main__":
     test_additive_invariant()
     print("test_additive_invariant PASSED")
     print("ADDITIVE INVARIANT HOLDS — DeBERTa field does not leak into any decision field.")
+    test_authoritative_flag_feeds_tier()
+    print("test_authoritative_flag_feeds_tier PASSED")
+    print("AUTHORITATIVE WIRING CONFIRMED — flag-on path feeds the tier from DeBERTa.")

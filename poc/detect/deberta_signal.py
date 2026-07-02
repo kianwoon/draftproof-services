@@ -295,3 +295,85 @@ def headline_from_heatmap(heatmap: dict | None, sentences: list[dict]) -> dict |
         return None
     return _build_headline(scored_tuples)
 
+
+# ─── Authoritative-tier signal (>=0.99 high-confidence proportion) ────────────
+#
+# DISTINCT from compose() (display, >=0.80) and headline_from_heatmap(): the authoritative
+# tier must be FAIR above all — the >=0.80 cutoff carries ~20% ESL FPR (1 in 5 ESL essays),
+# which is unacceptable for a score that can flag a submission. The >=0.99 high-confidence
+# band carries ~1-3% ESL FPR (per the SCoCESLE gate), so the authoritative score is the
+# PROPORTION of sentences in that band, not the >=0.80 proportion the heatmap shows.
+#
+# This is gated behind DRAFTPROOF_DEBERTA_AUTHORITATIVE (default off) and fail-opens to None
+# (caller falls back to the existing perplexity Layer3 path) on short text or model error.
+
+# Tier cutoffs for the >=0.99 proportion score. Tuned for the PROPORTION scale (0-1), distinct
+# from Layer3's 0.32/0.48/0.65 (which were calibrated to a deflated perplexity weighted average).
+# These are PROVISIONAL pending Phase 3 SCoCESLE validation — the flag stays off until gated.
+_AUTHORITATIVE_CUTOFFS = (0.10, 0.25, 0.50)  # green / amber / orange / red
+
+
+def _authoritative_enabled() -> bool:
+    return os.getenv("DRAFTPROOF_DEBERTA_AUTHORITATIVE", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _derive_ai_tier_deberta(score: float) -> str:
+    """Map the >=0.99 high-confidence PROPORTION (0-1) to a tier name.
+
+    Distinct from Layer3._derive_ai_tier (0.32/0.48/0.65 on a deflated weighted average). The
+    proportion of >=0.99 sentences reads on a different scale: a document where 1 in 7 sentences
+    is high-confidence AI is already notable, so the cutoffs are tighter. PROVISIONAL — validate
+    against SCoCESLE before enabling the flag."""
+    if score is None:
+        return "green"
+    if score >= _AUTHORITATIVE_CUTOFFS[2]:
+        return "red"
+    if score >= _AUTHORITATIVE_CUTOFFS[1]:
+        return "orange"
+    if score >= _AUTHORITATIVE_CUTOFFS[0]:
+        return "amber"
+    return "green"
+
+
+def compose_authoritative(text: str) -> dict | None:
+    """Authoritative-tier DeBERTa score: the proportion of HIGH-CONFIDENCE (>=0.99) sentences.
+
+    Returns None (fail-open → caller falls back to the perplexity Layer3 path) when:
+      - the authoritative flag is off
+      - the text is too short (< _MIN_WORDS)
+      - the model is unavailable or inference fails
+
+    This is the FAIR operating point (~1-3% ESL FPR), distinct from compose()'s >=0.80 display
+    proportion (~20% ESL FPR). The two serve different jobs: this one can flag a submission;
+    compose()'s is for visualization only.
+
+    Output: {ai_likelihood_score: float 0-1, tier: str, n_high_confidence: int,
+             n_scored: int, confidence: str, model_version: str, available: bool}"""
+    if not _authoritative_enabled() or _word_count(text) < _MIN_WORDS:
+        return None
+    try:
+        sents = split_sentences(text)
+        windows = build_windows(sents, size=3, step=1)
+        probs = score_windows(windows)
+        if probs is None:
+            return None
+        agg = aggregate(sents, windows, probs, size=3, step=1)
+        sentence_scores = [s for s in agg["sentence_scores"] if s is not None]
+        if not sentence_scores:
+            return None
+        n_scored = len(sentence_scores)
+        n_high_confidence = sum(1 for s in sentence_scores if s >= SENT_THRESHOLD)
+        score = n_high_confidence / n_scored if n_scored else 0.0
+        return {
+            "ai_likelihood_score": round(score, 4),
+            "tier": _derive_ai_tier_deberta(score),
+            "n_high_confidence": n_high_confidence,
+            "n_scored": n_scored,
+            "confidence": "medium" if score >= _AUTHORITATIVE_CUTOFFS[0] else "low",
+            "model_version": MODEL_VERSION,
+            "available": True,
+        }
+    except Exception as e:  # noqa: BLE001 — fail-open, never break the scan
+        logger.warning("[deberta] compose_authoritative failed (fail-open): %s", e)
+        return None
+
