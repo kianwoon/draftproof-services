@@ -118,3 +118,43 @@ AI recall — the bottom ~10% of AI essays now read green/acceptable on this adv
 (~0.4% of ESL essays still false-flag at the very top, the monotonic ceiling). Acceptable for
 an advisory comparison score alongside the composite (which has its own detection).
 
+---
+
+## Authoritative-tier elevation (2026-07-02) — Phase 3 fairness gate
+
+Run: `poc/calibration/deberta_authoritative_gate.py` over SCoCESLE
+(139 higher + 129 lower proficiency, 4 dropped <150w) + 65 AI.
+
+The authoritative signal is the **>=0.99 high-confidence PROPORTION** (not the >=0.80 display
+proportion, and NOT calibrated — isotonic calibration was abandoned as a proven dead end, see
+`deberta_fit_calibrator_windows.py` docstring). Fairness comes from the threshold.
+
+| metric | value |
+|---|---|
+| ESL FPR @ >=25% (AMBER cutoff) | **2.6%** |
+| ESL FPR @ >=10% (GREEN/AMBER line) | 7.8% |
+| ESL FPR @ >=50% (ORANGE cutoff) | 1.1% |
+| higher-prof FPR @ >=25% | 4.3% |
+| lower-prof FPR @ >=25% (at-risk) | **0.8%** |
+| parity gap (lower − higher) | **−3.5 pts** (lower-prof flagged LESS — favorable) |
+| AUC (AI vs human) | **0.9973** |
+| human proportion: mean / p90 / max | 2.4% / 7.7% / 100.0% |
+| ai proportion: mean / p10 | 95.8% / 100.0% |
+
+### Decision
+
+**GATE PASSES.** ESL FPR @ the AMBER cutoff = 2.6% (≤3.0% required). The at-risk lower-
+proficiency subgroup is flagged LESS than higher-proficiency (parity gap −3.5, favorable
+direction — the opposite of bias). AUC 0.997 = near-perfect separation.
+
+The >=0.99 high-confidence proportion is fair enough to serve as the authoritative
+`ai_likelihood_score`, gated behind `DRAFTPROOF_DEBERTA_AUTHORITATIVE`. The provisional tier
+cutoffs (`<0.10 GREEN, <0.25 AMBER, <0.50 ORANGE, >=0.50 RED`) are confirmed: at 25% the all-
+ESL FPR is 2.6%; at 10% it rises to 7.8% (the GREEN/AMBER boundary is the noisier band, which
+is acceptable since GREEN is not an accusation).
+
+Honest trade-off: the >=0.99 bar misses paraphrased/humanized AI (AI recall cost). AI mean
+proportion is 95.8% but the bottom tail of AI essays reads low — the detector localizes clean
+AI text well but, like all post-hoc statistical detectors, is not complete. The perplexity
+Layer3 path remains as the fallback when DeBERTa is unavailable (short text / model error).
+
