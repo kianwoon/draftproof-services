@@ -143,9 +143,11 @@ def _build_headline(scored_sentences: list[tuple]) -> dict:
     n_high_confidence = sum(1 for _, s, _ in flagged if s >= SENT_THRESHOLD)
     signal_pct = round(100.0 * n_flagged / n_scored) if n_scored else 0
 
-    # Flagged passages: highest score first, capped. Carry the sentence_id the caller passed
-    # (canonical sNNN from the report, or an integer index from compose()'s naive split).
-    flagged_sorted = sorted(flagged, key=lambda t: t[1], reverse=True)[:_MAX_FLAGGED_PERSISTED]
+    # DISPLAYED passages: only the high-confidence ones (>= SENT_THRESHOLD). The count fields
+    # above stay unified with the map (all non-clean); the passages list surfaces the few the
+    # classifier is most sure about, not a wall of every mildly-flagged sentence.
+    high_confidence = [(sid, s, txt) for sid, s, txt in flagged if s >= SENT_THRESHOLD]
+    flagged_sorted = sorted(high_confidence, key=lambda t: t[1], reverse=True)[:_MAX_FLAGGED_PERSISTED]
     flagged_passages = [
         {"sentence_id": sid, "score": round(float(s), 3), "text": txt}
         for sid, s, txt in flagged_sorted

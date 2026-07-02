@@ -1321,10 +1321,16 @@ function buildSubmittedContentModel(report) {
     paragraph.sentence_ids = uniqueCompact(paragraph.segments.map((segment) => segment.sentence_id));
     paragraph.signalCount = paragraph.segments.reduce((count, segment) => count + segment.signals.length, 0);
     paragraph.flaggedSentences = flaggedSentences;
-    // Paragraph-dominant guidance from the strongest flagged sentence (DeBERTa-native).
+    // Paragraph-dominant guidance from the strongest flagged sentence (DeBERTa-native). The
+    // band-level text is templated, so we anchor it to the actual sentence the classifier flagged
+    // — naming the words to change makes the advice concrete instead of generic boilerplate.
     const top = flaggedSentences[0];
-    paragraph.readerSummary = top?.reader_summary || '';
-    paragraph.recommendation = top?.recommendation || '';
+    const topSnippet = top?.text ? `"${top.text.split(/\s+/).slice(0, 14).join(' ')}${top.text.split(/\s+/).length > 14 ? '…' : ''}"` : '';
+    const flaggedCount = flaggedSentences.length;
+    paragraph.readerSummary = top
+      ? `${top.reader_summary} ${flaggedCount > 1 ? `${flaggedCount} sentences in this paragraph read this way; the strongest is ${topSnippet}.` : `The strongest is ${topSnippet}.`}`.trim()
+      : '';
+    paragraph.recommendation = top ? `${top.recommendation}${topSnippet ? ` Start with ${topSnippet}.` : ''}`.trim() : '';
     paragraph.explanation = explanationByParagraph.get(String(paragraph.id)) || null;
   });
 

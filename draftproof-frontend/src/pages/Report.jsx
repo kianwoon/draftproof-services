@@ -1039,22 +1039,15 @@ export default function Report() {
     const nextIndex = (currentIndex + direction + highlightedParagraphs.length) % highlightedParagraphs.length;
     lockAndScrollParagraph(highlightedParagraphs[nextIndex].id);
   };
-  const selectedParagraphGuidance = selectedParagraph?.explanation || {};
-  const selectedReaderSummary = (
-    selectedParagraphGuidance.reader_summary ||
-    selectedParagraphGuidance.summary ||
-    signalDescription(selectedParagraph?.primarySignal?.key, selectedParagraph?.primarySignal?.description, t)
-  );
-  const selectedMainIssue = selectedParagraphGuidance.main_issue || '';
-  const selectedWhyFlagged = Array.isArray(selectedParagraphGuidance.why_flagged)
-    ? selectedParagraphGuidance.why_flagged.filter(Boolean).slice(0, 4)
-    : [];
-  const selectedRecommendation = (
-    selectedParagraphGuidance.recommendation ||
-    selectedParagraph?.primarySignal?.recommendation ||
-    ''
-  );
-  const selectedRewriteHint = selectedParagraphGuidance.rewrite_hint || '';
+  // Editor-panel guidance: DeBERTa-native (the paragraph model's readerSummary/recommendation),
+  // NOT the perplexity-fed LLM explanation. The learned classifier is the sole methodology for
+  // this section; the old explanation (reader_summary/main_issue/why_flagged/rewrite_hint over
+  // perplexity findings) leaked "predictable, generic phrasing" advice next to a DeBERTa highlight.
+  const selectedReaderSummary = selectedParagraph?.readerSummary || '';
+  const selectedMainIssue = '';
+  const selectedWhyFlagged = [];
+  const selectedRecommendation = selectedParagraph?.recommendation || '';
+  const selectedRewriteHint = '';
   // Per-paragraph Critical Thinking tag (deterministic; from the scan report).
   const selectedCriticalThinking = (() => {
     const rows = badge?.critical_thinking_control?.paragraphs;
@@ -1195,11 +1188,10 @@ export default function Report() {
 
   const copySelectedParagraphGuidance = async () => {
     if (!selectedParagraph?.primarySignal) return;
+    // DeBERTa-native guidance only (reader summary + recommendation). No perplexity text.
     const parts = [
-      `${t('report.submitted.mainIssue')}: ${selectedMainIssue || signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t)}`,
-      selectedWhyFlagged.length > 0 ? `${t('report.submitted.whyFlagged')}: ${selectedWhyFlagged.join(' ')}` : '',
+      selectedReaderSummary ? `${t('report.submitted.readerSummary')}: ${selectedReaderSummary}` : '',
       selectedRecommendation ? `${t('report.submitted.recommendation')}: ${selectedRecommendation}` : '',
-      selectedRewriteHint ? `${t('report.submitted.rewriteHint')}: ${selectedRewriteHint}` : '',
     ].filter(Boolean);
     await navigator.clipboard?.writeText(parts.join('\n'));
   };
