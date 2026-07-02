@@ -917,6 +917,32 @@ img[src^="https://img.shields.io"] { height: 18px; }
     font-size: 8.5pt;
     line-height: 1.5;
 }
+.dp-evidence-list {
+    margin: 2pt 0 0 12pt;
+    padding: 0;
+    list-style: none;
+    font-size: 8.5pt;
+    line-height: 1.5;
+}
+.dp-evidence-list li {
+    margin-bottom: 3pt;
+    display: flex;
+    align-items: flex-start;
+    gap: 4pt;
+}
+.dp-evidence-score {
+    flex-shrink: 0;
+    min-width: 26pt;
+    text-align: center;
+    padding: 1pt 3pt;
+    border-radius: 3pt;
+    color: #fff;
+    font-size: 7.5pt;
+    font-weight: 700;
+}
+.dp-evidence-text {
+    color: #475569;
+}
 """
 
 

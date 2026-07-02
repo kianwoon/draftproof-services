@@ -1279,6 +1279,31 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
       <ul class="dp-finding-bullets">{items}</ul>
     </div>"""
 
+    # Per-sentence evidence breakdown (DeBERTa findings only). Lists each flagged sentence
+    # with its score + band color, matching the web page's evidence list. Only shown when
+    # there are DeBERTa scanner findings (the authoritative path).
+    deberta_evidence_html = ""
+    deberta_finds = [f for f in group_findings if getattr(f, "scanner", "") == "deberta"]
+    if deberta_finds:
+        _BAND_COLORS = {"low": "#f59e0b", "medium": "#f97316", "high": "#dc2626"}
+        rows = []
+        for f in sorted(deberta_finds, key=lambda x: -(x.metadata.get("deberta_score", 0))):
+            sc = f.metadata.get("deberta_score", 0)
+            band_color = _BAND_COLORS.get(
+                "high" if sc >= 99 else "medium" if sc >= 80 else "low", "#94a3b8")
+            sid = f.sentence_id or ""
+            snippet = _truncate(f.evidence or "", 120)
+            rows.append(
+                f'<li><span class="dp-evidence-score" style="background:{band_color}">{round(sc)}%</span>'
+                f'<span class="dp-evidence-text">{_e(snippet)}</span></li>'
+            )
+        if rows:
+            deberta_evidence_html = f"""
+    <div class="dp-finding-subsection">
+      <div class="dp-finding-subsection-label">FLAGGED SENTENCES</div>
+      <ul class="dp-evidence-list">{"".join(rows)}</ul>
+    </div>"""
+
     return f"""<div class="dp-signal-card dp-finding-card dp-finding-card--{tier_level.value}">
   <div class="dp-finding-card-header">
     <div>
@@ -1302,6 +1327,7 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
     {_subsection("MAIN ISSUE TO FIX", main_issue)}
     {bullets_html}
     {_subsection("HOW TO IMPROVE THIS PARAGRAPH", recommendation)}
+    {deberta_evidence_html}
     {_subsection("REWRITE HINT", rewrite_hint)}
   </div>
 </div>"""
