@@ -370,6 +370,19 @@ _DEBERTA_HEAT_DESCRIPTIONS = {
     "moderate": "The second-opinion detector sees strong AI-like signal (below its high-confidence bar).",
     "high": "The second-opinion detector is >=99% confident this passage is AI-like.",
 }
+# Band-specific, student-facing edit guidance. Drives the issue-card "recommendation" so the
+# advice is native to the learned-classifier signal (not the abandoned perplexity family).
+_DEBERTA_HEAT_RECOMMENDATIONS = {
+    "low": "This sentence reads as mildly formulaic under the learned classifier. Ground it in a concrete detail from your own work — a specific student, a measured outcome, a moment — so it sounds like you rather than a template.",
+    "moderate": "This sentence reads as strongly AI-like under the learned classifier. Rewrite it around a specific, verifiable detail from your experience, and vary the sentence rhythm so it does not follow a common template.",
+    "high": "The learned classifier is highly confident this sentence is AI-generated. Revoice it entirely in your own words and tie every claim to a concrete detail only you would know (a name, a number, an observation).",
+}
+# Plain-language reader summary per band — what a human reviewer would notice.
+_DEBERTA_HEAT_READER_SUMMARY = {
+    "low": "A reader may notice this sentence sounds polished but slightly generic.",
+    "moderate": "A reader may notice this sentence follows a familiar, template-like structure common in AI-assisted writing.",
+    "high": "A reader may notice this sentence reads as machine-generated — fluent but generic, without the texture of personal experience.",
+}
 
 
 class ReportBuilder:
@@ -3011,8 +3024,9 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "recommendation": f.recommendation,
         }
 
-    # DeBERTa heatmap band → color/label/tier via the module-level _DEBERTA_HEAT_* maps.
-    # Drives the Signal-highlights color; perplexity findings ride as secondary signals.
+    # DeBERTa heatmap → the SOLE signal source for Signal highlights (per Turnitin: learned
+    # classifier replaces the perplexity family). Colors the map AND rebuilds the tile headline
+    # from the same per-sentence scores, so the two sections can never disagree.
     def _compute_deberta_heatmap() -> list:
         """Return the per-sentence DeBERTa heatmap, computed from _source_segments(complete=True) —
         the EXACT sentence list the map renders. This is the single source of truth: the map colors
@@ -3066,7 +3080,10 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
 
     def _deberta_primary_signal(heat_row: dict) -> dict | None:
         """Build a primary_signal dict (the shape _segment_signal returns) from a DeBERTa
-        heatmap row. This is the SOLE signal on a segment — no perplexity secondaries."""
+        heatmap row. This is the SOLE signal on a segment — no perplexity secondaries.
+
+        Carries band-native guidance (recommendation + reader_summary) so the issue-card body
+        is coherent with the DeBERTa highlight color — both come from the learned classifier."""
         band = heat_row.get("band") or "clean"
         score = heat_row.get("score")
         return {
@@ -3082,35 +3099,19 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "score": round(float(score) * 100) if score is not None else 0,
             "actionability": "review",
             "rewrite_permission": "advisory",
-            "recommendation": None,
+            "recommendation": _DEBERTA_HEAT_RECOMMENDATIONS.get(band),
+            "reader_summary": _DEBERTA_HEAT_READER_SUMMARY.get(band),
         }
 
     def _document_segments(complete: bool = False) -> list:
         segments = []
-        # DeBERTa learned-classifier heatmap: per-sentence score keyed to canonical sNNN ids.
-        # The learned classifier is the SOLE signal source for this section. The perplexity
-        # family (predictability/top-k/ai_likelihood) was abandoned per the Turnitin breakdown
-        # and MUST NOT appear here even as secondary chips — mixing methodologies is what made
-        # the legend show "Learned-classifier AI signal" + "AI likelihood" + "Predictability" at
-        # once. Fail-open: if DeBERTa unavailable, segments render plain (no signal).
-        #
-        # SINGLE SOURCE OF TRUTH: the heatmap is computed from _source_segments(complete=True) —
-        # the EXACT sentence list the map renders — and is also used to rebuild the tile's
-        # ai_signal_deberta headline so the two sections can never disagree on sentence boundaries.
-        # (build()'s structured_sentence_segments cache is NOT used here, because it can split
-        # sentences differently than _source_segments, causing a tile-vs-map flag mismatch.)
         deberta_heat = _compute_deberta_heatmap()
         _sync_deberta_headline_from_heatmap(deberta_heat)
         deberta_by_sid = {row["sentence_id"]: row for row in deberta_heat} if deberta_heat else {}
         for item in _source_segments(complete):
             sid = item.get("sentence_id")
-            # NOTE: perplexity findings (findings_by_sentence) are intentionally NOT read here.
-            # The learned classifier is the SOLE signal source for this section; mixing in the
-            # perplexity family (ai_likelihood/predictability) — even as secondary chips — is what
-            # made the legend show three methodologies at once. See _deberta_primary_signal().
-
-            # DeBERTa-only signals. A "clean" band (score None or < 0.50) means the classifier
-            # reads the sentence as human → no signal, plain segment.
+            # DeBERTa is the sole signal here (no perplexity secondaries — see _deberta_primary_signal).
+            # A clean band (score None or < 0.50) → human-like → no signal, plain segment.
             heat_row = deberta_by_sid.get(sid)
             heat_band = (heat_row or {}).get("band")
             if heat_row is not None and heat_band and heat_band != "clean":
@@ -3154,6 +3155,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "text_parts": [],
                 "finding_count": 0,
                 "signals": {},
+                "flagged_sentences": [],  # DeBERTa-native per-sentence evidence (no perplexity)
             })
             entry["sentence_ids"].append(segment.get("sentence_id"))
             if segment.get("text"):
@@ -3171,13 +3173,37 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                         "score": signal.get("score", 0),
                         "color": signal.get("color"),
                     }
+                # Collect DeBERTa-native per-sentence evidence for the issue card. This is the
+                # ONLY guidance the card shows — band + score + the actual sentence text — so the
+                # advice is coherent with the highlight color (both from the learned classifier).
+                if key == "ai_signal_deberta":
+                    entry["flagged_sentences"].append({
+                        "sentence_id": segment.get("sentence_id"),
+                        "text": segment.get("text") or "",
+                        "score": signal.get("score", 0),
+                        "band": signal.get("title", "").replace("deberta_", ""),
+                        "tier": signal.get("tier", ""),
+                        "color": signal.get("color"),
+                        "recommendation": signal.get("recommendation"),
+                        "reader_summary": signal.get("reader_summary"),
+                    })
         rows = []
         for entry in paragraphs.values():
             signals = sorted(entry.pop("signals").values(), key=lambda item: item["score"], reverse=True)
+            flagged = entry.pop("flagged_sentences", [])
+            # Sort evidence by score desc; the card surfaces the strongest sentences first.
+            flagged.sort(key=lambda s: s.get("score", 0), reverse=True)
             text_parts = entry.pop("text_parts", [])
             entry["text"] = " ".join(part.strip() for part in text_parts if part and part.strip())
             entry["top_signals"] = signals[:3]
             entry["primary_signal"] = signals[0] if signals else None
+            entry["flagged_sentences"] = flagged
+            # Paragraph-dominant guidance: the strongest flagged sentence's band drives the
+            # reader_summary + recommendation shown at the top of the card.
+            if flagged:
+                top = flagged[0]
+                entry["reader_summary"] = top.get("reader_summary")
+                entry["recommendation"] = top.get("recommendation")
             rows.append(entry)
         rows.sort(key=lambda item: item["start_char"])
         return rows

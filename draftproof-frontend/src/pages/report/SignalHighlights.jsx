@@ -6,17 +6,15 @@ import EditPencilIcon from './EditPencilIcon';
 
 export default function SignalHighlights({
   submittedContent, selectedParagraph, selectedParagraphId, highlightedParagraphs,
-  paragraphSeverityBar, selectedReaderSummary,
-  selectedMainIssue, selectedWhyFlagged, selectedRecommendation, selectedRewriteHint,
+  paragraphSeverityBar,
   selectedCriticalThinking,
   showSubmittedEditEntry, onSelectParagraph, onPreviewParagraph, onAdjacent,
-  onEditParagraph, onCopyGuidance, renderSignalGauge,
+  onEditParagraph, onCopyGuidance,
 }) {
   const { t } = useTranslation();
   const [tab, setTab] = useState('issues'); // 'issues' | 'document'
   const [openId, setOpenId] = useState(highlightedParagraphs[0]?.id ?? null);
-  const [showMore, setShowMore] = useState(false);
-  const toggleCard = (id) => setOpenId((cur) => { setShowMore(false); return cur === id ? null : id; });
+  const toggleCard = (id) => setOpenId((cur) => (cur === id ? null : id));
   const issuesRef = useRef(null);
   useEffect(() => {
     if (tab !== 'issues' || !selectedParagraph?.id) return;
@@ -159,17 +157,13 @@ export default function SignalHighlights({
                     <div className="issue-card-body">
                       {selectedParagraph?.id === paragraph.id ? (
                         <>
-                          <p className="issue-card-summary">{selectedReaderSummary}</p>
-                          {selectedMainIssue && (
-                            <div className="issue-action">
-                              <span className="issue-action-label">{t('report.submitted.mainIssue')}</span>
-                              <p>{selectedMainIssue}</p>
-                            </div>
+                          {selectedParagraph.readerSummary && (
+                            <p className="issue-card-summary">{selectedParagraph.readerSummary}</p>
                           )}
-                          {selectedRecommendation && (
+                          {selectedParagraph.recommendation && (
                             <div className="issue-action">
                               <span className="issue-action-label">{t('report.submitted.recommendation')}</span>
-                              <p>{selectedRecommendation}</p>
+                              <p>{selectedParagraph.recommendation}</p>
                             </div>
                           )}
                           {selectedCriticalThinking && (
@@ -183,32 +177,17 @@ export default function SignalHighlights({
                             </div>
                           )}
 
-                          <button type="button" className="issue-more-toggle" aria-expanded={showMore}
-                            onClick={() => setShowMore((v) => !v)}>
-                            {showMore ? t('report.submitted.lessDetail') : t('report.submitted.moreDetail')}
-                          </button>
-
-                          {showMore && (
-                            <div className="issue-more">
-                              {selectedWhyFlagged.length > 0 && (
-                                <div className="issue-action">
-                                  <span className="issue-action-label">{t('report.submitted.whyFlagged')}</span>
-                                  <ul>{selectedWhyFlagged.map((reason) => <li key={reason}>{reason}</li>)}</ul>
-                                </div>
-                              )}
-                              {selectedRewriteHint && (
-                                <div className="issue-action">
-                                  <span className="issue-action-label">{t('report.submitted.rewriteHint')}</span>
-                                  <p>{selectedRewriteHint}</p>
-                                </div>
-                              )}
-                              {selectedParagraph.signals.length > 1 && (
-                                <div className="issue-action">
-                                  <span className="issue-action-label">{t('report.submitted.alsoDetected')}</span>
-                                  <p>{selectedParagraph.signals.slice(1, 4).map((s) => signalLabel(s.key, s.label, t)).join(' · ')}</p>
-                                </div>
-                              )}
-                              {renderSignalGauge()}
+                          {selectedParagraph.flaggedSentences?.length > 0 && (
+                            <div className="issue-action issue-action-evidence">
+                              <span className="issue-action-label">{t('report.submitted.flaggedSentences')}</span>
+                              <ul className="deberta-evidence-list">
+                                {selectedParagraph.flaggedSentences.slice(0, 3).map((sent) => (
+                                  <li key={sent.sentence_id}>
+                                    <span className="deberta-evidence-score">{Math.round(sent.score)}%</span>
+                                    <span className="deberta-evidence-text">{sent.text}</span>
+                                  </li>
+                                ))}
+                              </ul>
                             </div>
                           )}
 

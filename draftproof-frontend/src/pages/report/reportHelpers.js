@@ -1300,12 +1300,31 @@ function buildSubmittedContentModel(report) {
     paragraph.segments.sort((a, b) => a.start_char - b.start_char);
     const text = paragraph.segments.map((segment) => segment.text).join(' ').trim();
     const signals = mergeParagraphSignals(paragraph.segments);
+    // DeBERTa-native per-sentence evidence: the flagged sentences in this paragraph with their
+    // band/score/guidance. This is the SOLE source of the issue-card body — no perplexity text.
+    const flaggedSentences = paragraph.segments
+      .flatMap((segment) => (segment.signals || [])
+        .filter((signal) => signal.key === 'ai_signal_deberta')
+        .map((signal) => ({
+          sentence_id: segment.sentence_id,
+          text: segment.text || '',
+          score: signal.score ?? 0,
+          tier: signal.tier || '',
+          recommendation: signal.recommendation || '',
+          reader_summary: signal.reader_summary || '',
+        })))
+      .sort((a, b) => (b.score || 0) - (a.score || 0));
     paragraph.text = text;
     paragraph.signals = signals;
     paragraph.primarySignal = signals[0] || null;
     paragraph.sentence_id = summarizeSentenceIds(paragraph.segments);
     paragraph.sentence_ids = uniqueCompact(paragraph.segments.map((segment) => segment.sentence_id));
     paragraph.signalCount = paragraph.segments.reduce((count, segment) => count + segment.signals.length, 0);
+    paragraph.flaggedSentences = flaggedSentences;
+    // Paragraph-dominant guidance from the strongest flagged sentence (DeBERTa-native).
+    const top = flaggedSentences[0];
+    paragraph.readerSummary = top?.reader_summary || '';
+    paragraph.recommendation = top?.recommendation || '';
     paragraph.explanation = explanationByParagraph.get(String(paragraph.id)) || null;
   });
 

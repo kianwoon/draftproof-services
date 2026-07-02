@@ -499,6 +499,7 @@ export const report = {
     "recommendation": "How to improve this paragraph",
     "criticalThinking": "Critical thinking",
     "rewriteHint": "Rewrite hint",
+    "flaggedSentences": "Sentences the classifier flagged",
     "noSignal": "No highlighted signal",
     "mapReady": "Content map ready",
     "mapReadyBody": "The submitted text is available for review. New scans include richer signal highlights for each affected paragraph.",

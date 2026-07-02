@@ -1944,3 +1944,12 @@ button.paragraph-severity-seg {
 .submitted-issues-empty { padding: 2rem 1.15rem; text-align: center; }
 .submitted-issues-empty h3 { color: var(--navy-950); }
 
+/* DeBERTa per-sentence evidence list (the classifier-flagged sentences in a paragraph). */
+.deberta-evidence-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
+.deberta-evidence-list li { display: flex; gap: .5rem; align-items: flex-start; }
+.deberta-evidence-score {
+  flex: 0 0 auto; font-size: .68rem; font-weight: 800; line-height: 1.5;
+  padding: 0 .4rem; border-radius: 5px; color: #fff; background: var(--signal-color, #dc2626);
+}
+.deberta-evidence-text { font-size: .85rem; line-height: 1.45; color: #475569; }
+

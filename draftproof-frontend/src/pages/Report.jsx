@@ -2249,11 +2249,6 @@ export default function Report() {
             selectedParagraphId={selectedParagraphId}
             highlightedParagraphs={highlightedParagraphs}
             paragraphSeverityBar={paragraphSeverityBar}
-            selectedReaderSummary={selectedReaderSummary}
-            selectedMainIssue={selectedMainIssue}
-            selectedWhyFlagged={selectedWhyFlagged}
-            selectedRecommendation={selectedRecommendation}
-            selectedRewriteHint={selectedRewriteHint}
             selectedCriticalThinking={selectedCriticalThinking}
             showSubmittedEditEntry={showSubmittedEditEntry}
             onSelectParagraph={lockAndScrollParagraph}
@@ -2261,7 +2256,6 @@ export default function Report() {
             onAdjacent={selectAdjacentHighlightedParagraph}
             onEditParagraph={openSubmittedEditorForParagraph}
             onCopyGuidance={copySelectedParagraphGuidance}
-            renderSignalGauge={renderSubmittedSignalGauge}
           />
         )}
         {submittedEditorOpen && (
