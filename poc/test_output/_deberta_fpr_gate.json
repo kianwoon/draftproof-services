@@ -1,0 +1,60 @@
+{
+  "model": "fakespot-ai/roberta-base-ai-text-detection-v1",
+  "primary_threshold": 50.0,
+  "fpr_pct": {
+    "all": {
+      "40.0": 1.1,
+      "50.0": 1.1,
+      "60.0": 0.7
+    },
+    "higher": {
+      "40.0": 1.4,
+      "50.0": 1.4,
+      "60.0": 1.4
+    },
+    "lower": {
+      "40.0": 0.8,
+      "50.0": 0.8,
+      "60.0": 0.0
+    }
+  },
+  "parity_gap_pct": -0.6,
+  "human_dist": {
+    "all": {
+      "n": 268,
+      "mean": 1.1,
+      "p50": 0.0,
+      "p90": 0.0,
+      "max": 85.1
+    },
+    "higher": {
+      "n": 139,
+      "mean": 1.7,
+      "p50": 0.0,
+      "p90": 0.0,
+      "max": 85.1
+    },
+    "lower": {
+      "n": 129,
+      "mean": 0.4,
+      "p50": 0.0,
+      "p90": 0.0,
+      "max": 52.8
+    }
+  },
+  "ai_dist": {
+    "n": 65,
+    "mean": 95.6,
+    "p50": 100.0,
+    "p90": 100.0,
+    "max": 100.0
+  },
+  "auc_ai_vs_human": 0.999,
+  "n": {
+    "higher": 139,
+    "lower": 129,
+    "ai": 65,
+    "dropped_short": 4
+  },
+  "seconds": 39.4
+}

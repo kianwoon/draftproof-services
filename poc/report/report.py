@@ -3066,7 +3066,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
 
     def _deberta_primary_signal(heat_row: dict) -> dict | None:
         """Build a primary_signal dict (the shape _segment_signal returns) from a DeBERTa
-        heatmap row. Drives the highlight color/label; the perplexity findings ride as secondary."""
+        heatmap row. This is the SOLE signal on a segment — no perplexity secondaries."""
         band = heat_row.get("band") or "clean"
         score = heat_row.get("score")
         return {
@@ -3088,10 +3088,11 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     def _document_segments(complete: bool = False) -> list:
         segments = []
         # DeBERTa learned-classifier heatmap: per-sentence score keyed to canonical sNNN ids.
-        # Replaces the perplexity-family signals (predictability/top-k) as the HIGHLIGHT COLOR
-        # source — the methodology the Turnitin breakdown says was abandoned. The perplexity
-        # findings remain as secondary signals (for guidance text) but no longer set the color.
-        # Fail-open: if DeBERTa unavailable, fall back to the legacy perplexity-driven primary.
+        # The learned classifier is the SOLE signal source for this section. The perplexity
+        # family (predictability/top-k/ai_likelihood) was abandoned per the Turnitin breakdown
+        # and MUST NOT appear here even as secondary chips — mixing methodologies is what made
+        # the legend show "Learned-classifier AI signal" + "AI likelihood" + "Predictability" at
+        # once. Fail-open: if DeBERTa unavailable, segments render plain (no signal).
         #
         # SINGLE SOURCE OF TRUTH: the heatmap is computed from _source_segments(complete=True) —
         # the EXACT sentence list the map renders — and is also used to rebuild the tile's
@@ -3103,29 +3104,21 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         deberta_by_sid = {row["sentence_id"]: row for row in deberta_heat} if deberta_heat else {}
         for item in _source_segments(complete):
             sid = item.get("sentence_id")
-            signals = [_segment_signal(f) for f in findings_by_sentence.get(sid, [])]
-            signals.sort(key=lambda entry: entry.get("score", 0), reverse=True)
-            perplexity_primary = signals[0] if signals else None
+            # NOTE: perplexity findings (findings_by_sentence) are intentionally NOT read here.
+            # The learned classifier is the SOLE signal source for this section; mixing in the
+            # perplexity family (ai_likelihood/predictability) — even as secondary chips — is what
+            # made the legend show three methodologies at once. See _deberta_primary_signal().
 
-            # Color source: DeBERTa band if available AND non-clean, else legacy perplexity
-            # primary. A "clean" band (score None or < 0.50) means the learned classifier reads
-            # the sentence as human — it should NOT attach a DeBERTa signal (so plain/clean
-            # segments stay signal-less, matching the contract that unscored spans render plain).
+            # DeBERTa-only signals. A "clean" band (score None or < 0.50) means the classifier
+            # reads the sentence as human → no signal, plain segment.
             heat_row = deberta_by_sid.get(sid)
             heat_band = (heat_row or {}).get("band")
             if heat_row is not None and heat_band and heat_band != "clean":
                 primary = _deberta_primary_signal(heat_row)
-                # Keep perplexity findings as SECONDARY signals (guidance), but the color/label
-                # come from the learned classifier. De-dup the deberta key if a finding mapped to it.
-                secondary = [s for s in signals if s.get("key") != "ai_signal_deberta"]
-                segment_signals = ([primary] + secondary) if primary else secondary
-                primary = segment_signals[0] if segment_signals else None
+                segment_signals = [primary] if primary else []
             else:
-                # No DeBERTa AI signal on this sentence. Keep the perplexity findings as
-                # guidance signals (so issue-card text still works), but they no longer set
-                # the HIGHLIGHT color — a perplexity flag alone does not color the paragraph.
-                segment_signals = [s for s in signals if s.get("key") != "ai_likelihood"]
-                primary = None  # no highlight color without a learned-classifier signal
+                primary = None
+                segment_signals = []
 
             segment = {
                 "segment_id": sid,
