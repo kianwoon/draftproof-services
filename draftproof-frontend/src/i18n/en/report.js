@@ -666,6 +666,7 @@ export const report = {
     },
     "lowConfidenceCaveat": "Mixed signals in this document — treat this breakdown as a starting point for review, not a verdict.",
     "betaChip": "Beta",
+    "subtitle": "How this document's writing signals distribute across four authorship styles. The shares always add up to 100% — a composition of the mix, not an AI-probability. For the detector's AI estimate, see Text-pattern risk above.",
     "uncertaintyFlags": {
       "deep_scan_uncalibrated": "Includes an early-stage detector signal that is still being validated.",
       "deep_scan_below_reliability_floor": "The deep-scan reading on this document is below the reliability floor — treat it as weak evidence.",

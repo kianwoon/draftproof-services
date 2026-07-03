@@ -650,6 +650,7 @@
 
 .authorship-breakdown-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: .8rem;
@@ -661,6 +662,15 @@
   font-size: .95rem;
   font-weight: 700;
   color: var(--navy-950);
+}
+
+.authorship-breakdown-subtitle {
+  flex-basis: 100%;
+  margin: .1rem 0 0;
+  font-size: .78rem;
+  line-height: 1.5;
+  color: #64748b;
+  max-width: 68ch;
 }
 
 .authorship-breakdown-bars {

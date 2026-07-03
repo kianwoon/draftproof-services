@@ -79,6 +79,13 @@ export default function AuthorshipClarityBreakdown({ t, breakdown }) {
             {t('report.authorshipBreakdown.betaChip')}
           </span>
         </h3>
+        {/* Semantic bridge to the hero above: these shares are a COMPOSITION
+            (always sum to 100%), not an AI-probability — without this line,
+            "Student-owned · 37%" reads as contradicting the hero's
+            "Ownership risk: Low / you can defend this as your own work". */}
+        <p className="authorship-breakdown-subtitle">
+          {t('report.authorshipBreakdown.subtitle')}
+        </p>
       </div>
 
       <div className="authorship-breakdown-bars">
