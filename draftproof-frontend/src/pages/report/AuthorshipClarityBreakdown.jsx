@@ -108,14 +108,6 @@ function DeepScanHeadline({ t, deepScan, authoritativeTier }) {
   );
 }
 
-// Uncertainty flags we know how to explain to users. Unknown flags are silently
-// skipped — never render raw flag strings.
-const KNOWN_UNCERTAINTY_FLAGS = [
-  'deep_scan_uncalibrated',
-  'deep_scan_below_reliability_floor',
-  'paraphrase_without_original_draft',
-];
-
 export default function AuthorshipClarityBreakdown({ t, breakdown, authoritativeTier }) {
   if (!breakdown) return null;
 
@@ -123,17 +115,8 @@ export default function AuthorshipClarityBreakdown({ t, breakdown, authoritative
   const bandShares = breakdown.document_breakdown_bands || {};
   // Percentages ALWAYS display (owner decision 2026-07-04, superseding the
   // earlier confidence-gated approach: a number that appears only sometimes
-  // reads as ambiguous/confusing). On near-uniform documents the printed
-  // digits are within formula noise — the "mixed signals" caveat below
-  // (flatness-gated, confidence === 'low') carries that warning instead of
-  // hiding the number. degraded_display is deliberately not consulted here:
-  // it is structurally always true in Phase 1A (three signals unbuilt) and
-  // that situation is disclosed via the uncertainty-flag caveat lines.
-  const showCaveat = breakdown.confidence === 'low';
+  // reads as ambiguous/confusing).
   const showPercent = true;
-  const uncertaintyFlags = Array.isArray(breakdown.uncertainty_flags)
-    ? KNOWN_UNCERTAINTY_FLAGS.filter((flag) => breakdown.uncertainty_flags.includes(flag))
-    : [];
 
   return (
     <section
@@ -170,18 +153,6 @@ export default function AuthorshipClarityBreakdown({ t, breakdown, authoritative
           />
         ))}
       </div>
-
-      {showCaveat && (
-        <p className="authorship-breakdown-caveat">
-          {t('report.authorshipBreakdown.lowConfidenceCaveat')}
-        </p>
-      )}
-
-      {uncertaintyFlags.map((flag) => (
-        <p key={flag} className="authorship-breakdown-caveat">
-          {t(`report.authorshipBreakdown.uncertaintyFlags.${flag}`)}
-        </p>
-      ))}
 
       <p className="authorship-breakdown-disclaimer">
         {t('report.authorshipBreakdown.disclaimer')}
