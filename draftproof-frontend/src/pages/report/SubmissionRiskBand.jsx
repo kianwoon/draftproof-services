@@ -57,12 +57,14 @@ export default function SubmissionRiskBand({ t, sr }) {
 
       {/* DraftProof's own scale (owner decision 2026-07-04): gives readers OUR
           numbers to benchmark the AI-likelihood % against, instead of guessing
-          or defaulting to Turnitin's familiar 20% line. Collapsed by default —
-          matches the .report-advanced-signals disclosure pattern, sized down
-          for this compact hero band. Numbers are the real committed
-          tier_authority cutoffs (poc/detect_v7/weights.json) — not invented. */}
+          or defaulting to Turnitin's familiar 20% line. Expanded by default
+          (owner decision 2026-07-04, superseding the original collapsed
+          default) — this is load-bearing context for the AI-likelihood %
+          right above it, not an optional aside. Numbers are the real
+          committed tier_authority cutoffs (poc/detect_v7/weights.json) — not
+          invented. */}
       {hasScore && (
-        <details className="submission-risk-scale">
+        <details className="submission-risk-scale" open>
           <summary>{t('report.submissionRisk.scale.toggle')}</summary>
           <div className="submission-risk-scale-content">
             <table className="submission-risk-scale-table">
