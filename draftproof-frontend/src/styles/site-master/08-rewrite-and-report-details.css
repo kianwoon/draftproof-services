@@ -677,6 +677,78 @@
    colors reuse the category-accent tier palette below (amber #d97706,
    orange #ea580c, red #dc2626); "insufficient" is deliberately muted —
    below the reliability floor the number is weak evidence, not a verdict. */
+/* Fused-score headline (owner decision 2026-07-04): the authoritative
+   AI-likelihood that drives the tier leads the panel; the deep-scan/composite
+   ingredients demote to the muted evidence line below. */
+.authorship-breakdown-fused {
+  margin: 0 0 .9rem;
+  padding: .5rem .7rem;
+  border: 1px solid rgba(13, 27, 42, .08);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.authorship-breakdown-fused-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .55rem;
+}
+
+.authorship-breakdown-fused-label {
+  font-size: .8rem;
+  font-weight: 700;
+  color: var(--navy-800, #243b53);
+}
+
+.authorship-breakdown-fused-value {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--navy-950, #0f172a);
+  letter-spacing: -.01em;
+}
+
+.authorship-breakdown-fused-band-chip {
+  display: inline-block;
+  padding: .1rem .55rem;
+  border: 1px solid rgba(100, 116, 139, .3);
+  border-radius: 999px;
+  background: rgba(100, 116, 139, .1);
+  color: #475569;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+.authorship-breakdown-fused-band-chip.is-green {
+  border-color: rgba(22, 163, 74, .35);
+  background: rgba(22, 163, 74, .12);
+  color: #15803d;
+}
+.authorship-breakdown-fused-band-chip.is-amber {
+  border-color: rgba(217, 119, 6, .35);
+  background: rgba(217, 119, 6, .12);
+  color: #92400e;
+}
+.authorship-breakdown-fused-band-chip.is-orange {
+  border-color: rgba(234, 88, 12, .35);
+  background: rgba(234, 88, 12, .12);
+  color: #9a3412;
+}
+.authorship-breakdown-fused-band-chip.is-red {
+  border-color: rgba(220, 38, 38, .35);
+  background: rgba(220, 38, 38, .12);
+  color: #991b1b;
+}
+
+.authorship-breakdown-fused-evidence {
+  margin: .4rem 0 0;
+  font-size: .72rem;
+  font-weight: 500;
+  color: #64748b;
+}
+
 .authorship-breakdown-deepscan {
   display: flex;
   flex-wrap: wrap;

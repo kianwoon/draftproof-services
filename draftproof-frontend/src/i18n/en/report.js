@@ -699,6 +699,17 @@ export const report = {
     },
     "lowConfidenceCaveat": "Mixed signals in this document — treat this breakdown as a starting point for review, not a verdict.",
     "betaChip": "Beta",
+    // allow-hardcode: i18n UI copy strings (labels/band names), not a scoring or matching list.
+    "fusedHeadline": {
+      "label": "DraftProof AI-likelihood",
+      "bands": {
+        "low": "Low",
+        "moderate": "Moderate",
+        "high": "High",
+        "critical": "Critical"
+      },
+      "evidence": "Behind this score: composite detector {{composite}}%, deep-scan detector {{deepScan}}% (sentence-level). See the DraftProof scale above."
+    },
     "deepScan": {
       "label": "Deep-scan AI estimate",
       "insufficientChip": "insufficient evidence",
