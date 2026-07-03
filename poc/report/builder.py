@@ -3,8 +3,11 @@
 Extracted from report.py. Imports the data models, actionability, DeBERTa
 metadata, and grounding helpers from their sibling modules.
 """
+import logging
 import re
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
 from detect.document_structure import structured_sentence_segments
@@ -1264,6 +1267,60 @@ class ReportBuilder:
             authoritative_ai_likelihood = None
             authoritative_tier = None
 
+        # V7 fused-score tier-authority re-base (kill-switched, fail-open). When
+        # DRAFTPROOF_V7_TIER_AUTHORITY is truthy AND a real deep-scan sentence
+        # proportion is available, the authoritative ai_likelihood_score + tier
+        # become the FUSED score (0.40 * composite + 0.60 * deep_scan_proportion * 100)
+        # instead of the composite/DeBERTa-authoritative value alone (see
+        # poc/calibration/v7_fused_gate_result.json — GATE PASS). This MUST run
+        # here, before submission_risk/policy_risk/the badge dict are built below,
+        # so every badge-consuming composer sees the fused values, not stale
+        # composite ones (the exact bug this task exists to fix). Mirrors the
+        # DeBERTa-authoritative override pattern immediately above: reassigns the
+        # same authoritative_ai_likelihood/authoritative_tier variables that
+        # already flow into submission_risk, the badge dict, and the tier floor
+        # logic below, so no downstream consumer needs to change.
+        tier_authority_provenance = None
+        # Hoisted: also handed to run_v7_breakdown below as _precomputed_deep_scan
+        # so the SAME Modal result serves both the tier override and the breakdown
+        # panel — one paid call per scan, never two.
+        _deep_scan_for_authority = None
+        try:
+            from detect_v7.pipeline_bridge import (  # noqa: E402
+                compute_fused_authority as _compute_fused_authority,
+                get_deep_scan_proportion as _get_deep_scan_proportion,
+                is_tier_authority_enabled as _is_tier_authority_enabled,
+            )
+            if _is_tier_authority_enabled():
+                _pre_fusion_composite = (
+                    authoritative_ai_likelihood
+                    if authoritative_ai_likelihood is not None
+                    else round(layer3.ai_likelihood_score * 100, 2)
+                )
+                _deep_scan_for_authority = _get_deep_scan_proportion(
+                    {"document_text": self._original_text}
+                )
+                if _deep_scan_for_authority is not None:
+                    _fused = _compute_fused_authority(
+                        _pre_fusion_composite, _deep_scan_for_authority["proportion"]
+                    )
+                    tier_authority_provenance = {
+                        "source": "v7_fused",
+                        "fused_score": _fused["fused_score"],
+                        "composite_score": _pre_fusion_composite,
+                        "proportion": _deep_scan_for_authority["proportion"],
+                    }
+                    authoritative_ai_likelihood = _fused["fused_score"]
+                    authoritative_tier = _fused["tier"]
+                # else: fail-open — no deep scan proportion available, badge stays
+                # composite-driven (authoritative_ai_likelihood/tier untouched).
+        except Exception:
+            logger.exception(
+                "report.builder: V7 tier-authority override failed; falling back to "
+                "composite-driven badge (additive, non-fatal)."
+            )
+            tier_authority_provenance = None
+
         transformation = classify_transformation_from_scan(
             layer3_input,
             layer3,
@@ -1365,7 +1422,8 @@ class ReportBuilder:
             "ai_likelihood_score": (authoritative_ai_likelihood
                                     if authoritative_ai_likelihood is not None
                                     else round(layer3.ai_likelihood_score * 100, 2)),
-            "signal_source": ("deberta_authoritative" if authoritative_ai_likelihood is not None
+            "signal_source": ("v7_fused" if tier_authority_provenance is not None
+                              else "deberta_authoritative" if authoritative_ai_likelihood is not None
                               else "perplexity_layer3"),
             "external_detector_estimate": external_detector_estimate,
             "grounding_diagnosis": grounding_diagnosis,
@@ -1411,6 +1469,12 @@ class ReportBuilder:
             },
         }
 
+        # V7 tier-authority provenance: present ONLY when the fused override actually
+        # applied (flag on + real deep-scan proportion available). Absent otherwise
+        # (flag off, or flag on but no deep scan) — see the override block above.
+        if tier_authority_provenance is not None:
+            ai_risk_badge["tier_authority"] = tier_authority_provenance
+
         from detect.authenticity_dashboard import maybe_attach as _attach_dashboard
         _dash = _attach_dashboard(ai_risk_badge, predictability=None)  # predictability added read-time (Task 7)
         if _dash is not None:
@@ -1424,7 +1488,14 @@ class ReportBuilder:
         # ai_risk_badge alone is scores-only and would silently fall back to quick-scan
         # (observed live 2026-07-04: "no document text available on detection_result").
         # Spread into a copy — never mutate the badge that ships in the report.
-        _v7_breakdown = _run_v7_breakdown({**ai_risk_badge, "document_text": self._original_text})
+        _v7_breakdown = _run_v7_breakdown({
+            **ai_risk_badge,
+            "document_text": self._original_text,
+            # Reuse the tier-authority block's Modal result (None when that block
+            # didn't run) — get_deep_scan_proportion short-circuits on this key so
+            # a scan never pays for two identical deep-scan calls.
+            "_precomputed_deep_scan": _deep_scan_for_authority,
+        })
         if _v7_breakdown is not None:
             ai_risk_badge["authorship_breakdown"] = _v7_breakdown
 

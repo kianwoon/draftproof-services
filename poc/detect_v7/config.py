@@ -196,3 +196,27 @@ def get_display_bands() -> dict[str, float]:
 
 def get_ai_assisted_polished_band() -> dict[str, float]:
     return dict(_weights()["ai_assisted_polished_band"])
+
+
+def get_tier_authority_config() -> dict[str, Any]:
+    """Return the fused-score tier-authority config (weights + cutoffs).
+
+    Validates that cutoffs are strictly ascending (amber < orange < red) —
+    a config error here must fail loudly rather than silently produce a
+    tier ordering that contradicts itself. Raises ``ValueError`` on a
+    malformed/non-ascending cutoff set.
+    """
+    section = _weights()["tier_authority"]
+    cutoffs = section["cutoffs"]
+    amber, orange, red = cutoffs["amber"], cutoffs["orange"], cutoffs["red"]
+    if not (amber < orange < red):
+        # allow-hardcode: human-readable error message text, not a scoring/matching list
+        raise ValueError(
+            f"weights.json contract violation: tier_authority.cutoffs must be "
+            f"strictly ascending (amber < orange < red), got amber={amber!r}, "
+            f"orange={orange!r}, red={red!r}."
+        )
+    return {
+        "weights": dict(section["weights"]),
+        "cutoffs": dict(cutoffs),
+    }
