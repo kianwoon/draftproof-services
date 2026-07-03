@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 
 _ENV_VAR = "DRAFTPROOF_V7_AUTHORSHIP_BREAKDOWN"
 _DEEP_SCAN_ENV_VAR = "DRAFTPROOF_V7_DEEP_SCAN"
+_TIER_AUTHORITY_ENV_VAR = "DRAFTPROOF_V7_TIER_AUTHORITY"
 _TRUTHY = {"1", "true"}
 
 _UNCERTAINTY_FLAG_DEEP_SCAN_UNCALIBRATED = "deep_scan_uncalibrated"
@@ -114,6 +115,148 @@ def is_deep_scan_enabled() -> bool:
     """
     raw = os.getenv(_DEEP_SCAN_ENV_VAR, "")
     return raw.strip().lower() in _TRUTHY
+
+
+def is_tier_authority_enabled() -> bool:
+    """Kill switch for the V7 fused-score tier-authority re-base.
+
+    Reads ``DRAFTPROOF_V7_TIER_AUTHORITY`` with the exact same strict
+    "1"/"true" truthy contract as ``is_v7_enabled()``/``is_deep_scan_enabled()``
+    (case-insensitive, whitespace-stripped; anything else, including unset,
+    resolves to disabled). Default is OFF — when off, the badge's tier and
+    ai_likelihood_score are computed exactly as before this feature existed
+    (byte-identical output).
+    """
+    raw = os.getenv(_TIER_AUTHORITY_ENV_VAR, "")
+    return raw.strip().lower() in _TRUTHY
+
+
+def _tier_for_fused_score(fused_score: float, cutoffs: dict[str, float]) -> str:
+    if fused_score >= cutoffs["red"]:
+        return "red"
+    if fused_score >= cutoffs["orange"]:
+        return "orange"
+    if fused_score >= cutoffs["amber"]:
+        return "amber"
+    return "green"
+
+
+def compute_fused_authority(composite_0_100: float, proportion_0_1: float) -> dict[str, Any]:
+    """Pure function: fuse the composite badge score with the deep-scan
+    sentence proportion into the V7 tier-authority score + tier.
+
+    ``fused_score = weights.composite * composite_0_100 +
+    weights.deep_scan_proportion * proportion_0_1 * 100`` per
+    ``weights.json``'s ``tier_authority`` section (poc/calibration/
+    v7_fused_gate_result.json — GATE PASS 2026-07-04). Tier is derived from
+    the SAME cutoffs (32/48/65) already used for the composite-only scale;
+    the cutoff sweep validated they carry over unchanged on the fused scale.
+
+    Parameters
+    ----------
+    composite_0_100: the existing composite ``ai_likelihood_score`` (0-100).
+    proportion_0_1: the deep-scan sentence-level flagged proportion (0-1).
+
+    Returns
+    -------
+    ``{"fused_score": float (0-100, 2dp), "tier": "green"|"amber"|"orange"|"red"}``
+
+    Raises ``ValueError`` if either input is not a finite number in its
+    expected range — this function never silently clamps out-of-range
+    inputs into a fake tier; the caller (``run_v7_breakdown``) is
+    responsible for fail-open behavior (skip the override, not call this
+    function with malformed inputs).
+    """
+    if isinstance(composite_0_100, bool) or not isinstance(composite_0_100, (int, float)):
+        raise ValueError(f"composite_0_100 must be a number, got {composite_0_100!r}")
+    if isinstance(proportion_0_1, bool) or not isinstance(proportion_0_1, (int, float)):
+        raise ValueError(f"proportion_0_1 must be a number, got {proportion_0_1!r}")
+    if not (0.0 <= float(composite_0_100) <= 100.0):
+        raise ValueError(f"composite_0_100 must be in [0, 100], got {composite_0_100!r}")
+    if not (0.0 <= float(proportion_0_1) <= 1.0):
+        raise ValueError(f"proportion_0_1 must be in [0, 1], got {proportion_0_1!r}")
+
+    tier_authority = config.get_tier_authority_config()
+    weights = tier_authority["weights"]
+    cutoffs = tier_authority["cutoffs"]
+
+    fused_score = (
+        weights["composite"] * float(composite_0_100)
+        + weights["deep_scan_proportion"] * float(proportion_0_1) * 100.0
+    )
+    fused_score = round(fused_score, 2)
+    tier = _tier_for_fused_score(fused_score, cutoffs)
+    return {"fused_score": fused_score, "tier": tier}
+
+
+def get_deep_scan_proportion(detection_result: Any) -> Optional[dict[str, Any]]:
+    """Best-effort deep-scan sentence-proportion lookup, shared by
+    ``run_v7_breakdown`` (2-detector fusion input) and the builder-level
+    fused tier-authority override (``compute_fused_authority`` needs this
+    SAME proportion so the two never disagree).
+
+    Returns ``None`` when deep scan is disabled, document text is
+    unavailable, sentence splitting produces nothing, or the Modal call
+    fails/returns a malformed/unavailable response — fail-open, never
+    raises. On success returns a dict with the fields ``run_v7_breakdown``
+    and the builder override both need: ``proportion`` (0-1),
+    ``uncalibrated`` (bool), ``below_floor`` (bool), ``payload`` (the
+    display-ready deep_scan dict).
+    """
+    # Short-circuit: the builder's tier-authority block runs first and hands its
+    # Modal result through as _precomputed_deep_scan — reuse it so a scan with
+    # both flags on pays for ONE deep-scan call, not two identical ones.
+    if isinstance(detection_result, dict):
+        precomputed = detection_result.get("_precomputed_deep_scan")
+        if isinstance(precomputed, dict) and "proportion" in precomputed:
+            return precomputed
+    if not is_deep_scan_enabled():
+        return None
+    document_text = _extract_document_text(detection_result)
+    if not document_text:
+        logger.info(
+            "detect_v7.pipeline_bridge: deep scan enabled but no document text "
+            "available on detection_result; skipping deep-scan proportion."
+        )
+        return None
+    sentences = [s for s in split_sentences(document_text) if s.strip()]
+    if not sentences:
+        logger.info(
+            "detect_v7.pipeline_bridge: deep scan enabled but document text "
+            "produced no sentences; skipping deep-scan proportion."
+        )
+        return None
+    modal_response = modal_client.call_deep_scan(sentences)
+    chunk_scores = modal_response.get("chunk_scores") if isinstance(modal_response, dict) else None
+    if not (
+        isinstance(modal_response, dict)
+        and modal_response.get("available") is True
+        and isinstance(chunk_scores, list)
+        and len(chunk_scores) == len(sentences)
+        and all(isinstance(s, (int, float)) and not isinstance(s, bool) for s in chunk_scores)
+    ):
+        logger.info(
+            "detect_v7.pipeline_bridge: Modal deep scan unavailable/failed/malformed; "
+            "skipping deep-scan proportion."
+        )
+        return None
+
+    calibration = config.get_deep_scan_calibration()
+    sent_threshold = calibration["sent_threshold"]
+    doc_floor = calibration["doc_floor"]
+    flagged = sum(1 for s in chunk_scores if s >= sent_threshold)
+    proportion = flagged / len(chunk_scores)
+    deberta_score = max(0.0, min(1.0, float(proportion)))
+    return {
+        "proportion": deberta_score,
+        "uncalibrated": modal_response.get("calibrated") is not True,
+        "below_floor": proportion < doc_floor,
+        "payload": {
+            "proportion": deberta_score,
+            "band": _deep_scan_band(deberta_score),
+            "calibrated": modal_response.get("calibrated") is True,
+        },
+    }
 
 
 def _extract_document_text(detection_result: Any) -> Optional[str]:
@@ -282,53 +425,12 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
         deep_scan_below_floor = False
         deep_scan_payload: Optional[dict[str, Any]] = None
         detector_scores = {"fakespot": calibrated_score}
-        if is_deep_scan_enabled():
-            document_text = _extract_document_text(detection_result)
-            if document_text:
-                sentences = [s for s in split_sentences(document_text) if s.strip()]
-                if not sentences:
-                    logger.info(
-                        "detect_v7.pipeline_bridge: deep scan enabled but document text "
-                        "produced no sentences; falling back to 1-detector quick-scan fusion."
-                    )
-                else:
-                    modal_response = modal_client.call_deep_scan(sentences)
-                    chunk_scores = (
-                        modal_response.get("chunk_scores") if isinstance(modal_response, dict) else None
-                    )
-                    if (
-                        isinstance(modal_response, dict)
-                        and modal_response.get("available") is True
-                        and isinstance(chunk_scores, list)
-                        and len(chunk_scores) == len(sentences)
-                        and all(
-                            isinstance(s, (int, float)) and not isinstance(s, bool) for s in chunk_scores
-                        )
-                    ):
-                        calibration = config.get_deep_scan_calibration()
-                        sent_threshold = calibration["sent_threshold"]
-                        doc_floor = calibration["doc_floor"]
-                        flagged = sum(1 for s in chunk_scores if s >= sent_threshold)
-                        proportion = flagged / len(chunk_scores)
-                        deberta_score = max(0.0, min(1.0, float(proportion)))
-                        detector_scores = {"fakespot": calibrated_score, "deberta_large": deberta_score}
-                        deep_scan_uncalibrated = modal_response.get("calibrated") is not True
-                        deep_scan_below_floor = proportion < doc_floor
-                        deep_scan_payload = {
-                            "proportion": deberta_score,
-                            "band": _deep_scan_band(deberta_score),
-                            "calibrated": modal_response.get("calibrated") is True,
-                        }
-                    else:
-                        logger.info(
-                            "detect_v7.pipeline_bridge: Modal deep scan unavailable/failed/malformed; "
-                            "falling back to 1-detector quick-scan fusion."
-                        )
-            else:
-                logger.info(
-                    "detect_v7.pipeline_bridge: deep scan enabled but no document text "
-                    "available on detection_result; falling back to 1-detector quick-scan fusion."
-                )
+        deep_scan_result = get_deep_scan_proportion(detection_result)
+        if deep_scan_result is not None:
+            detector_scores = {"fakespot": calibrated_score, "deberta_large": deep_scan_result["proportion"]}
+            deep_scan_uncalibrated = deep_scan_result["uncalibrated"]
+            deep_scan_below_floor = deep_scan_result["below_floor"]
+            deep_scan_payload = deep_scan_result["payload"]
 
         fused_score, _fusion_detail = detector_fusion.compute_calibrated_detector_score(detector_scores)
 
