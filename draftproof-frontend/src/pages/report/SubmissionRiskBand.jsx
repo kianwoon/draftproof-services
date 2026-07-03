@@ -1,14 +1,19 @@
 import { SUBMISSION_RISK_AXES } from './reportHelpers';
 
 // Leads the report with the additive 3-layer Submission-risk view: an overall
-// level + plain-language reason, then the per-axis grid. The AI-likelihood % is
-// demoted to the "text_pattern" axis (kept visible as the external trigger), and
-// policy/declaration stays "self-declare" since the text can't reveal it.
-// Renders nothing when `sr` is absent (older reports / abstained diagnosis).
+// level + plain-language reason, then a compact per-axis chip row (label ·
+// level, color-coded, no per-chip body text — owner redesign 2026-07-04: the
+// former 5 tall boxes made the hero too heavy). The AI-likelihood % stays
+// visible in the single merged note line below the chips — it is load-bearing
+// (the detector's absolute estimate the V7 panel's subtitle points to as
+// "Text-pattern risk above"). Renders nothing when `sr` is absent (older
+// reports / abstained diagnosis).
 export default function SubmissionRiskBand({ t, sr }) {
   if (!sr || !sr.overall || !sr.overall.level) return null;
   const { overall, axes = {} } = sr;
   const level = overall.level;
+  const textPattern = axes.text_pattern || {};
+  const hasScore = typeof textPattern.display_score === 'number';
 
   return (
     <div className={`submission-risk-band is-${level}`} aria-label={t('report.submissionRisk.ariaLabel')}>
@@ -22,26 +27,26 @@ export default function SubmissionRiskBand({ t, sr }) {
         </p>
       </div>
 
-      <div className="submission-risk-axes">
+      <div className="submission-risk-chips">
         {SUBMISSION_RISK_AXES.map((key) => {
-          const ax = axes[key] || {};
-          const lvl = ax.level || 'unknown';
+          const lvl = (axes[key] || {}).level || 'unknown';
           return (
-            <div className={`submission-risk-axis is-${lvl}`} key={key}>
-              <span>{t(`report.submissionRisk.axes.${key}`)}</span>
+            <span className={`submission-risk-chip is-${lvl}`} key={key}>
+              {t(`report.submissionRisk.axes.${key}`)}
+              {' · '}
               <strong>{t(`report.submissionRisk.levels.${lvl}`)}</strong>
-              {key === 'text_pattern' && typeof ax.display_score === 'number' && (
-                <em>{t('report.submissionRisk.externalTrigger', { score: Math.round(ax.display_score) })}</em>
-              )}
-              {key === 'policy_declaration' && (
-                <em>{t('report.submissionRisk.selfDeclare')}</em>
-              )}
-            </div>
+            </span>
           );
         })}
       </div>
 
-      <p className="submission-risk-note">{t('report.submissionRisk.note')}</p>
+      {/* One merged muted line: former per-chip AI-likelihood explainer + the
+          band-wide note. Falls back to the note alone when no score exists. */}
+      <p className="submission-risk-note">
+        {hasScore
+          ? t('report.submissionRisk.compactNote', { score: Math.round(textPattern.display_score) })
+          : t('report.submissionRisk.note')}
+      </p>
     </div>
   );
 }

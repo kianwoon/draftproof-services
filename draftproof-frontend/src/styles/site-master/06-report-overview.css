@@ -239,49 +239,42 @@
   font-size: .9rem;
 }
 
-.submission-risk-axes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: .55rem;
-  margin-top: .8rem;
-}
-
-.submission-risk-axis {
+/* Compact per-axis chip row (owner redesign 2026-07-04: replaced the 5 tall
+   axis boxes — "label · level" chips, equal height, no per-chip body text).
+   Level colors reuse the former axis-box border-left palette. */
+.submission-risk-chips {
   display: flex;
-  flex-direction: column;
-  gap: .15rem;
-  padding: .55rem .7rem;
-  border-radius: 10px;
-  border: 1px solid rgba(13, 27, 42, .10);
-  background: #f8fafc;
-  border-left: 3px solid #cbd5e1;
+  flex-wrap: wrap;
+  gap: .45rem;
+  margin-top: .65rem;
 }
-.submission-risk-axis.is-low { border-left-color: #16a34a; }
-.submission-risk-axis.is-medium { border-left-color: #d97706; }
-.submission-risk-axis.is-high { border-left-color: #dc2626; }
-.submission-risk-axis.is-unknown { border-left-color: #94a3b8; }
 
-.submission-risk-axis > span {
-  color: #64748b;
-  font-size: .7rem;
-  font-weight: 750;
-  letter-spacing: .03em;
-  text-transform: uppercase;
+.submission-risk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .28rem;
+  padding: .28rem .65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(13, 27, 42, .10);
+  border-left: 3px solid #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+  font-size: .74rem;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
 }
-.submission-risk-axis > strong {
+.submission-risk-chip > strong {
   color: #0f172a;
-  font-size: .98rem;
   font-weight: 750;
 }
-.submission-risk-axis > em {
-  color: #64748b;
-  font-size: .72rem;
-  font-style: normal;
-  line-height: 1.35;
-}
+.submission-risk-chip.is-low { border-left-color: #16a34a; }
+.submission-risk-chip.is-medium { border-left-color: #d97706; }
+.submission-risk-chip.is-high { border-left-color: #dc2626; }
+.submission-risk-chip.is-unknown { border-left-color: #94a3b8; }
 
 .submission-risk-note {
-  margin: .7rem 0 0;
+  margin: .6rem 0 0;
   color: #64748b;
   font-size: .78rem;
   line-height: 1.5;

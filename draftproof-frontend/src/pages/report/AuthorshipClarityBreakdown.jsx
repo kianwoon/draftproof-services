@@ -40,6 +40,43 @@ function CategoryBar({ t, category, raw, band, showPercent }) {
   );
 }
 
+// Deep-scan bands we have i18n labels + chip colors for. Unknown bands are
+// silently skipped — never render raw band strings. "green" is deliberately
+// absent: the backend never emits it for deep_scan.
+const KNOWN_DEEP_SCAN_BANDS = ['insufficient', 'amber', 'orange', 'red'];
+
+// Headline row between the subtitle and the bars: the deep-scan detector's
+// absolute AI estimate for this document. For band "insufficient" the reading
+// is below the reliability floor, so the number is weak evidence — show a
+// muted "insufficient evidence" chip instead of a percentage-as-verdict.
+function DeepScanHeadline({ t, deepScan }) {
+  if (!deepScan || !KNOWN_DEEP_SCAN_BANDS.includes(deepScan.band)) return null;
+  const hasProportion =
+    typeof deepScan.proportion === 'number' && Number.isFinite(deepScan.proportion);
+  const insufficient = deepScan.band === 'insufficient';
+  return (
+    <div className="authorship-breakdown-deepscan">
+      <span className="authorship-breakdown-deepscan-label">
+        {t('report.authorshipBreakdown.deepScan.label')}
+      </span>
+      {insufficient || !hasProportion ? (
+        <span className="authorship-breakdown-deepscan-chip is-insufficient">
+          {t('report.authorshipBreakdown.deepScan.insufficientChip')}
+        </span>
+      ) : (
+        <>
+          <strong className="authorship-breakdown-deepscan-value">
+            {Math.round(deepScan.proportion * 100)}%
+          </strong>
+          <span className={`authorship-breakdown-deepscan-chip is-${deepScan.band}`}>
+            {t(`report.authorshipBreakdown.deepScan.bands.${deepScan.band}`)}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Uncertainty flags we know how to explain to users. Unknown flags are silently
 // skipped — never render raw flag strings.
 const KNOWN_UNCERTAINTY_FLAGS = [
@@ -87,6 +124,8 @@ export default function AuthorshipClarityBreakdown({ t, breakdown }) {
           {t('report.authorshipBreakdown.subtitle')}
         </p>
       </div>
+
+      <DeepScanHeadline t={t} deepScan={breakdown.deep_scan} />
 
       <div className="authorship-breakdown-bars">
         {CATEGORY_ORDER.map((category) => (
