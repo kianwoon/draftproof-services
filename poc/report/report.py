@@ -251,11 +251,6 @@ class DraftReport:
         plan["rewritten_text"] = self.rewritten_text
         return plan
 
-    def to_json(self, indent: int = 2) -> str:
-        """Serialize the report to a JSON string."""
-        import json
-        return json.dumps(self.to_dict(), indent=indent, default=str)
-
 
 # ── Builder ─────────────────────────────────────────────────────────
 

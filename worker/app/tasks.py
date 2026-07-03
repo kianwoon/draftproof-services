@@ -100,18 +100,10 @@ EXTERNAL_REVIEW_REWRITE_WARNINGS = {
 
 
 def _selected_rewrite_pipeline(settings_obj) -> str:
-    """Return the first enabled rewrite pipeline in production priority order."""
+    """Return the enabled rewrite pipeline (v6 only; legacy fallback)."""
 
     if getattr(settings_obj, "DRAFTPROOF_REWRITE_V6_ENABLED", False):
         return "v6"
-    if getattr(settings_obj, "DRAFTPROOF_REWRITE_V5_ENABLED", False):
-        return "v5"
-    if getattr(settings_obj, "DRAFTPROOF_REWRITE_V4_ENABLED", False):
-        return "v4"
-    if getattr(settings_obj, "DRAFTPROOF_REWRITE_V3_ENABLED", False):
-        return "v3"
-    if getattr(settings_obj, "DRAFTPROOF_REWRITE_V2_ENABLED", False):
-        return "v2"
     return "legacy"
 
 
@@ -372,21 +364,6 @@ def _debug_integrity_layers(report_json: dict | None, badge: dict | None) -> dic
             "label": f"{ai_band} / {grounding_band}",
         },
     }
-
-
-def _scan_email_ai_signal_score(report_json: dict | None) -> float | int | None:
-    if not isinstance(report_json, dict):
-        return None
-    badge = report_json.get("ai_risk_badge") or {}
-    transformation = badge.get("transformation_classification") or {}
-    features = transformation.get("features") or {}
-    if features.get("calibrated_ai_risk") is not None:
-        return features.get("calibrated_ai_risk")
-    intelligence = report_json.get("scan_intelligence") or {}
-    contribution = ((intelligence.get("transformation") or {}).get("contribution") or {})
-    if contribution.get("calibrated_ai_risk") is not None:
-        return contribution.get("calibrated_ai_risk")
-    return contribution.get("adjusted_ai_risk")
 
 
 def _configure_torch_threads(torch) -> int | None:
@@ -2192,9 +2169,6 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             return {"status": "failed", "error": "review-only findings"}
 
         # 3. Run rewrite pipeline
-        from poc.rewrite_pipeline import run_rewrite_pipeline
-        from app.config import settings
-
         llm_api_key = settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or settings.CEREBRAS_API_KEY
         if not llm_api_key:
             update_rewrite_status(
@@ -2301,59 +2275,8 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         progress_callback=report_rewrite_progress,
                         cancellation_check=raise_if_canceled,
                     )
-                elif pipeline_choice == "v5":
-                    from rewrite_v5 import run_rewrite_pipeline_v5
-                    v5_rewrite_model = (
-                        settings.DRAFTPROOF_REWRITE_V5_MODEL
-                        or settings.DRAFTPROOF_REWRITE_V4_MODEL
-                        or rewrite_model
-                    )
-                    result = run_rewrite_pipeline_v5(
-                        detect_json=report_json,
-                        output_dir=tmpdir,
-                        api_key=llm_api_key or None,
-                        model=v5_rewrite_model,
-                        base_url=settings.LLM_BASE_URL or None,
-                        progress_callback=report_rewrite_progress,
-                        checkpoint_callback=persist_rewrite_checkpoint,
-                        seed_candidate_texts=previous_rewrite_seed_texts,
-                        cancellation_check=raise_if_canceled,
-                    )
-                elif pipeline_choice == "v4":
-                    from rewrite_v4 import run_rewrite_pipeline_v4
-                    v4_rewrite_model = settings.DRAFTPROOF_REWRITE_V4_MODEL or rewrite_model
-                    result = run_rewrite_pipeline_v4(
-                        detect_json=report_json,
-                        output_dir=tmpdir,
-                        api_key=llm_api_key or None,
-                        model=v4_rewrite_model,
-                        base_url=settings.LLM_BASE_URL or None,
-                        progress_callback=report_rewrite_progress,
-                        cancellation_check=raise_if_canceled,
-                    )
-                elif pipeline_choice == "v3":
-                    from rewrite_v3 import run_rewrite_pipeline_v3
-                    result = run_rewrite_pipeline_v3(
-                        detect_json=report_json,
-                        output_dir=tmpdir,
-                        api_key=llm_api_key or None,
-                        model=rewrite_model,
-                        base_url=settings.LLM_BASE_URL or None,
-                        progress_callback=report_rewrite_progress,
-                        cancellation_check=raise_if_canceled,
-                    )
-                elif pipeline_choice == "v2":
-                    from rewrite_v2 import run_rewrite_pipeline_v2
-                    result = run_rewrite_pipeline_v2(
-                        detect_json=report_json,
-                        output_dir=tmpdir,
-                        api_key=llm_api_key or None,
-                        model=rewrite_model,
-                        base_url=settings.LLM_BASE_URL or None,
-                        progress_callback=report_rewrite_progress,
-                        cancellation_check=raise_if_canceled,
-                    )
                 else:
+                    from poc.rewrite_pipeline import run_rewrite_pipeline
                     result = run_rewrite_pipeline(
                         detect_json=report_json,
                         output_dir=tmpdir,

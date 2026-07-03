@@ -31,7 +31,6 @@ import {
   translatedGroup,
   transformationLabel,
   confidenceLabel,
-  evidenceLabel,
   translateAuthorshipRating,
   formatMetricPercent,
   calibratedReportAiScore,
@@ -190,61 +189,6 @@ function adjustHighlightedRanges(ranges, previousText, nextText) {
       .map(([segmentId, range]) => [segmentId, adjustHighlightedRange(range, previousText, nextText)])
       .filter(([, range]) => range && range.end > range.start)
   );
-}
-
-function mapOriginalRangeToCurrent(originalText, currentText, range) {
-  if (!range || range.end <= range.start) return null;
-  if (originalText === currentText) return range;
-
-  const parts = lcsTokenDiff(tokenizeTrackedText(originalText), tokenizeTrackedText(currentText));
-  let originalOffset = 0;
-  let currentOffset = 0;
-  let mappedStart = null;
-  let mappedEnd = null;
-
-  const include = (start, end = start) => {
-    mappedStart = mappedStart == null ? start : Math.min(mappedStart, start);
-    mappedEnd = mappedEnd == null ? end : Math.max(mappedEnd, end);
-  };
-
-  parts.forEach((part) => {
-    const length = part.text.length;
-    if (part.type === 'equal') {
-      const originalEnd = originalOffset + length;
-      const overlapStart = Math.max(range.start, originalOffset);
-      const overlapEnd = Math.min(range.end, originalEnd);
-      if (overlapStart < overlapEnd) {
-        include(
-          currentOffset + (overlapStart - originalOffset),
-          currentOffset + (overlapEnd - originalOffset)
-        );
-      }
-      originalOffset = originalEnd;
-      currentOffset += length;
-      return;
-    }
-
-    if (part.type === 'delete') {
-      const originalEnd = originalOffset + length;
-      if (Math.max(range.start, originalOffset) < Math.min(range.end, originalEnd)) {
-        include(currentOffset);
-      }
-      originalOffset = originalEnd;
-      return;
-    }
-
-    if (part.type === 'insert') {
-      if (originalOffset >= range.start && originalOffset <= range.end) {
-        include(currentOffset, currentOffset + length);
-      }
-      currentOffset += length;
-    }
-  });
-
-  if (mappedStart == null || mappedEnd == null) return null;
-  const start = Math.max(0, Math.min(currentText.length, mappedStart));
-  const end = Math.max(start, Math.min(currentText.length, mappedEnd));
-  return end > start ? { start, end } : null;
 }
 
 function buildOriginalSegmentRanges(originalText, segments) {
@@ -1101,8 +1045,7 @@ export default function Report() {
     if (!paragraph?.id || !paragraph.text) return null;
     return (
       findTextRange(submittedDraftText, paragraph.text) ||
-      existingRanges[paragraph.id] ||
-      mapOriginalRangeToCurrent(originalSubmittedText, submittedDraftText, originalAffectedRanges[paragraph.id])
+      existingRanges[paragraph.id]
     );
   };
 
@@ -1710,75 +1653,6 @@ export default function Report() {
             </div>
           </div>
         )}
-      </div>
-    );
-  };
-
-  const renderSignalGaugeStrip = (summary) => {
-    if (!summary) return null;
-
-    const signalGauges = [
-      {
-        key: 'aiRisk',
-        label: t('report.transformation.smartSignals.aiRisk'),
-        value: summary.adjustedAiRisk,
-        tone: summary.adjustedAiRisk <= 20 ? 'positive' : summary.adjustedAiRisk <= 35 ? 'warning' : 'danger',
-      },
-      {
-        key: 'humanAnchor',
-        label: t('report.transformation.smartSignals.humanAnchor'),
-        value: summary.humanAnchorDiscount,
-        tone: 'positive',
-      },
-      {
-        key: 'confidence',
-        label: t('report.transformation.smartSignals.confidence'),
-        value: summary.calibrationConfidence,
-        tone: 'info',
-      },
-      {
-        key: 'suppression',
-        label: t('report.transformation.smartSignals.suppression'),
-        value: summary.reportingSuppression,
-        tone: 'neutral',
-      },
-    ].filter((item) => Number.isFinite(Number(item.value)));
-
-    if (signalGauges.length === 0) return null;
-
-    return (
-      <div className="transformation-signal-gauge-strip" aria-label={t('report.transformation.smartSignalsLabel')}>
-        {signalGauges.map((item) => {
-          const value = Math.round(clampPercent(Number(item.value)) ?? 0);
-          return (
-            <div
-              key={item.key}
-              className={`transformation-signal-gauge is-${item.tone}`}
-              role="meter"
-              aria-label={item.label}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={value}
-              aria-valuetext={t('report.transformation.smartSignalsValue', { label: item.label, value })}
-            >
-              <svg viewBox="0 0 92 50" aria-hidden="true" focusable="false">
-                <path
-                  className="transformation-signal-gauge-track"
-                  d="M12 42 A34 34 0 0 1 80 42"
-                  pathLength="100"
-                />
-                <path
-                  className="transformation-signal-gauge-fill"
-                  d="M12 42 A34 34 0 0 1 80 42"
-                  pathLength="100"
-                  strokeDasharray={`${value} 100`}
-                />
-              </svg>
-              <strong>{value}%</strong>
-              <span>{item.label}</span>
-            </div>
-          );
-        })}
       </div>
     );
   };
