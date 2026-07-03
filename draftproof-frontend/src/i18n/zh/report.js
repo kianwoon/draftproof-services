@@ -25,6 +25,7 @@ export const report = {
     "note": "这关乎你能否把它作为自己的作品站得住脚 — 而不是它看起来是否像 AI 所写。AI 使用声明、课程政策和小组分工都不在文本中，只有你才能声明。",
     "compactNote": "AI 可能性 ~{{score}}%（综合检测器）—— 这不是 Turnitin 分数；检测器会过度标记流畅文字，因此这是提示而非定论。下方「作者身份清晰度细分」中另有一项测试版深度扫描估计，不同检测器的结果可能不一致。AI 使用声明、课程政策和小组分工都不在文本中——只有你才能声明。",
     "compactNoteFused": "AI 可能性 ~{{score}}%（融合：综合 + 深度扫描检测器）—— 这不是 Turnitin 分数；检测器会过度标记流畅文字，因此这是提示而非定论。深度扫描详情见下方「作者身份清晰度细分」。AI 使用声明、课程政策和小组分工都不在文本中——只有你才能声明。",
+    "compactNoteFusedAnchored": "AI 可能性 ~{{score}}%（融合：综合 + 深度扫描检测器）—— DraftProof 的标记线为 {{flagLine}}，且这不是 Turnitin 分数：不要与 Turnitin 的 20% 线比较。检测器会过度标记流畅文字，因此这是提示而非定论。深度扫描详情见下方「作者身份清晰度细分」。AI 使用声明、课程政策和小组分工都不在文本中——只有你才能声明。",
     "ownershipLead": {
       "low": "你可以把它作为自己的作品站得住脚。",
       "medium": "在能够完全将其作为自己的作品之前，请先加强它。",
@@ -49,6 +50,35 @@ export const report = {
       "citation": "论断未清晰对应到来源",
       "defence_readiness": "在面谈中难以作为自己的作品来辩护",
       "text_pattern": "类似 AI 的文本模式，可能触发检测器"
+    },
+    // allow-hardcode: DraftProof 分数说明表的 i18n UI 文案（来自 poc/detect_v7/weights.json
+    // tier_authority._notes / display_bands 的真实 FPR 数字，人工撰写的说明文字，非评分/匹配逻辑）。
+    "scale": {
+      "toggle": "这些数字是什么意思？",
+      "headers": {
+        "score": "DraftProof 分数",
+        "reads": "解读",
+        "measured": "我们的实测结果"
+      },
+      "rows": {
+        "low": {
+          "reads": "低",
+          "measured": "约 6% 或更少的真实 ESL 学生会得到这么高的分数 — 大多数人类写作远低于此"
+        },
+        "medium": {
+          "reads": "中",
+          "measured": "真实人类写作中罕见（实测假阳性率 0.4%）"
+        },
+        "high": {
+          "reads": "高",
+          "measured": "真实人类写作中很少见（实测假阳性率低于 1%）"
+        },
+        "critical": {
+          "reads": "严重",
+          "measured": "在我们的测试中几乎从未在真实人类写作中出现（实测假阳性率 0%）"
+        }
+      },
+      "notTurnitinComparable": "DraftProof 的分数与 Turnitin 的百分比不可比较 — 两者衡量的是不同的东西，使用不同的量表。"
     }
   },
   "repairSummary": {
@@ -665,6 +695,8 @@ export const report = {
     "deepScan": {
       "label": "深度扫描 AI 估计",
       "insufficientChip": "证据不足",
+      "notTurnitin": "句子级信号 —— 不是 Turnitin 分数",
+      "bandDefersToTier": "{{band}}信号 · 总体{{tier}}",
       "bands": {
         "amber": "黄色预警",
         "orange": "橙色预警",

@@ -715,6 +715,11 @@
   text-transform: uppercase;
   line-height: 1.5;
 }
+.authorship-breakdown-deepscan-chip.is-green {
+  border-color: rgba(22, 163, 74, .35);
+  background: rgba(22, 163, 74, .12);
+  color: #15803d;
+}
 .authorship-breakdown-deepscan-chip.is-amber {
   border-color: rgba(217, 119, 6, .35);
   background: rgba(217, 119, 6, .12);
@@ -732,6 +737,13 @@
 }
 .authorship-breakdown-deepscan-chip.is-insufficient {
   text-transform: none;
+}
+
+.authorship-breakdown-deepscan-note {
+  flex-basis: 100%;
+  font-size: .72rem;
+  font-weight: 500;
+  color: #64748b;
 }
 
 .authorship-breakdown-bars {

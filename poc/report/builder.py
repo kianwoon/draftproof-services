@@ -1286,6 +1286,7 @@ class ReportBuilder:
         # panel — one paid call per scan, never two.
         _deep_scan_for_authority = None
         try:
+            from detect_v7.config import get_tier_authority_config as _get_tier_authority_config  # noqa: E402
             from detect_v7.pipeline_bridge import (  # noqa: E402
                 compute_fused_authority as _compute_fused_authority,
                 get_deep_scan_proportion as _get_deep_scan_proportion,
@@ -1309,6 +1310,7 @@ class ReportBuilder:
                         "fused_score": _fused["fused_score"],
                         "composite_score": _pre_fusion_composite,
                         "proportion": _deep_scan_for_authority["proportion"],
+                        "flag_line": _get_tier_authority_config()["cutoffs"]["amber"],
                     }
                     authoritative_ai_likelihood = _fused["fused_score"]
                     authoritative_tier = _fused["tier"]

@@ -45,15 +45,38 @@ function CategoryBar({ t, category, raw, band, showPercent }) {
 // absent: the backend never emits it for deep_scan.
 const KNOWN_DEEP_SCAN_BANDS = ['insufficient', 'amber', 'orange', 'red'];
 
+// Tiers the authoritative badge can carry (poc/report/builder.py:
+// "tier": authoritative_tier or layer3.tier.value — lowercase green/amber/orange/red).
+const KNOWN_AUTHORITATIVE_TIERS = ['green', 'amber', 'orange', 'red'];
+
 // Headline row between the subtitle and the bars: the deep-scan detector's
 // absolute AI estimate for this document. For band "insufficient" the reading
 // is below the reliability floor, so the number is weak evidence — show a
 // muted "insufficient evidence" chip instead of a percentage-as-verdict.
-function DeepScanHeadline({ t, deepScan }) {
+//
+// Chip COLOR authority (owner decision 2026-07-04): a raw deep-scan band (e.g.
+// "amber") is only one ingredient feeding the fused ai_likelihood_score at 60%
+// weight (poc/detect_v7/weights.json tier_authority) — it must never carry its
+// own independent alarm color that can contradict the authoritative tier shown
+// in the hero (e.g. an amber chip next to a green "Low Risk" verdict). The chip
+// color always follows `authoritativeTier` when supplied; the raw band label
+// still prints in the chip text so the underlying signal isn't hidden. Older
+// reports / tier-authority-off carry no authoritativeTier, so we fall back to
+// the pre-existing band-driven color rather than breaking.
+function DeepScanHeadline({ t, deepScan, authoritativeTier }) {
   if (!deepScan || !KNOWN_DEEP_SCAN_BANDS.includes(deepScan.band)) return null;
   const hasProportion =
     typeof deepScan.proportion === 'number' && Number.isFinite(deepScan.proportion);
   const insufficient = deepScan.band === 'insufficient';
+  const hasAuthoritativeTier = KNOWN_AUTHORITATIVE_TIERS.includes(authoritativeTier);
+  // "insufficient" stays muted regardless of authoritativeTier — it's a
+  // data-quality state (too few sentences crossed the reliability floor), not
+  // a risk color, so it must never borrow the authoritative tier's alarm hue.
+  const chipColorTier = insufficient ? null : (hasAuthoritativeTier ? authoritativeTier : deepScan.band);
+  const chipClassName = insufficient
+    ? 'authorship-breakdown-deepscan-chip is-insufficient'
+    : `authorship-breakdown-deepscan-chip is-${chipColorTier}`;
+  const bandLabel = t(`report.authorshipBreakdown.deepScan.bands.${deepScan.band}`);
   return (
     <div className="authorship-breakdown-deepscan">
       <span className="authorship-breakdown-deepscan-label">
@@ -68,11 +91,19 @@ function DeepScanHeadline({ t, deepScan }) {
           <strong className="authorship-breakdown-deepscan-value">
             {Math.round(deepScan.proportion * 100)}%
           </strong>
-          <span className={`authorship-breakdown-deepscan-chip is-${deepScan.band}`}>
-            {t(`report.authorshipBreakdown.deepScan.bands.${deepScan.band}`)}
+          <span className={chipClassName}>
+            {hasAuthoritativeTier
+              ? t('report.authorshipBreakdown.deepScan.bandDefersToTier', {
+                  band: bandLabel,
+                  tier: t(`report.tiers.${authoritativeTier}`),
+                })
+              : bandLabel}
           </span>
         </>
       )}
+      <span className="authorship-breakdown-deepscan-note">
+        {t('report.authorshipBreakdown.deepScan.notTurnitin')}
+      </span>
     </div>
   );
 }
@@ -85,7 +116,7 @@ const KNOWN_UNCERTAINTY_FLAGS = [
   'paraphrase_without_original_draft',
 ];
 
-export default function AuthorshipClarityBreakdown({ t, breakdown }) {
+export default function AuthorshipClarityBreakdown({ t, breakdown, authoritativeTier }) {
   if (!breakdown) return null;
 
   const rawShares = breakdown.document_breakdown_raw || {};
@@ -125,7 +156,7 @@ export default function AuthorshipClarityBreakdown({ t, breakdown }) {
         </p>
       </div>
 
-      <DeepScanHeadline t={t} deepScan={breakdown.deep_scan} />
+      <DeepScanHeadline t={t} deepScan={breakdown.deep_scan} authoritativeTier={authoritativeTier} />
 
       <div className="authorship-breakdown-bars">
         {CATEGORY_ORDER.map((category) => (

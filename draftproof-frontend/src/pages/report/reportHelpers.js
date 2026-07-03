@@ -1551,7 +1551,11 @@ function submissionRisk(badge) {
   // When the V7 tier-authority override fired, the badge's ai_likelihood (and
   // therefore the % in the band's note) is the FUSED score, not the composite —
   // the note must label it correctly (mislabel observed live 2026-07-04).
-  return { ...sr, _fused: Boolean((badge || {}).tier_authority) };
+  return {
+    ...sr,
+    _fused: Boolean((badge || {}).tier_authority),
+    _flagLine: ((badge || {}).tier_authority || {}).flag_line || null,
+  };
 }
 
 // Two policy-interpreted scores (AI-allowed vs AI-restricted). Returns null when the

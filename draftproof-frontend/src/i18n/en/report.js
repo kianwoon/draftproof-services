@@ -26,6 +26,7 @@ export const report = {
     "note": "This is about whether you can stand behind this as your own work — not whether it looks AI-written. Declaration, course policy, and group contribution aren't in the text; only you can declare those.",
     "compactNote": "AI-likelihood ~{{score}}% (composite detector) — NOT a Turnitin score; detectors over-flag fluent writing, so it's a heads-up, not a verdict. A separate beta deep-scan estimate appears in the Authorship clarity breakdown below; different detectors can disagree. Declaration, course policy, and group contribution aren't in the text — only you can declare those.",
     "compactNoteFused": "AI-likelihood ~{{score}}% (fused: composite + deep-scan detectors) — NOT a Turnitin score; detectors over-flag fluent writing, so it's a heads-up, not a verdict. The deep-scan detail appears in the Authorship clarity breakdown below. Declaration, course policy, and group contribution aren't in the text — only you can declare those.",
+    "compactNoteFusedAnchored": "AI-likelihood ~{{score}}% (fused: composite + deep-scan detectors) — DraftProof's flag line is {{flagLine}}, and this is NOT a Turnitin score: do not compare it to Turnitin's 20% line. Detectors over-flag fluent writing, so it's a heads-up, not a verdict. Deep-scan detail is in the Authorship clarity breakdown below. Declaration, course policy, and group contribution aren't in the text — only you can declare those.",
     "ownershipLead": {
       "low": "You can defend this as your own work.",
       "medium": "Strengthen this before you can fully defend it as your own.",
@@ -50,6 +51,36 @@ export const report = {
       "citation": "claims that are not clearly tied to a source",
       "defence_readiness": "hard to defend as your own work in an interview",
       "text_pattern": "AI-like text patterns that may trigger a detector"
+    },
+    // allow-hardcode: i18n UI copy for the DraftProof-scale legend table (owner-specified
+    // real FPR numbers from poc/detect_v7/weights.json tier_authority._notes / display_bands —
+    // human-reviewed craft text, not a scoring/matching oracle).
+    "scale": {
+      "toggle": "What do these numbers mean?",
+      "headers": {
+        "score": "DraftProof score",
+        "reads": "Reads as",
+        "measured": "What we measured"
+      },
+      "rows": {
+        "low": {
+          "reads": "Low",
+          "measured": "~6% or fewer real ESL students score this high — most human writing lands well under this"
+        },
+        "medium": {
+          "reads": "Medium",
+          "measured": "uncommon for genuine human writing (0.4% false-positive rate measured)"
+        },
+        "high": {
+          "reads": "High",
+          "measured": "rare for genuine human writing (<1% false-positive rate measured)"
+        },
+        "critical": {
+          "reads": "Critical",
+          "measured": "essentially never seen in genuine human writing in our testing (0% false-positive rate measured)"
+        }
+      },
+      "notTurnitinComparable": "DraftProof's score is not comparable to Turnitin's percentage — the two tools measure different things on different scales."
     }
   },
   "repairSummary": {
@@ -671,6 +702,8 @@ export const report = {
     "deepScan": {
       "label": "Deep-scan AI estimate",
       "insufficientChip": "insufficient evidence",
+      "notTurnitin": "sentence-level signal — not a Turnitin score",
+      "bandDefersToTier": "{{band}} signal · {{tier}} overall",
       "bands": {
         "amber": "Amber",
         "orange": "Orange",
