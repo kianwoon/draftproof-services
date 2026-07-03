@@ -4,11 +4,10 @@
 // Renders nothing if the badge has no authorship_breakdown (flag off / older report) — matches
 // the additive/null-safe house pattern used by DebertaSignal.jsx / AuthenticityDashboard.jsx.
 //
-// Percentage display is CONFIDENCE-GATED (owner decision 2026-07-04): when the flatness
-// guard fires (confidence === 'low' or degraded_display — i.e. a near-uniform distribution
-// where a printed digit would imply meaningless precision), only bands render. When one
-// category clearly dominates, the rounded share renders next to the band ("Strong · 54%").
-// Bar-fill widths always use document_breakdown_raw for visual proportion either way.
+// Percentages ALWAYS display next to the band ("Some · 37%") — owner decision 2026-07-04.
+// On near-uniform documents the digits sit within formula noise; the flatness-gated
+// "mixed signals" caveat carries that warning rather than hiding the number.
+// Bar-fill widths always use document_breakdown_raw for visual proportion.
 
 const CATEGORY_ORDER = [
   'student_owned',
@@ -54,16 +53,16 @@ export default function AuthorshipClarityBreakdown({ t, breakdown }) {
 
   const rawShares = breakdown.document_breakdown_raw || {};
   const bandShares = breakdown.document_breakdown_bands || {};
-  // "Mixed signals" caveat + percent suppression are gated on FLATNESS ONLY
-  // (confidence === 'low', i.e. no category decisively wins). Do NOT gate on
-  // degraded_display: in Phase 1A three signals are always unbuilt, so every
-  // document is structurally degraded and that flag is ALWAYS true — gating on
-  // it made the percent unreachable on every report (verified live 2026-07-04,
-  // report 95d3de1f: degraded_paragraph_count == paragraph_count on all docs).
-  // The unbuilt-signal situation is already disclosed via the uncertainty-flag
-  // caveat lines below.
+  // Percentages ALWAYS display (owner decision 2026-07-04, superseding the
+  // earlier confidence-gated approach: a number that appears only sometimes
+  // reads as ambiguous/confusing). On near-uniform documents the printed
+  // digits are within formula noise — the "mixed signals" caveat below
+  // (flatness-gated, confidence === 'low') carries that warning instead of
+  // hiding the number. degraded_display is deliberately not consulted here:
+  // it is structurally always true in Phase 1A (three signals unbuilt) and
+  // that situation is disclosed via the uncertainty-flag caveat lines.
   const showCaveat = breakdown.confidence === 'low';
-  const showPercent = !showCaveat;
+  const showPercent = true;
   const uncertaintyFlags = Array.isArray(breakdown.uncertainty_flags)
     ? KNOWN_UNCERTAINTY_FLAGS.filter((flag) => breakdown.uncertainty_flags.includes(flag))
     : [];
