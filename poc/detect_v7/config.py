@@ -161,6 +161,10 @@ def get_esl_guard_config() -> dict[str, Any]:
     return dict(_weights()["esl_guard"])
 
 
+def get_deep_scan_calibration() -> dict[str, Any]:
+    return dict(_weights()["deep_scan_calibration"])
+
+
 def get_display_bands() -> dict[str, float]:
     return dict(_weights()["display_bands"])
 

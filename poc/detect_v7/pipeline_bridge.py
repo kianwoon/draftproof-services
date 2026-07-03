@@ -54,12 +54,18 @@ import logging
 import os
 from typing import Any, Optional
 
-from . import aggregate, breakdown_composer, category_scoring, detector_fusion, signal_adapter
+from poc.detect.deberta_windowing import split_sentences
+
+from . import aggregate, breakdown_composer, category_scoring, config, detector_fusion, modal_client, signal_adapter
 
 logger = logging.getLogger(__name__)
 
 _ENV_VAR = "DRAFTPROOF_V7_AUTHORSHIP_BREAKDOWN"
+_DEEP_SCAN_ENV_VAR = "DRAFTPROOF_V7_DEEP_SCAN"
 _TRUTHY = {"1", "true"}
+
+_UNCERTAINTY_FLAG_DEEP_SCAN_UNCALIBRATED = "deep_scan_uncalibrated"
+_UNCERTAINTY_FLAG_DEEP_SCAN_BELOW_FLOOR = "deep_scan_below_reliability_floor"
 
 
 def is_v7_enabled() -> bool:
@@ -77,6 +83,42 @@ def is_v7_enabled() -> bool:
     """
     raw = os.getenv(_ENV_VAR, "")
     return raw.strip().lower() in _TRUTHY
+
+
+def is_deep_scan_enabled() -> bool:
+    """Kill switch for the V7 deep-scan (2-detector, Modal-backed) fusion path.
+
+    Reads ``DRAFTPROOF_V7_DEEP_SCAN`` with the exact same strict "1"/"true"
+    truthy contract as ``is_v7_enabled()`` (see that function's docstring).
+    Default is OFF. MUST stay OFF in production until the Modal
+    ``deberta_large`` checkpoint is SCoCESLE-calibrated (see
+    ``modal_endpoints/README.md`` "Remaining Task 1B.0 work") — this function
+    only reads the env var, it never hardcodes a default-on value.
+    """
+    raw = os.getenv(_DEEP_SCAN_ENV_VAR, "")
+    return raw.strip().lower() in _TRUTHY
+
+
+def _extract_document_text(detection_result: Any) -> Optional[str]:
+    """Best-effort extraction of raw document text for the Modal deep-scan
+    call. The ``ai_risk_badge`` dict this bridge normally receives (see
+    module docstring) does NOT carry raw text at this call site — it is
+    document-level scores only. This checks the small set of plausible keys
+    a caller might attach; if none are present, deep scan is skipped
+    (fail-open, not fatal — falls back to the quick-scan path).
+    """
+    candidates = ("text", "document_text", "source_text", "full_text")
+    if isinstance(detection_result, dict):
+        for key in candidates:
+            value = detection_result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        return None
+    for key in candidates:
+        value = getattr(detection_result, key, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
 
 
 def _extract_ai_components(detection_result: Any) -> Optional[dict[str, Any]]:
@@ -219,7 +261,52 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
             )
             return None
 
+        deep_scan_uncalibrated = False
+        deep_scan_below_floor = False
         detector_scores = {"fakespot": calibrated_score}
+        if is_deep_scan_enabled():
+            document_text = _extract_document_text(detection_result)
+            if document_text:
+                sentences = [s for s in split_sentences(document_text) if s.strip()]
+                if not sentences:
+                    logger.info(
+                        "detect_v7.pipeline_bridge: deep scan enabled but document text "
+                        "produced no sentences; falling back to 1-detector quick-scan fusion."
+                    )
+                else:
+                    modal_response = modal_client.call_deep_scan(sentences)
+                    chunk_scores = (
+                        modal_response.get("chunk_scores") if isinstance(modal_response, dict) else None
+                    )
+                    if (
+                        isinstance(modal_response, dict)
+                        and modal_response.get("available") is True
+                        and isinstance(chunk_scores, list)
+                        and len(chunk_scores) == len(sentences)
+                        and all(
+                            isinstance(s, (int, float)) and not isinstance(s, bool) for s in chunk_scores
+                        )
+                    ):
+                        calibration = config.get_deep_scan_calibration()
+                        sent_threshold = calibration["sent_threshold"]
+                        doc_floor = calibration["doc_floor"]
+                        flagged = sum(1 for s in chunk_scores if s >= sent_threshold)
+                        proportion = flagged / len(chunk_scores)
+                        deberta_score = max(0.0, min(1.0, float(proportion)))
+                        detector_scores = {"fakespot": calibrated_score, "deberta_large": deberta_score}
+                        deep_scan_uncalibrated = modal_response.get("calibrated") is not True
+                        deep_scan_below_floor = proportion < doc_floor
+                    else:
+                        logger.info(
+                            "detect_v7.pipeline_bridge: Modal deep scan unavailable/failed/malformed; "
+                            "falling back to 1-detector quick-scan fusion."
+                        )
+            else:
+                logger.info(
+                    "detect_v7.pipeline_bridge: deep scan enabled but no document text "
+                    "available on detection_result; falling back to 1-detector quick-scan fusion."
+                )
+
         fused_score, _fusion_detail = detector_fusion.compute_calibrated_detector_score(detector_scores)
 
         raw_signals = _build_raw_signals(detection_result)
@@ -241,7 +328,16 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
         word_count = _extract_qualifying_word_count(detection_result) or 1
         document_aggregate = aggregate.aggregate_document([paragraph_result], [word_count])
 
-        return breakdown_composer.compose_authorship_breakdown(document_aggregate, [paragraph_result])
+        breakdown = breakdown_composer.compose_authorship_breakdown(document_aggregate, [paragraph_result])
+        if deep_scan_uncalibrated:
+            flags = breakdown.setdefault("uncertainty_flags", [])
+            if _UNCERTAINTY_FLAG_DEEP_SCAN_UNCALIBRATED not in flags:
+                flags.append(_UNCERTAINTY_FLAG_DEEP_SCAN_UNCALIBRATED)
+        if deep_scan_below_floor:
+            flags = breakdown.setdefault("uncertainty_flags", [])
+            if _UNCERTAINTY_FLAG_DEEP_SCAN_BELOW_FLOOR not in flags:
+                flags.append(_UNCERTAINTY_FLAG_DEEP_SCAN_BELOW_FLOOR)
+        return breakdown
     except Exception:
         logger.exception("detect_v7.pipeline_bridge: run_v7_breakdown failed; returning None (additive, non-fatal).")
         return None
