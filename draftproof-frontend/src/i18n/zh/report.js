@@ -50,6 +50,35 @@ export const report = {
       "citation": "论断未清晰对应到来源",
       "defence_readiness": "在面谈中难以作为自己的作品来辩护",
       "text_pattern": "类似 AI 的文本模式，可能触发检测器"
+    },
+    // allow-hardcode: DraftProof 分数说明表的 i18n UI 文案（来自 poc/detect_v7/weights.json
+    // tier_authority._notes / display_bands 的真实 FPR 数字，人工撰写的说明文字，非评分/匹配逻辑）。
+    "scale": {
+      "toggle": "这些数字是什么意思？",
+      "headers": {
+        "score": "DraftProof 分数",
+        "reads": "解读",
+        "measured": "我们的实测结果"
+      },
+      "rows": {
+        "low": {
+          "reads": "低",
+          "measured": "约 6% 或更少的真实 ESL 学生会得到这么高的分数 — 大多数人类写作远低于此"
+        },
+        "medium": {
+          "reads": "中",
+          "measured": "真实人类写作中罕见（实测假阳性率 0.4%）"
+        },
+        "high": {
+          "reads": "高",
+          "measured": "真实人类写作中很少见（实测假阳性率低于 1%）"
+        },
+        "critical": {
+          "reads": "严重",
+          "measured": "在我们的测试中几乎从未在真实人类写作中出现（实测假阳性率 0%）"
+        }
+      },
+      "notTurnitinComparable": "DraftProof 的分数与 Turnitin 的百分比不可比较 — 两者衡量的是不同的东西，使用不同的量表。"
     }
   },
   "repairSummary": {
@@ -667,6 +696,7 @@ export const report = {
       "label": "深度扫描 AI 估计",
       "insufficientChip": "证据不足",
       "notTurnitin": "句子级信号 —— 不是 Turnitin 分数",
+      "bandDefersToTier": "{{band}}信号 · 总体{{tier}}",
       "bands": {
         "amber": "黄色预警",
         "orange": "橙色预警",

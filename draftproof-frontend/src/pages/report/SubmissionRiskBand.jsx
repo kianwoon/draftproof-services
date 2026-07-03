@@ -54,6 +54,52 @@ export default function SubmissionRiskBand({ t, sr }) {
             )
           : t('report.submissionRisk.note')}
       </p>
+
+      {/* DraftProof's own scale (owner decision 2026-07-04): gives readers OUR
+          numbers to benchmark the AI-likelihood % against, instead of guessing
+          or defaulting to Turnitin's familiar 20% line. Collapsed by default —
+          matches the .report-advanced-signals disclosure pattern, sized down
+          for this compact hero band. Numbers are the real committed
+          tier_authority cutoffs (poc/detect_v7/weights.json) — not invented. */}
+      {hasScore && (
+        <details className="submission-risk-scale">
+          <summary>{t('report.submissionRisk.scale.toggle')}</summary>
+          <div className="submission-risk-scale-content">
+            <table className="submission-risk-scale-table">
+              <thead>
+                <tr>
+                  <th>{t('report.submissionRisk.scale.headers.score')}</th>
+                  <th>{t('report.submissionRisk.scale.headers.reads')}</th>
+                  <th>{t('report.submissionRisk.scale.headers.measured')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>0–32</td>
+                  <td>{t('report.submissionRisk.scale.rows.low.reads')}</td>
+                  <td>{t('report.submissionRisk.scale.rows.low.measured')}</td>
+                </tr>
+                <tr>
+                  <td>32–48</td>
+                  <td>{t('report.submissionRisk.scale.rows.medium.reads')}</td>
+                  <td>{t('report.submissionRisk.scale.rows.medium.measured')}</td>
+                </tr>
+                <tr>
+                  <td>48–65</td>
+                  <td>{t('report.submissionRisk.scale.rows.high.reads')}</td>
+                  <td>{t('report.submissionRisk.scale.rows.high.measured')}</td>
+                </tr>
+                <tr>
+                  <td>65+</td>
+                  <td>{t('report.submissionRisk.scale.rows.critical.reads')}</td>
+                  <td>{t('report.submissionRisk.scale.rows.critical.measured')}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="submission-risk-scale-footnote">{t('report.submissionRisk.scale.notTurnitinComparable')}</p>
+          </div>
+        </details>
+      )}
     </div>
   );
 }

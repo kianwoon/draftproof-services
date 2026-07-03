@@ -1911,7 +1911,7 @@ export default function Report() {
           repairActionLabel={t('report.submitted.editor.editDraft')}
           repairActionHint={t('report.repairSummary.editDraftHint')}
           onRepairAction={showSubmittedEditEntry ? () => openSubmittedEditorForParagraph() : null}
-          afterTitle={<AuthorshipClarityBreakdown t={t} breakdown={(badge && badge.authorship_breakdown) || null} />}
+          afterTitle={<AuthorshipClarityBreakdown t={t} breakdown={(badge && badge.authorship_breakdown) || null} authoritativeTier={badge.tier || report.tier} />}
         />
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>

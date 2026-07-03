@@ -280,6 +280,91 @@
   line-height: 1.5;
 }
 
+/* DraftProof's own scale — small collapsed-by-default legend near the
+   AI-likelihood note, so readers benchmark against OUR numbers rather than
+   guessing or reaching for Turnitin's 20% line. Sized down from the
+   .report-advanced-signals disclosure pattern to fit this compact hero band. */
+.submission-risk-scale {
+  margin-top: .5rem;
+  font-size: .78rem;
+}
+
+.submission-risk-scale summary {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  color: #0f766e;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.submission-risk-scale summary::-webkit-details-marker {
+  display: none;
+}
+
+.submission-risk-scale summary::before {
+  content: "+";
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #99f6e4;
+  border-radius: 5px;
+  font-size: .72rem;
+  font-weight: 850;
+}
+
+.submission-risk-scale[open] summary::before {
+  content: "-";
+}
+
+.submission-risk-scale-content {
+  margin-top: .5rem;
+  padding: .7rem .8rem;
+  border: 1px solid rgba(13, 27, 42, .08);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.submission-risk-scale-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .74rem;
+}
+
+.submission-risk-scale-table th,
+.submission-risk-scale-table td {
+  text-align: left;
+  padding: .3rem .5rem;
+  vertical-align: top;
+}
+
+.submission-risk-scale-table th {
+  color: #64748b;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: .66rem;
+  border-bottom: 1px solid rgba(13, 27, 42, .1);
+}
+
+.submission-risk-scale-table td {
+  color: #334155;
+  border-bottom: 1px solid rgba(13, 27, 42, .06);
+}
+
+.submission-risk-scale-table tr:last-child td {
+  border-bottom: none;
+}
+
+.submission-risk-scale-footnote {
+  margin: .6rem 0 0;
+  color: #64748b;
+  font-size: .72rem;
+  line-height: 1.45;
+}
+
 /* Policy risk — two policy-interpreted scores replacing the raw two-number block. */
 .policy-risk { margin: .4rem 0 0; }
 .policy-risk-kicker {
