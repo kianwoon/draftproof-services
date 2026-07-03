@@ -660,6 +660,7 @@ export const report = {
     },
     "lowConfidenceCaveat": "本文档信号不一致——请将此细分结果作为复核的起点，而非最终判定。",
     "betaChip": "测试版",
+    "subtitle": "展示本文档的写作信号在四种作者风格之间的分布。四项占比之和恒为 100%——这是构成比例，不是 AI 概率。检测器的 AI 估计请见上方「文本模式风险」。",
     "uncertaintyFlags": {
       "deep_scan_uncalibrated": "包含一项仍在验证中的早期检测信号。",
       "deep_scan_below_reliability_floor": "本文档的深度扫描读数低于可靠性下限——请仅作为弱证据参考。",
