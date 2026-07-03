@@ -4,13 +4,11 @@
 // Renders nothing if the badge has no authorship_breakdown (flag off / older report) — matches
 // the additive/null-safe house pattern used by DebertaSignal.jsx / AuthenticityDashboard.jsx.
 //
-// display_mode is always "bands" today (Phase 1) — document_breakdown_raw is used ONLY to size
-// bar-fill widths for a visual sense of proportion; the exact percentage is NEVER rendered as
-// text (false precision until a validation dataset exists — see project decision).
-//
-// NOTE: styling is not yet written — this component uses the `authorship-breakdown-*` class
-// naming convention (sibling to `deberta-*` / `authn-*`) but the CSS itself is a TODO for the
-// follow-up task that wires this into Report.jsx.
+// Percentage display is CONFIDENCE-GATED (owner decision 2026-07-04): when the flatness
+// guard fires (confidence === 'low' or degraded_display — i.e. a near-uniform distribution
+// where a printed digit would imply meaningless precision), only bands render. When one
+// category clearly dominates, the rounded share renders next to the band ("Strong · 54%").
+// Bar-fill widths always use document_breakdown_raw for visual proportion either way.
 
 const CATEGORY_ORDER = [
   'student_owned',
@@ -19,10 +17,12 @@ const CATEGORY_ORDER = [
   'ai_generated_like',
 ];
 
-function CategoryBar({ t, category, raw, band }) {
-  const widthPct = typeof raw === 'number' && Number.isFinite(raw)
-    ? Math.max(0, Math.min(100, raw * 100))
-    : 0;
+function CategoryBar({ t, category, raw, band, showPercent }) {
+  const hasRaw = typeof raw === 'number' && Number.isFinite(raw);
+  const widthPct = hasRaw ? Math.max(0, Math.min(100, raw * 100)) : 0;
+  const bandLabel = band
+    ? t(`report.authorshipBreakdown.bands.${band}`)
+    : t('report.authorshipBreakdown.bands.None');
   return (
     <div className="authorship-breakdown-row">
       <span className="authorship-breakdown-row-label">
@@ -35,7 +35,7 @@ function CategoryBar({ t, category, raw, band }) {
         />
       </div>
       <span className="authorship-breakdown-row-band">
-        {band ? t(`report.authorshipBreakdown.bands.${band}`) : t('report.authorshipBreakdown.bands.None')}
+        {showPercent && hasRaw ? `${bandLabel} · ${Math.round(widthPct)}%` : bandLabel}
       </span>
     </div>
   );
@@ -55,6 +55,9 @@ export default function AuthorshipClarityBreakdown({ t, breakdown }) {
   const rawShares = breakdown.document_breakdown_raw || {};
   const bandShares = breakdown.document_breakdown_bands || {};
   const showCaveat = breakdown.confidence === 'low' || breakdown.degraded_display === true;
+  // Confidence gate: print the share only when the distribution is decisive enough for a
+  // digit to be honest. Mixed-signal documents stay bands-only (see header comment).
+  const showPercent = !showCaveat;
   const uncertaintyFlags = Array.isArray(breakdown.uncertainty_flags)
     ? KNOWN_UNCERTAINTY_FLAGS.filter((flag) => breakdown.uncertainty_flags.includes(flag))
     : [];
@@ -81,6 +84,7 @@ export default function AuthorshipClarityBreakdown({ t, breakdown }) {
             category={category}
             raw={rawShares[category]}
             band={bandShares[category]}
+            showPercent={showPercent}
           />
         ))}
       </div>
