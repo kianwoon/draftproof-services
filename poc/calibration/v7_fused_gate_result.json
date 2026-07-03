@@ -1,0 +1,68 @@
+{
+ "generated_at": "2026-07-03 20:54 UTC",
+ "n": {
+  "human_higher": 139,
+  "human_lower": 133,
+  "ai": 124
+ },
+ "fusion_weights": {
+  "fakespot": 0.4,
+  "deberta_large": 0.6
+ },
+ "sent_threshold": 0.999,
+ "scores": {
+  "composite": {
+   "fpr": {
+    "40.0": {
+     "higher": 25.2,
+     "lower": 6.0,
+     "overall": 15.8
+    },
+    "50.0": {
+     "higher": 5.0,
+     "lower": 0.8,
+     "overall": 2.9
+    },
+    "60.0": {
+     "higher": 2.2,
+     "lower": 0.8,
+     "overall": 1.5
+    }
+   },
+   "parity_gap_at_primary": -4.2,
+   "auc_ai_vs_human": 0.755,
+   "ai_tpr_at_primary": 9.7
+  },
+  "fused": {
+   "fpr": {
+    "40.0": {
+     "higher": 3.6,
+     "lower": 1.5,
+     "overall": 2.6
+    },
+    "50.0": {
+     "higher": 0.0,
+     "lower": 0.8,
+     "overall": 0.4
+    },
+    "60.0": {
+     "higher": 0.0,
+     "lower": 0.0,
+     "overall": 0.0
+    }
+   },
+   "parity_gap_at_primary": 0.8,
+   "auc_ai_vs_human": 0.9955,
+   "ai_tpr_at_primary": 84.7
+  }
+ },
+ "verdict": {
+  "fpr_rise_pts": -2.5,
+  "fpr_rise_ok": true,
+  "auc_drop": -0.2405,
+  "auc_drop_ok": true,
+  "parity_widen_pts": -3.4,
+  "parity_widen_ok": true,
+  "gate_pass": true
+ }
+}
