@@ -648,5 +648,26 @@ export const report = {
     "reviewPassages": "Review these passages",
     "noteAgree": "Both detection methods flag this document for review.",
     "noteDisagree": "The two detection methods read this document differently. This is common — they use different signals. Review the flagged passages yourself."
+  },
+  "authorshipBreakdown": {
+    "ariaLabel": "Authorship clarity breakdown",
+    "title": "Authorship clarity breakdown",
+    "categories": {
+      "student_owned": "Student-owned",
+      "ai_assisted_polished": "AI-assisted / polished",
+      "ai_paraphrased": "AI-paraphrased",
+      "ai_generated_like": "AI-generated-like"
+    },
+    "bands": {
+      "Strong": "Strong",
+      "Some": "Some",
+      "Little": "Little",
+      "None": "None"
+    },
+    "lowConfidenceCaveat": "Mixed signals in this document — treat this breakdown as a starting point for review, not a verdict.",
+    "disclaimer": "DraftProof provides authorship clarity signals and writing-risk analysis. It does not determine misconduct. Final judgement belongs to the school, teacher, or relevant academic policy."
+  },
+  "advancedSignals": {
+    "summary": "Advanced signals"
   }
 };
