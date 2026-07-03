@@ -1,0 +1,126 @@
+{
+ "generated_at": "2026-07-03 20:16 UTC",
+ "operating_point": {
+  "sent_threshold": 0.999,
+  "doc_floor": 0.3
+ },
+ "human_side_baseline": "poc/calibration/v7_deberta_academic_baseline.json (reused, not re-scored)",
+ "families": {
+  "google/gemini-2.5-flash": {
+   "n_essays": 20,
+   "tpr_at_doc_floor": 1.0,
+   "proportion_dist": {
+    "n": 20,
+    "min": 0.6667,
+    "p10": 0.7692,
+    "p50": 0.9167,
+    "p90": 1.0,
+    "max": 1.0
+   },
+   "per_essay": {
+    "ai_google_gemini_2_5_flash_00": 0.9231,
+    "ai_google_gemini_2_5_flash_01": 1.0,
+    "ai_google_gemini_2_5_flash_02": 1.0,
+    "ai_google_gemini_2_5_flash_03": 0.9167,
+    "ai_google_gemini_2_5_flash_04": 0.8182,
+    "ai_google_gemini_2_5_flash_05": 0.7692,
+    "ai_google_gemini_2_5_flash_06": 0.6667,
+    "ai_google_gemini_2_5_flash_07": 0.8182,
+    "ai_google_gemini_2_5_flash_08": 0.8333,
+    "ai_google_gemini_2_5_flash_09": 0.9167,
+    "ai_google_gemini_2_5_flash_10": 0.9167,
+    "ai_google_gemini_2_5_flash_11": 1.0,
+    "ai_google_gemini_2_5_flash_12": 1.0,
+    "ai_google_gemini_2_5_flash_13": 0.9231,
+    "ai_google_gemini_2_5_flash_14": 0.7692,
+    "ai_google_gemini_2_5_flash_15": 0.7692,
+    "ai_google_gemini_2_5_flash_16": 0.7857,
+    "ai_google_gemini_2_5_flash_17": 0.9286,
+    "ai_google_gemini_2_5_flash_18": 0.9091,
+    "ai_google_gemini_2_5_flash_19": 0.9091
+   }
+  },
+  "gpt-oss-120b": {
+   "n_essays": 20,
+   "tpr_at_doc_floor": 1.0,
+   "proportion_dist": {
+    "n": 20,
+    "min": 0.5333,
+    "p10": 0.6923,
+    "p50": 0.9231,
+    "p90": 1.0,
+    "max": 1.0
+   },
+   "per_essay": {
+    "ai_gpt_oss_120b_00": 1.0,
+    "ai_gpt_oss_120b_01": 0.9231,
+    "ai_gpt_oss_120b_02": 0.8,
+    "ai_gpt_oss_120b_03": 0.8333,
+    "ai_gpt_oss_120b_04": 1.0,
+    "ai_gpt_oss_120b_05": 1.0,
+    "ai_gpt_oss_120b_06": 0.5333,
+    "ai_gpt_oss_120b_07": 0.7692,
+    "ai_gpt_oss_120b_08": 1.0,
+    "ai_gpt_oss_120b_09": 1.0,
+    "ai_gpt_oss_120b_10": 0.6923,
+    "ai_gpt_oss_120b_11": 0.9231,
+    "ai_gpt_oss_120b_12": 0.9231,
+    "ai_gpt_oss_120b_13": 0.8667,
+    "ai_gpt_oss_120b_14": 0.9167,
+    "ai_gpt_oss_120b_15": 0.8462,
+    "ai_gpt_oss_120b_16": 0.7857,
+    "ai_gpt_oss_120b_17": 0.6667,
+    "ai_gpt_oss_120b_18": 1.0,
+    "ai_gpt_oss_120b_19": 1.0
+   }
+  },
+  "openai/gpt-5-mini": {
+   "n_essays": 19,
+   "tpr_at_doc_floor": 0.9474,
+   "proportion_dist": {
+    "n": 19,
+    "min": 0.2,
+    "p10": 0.3846,
+    "p50": 0.5833,
+    "p90": 0.8333,
+    "max": 0.8571
+   },
+   "per_essay": {
+    "ai_openai_gpt_5_mini_00": 0.8571,
+    "ai_openai_gpt_5_mini_01": 0.4167,
+    "ai_openai_gpt_5_mini_02": 0.6154,
+    "ai_openai_gpt_5_mini_03": 0.5833,
+    "ai_openai_gpt_5_mini_04": 0.5385,
+    "ai_openai_gpt_5_mini_05": 0.6154,
+    "ai_openai_gpt_5_mini_06": 0.5833,
+    "ai_openai_gpt_5_mini_07": 0.4667,
+    "ai_openai_gpt_5_mini_08": 0.5455,
+    "ai_openai_gpt_5_mini_09": 0.2,
+    "ai_openai_gpt_5_mini_11": 0.6429,
+    "ai_openai_gpt_5_mini_12": 0.8333,
+    "ai_openai_gpt_5_mini_13": 0.3846,
+    "ai_openai_gpt_5_mini_14": 0.6667,
+    "ai_openai_gpt_5_mini_15": 0.4,
+    "ai_openai_gpt_5_mini_16": 0.7143,
+    "ai_openai_gpt_5_mini_17": 0.3846,
+    "ai_openai_gpt_5_mini_18": 0.7692,
+    "ai_openai_gpt_5_mini_19": 0.7273
+   }
+  }
+ },
+ "consistency_check_original_family": {
+  "per_essay": {
+   "ai_claude_haiku_4_5_00": 0.8125,
+   "ai_claude_haiku_4_5_01": 0.6429,
+   "ai_claude_haiku_4_5_02": 0.6667,
+   "ai_claude_haiku_4_5_03": 0.7143,
+   "ai_claude_haiku_4_5_04": 0.8
+  },
+  "flagged_at_floor": 5,
+  "n": 5
+ },
+ "cost_proxies": {
+  "modal_calls": 64,
+  "sentences_scored": 823
+ }
+}
