@@ -734,6 +734,13 @@
   text-transform: none;
 }
 
+.authorship-breakdown-deepscan-note {
+  flex-basis: 100%;
+  font-size: .72rem;
+  font-weight: 500;
+  color: #64748b;
+}
+
 .authorship-breakdown-bars {
   display: flex;
   flex-direction: column;

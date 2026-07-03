@@ -73,6 +73,9 @@ function DeepScanHeadline({ t, deepScan }) {
           </span>
         </>
       )}
+      <span className="authorship-breakdown-deepscan-note">
+        {t('report.authorshipBreakdown.deepScan.notTurnitin')}
+      </span>
     </div>
   );
 }

@@ -45,10 +45,12 @@ export default function SubmissionRiskBand({ t, sr }) {
       <p className="submission-risk-note">
         {hasScore
           ? t(
-              sr._fused
-                ? 'report.submissionRisk.compactNoteFused'
-                : 'report.submissionRisk.compactNote',
-              { score: Math.round(textPattern.display_score) },
+              sr._fused && sr._flagLine != null
+                ? 'report.submissionRisk.compactNoteFusedAnchored'
+                : sr._fused
+                  ? 'report.submissionRisk.compactNoteFused'
+                  : 'report.submissionRisk.compactNote',
+              { score: Math.round(textPattern.display_score), flagLine: sr._flagLine },
             )
           : t('report.submissionRisk.note')}
       </p>

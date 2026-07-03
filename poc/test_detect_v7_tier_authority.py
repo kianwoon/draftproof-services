@@ -247,6 +247,7 @@ class TestTierAuthorityFlagOnWithDeepScan:
         assert prov["fused_score"] == pytest.approx(
             0.40 * prov["composite_score"] + 0.60 * 1.0 * 100.0, abs=0.02
         )
+        assert prov["flag_line"] == config.get_tier_authority_config()["cutoffs"]["amber"]
         # With proportion=1.0 fully weighted, fused_score is at least 60 -> orange or red.
         assert badge["tier"] in {"orange", "red"}
         assert badge["ai_likelihood_score"] == pytest.approx(prov["fused_score"], abs=0.01)
