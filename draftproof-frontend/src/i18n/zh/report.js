@@ -23,6 +23,7 @@ export const report = {
     "selfDeclare": "未知 — 需自行声明",
     "externalTrigger": "AI 可能性 ~{{score}}% — 这不是 Turnitin 分数，请勿与 20% 线比较。检测器会过度标记流畅文字，因此这是提示，并非定论。",
     "note": "这关乎你能否把它作为自己的作品站得住脚 — 而不是它看起来是否像 AI 所写。AI 使用声明、课程政策和小组分工都不在文本中，只有你才能声明。",
+    "compactNote": "AI 可能性 ~{{score}}% —— 这不是 Turnitin 分数；检测器会过度标记流畅文字，因此这是提示而非定论。此视图关乎你能否把它作为自己的作品站得住脚；AI 使用声明、课程政策和小组分工都不在文本中——只有你才能声明。",
     "ownershipLead": {
       "low": "你可以把它作为自己的作品站得住脚。",
       "medium": "在能够完全将其作为自己的作品之前，请先加强它。",
@@ -660,6 +661,15 @@ export const report = {
     },
     "lowConfidenceCaveat": "本文档信号不一致——请将此细分结果作为复核的起点，而非最终判定。",
     "betaChip": "测试版",
+    "deepScan": {
+      "label": "深度扫描 AI 估计",
+      "insufficientChip": "证据不足",
+      "bands": {
+        "amber": "黄色预警",
+        "orange": "橙色预警",
+        "red": "红色预警"
+      }
+    },
     "subtitle": "展示本文档的写作信号在四种作者风格之间的分布。四项占比之和恒为 100%——这是构成比例，不是 AI 概率。检测器的 AI 估计请见上方「文本模式风险」。",
     "uncertaintyFlags": {
       "deep_scan_uncalibrated": "包含一项仍在验证中的早期检测信号。",
