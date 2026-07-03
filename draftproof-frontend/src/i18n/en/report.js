@@ -24,7 +24,7 @@ export const report = {
     "selfDeclare": "Unknown — self-declare",
     "externalTrigger": "AI-likelihood ~{{score}}% — NOT a Turnitin score; don't compare it to the 20% line. Detectors over-flag fluent writing, so it's a heads-up, not a verdict.",
     "note": "This is about whether you can stand behind this as your own work — not whether it looks AI-written. Declaration, course policy, and group contribution aren't in the text; only you can declare those.",
-    "compactNote": "AI-likelihood ~{{score}}% — NOT a Turnitin score; detectors over-flag fluent writing, so it's a heads-up, not a verdict. This view is about standing behind the work as your own; declaration, course policy, and group contribution aren't in the text — only you can declare those.",
+    "compactNote": "AI-likelihood ~{{score}}% (composite detector) — NOT a Turnitin score; detectors over-flag fluent writing, so it's a heads-up, not a verdict. A separate beta deep-scan estimate appears in the Authorship clarity breakdown below; different detectors can disagree. Declaration, course policy, and group contribution aren't in the text — only you can declare those.",
     "ownershipLead": {
       "low": "You can defend this as your own work.",
       "medium": "Strengthen this before you can fully defend it as your own.",
@@ -676,7 +676,7 @@ export const report = {
         "red": "Red"
       }
     },
-    "subtitle": "How this document's writing signals distribute across four authorship styles. The shares always add up to 100% — a composition of the mix, not an AI-probability. For the detector's AI estimate, see Text-pattern risk above.",
+    "subtitle": "How this document's writing signals distribute across four authorship styles. The shares always add up to 100% — a composition of the mix, not an AI-probability. The deep-scan estimate below comes from a separate beta detector and may differ from Text-pattern risk in the summary above — different models, and both are signals rather than verdicts.",
     "uncertaintyFlags": {
       "deep_scan_uncalibrated": "Includes an early-stage detector signal that is still being validated.",
       "deep_scan_below_reliability_floor": "The deep-scan reading on this document is below the reliability floor — treat it as weak evidence.",
