@@ -81,6 +81,14 @@ export default function FeedbackWidget() {
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
 
+  // Allow other components (e.g. the report's Authorship Clarity Breakdown beta
+  // feedback prompt) to open this modal programmatically without prop drilling.
+  useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener('draftproof:open-feedback', onOpen);
+    return () => window.removeEventListener('draftproof:open-feedback', onOpen);
+  }, []);
+
   function close() {
     setOpen(false);
     setForm(EMPTY);

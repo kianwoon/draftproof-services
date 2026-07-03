@@ -665,6 +665,14 @@ export const report = {
       "None": "None"
     },
     "lowConfidenceCaveat": "Mixed signals in this document — treat this breakdown as a starting point for review, not a verdict.",
+    "betaChip": "Beta",
+    "uncertaintyFlags": {
+      "deep_scan_uncalibrated": "Includes an early-stage detector signal that is still being validated.",
+      "deep_scan_below_reliability_floor": "The deep-scan reading on this document is below the reliability floor — treat it as weak evidence.",
+      "paraphrase_without_original_draft": "Paraphrase detection is limited without an original draft to compare against."
+    },
+    "feedbackPrompt": "This breakdown is in beta. Does it match your sense of the document?",
+    "feedbackAction": "Tell us",
     "disclaimer": "DraftProof provides authorship clarity signals and writing-risk analysis. It does not determine misconduct. Final judgement belongs to the school, teacher, or relevant academic policy."
   },
   "advancedSignals": {

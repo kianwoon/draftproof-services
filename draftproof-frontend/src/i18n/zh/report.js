@@ -659,6 +659,14 @@ export const report = {
       "None": "未见"
     },
     "lowConfidenceCaveat": "本文档信号不一致——请将此细分结果作为复核的起点，而非最终判定。",
+    "betaChip": "测试版",
+    "uncertaintyFlags": {
+      "deep_scan_uncalibrated": "包含一项仍在验证中的早期检测信号。",
+      "deep_scan_below_reliability_floor": "本文档的深度扫描读数低于可靠性下限——请仅作为弱证据参考。",
+      "paraphrase_without_original_draft": "缺少可对比的原始草稿，改写检测能力有限。"
+    },
+    "feedbackPrompt": "此细分功能处于测试阶段。它与您对文档的判断相符吗？",
+    "feedbackAction": "告诉我们",
     "disclaimer": "DraftProof 提供作者归属清晰度信号与写作风险分析，并不据此判定学术不端。最终判断权属于学校、教师或相关学术政策。"
   },
   "advancedSignals": {
