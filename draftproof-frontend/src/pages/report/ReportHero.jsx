@@ -29,6 +29,7 @@ export default function ReportHero({
   submissionRiskView = null,
   isRewrittenView = false,
   onDownloadRewrittenPdf,
+  afterTitle = null,
 }) {
   // Download PDF lives in the info column (under the date). The rewrite CTAs (Auto
   // Rewrite + cancel) live inside the Repair Summary risk box, next to Manual Rewrite —
@@ -107,6 +108,11 @@ export default function ReportHero({
             )}
           </div>
         </div>
+
+        {/* V7 re-base (owner decision 2026-07-04): the Authorship Clarity Breakdown
+            renders here, directly under the title/stats row, as the report's center
+            of gravity — before the submission-risk chips and repair summary. */}
+        {afterTitle}
 
         {submissionRiskView && <SubmissionRiskBand t={t} sr={submissionRiskView} />}
 
