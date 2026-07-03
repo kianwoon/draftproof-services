@@ -44,7 +44,12 @@ export default function SubmissionRiskBand({ t, sr }) {
           band-wide note. Falls back to the note alone when no score exists. */}
       <p className="submission-risk-note">
         {hasScore
-          ? t('report.submissionRisk.compactNote', { score: Math.round(textPattern.display_score) })
+          ? t(
+              sr._fused
+                ? 'report.submissionRisk.compactNoteFused'
+                : 'report.submissionRisk.compactNote',
+              { score: Math.round(textPattern.display_score) },
+            )
           : t('report.submissionRisk.note')}
       </p>
     </div>

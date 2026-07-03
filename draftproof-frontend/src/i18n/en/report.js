@@ -25,6 +25,7 @@ export const report = {
     "externalTrigger": "AI-likelihood ~{{score}}% — NOT a Turnitin score; don't compare it to the 20% line. Detectors over-flag fluent writing, so it's a heads-up, not a verdict.",
     "note": "This is about whether you can stand behind this as your own work — not whether it looks AI-written. Declaration, course policy, and group contribution aren't in the text; only you can declare those.",
     "compactNote": "AI-likelihood ~{{score}}% (composite detector) — NOT a Turnitin score; detectors over-flag fluent writing, so it's a heads-up, not a verdict. A separate beta deep-scan estimate appears in the Authorship clarity breakdown below; different detectors can disagree. Declaration, course policy, and group contribution aren't in the text — only you can declare those.",
+    "compactNoteFused": "AI-likelihood ~{{score}}% (fused: composite + deep-scan detectors) — NOT a Turnitin score; detectors over-flag fluent writing, so it's a heads-up, not a verdict. The deep-scan detail appears in the Authorship clarity breakdown below. Declaration, course policy, and group contribution aren't in the text — only you can declare those.",
     "ownershipLead": {
       "low": "You can defend this as your own work.",
       "medium": "Strengthen this before you can fully defend it as your own.",
