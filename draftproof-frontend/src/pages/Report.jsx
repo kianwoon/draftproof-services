@@ -1913,14 +1913,6 @@ export default function Report() {
           onRepairAction={showSubmittedEditEntry ? () => openSubmittedEditorForParagraph() : null}
         />
         <AuthorshipClarityBreakdown t={t} breakdown={(badge && badge.authorship_breakdown) || null} />
-        <details className="report-advanced-signals">
-          <summary>{t('report.advancedSignals.summary')}</summary>
-          <div className="report-advanced-signals-content">
-            <AuthenticityDashboard t={t} dashboard={(badge && badge.authenticity_dashboard) || null} />
-            <DebertaSignal t={t} signal={(badge && badge.ai_signal_deberta) || null} compositeTier={badge.tier || report.tier} />
-            <CriticalThinkingControl badge={badge} t={t} />
-          </div>
-        </details>
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>
             <div className="scan-progress" role="status" aria-live="polite">
@@ -1966,14 +1958,16 @@ export default function Report() {
           </section>
         )}
 
-        {transformationScorecard ? (
-          <section className={`report-overview-card${hasRewriteSignalComparison ? ' is-rewrite-comparison' : ''}`} aria-label={t('report.overview')}>
+        {/* V7-centered layout (owner decision 2026-07-04): only the rewrite-comparison
+            scorecard stays above the fold (it's the point of a rewrite re-scan). The
+            plain writing-signal-pattern scorecard, summary bar, and score profile all
+            live in the collapsed Advanced signals section after the document view. */}
+        {hasRewriteSignalComparison && transformationScorecard && (
+          <section className="report-overview-card is-rewrite-comparison" aria-label={t('report.overview')}>
             {/* After a rewrite the scorecard already shows original-vs-rewritten, so the
                 separate "Original scan baseline" bar is redundant — omit it. */}
             {transformationScorecard}
           </section>
-        ) : (
-          reportSummaryBar
         )}
 
         {showOriginalRepairGuidance && (
@@ -2004,6 +1998,24 @@ export default function Report() {
             onCopyGuidance={copySelectedParagraphGuidance}
           />
         )}
+        <details className="report-advanced-signals">
+          <summary>{t('report.advancedSignals.summary')}</summary>
+          <div className="report-advanced-signals-content">
+            {!hasRewriteSignalComparison && (
+              transformationScorecard ? (
+                <section className="report-overview-card" aria-label={t('report.overview')}>
+                  {transformationScorecard}
+                </section>
+              ) : (
+                reportSummaryBar
+              )
+            )}
+            {scoreProfileSection}
+            <AuthenticityDashboard t={t} dashboard={(badge && badge.authenticity_dashboard) || null} />
+            <DebertaSignal t={t} signal={(badge && badge.ai_signal_deberta) || null} compositeTier={badge.tier || report.tier} />
+            <CriticalThinkingControl badge={badge} t={t} />
+          </div>
+        </details>
         {submittedEditorOpen && (
           <div className={`submitted-editor-backdrop${submittedEditorClosing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-label={t('report.submitted.editor.title')}>
             <div className="submitted-editor-sheet">
@@ -2294,8 +2306,6 @@ export default function Report() {
             </div>
           </div>
         )}
-
-        {scoreProfileSection}
 
       </div>
     </main>
