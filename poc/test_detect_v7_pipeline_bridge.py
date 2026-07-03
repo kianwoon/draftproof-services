@@ -470,3 +470,93 @@ class TestDeepScanFusion:
         assert result is not None
         assert "deep_scan_uncalibrated" not in result.get("uncertainty_flags", [])
         assert "deep_scan_below_reliability_floor" not in result.get("uncertainty_flags", [])
+
+
+def _ten_sentence_doc() -> str:
+    return " ".join(f"Sentence number {i}." for i in range(10))
+
+
+def _chunk_scores_with_flagged(flagged: int, total: int = 10) -> list[float]:
+    """flagged sentences at >= sent_threshold (0.999), rest well below."""
+    return [0.9995] * flagged + [0.1] * (total - flagged)
+
+
+def _run_with_proportion(monkeypatch, flagged: int, calibrated: bool = True):
+    monkeypatch.setenv(_ENV_VAR, "1")
+    monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+    monkeypatch.setattr(
+        modal_client,
+        "call_deep_scan",
+        lambda chunks, timeout_s=60.0: {
+            "available": True,
+            "calibrated": calibrated,
+            "chunk_scores": _chunk_scores_with_flagged(flagged),
+            "document_score": 0.5,
+        },
+    )
+    return pipeline_bridge.run_v7_breakdown(_realistic_detection_result(text=_ten_sentence_doc()))
+
+
+class TestDeepScanDisplayBand:
+    """User-facing 'Deep-scan AI estimate' object (schema contract):
+    {"proportion": float, "band": "insufficient"|"amber"|"orange"|"red",
+    "calibrated": bool}. Present ONLY on deep-scan success; NEVER "green"."""
+
+    def test_success_attaches_deep_scan_with_proportion_and_calibrated(self, monkeypatch):
+        result = _run_with_proportion(monkeypatch, flagged=4, calibrated=True)
+        assert result is not None
+        ds = result["deep_scan"]
+        assert ds == {"proportion": pytest.approx(0.4), "band": "amber", "calibrated": True}
+
+    def test_calibrated_false_passthrough(self, monkeypatch):
+        result = _run_with_proportion(monkeypatch, flagged=6, calibrated=False)
+        assert result is not None
+        assert result["deep_scan"]["calibrated"] is False
+
+    def test_deep_scan_disabled_no_key(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        monkeypatch.delenv(_DEEP_SCAN_ENV_VAR, raising=False)
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result(text=_ten_sentence_doc()))
+        assert result is not None
+        assert "deep_scan" not in result
+
+    def test_deep_scan_failed_no_key(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+        monkeypatch.setattr(modal_client, "call_deep_scan", lambda chunks, timeout_s=60.0: None)
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result(text=_ten_sentence_doc()))
+        assert result is not None
+        assert "deep_scan" not in result
+
+    def test_deep_scan_no_text_no_key(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result())  # no text=
+        assert result is not None
+        assert "deep_scan" not in result
+
+    @pytest.mark.parametrize(
+        "flagged,expected_band",
+        [
+            (0, "insufficient"),   # 0.0 < 0.3 floor
+            (2, "insufficient"),   # 0.2 < 0.3 floor
+            (3, "amber"),          # exactly 0.3 (insufficient_below edge, inclusive band)
+            (4, "amber"),          # 0.4 < orange_min 0.5
+            (5, "orange"),         # exactly 0.5 (orange_min edge)
+            (6, "orange"),         # 0.6 < red_min 0.7
+            (7, "red"),            # exactly 0.7 (red_min edge)
+            (10, "red"),           # 1.0
+        ],
+    )
+    def test_band_boundaries_exact(self, monkeypatch, flagged, expected_band):
+        result = _run_with_proportion(monkeypatch, flagged=flagged)
+        assert result is not None
+        ds = result["deep_scan"]
+        assert ds["proportion"] == pytest.approx(flagged / 10.0)
+        assert ds["band"] == expected_band
+
+    @pytest.mark.parametrize("flagged", list(range(11)))
+    def test_never_emits_green(self, monkeypatch, flagged):
+        result = _run_with_proportion(monkeypatch, flagged=flagged)
+        assert result is not None
+        assert result["deep_scan"]["band"] in {"insufficient", "amber", "orange", "red"}

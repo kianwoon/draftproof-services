@@ -165,6 +165,31 @@ def get_deep_scan_calibration() -> dict[str, Any]:
     return dict(_weights()["deep_scan_calibration"])
 
 
+def get_deep_scan_display_bands() -> dict[str, float]:
+    """Display-band cutoffs for the user-facing 'Deep-scan AI estimate'
+    (bands: insufficient / amber / orange / red — NO 'green' exists, per the
+    poc/detect/deberta_signal.py philosophy: below the reliability floor is
+    'insufficient evidence', never 'clean').
+
+    Enforces the contract that ``insufficient_below`` equals
+    ``deep_scan_calibration.doc_floor`` (both read from weights.json — the
+    check compares two config values, it hardcodes neither). A mismatch is a
+    config error and raises ValueError rather than silently banding with a
+    floor that disagrees with the reliability floor.
+    """
+    calibration = _weights()["deep_scan_calibration"]
+    bands = dict(calibration["display_bands"])
+    if bands["insufficient_below"] != calibration["doc_floor"]:
+        # allow-hardcode: human-readable error message text, not a scoring/matching list
+        raise ValueError(
+            f"weights.json contract violation: display_bands.insufficient_below "
+            f"({bands['insufficient_below']!r}) must equal deep_scan_calibration.doc_floor "
+            f"({calibration['doc_floor']!r}) — below the reliability floor is "
+            f"insufficient evidence, never a band."
+        )
+    return bands
+
+
 def get_display_bands() -> dict[str, float]:
     return dict(_weights()["display_bands"])
 

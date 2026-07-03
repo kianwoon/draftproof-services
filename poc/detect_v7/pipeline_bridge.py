@@ -68,6 +68,23 @@ _UNCERTAINTY_FLAG_DEEP_SCAN_UNCALIBRATED = "deep_scan_uncalibrated"
 _UNCERTAINTY_FLAG_DEEP_SCAN_BELOW_FLOOR = "deep_scan_below_reliability_floor"
 
 
+def _deep_scan_band(proportion: float) -> str:
+    """Map the deep-scan sentence proportion to a display band using the
+    weights.json cutoffs (config.get_deep_scan_display_bands — no literals
+    here per the no-hardcode rule). Mirrors poc/detect/deberta_signal.py's
+    ``_band_for`` philosophy: there is NO "green" band — below the
+    reliability floor is "insufficient evidence", never "clean".
+    """
+    bands = config.get_deep_scan_display_bands()
+    if proportion < bands["insufficient_below"]:
+        return "insufficient"
+    if proportion < bands["orange_min"]:
+        return "amber"
+    if proportion < bands["red_min"]:
+        return "orange"
+    return "red"
+
+
 def is_v7_enabled() -> bool:
     """Kill switch for the V7 Authorship Clarity Breakdown pipeline step.
 
@@ -263,6 +280,7 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
 
         deep_scan_uncalibrated = False
         deep_scan_below_floor = False
+        deep_scan_payload: Optional[dict[str, Any]] = None
         detector_scores = {"fakespot": calibrated_score}
         if is_deep_scan_enabled():
             document_text = _extract_document_text(detection_result)
@@ -296,6 +314,11 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
                         detector_scores = {"fakespot": calibrated_score, "deberta_large": deberta_score}
                         deep_scan_uncalibrated = modal_response.get("calibrated") is not True
                         deep_scan_below_floor = proportion < doc_floor
+                        deep_scan_payload = {
+                            "proportion": deberta_score,
+                            "band": _deep_scan_band(deberta_score),
+                            "calibrated": modal_response.get("calibrated") is True,
+                        }
                     else:
                         logger.info(
                             "detect_v7.pipeline_bridge: Modal deep scan unavailable/failed/malformed; "
@@ -337,6 +360,11 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
             flags = breakdown.setdefault("uncertainty_flags", [])
             if _UNCERTAINTY_FLAG_DEEP_SCAN_BELOW_FLOOR not in flags:
                 flags.append(_UNCERTAINTY_FLAG_DEEP_SCAN_BELOW_FLOOR)
+        if deep_scan_payload is not None:
+            # Additive, same pattern as the uncertainty_flags appends above:
+            # only present when the deep scan actually succeeded (frontend
+            # null-checks the key's absence for disabled/failed/no-text).
+            breakdown["deep_scan"] = deep_scan_payload
         return breakdown
     except Exception:
         logger.exception("detect_v7.pipeline_bridge: run_v7_breakdown failed; returning None (additive, non-fatal).")
