@@ -630,6 +630,169 @@
   max-height: 400px;
 }
 
+/* ── Authorship clarity breakdown ──────────────────────────
+   Additive V7 panel (AuthorshipClarityBreakdown.jsx). Sibling to
+   .deberta-signal / .authenticity-dashboard — same card shell (surface,
+   border-top accent, radius, shadow) so it reads as part of the same
+   report-card family. 4 horizontal bar rows, best→worst category order:
+   student_owned (good/green) → ai_assisted_polished (fair/amber) →
+   ai_paraphrased (caution/orange) → ai_generated_like (weak/red). */
+
+.authorship-breakdown {
+  margin: clamp(.9rem, 1.6vw, 1.2rem) 0;
+  padding: clamp(1rem, 1.8vw, 1.35rem);
+  border: 1px solid var(--border, #e2e8f0);
+  border-top: 4px solid var(--green, #3aa876);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  box-shadow: 0 18px 42px rgba(13, 27, 42, .08);
+}
+
+.authorship-breakdown-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  margin-bottom: .9rem;
+}
+
+.authorship-breakdown-head h3 {
+  margin: 0;
+  font-size: .95rem;
+  font-weight: 700;
+  color: var(--navy-950);
+}
+
+.authorship-breakdown-bars {
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+}
+
+.authorship-breakdown-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 1fr 64px;
+  align-items: center;
+  gap: .65rem;
+}
+
+.authorship-breakdown-row-label {
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--navy-800, #243b53);
+  line-height: 1.3;
+}
+
+.authorship-breakdown-bar-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: #eef2f6;
+  overflow: hidden;
+}
+
+.authorship-breakdown-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--green-500, #3ba876);
+  transition: width .25s ease;
+}
+
+/* Category tone accents, best → worst. */
+.authorship-breakdown-row:nth-child(1) .authorship-breakdown-bar-fill { background: #16a34a; }
+.authorship-breakdown-row:nth-child(2) .authorship-breakdown-bar-fill { background: #d97706; }
+.authorship-breakdown-row:nth-child(3) .authorship-breakdown-bar-fill { background: #ea580c; }
+.authorship-breakdown-row:nth-child(4) .authorship-breakdown-bar-fill { background: #dc2626; }
+
+.authorship-breakdown-row-band {
+  flex: none;
+  text-align: right;
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--navy-700, #334155);
+}
+
+.authorship-breakdown-caveat {
+  margin: .85rem 0 0;
+  padding: .55rem .7rem;
+  border-radius: 8px;
+  border-left: 3px solid #d97706;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: .78rem;
+  line-height: 1.45;
+}
+
+.authorship-breakdown-disclaimer {
+  margin: .7rem 0 0;
+  color: #64748b;
+  font-size: .72rem;
+  line-height: 1.45;
+}
+
+/* ── Advanced signals disclosure ────────────────────────────
+   Wraps AuthenticityDashboard / DebertaSignal / CriticalThinkingControl
+   behind a single collapsed toggle. Matches the .score-profile-details
+   summary chevron convention (plus/minus glyph, hover state). */
+
+.report-advanced-signals {
+  margin: clamp(.9rem, 1.6vw, 1.2rem) 0;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  overflow: hidden;
+}
+
+.report-advanced-signals summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 52px;
+  padding: .85rem 1.1rem;
+  color: var(--navy-950);
+  font-size: .9rem;
+  font-weight: 750;
+  cursor: pointer;
+  list-style: none;
+  transition: background .15s var(--ease, ease);
+}
+
+.report-advanced-signals summary::-webkit-details-marker {
+  display: none;
+}
+
+.report-advanced-signals summary::after {
+  content: "+";
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #0f766e;
+  font-size: 1.05rem;
+  font-weight: 850;
+}
+
+.report-advanced-signals[open] summary::after {
+  content: "-";
+}
+
+.report-advanced-signals summary:hover,
+.report-advanced-signals summary:focus-visible {
+  background: #f8fafc;
+  outline: none;
+}
+
+.report-advanced-signals-content {
+  display: flex;
+  flex-direction: column;
+  gap: .1rem;
+  padding: 0 1.1rem 1.1rem;
+}
+
 /* ── Responsive ─────────────────────────────── */
 
 @media (max-width: 1280px) {
