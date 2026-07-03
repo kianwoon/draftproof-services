@@ -1,0 +1,165 @@
+"""Tests for poc/detect_v7/config.py — the V7 weights.json loader.
+
+Run:  cd poc && python -m pytest test_detect_v7_config.py -v
+"""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from detect_v7 import config as v7config
+
+_TOL = 1e-6
+
+
+@pytest.fixture(autouse=True)
+def _reset_v7_weights_env(monkeypatch):
+    """Ensure DRAFTPROOF_V7_WEIGHTS_PATH never leaks between tests."""
+    monkeypatch.delenv("DRAFTPROOF_V7_WEIGHTS_PATH", raising=False)
+    v7config.reload_weights(force=True)
+    yield
+    monkeypatch.delenv("DRAFTPROOF_V7_WEIGHTS_PATH", raising=False)
+    v7config.reload_weights(force=True)
+
+
+def _sum_weights(pairs: list[tuple[str, float, str]]) -> float:
+    return sum(entry[1] for entry in pairs)
+
+
+def test_weights_json_loads_without_error():
+    data = v7config.reload_weights(force=True)
+    assert "fusion_weights" in data
+    assert "category_weights" in data
+    assert "_notes" in data
+
+
+def test_student_owned_sums_to_one():
+    pairs = v7config.get_category_weights("student_owned")
+    assert abs(_sum_weights(pairs) - 1.0) < _TOL
+
+
+def test_ai_assisted_polished_sums_to_one():
+    pairs = v7config.get_category_weights("ai_assisted_polished")
+    assert abs(_sum_weights(pairs) - 1.0) < _TOL
+
+
+def test_ai_generated_like_sums_to_one():
+    pairs = v7config.get_category_weights("ai_generated_like")
+    assert abs(_sum_weights(pairs) - 1.0) < _TOL
+
+
+def test_ai_paraphrased_with_comparison_sums_to_one():
+    pairs = v7config.get_category_weights("ai_paraphrased", has_comparison_text=True)
+    assert abs(_sum_weights(pairs) - 1.0) < _TOL
+
+
+def test_ai_paraphrased_without_comparison_sums_to_one():
+    pairs = v7config.get_category_weights("ai_paraphrased", has_comparison_text=False)
+    assert abs(_sum_weights(pairs) - 1.0) < _TOL
+
+
+def test_unknown_category_raises_value_error():
+    with pytest.raises(ValueError):
+        v7config.get_category_weights("not_a_real_category")
+
+
+def test_fusion_quick_scan_sums_to_one():
+    weights = v7config.get_fusion_weights(["fakespot"])
+    assert abs(sum(weights.values()) - 1.0) < _TOL
+
+
+def test_fusion_deep_scan_2detector_sums_to_one():
+    weights = v7config.get_fusion_weights(["fakespot", "deberta_large"])
+    assert abs(sum(weights.values()) - 1.0) < _TOL
+
+
+def test_fusion_unsupported_combination_raises_value_error():
+    with pytest.raises(ValueError):
+        v7config.get_fusion_weights(["fakespot", "deberta_large", "ou_advacheck"])
+    with pytest.raises(ValueError):
+        v7config.get_fusion_weights([])
+    with pytest.raises(ValueError):
+        v7config.get_fusion_weights(["unknown_detector"])
+
+
+def test_flatness_thresholds_accessor():
+    thresholds = v7config.get_flatness_thresholds()
+    assert "confidence_low_gap" in thresholds
+    assert "mixed_signals_max_category" in thresholds
+
+
+def test_esl_guard_config_accessor():
+    esl = v7config.get_esl_guard_config()
+    assert esl["esl_high_threshold"] == 0.70
+    assert esl["confidence_cap_value"] == "low"
+
+
+def test_display_bands_accessor():
+    bands = v7config.get_display_bands()
+    assert bands["strong_min"] > bands["some_min"] > bands["little_min"]
+
+
+def test_ai_assisted_polished_band_accessor():
+    band = v7config.get_ai_assisted_polished_band()
+    assert band["low"] < band["high"]
+
+
+def test_env_var_override_loads_alternate_file(tmp_path, monkeypatch):
+    alt_weights = {
+        "_notes": {"marker": "alt-fixture-weights"},
+        "fusion_weights": {
+            "quick_scan": {"fakespot": 1.0},
+            "deep_scan_2detector": {"deberta_large": 0.5, "fakespot": 0.5},
+            "deep_scan_3detector_inert": {
+                "deberta_large": 0.45,
+                "fakespot": 0.35,
+                "ou_advacheck": 0.20,
+            },
+        },
+        "category_weights": {
+            "student_owned": [{"signal": "specificity_score", "weight": 1.0}],
+            "ai_assisted_polished": [
+                {"signal": "calibrated_detector_score", "weight": 1.0}
+            ],
+            "ai_paraphrased_with_comparison": [
+                {"signal": "semantic_drift", "weight": 1.0}
+            ],
+            "ai_paraphrased_without_comparison": [
+                {"signal": "semantic_drift", "weight": 1.0}
+            ],
+            "ai_generated_like": [
+                {"signal": "calibrated_detector_score", "weight": 1.0}
+            ],
+        },
+        "ai_assisted_polished_band": {"low": 0.35, "high": 0.70},
+        "flatness_thresholds": {
+            "confidence_low_gap": 0.10,
+            "mixed_signals_max_category": 0.35,
+        },
+        "esl_guard": {
+            "esl_high_threshold": 0.70,
+            "ai_generated_damping": 0.85,
+            "detector_disagreement_confidence_cap_threshold": 0.25,
+            "esl_disagreement_cotrigger_threshold": 0.60,
+            "confidence_cap_value": "low",
+        },
+        "display_bands": {"strong_min": 0.5, "some_min": 0.25, "little_min": 0.10},
+    }
+    fixture_path = tmp_path / "alt_weights.json"
+    fixture_path.write_text(json.dumps(alt_weights), encoding="utf-8")
+
+    monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(fixture_path))
+    data = v7config.reload_weights(force=True)
+
+    assert data["_notes"]["marker"] == "alt-fixture-weights"
+    pairs = v7config.get_category_weights("student_owned")
+    assert pairs == [("specificity_score", 1.0, "direct")]
+
+
+def test_missing_file_raises_file_not_found(tmp_path, monkeypatch):
+    nonexistent = tmp_path / "does_not_exist" / "weights.json"
+    monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(nonexistent))
+    with pytest.raises(FileNotFoundError) as exc_info:
+        v7config.reload_weights(force=True)
+    assert str(nonexistent) in str(exc_info.value)

@@ -1,0 +1,88 @@
+{
+  "_notes": {
+    "fusion_weights": "Quick Scan uses fakespot (calibrated) alone at weight 1.0 — the only detector available on the worker without Modal. Deep Scan (2-detector) uses 0.60 deberta_large / 0.40 fakespot per spec D10/§4 (owner-commissioned reversal: DeBERTa-large becomes primary once calibrated). These 2-detector-path values ARE live spec numbers, not invented.",
+    "deep_scan_3detector_inert": "OU-Advacheck ('deep_scan_3detector_inert', 0.45/0.35/0.20) is DATA ONLY and NOT wired into any active code path. Per spec §4, OU-Advacheck is 'on hold' pending verification it was not one of the two candidates already rejected in the June 2026 fakespot evaluation (one inverted, one GPT-2-era). detector_fusion.py (not yet built) must never select this key until that verification + a separate SCoCESLE calibration pass clears it.",
+    "category_weights": "CORRECTED 2026-07-03: the values originally written here were fabricated by a subagent that had no visibility into the source spec (draftproof_authorship_clarity_breakdown_tech_spec_v2.md — a file the user attached to the chat, never committed to this repo, so a fresh subagent with zero conversation context genuinely could not see it). These are now the LITERAL formula weights transcribed from that spec's §14.1-14.4 ('starter formula'), embedded verbatim as data per V7 spec §6/D4 (docs/draftproof_v7_authorship_clarity_spec.md). Each entry carries a 'direction' field: 'direct' means use the signal value as-is; 'inverse' means use (1 - signal_value) — the v2 formulas mix both (e.g. student_owned uses '1 - calibrated_detector_score', ai_generated_like uses specificity_score inverted). Getting direction wrong silently flips an entire category's score, so category_scoring.py MUST read and apply this field, never assume direct. Each list sums to exactly 1.0 on the weight component alone (direction does not affect the sum-to-1 check). Still untuned defaults — tunable only via the MLflow validation harness per spec §9.",
+    "ai_paraphrased_variants": "Per spec D9 / v2 §14.3: 'ai_paraphrased' has two formula variants selected by has_comparison_text. The with-comparison variant's only comparison-dependent term is meaning_preservation_score (NEW/unbuilt as of Phase 1A — inert placeholder until Phase 1C). paraphrase_pattern_score is NOT comparison-dependent (it's a MiniLM structural-reuse pattern signal, also NEW/unbuilt Phase 1C, but present in BOTH variants per the v2 formula) and semantic_drift is not part of the ai_paraphrased formula in v2 at all — do not add it. The without-comparison (fallback) variant is the v2 formula with meaning_preservation_score's 0.10 weight simply omitted (v2 does not redistribute it — fallback sums to 1.0 on its own smaller term set: 0.30/0.25/0.20/0.15/0.10).",
+    "flatness_thresholds": "Verbatim from spec §6 / v2 §16 rule: if the gap between the top and second-place category share is under 0.10, confidence is forced to 'low'; if the top category share itself is under 0.35 (near-uniform distribution across all 4 categories), presentation is forced to 'mixed signals' rather than showing 4 specific numbers. These guard against the v2 draft's own near-uniform 19/26/27/28% example (spec D5).",
+    "esl_guard": "Per spec §6 / v2 §18: kept as a runtime confidence cap (not a score suppressor) plus the binding SCoCESLE FPR gate on poc/detect/ changes (spec D8) — this config only carries the runtime-cap thresholds, not the corpus gate itself. esl_high_threshold=0.70 marks a paragraph/document as ESL-flagged; ai_generated_damping=0.85 multiplicatively damps ai_generated_like_raw when ESL-flagged (never fully zeroes it — damping, not suppression); detector_disagreement_confidence_cap_threshold=0.25 means disagreement above that value alone triggers a confidence cap; esl_disagreement_cotrigger_threshold=0.60 means when ESL score exceeds 0.60 AND the disagreement trigger also fires, confidence_cap_value ('low') is force-applied regardless of other confidence signals.",
+    "display_bands": "Strong/Some/Little/None banding for the normalized per-category share (spec §6.1). strong_min=0.5 (majority share), some_min=0.25 (meaningfully present), little_min=0.10 (weak but non-trivial); anything below little_min displays as 'None'. These are Phase-1A display-only edges — exact percentages remain internal/API-only until the §12 validation set clears calibration error targets (spec D5)."
+  },
+  "fusion_weights": {
+    "quick_scan": {
+      "fakespot": 1.0
+    },
+    "deep_scan_2detector": {
+      "deberta_large": 0.60,
+      "fakespot": 0.40
+    },
+    "deep_scan_3detector_inert": {
+      "_status": "inert_unused_data_only",
+      "deberta_large": 0.45,
+      "fakespot": 0.35,
+      "ou_advacheck": 0.20
+    }
+  },
+  "category_weights": {
+    "student_owned": [
+      {"signal": "calibrated_detector_score", "weight": 0.25, "direction": "inverse"},
+      {"signal": "specificity_score", "weight": 0.20, "direction": "direct"},
+      {"signal": "grounding_gap", "weight": 0.20, "direction": "inverse"},
+      {"signal": "sentence_variance", "weight": 0.15, "direction": "direct"},
+      {"signal": "generic_density", "weight": 0.10, "direction": "inverse"},
+      {"signal": "author_voice_absence", "weight": 0.10, "direction": "inverse"}
+    ],
+    "ai_assisted_polished": [
+      {"signal": "calibrated_detector_score", "weight": 0.25, "direction": "midrange", "midrange_ref": "ai_assisted_polished_band"},
+      {"signal": "sentence_smoothness", "weight": 0.25, "direction": "direct"},
+      {"signal": "specificity_score", "weight": 0.15, "direction": "direct"},
+      {"signal": "grounding_gap", "weight": 0.15, "direction": "inverse"},
+      {"signal": "local_style_shift", "weight": 0.10, "direction": "direct"},
+      {"signal": "semantic_drift", "weight": 0.10, "direction": "inverse"}
+    ],
+    "ai_paraphrased_with_comparison": [
+      {"signal": "calibrated_detector_score", "weight": 0.25, "direction": "direct"},
+      {"signal": "sentence_smoothness", "weight": 0.20, "direction": "direct"},
+      {"signal": "paraphrase_pattern_score", "weight": 0.20, "direction": "direct"},
+      {"signal": "author_voice_absence", "weight": 0.15, "direction": "direct"},
+      {"signal": "generic_density", "weight": 0.10, "direction": "direct"},
+      {"signal": "meaning_preservation_score", "weight": 0.10, "direction": "direct"}
+    ],
+    "ai_paraphrased_without_comparison": [
+      {"signal": "calibrated_detector_score", "weight": 0.30, "direction": "direct"},
+      {"signal": "sentence_smoothness", "weight": 0.25, "direction": "direct"},
+      {"signal": "paraphrase_pattern_score", "weight": 0.20, "direction": "direct"},
+      {"signal": "author_voice_absence", "weight": 0.15, "direction": "direct"},
+      {"signal": "generic_density", "weight": 0.10, "direction": "direct"}
+    ],
+    "ai_generated_like": [
+      {"signal": "calibrated_detector_score", "weight": 0.35, "direction": "direct"},
+      {"signal": "generic_density", "weight": 0.20, "direction": "direct"},
+      {"signal": "grounding_gap", "weight": 0.15, "direction": "direct"},
+      {"signal": "predictable_structure", "weight": 0.10, "direction": "direct"},
+      {"signal": "author_voice_absence", "weight": 0.10, "direction": "direct"},
+      {"signal": "sentence_smoothness", "weight": 0.05, "direction": "direct"},
+      {"signal": "specificity_score", "weight": 0.05, "direction": "inverse"}
+    ]
+  },
+  "ai_assisted_polished_band": {
+    "low": 0.35,
+    "high": 0.70
+  },
+  "flatness_thresholds": {
+    "confidence_low_gap": 0.10,
+    "mixed_signals_max_category": 0.35
+  },
+  "esl_guard": {
+    "esl_high_threshold": 0.70,
+    "ai_generated_damping": 0.85,
+    "detector_disagreement_confidence_cap_threshold": 0.25,
+    "esl_disagreement_cotrigger_threshold": 0.60,
+    "confidence_cap_value": "low"
+  },
+  "display_bands": {
+    "strong_min": 0.5,
+    "some_min": 0.25,
+    "little_min": 0.10
+  }
+}
