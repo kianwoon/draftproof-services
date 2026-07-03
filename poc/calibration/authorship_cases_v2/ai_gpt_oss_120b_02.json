@@ -1,0 +1,9 @@
+{
+ "case_id": "ai_gpt_oss_120b_02",
+ "authorship": "ai",
+ "source": "gpt-oss-120b",
+ "temperature": 0.6,
+ "topic": "how social media has changed public discourse",
+ "words": 230,
+ "text": "Social media platforms have reshaped the way people exchange ideas, turning public discourse into a rapid, highly visible, and often fragmented conversation. Where once newspapers, television, and town\u2011hall meetings dictated the tempo and scope of debate, now a tweet or a short video can ignite a nationwide discussion within minutes. This immediacy democratizes participation, allowing anyone with an internet connection to voice an opinion, challenge authority, or amplify a marginalized perspective. The resulting chorus of voices can bring urgent issues\u2014such as climate change, police reform, or gender equality\u2014into the mainstream faster than traditional media ever could, fostering a sense of collective urgency and engagement.\n\nAt the same time, the architecture of social networks encourages brevity and emotional resonance over nuance and deliberation. Algorithms prioritize content that provokes strong reactions, often rewarding sensationalism and polarizing rhetoric. Echo chambers form as users gravitate toward like\u2011minded communities, reinforcing pre\u2011existing beliefs and making it harder for opposing viewpoints to be considered seriously. The speed of sharing also reduces the opportunity for fact\u2011checking, allowing misinformation to spread before it can be corrected. Consequently, public discourse has become more volatile, with debates frequently devolving into heated exchanges rather than constructive dialogue. While social media has undeniably broadened participation and accelerated the flow of information, it has also introduced new challenges to the quality and civility of public conversation, demanding a careful balance between openness and responsibility."
+}
