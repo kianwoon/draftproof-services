@@ -1420,7 +1420,11 @@ class ReportBuilder:
         # never feeds tier/ai_likelihood/badge/any gate; kill-switched off by default; fail-open
         # (run_v7_breakdown catches all exceptions internally and returns None).
         from detect_v7.pipeline_bridge import run_v7_breakdown as _run_v7_breakdown
-        _v7_breakdown = _run_v7_breakdown(ai_risk_badge)
+        # document_text is required for the deep-scan path (sentence-level Modal scoring);
+        # ai_risk_badge alone is scores-only and would silently fall back to quick-scan
+        # (observed live 2026-07-04: "no document text available on detection_result").
+        # Spread into a copy — never mutate the badge that ships in the report.
+        _v7_breakdown = _run_v7_breakdown({**ai_risk_badge, "document_text": self._original_text})
         if _v7_breakdown is not None:
             ai_risk_badge["authorship_breakdown"] = _v7_breakdown
 
