@@ -642,5 +642,26 @@ export const report = {
     "reviewPassages": "请复核这些段落",
     "noteAgree": "两种检测方法都标记本文档供复核。",
     "noteDisagree": "两种检测方法对本文档的判断不同。这很常见——它们使用不同的信号。请自行复核被标记的段落。"
+  },
+  "authorshipBreakdown": {
+    "ariaLabel": "作者归属清晰度细分",
+    "title": "作者归属清晰度细分",
+    "categories": {
+      "student_owned": "学生原创",
+      "ai_assisted_polished": "AI 辅助润色",
+      "ai_paraphrased": "AI 改写",
+      "ai_generated_like": "疑似 AI 生成"
+    },
+    "bands": {
+      "Strong": "明显",
+      "Some": "一定程度",
+      "Little": "轻微",
+      "None": "未见"
+    },
+    "lowConfidenceCaveat": "本文档信号不一致——请将此细分结果作为复核的起点，而非最终判定。",
+    "disclaimer": "DraftProof 提供作者归属清晰度信号与写作风险分析，并不据此判定学术不端。最终判断权属于学校、教师或相关学术政策。"
+  },
+  "advancedSignals": {
+    "summary": "高级信号"
   }
 };

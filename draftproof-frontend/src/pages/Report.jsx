@@ -17,6 +17,7 @@ import FixFirstChecklist from './report/FixFirstChecklist';
 import CriticalThinkingControl from './report/CriticalThinkingControl';
 import AuthenticityDashboard from './report/AuthenticityDashboard';
 import DebertaSignal from './report/DebertaSignal';
+import AuthorshipClarityBreakdown from './report/AuthorshipClarityBreakdown';
 import ReportHero from './report/ReportHero';
 import PolicyRiskView from './report/PolicyRiskView';
 import useTextareaCaretOverlay from './report/useTextareaCaretOverlay';
@@ -1911,8 +1912,15 @@ export default function Report() {
           repairActionHint={t('report.repairSummary.editDraftHint')}
           onRepairAction={showSubmittedEditEntry ? () => openSubmittedEditorForParagraph() : null}
         />
-        <AuthenticityDashboard t={t} dashboard={(badge && badge.authenticity_dashboard) || null} />
-        <DebertaSignal t={t} signal={(badge && badge.ai_signal_deberta) || null} compositeTier={badge.tier || report.tier} />
+        <AuthorshipClarityBreakdown t={t} breakdown={(badge && badge.authorship_breakdown) || null} />
+        <details className="report-advanced-signals">
+          <summary>{t('report.advancedSignals.summary')}</summary>
+          <div className="report-advanced-signals-content">
+            <AuthenticityDashboard t={t} dashboard={(badge && badge.authenticity_dashboard) || null} />
+            <DebertaSignal t={t} signal={(badge && badge.ai_signal_deberta) || null} compositeTier={badge.tier || report.tier} />
+            <CriticalThinkingControl badge={badge} t={t} />
+          </div>
+        </details>
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>
             <div className="scan-progress" role="status" aria-live="polite">
@@ -1976,8 +1984,6 @@ export default function Report() {
             kicker={t('report.whatToFixFirst.kicker')}
           />
         )}
-
-        <CriticalThinkingControl badge={badge} t={t} />
 
         {rewriteCompletionBand}
 
