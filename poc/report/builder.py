@@ -1416,6 +1416,14 @@ class ReportBuilder:
         if _dash is not None:
             ai_risk_badge["authenticity_dashboard"] = _dash
 
+        # Additive V7 Authorship Clarity Breakdown (spec 2026-07-03/04). STRICTLY ADDITIVE —
+        # never feeds tier/ai_likelihood/badge/any gate; kill-switched off by default; fail-open
+        # (run_v7_breakdown catches all exceptions internally and returns None).
+        from detect_v7.pipeline_bridge import run_v7_breakdown as _run_v7_breakdown
+        _v7_breakdown = _run_v7_breakdown(ai_risk_badge)
+        if _v7_breakdown is not None:
+            ai_risk_badge["authorship_breakdown"] = _v7_breakdown
+
         # Additive second-opinion DeBERTa AI signal (spec 2026-07-01). STRICTLY ADDITIVE —
         # never feeds tier/ai_likelihood/external/gate; advisory comparison score only.
         # Fail-open: maybe_attach already catches/logs internally and returns available=False;
