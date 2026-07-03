@@ -54,9 +54,15 @@ export default function AuthorshipClarityBreakdown({ t, breakdown }) {
 
   const rawShares = breakdown.document_breakdown_raw || {};
   const bandShares = breakdown.document_breakdown_bands || {};
-  const showCaveat = breakdown.confidence === 'low' || breakdown.degraded_display === true;
-  // Confidence gate: print the share only when the distribution is decisive enough for a
-  // digit to be honest. Mixed-signal documents stay bands-only (see header comment).
+  // "Mixed signals" caveat + percent suppression are gated on FLATNESS ONLY
+  // (confidence === 'low', i.e. no category decisively wins). Do NOT gate on
+  // degraded_display: in Phase 1A three signals are always unbuilt, so every
+  // document is structurally degraded and that flag is ALWAYS true — gating on
+  // it made the percent unreachable on every report (verified live 2026-07-04,
+  // report 95d3de1f: degraded_paragraph_count == paragraph_count on all docs).
+  // The unbuilt-signal situation is already disclosed via the uncertainty-flag
+  // caveat lines below.
+  const showCaveat = breakdown.confidence === 'low';
   const showPercent = !showCaveat;
   const uncertaintyFlags = Array.isArray(breakdown.uncertainty_flags)
     ? KNOWN_UNCERTAINTY_FLAGS.filter((flag) => breakdown.uncertainty_flags.includes(flag))
