@@ -692,6 +692,17 @@ export const report = {
     },
     "lowConfidenceCaveat": "本文档信号不一致——请将此细分结果作为复核的起点，而非最终判定。",
     "betaChip": "测试版",
+    // allow-hardcode: i18n UI copy strings (labels/band names), not a scoring or matching list.
+    "fusedHeadline": {
+      "label": "DraftProof AI 可能性",
+      "bands": {
+        "low": "低",
+        "moderate": "中等",
+        "high": "高",
+        "critical": "严重"
+      },
+      "evidence": "此分数背后：综合检测器 {{composite}}%，深度扫描检测器 {{deepScan}}%（句子级）。请参见上方的 DraftProof 量表。"
+    },
     "deepScan": {
       "label": "深度扫描 AI 估计",
       "insufficientChip": "证据不足",

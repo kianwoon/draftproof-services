@@ -108,7 +108,51 @@ function DeepScanHeadline({ t, deepScan, authoritativeTier }) {
   );
 }
 
-export default function AuthorshipClarityBreakdown({ t, breakdown, authoritativeTier }) {
+// The band label + chip color BOTH derive from `authoritativeTier` — the tier
+// the backend actually assigned to this document (green/amber/orange/red, from
+// poc/report/builder.py). We deliberately do NOT recompute a band from the fused
+// score against frontend cutoffs: that duplicates the backend's threshold logic
+// (a no-hardcode violation) AND risks the label disagreeing with the color if the
+// two drift. One source of truth = always consistent with the hero tier.
+const TIER_TO_BAND = { green: 'low', amber: 'moderate', orange: 'high', red: 'critical' };
+
+// Headline row for when tier_authority (the fused AI-likelihood driving the
+// authoritative tier) is available: the FUSED score is the verdict, so it
+// leads the panel — the deep-scan/composite ingredients demote to a muted
+// evidence line beneath it (owner decision 2026-07-04).
+function FusedHeadline({ t, tierAuthority, authoritativeTier }) {
+  const fusedScore = tierAuthority.fused_score;
+  const hasAuthoritativeTier = KNOWN_AUTHORITATIVE_TIERS.includes(authoritativeTier);
+  const band = hasAuthoritativeTier ? TIER_TO_BAND[authoritativeTier] : null;
+  const composite = tierAuthority.composite_score;
+  const deepScanPct = Math.round((tierAuthority.proportion || 0) * 100);
+
+  return (
+    <div className="authorship-breakdown-fused">
+      <div className="authorship-breakdown-fused-headline">
+        <span className="authorship-breakdown-fused-label">
+          {t('report.authorshipBreakdown.fusedHeadline.label')}
+        </span>
+        <strong className="authorship-breakdown-fused-value">
+          {Math.round(fusedScore)}%
+        </strong>
+        {band && (
+          <span className={`authorship-breakdown-fused-band-chip is-${authoritativeTier}`}>
+            {t(`report.authorshipBreakdown.fusedHeadline.bands.${band}`)}
+          </span>
+        )}
+      </div>
+      <p className="authorship-breakdown-fused-evidence">
+        {t('report.authorshipBreakdown.fusedHeadline.evidence', {
+          composite: Math.round(composite),
+          deepScan: deepScanPct,
+        })}
+      </p>
+    </div>
+  );
+}
+
+export default function AuthorshipClarityBreakdown({ t, breakdown, authoritativeTier, tierAuthority }) {
   if (!breakdown) return null;
 
   const rawShares = breakdown.document_breakdown_raw || {};
@@ -139,7 +183,11 @@ export default function AuthorshipClarityBreakdown({ t, breakdown, authoritative
         </p>
       </div>
 
-      <DeepScanHeadline t={t} deepScan={breakdown.deep_scan} authoritativeTier={authoritativeTier} />
+      {tierAuthority && typeof tierAuthority.fused_score === 'number' ? (
+        <FusedHeadline t={t} tierAuthority={tierAuthority} authoritativeTier={authoritativeTier} />
+      ) : (
+        <DeepScanHeadline t={t} deepScan={breakdown.deep_scan} authoritativeTier={authoritativeTier} />
+      )}
 
       <div className="authorship-breakdown-bars">
         {CATEGORY_ORDER.map((category) => (
