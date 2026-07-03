@@ -730,6 +730,45 @@
   line-height: 1.45;
 }
 
+.authorship-breakdown-beta-chip {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: .5rem;
+  padding: .1rem .55rem;
+  border: 1px solid rgba(217, 119, 6, .35);
+  border-radius: 999px;
+  background: rgba(217, 119, 6, .12);
+  color: #92400e;
+  font-size: .62rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+
+.authorship-breakdown-feedback {
+  margin: .6rem 0 0;
+  color: #475569;
+  font-size: .76rem;
+  line-height: 1.45;
+}
+
+.authorship-breakdown-feedback-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #0f766e;
+  font-size: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.authorship-breakdown-feedback-link:hover,
+.authorship-breakdown-feedback-link:focus-visible {
+  color: #115e59;
+}
+
 /* ── Advanced signals disclosure ────────────────────────────
    Wraps AuthenticityDashboard / DebertaSignal / CriticalThinkingControl
    behind a single collapsed toggle. Matches the .score-profile-details

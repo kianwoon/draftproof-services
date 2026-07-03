@@ -41,12 +41,23 @@ function CategoryBar({ t, category, raw, band }) {
   );
 }
 
+// Uncertainty flags we know how to explain to users. Unknown flags are silently
+// skipped — never render raw flag strings.
+const KNOWN_UNCERTAINTY_FLAGS = [
+  'deep_scan_uncalibrated',
+  'deep_scan_below_reliability_floor',
+  'paraphrase_without_original_draft',
+];
+
 export default function AuthorshipClarityBreakdown({ t, breakdown }) {
   if (!breakdown) return null;
 
   const rawShares = breakdown.document_breakdown_raw || {};
   const bandShares = breakdown.document_breakdown_bands || {};
   const showCaveat = breakdown.confidence === 'low' || breakdown.degraded_display === true;
+  const uncertaintyFlags = Array.isArray(breakdown.uncertainty_flags)
+    ? KNOWN_UNCERTAINTY_FLAGS.filter((flag) => breakdown.uncertainty_flags.includes(flag))
+    : [];
 
   return (
     <section
@@ -54,7 +65,12 @@ export default function AuthorshipClarityBreakdown({ t, breakdown }) {
       aria-label={t('report.authorshipBreakdown.ariaLabel')}
     >
       <div className="authorship-breakdown-head">
-        <h3>{t('report.authorshipBreakdown.title')}</h3>
+        <h3>
+          {t('report.authorshipBreakdown.title')}
+          <span className="authorship-breakdown-beta-chip">
+            {t('report.authorshipBreakdown.betaChip')}
+          </span>
+        </h3>
       </div>
 
       <div className="authorship-breakdown-bars">
@@ -75,8 +91,25 @@ export default function AuthorshipClarityBreakdown({ t, breakdown }) {
         </p>
       )}
 
+      {uncertaintyFlags.map((flag) => (
+        <p key={flag} className="authorship-breakdown-caveat">
+          {t(`report.authorshipBreakdown.uncertaintyFlags.${flag}`)}
+        </p>
+      ))}
+
       <p className="authorship-breakdown-disclaimer">
         {t('report.authorshipBreakdown.disclaimer')}
+      </p>
+
+      <p className="authorship-breakdown-feedback">
+        {t('report.authorshipBreakdown.feedbackPrompt')}{' '}
+        <button
+          type="button"
+          className="authorship-breakdown-feedback-link"
+          onClick={() => window.dispatchEvent(new Event('draftproof:open-feedback'))}
+        >
+          {t('report.authorshipBreakdown.feedbackAction')}
+        </button>
       </p>
     </section>
   );
