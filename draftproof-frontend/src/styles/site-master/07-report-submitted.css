@@ -1926,7 +1926,6 @@ button.paragraph-severity-seg {
 .issue-chip-tier.is-high, .issue-chip-tier.is-critical { background: #fef2f2; color: #b91c1c; }
 .issue-chip-tier.is-moderate, .issue-chip-tier.is-medium { background: #fffbeb; color: #92400e; }
 .issue-chip-tier.is-low { background: #f0fdf4; color: #15803d; }
-.issue-card-snippet { display: block; font-size: .9rem; line-height: 1.4; color: #475569; }
 .issue-card-caret { color: #94a3b8; font-size: 1rem; }
 .issue-card-body { padding: 0 .85rem .6rem; }
 .issue-card-summary { font-size: .9rem; color: #475569; line-height: 1.45; margin: 0 0 .45rem; }
@@ -1945,13 +1944,19 @@ button.paragraph-severity-seg {
 .submitted-issues-empty h3 { color: var(--navy-950); }
 
 /* DeBERTa per-sentence evidence list (the classifier-flagged sentences in a paragraph). */
-.deberta-evidence-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; }
-.deberta-evidence-list li { display: flex; gap: .5rem; align-items: flex-start; }
+.deberta-evidence-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .55rem; }
+.deberta-evidence-list li { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-start; }
 .deberta-evidence-score {
   flex: 0 0 auto; font-size: .68rem; font-weight: 800; line-height: 1.5;
   padding: 0 .4rem; border-radius: 5px; color: #fff; background: var(--signal-color, #dc2626);
 }
-.deberta-evidence-text { font-size: .85rem; line-height: 1.45; color: #475569; }
+.deberta-evidence-text { font-size: .85rem; line-height: 1.45; color: #475569; flex: 1 1 200px; }
+/* Per-sentence tailored fix (LLM). Own line under the sentence so it reads as "here's the fix"
+   rather than more evidence text — fail-open: absent whenever the explainer had no suggestion. */
+.deberta-evidence-suggestion {
+  flex: 1 1 100%; margin-left: calc(1.5rem + .5rem); font-size: .82rem; line-height: 1.45;
+  color: var(--green-700, #0f766e); font-weight: 600;
+}
 
 /* ── Full-document per-sentence heatmap (graduated DeBERTa severity) ────────────── */
 /* Each sentence colored by its OWN classifier score, so a 100% sentence reads hotter

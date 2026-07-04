@@ -62,9 +62,17 @@ def build_paragraph_explanation_input(report_json: dict[str, Any]) -> dict[str, 
                 "text": paragraph.get("text") or segment.get("text") or "",
                 "findings": [],
                 "predictable_phrases": [],
+                "flagged_sentences": [],
             })
             if sentence_id and sentence_id not in entry["sentence_ids"]:
                 entry["sentence_ids"].append(sentence_id)
+            # The exact flagged sentence text, keyed by sentence_id, so the explainer can write a
+            # specific one-line fix for EACH sentence (not just one paragraph-level recommendation).
+            sentence_text = " ".join(str(segment.get("text") or finding.get("evidence") or "").split())
+            if sentence_id and sentence_text and not any(
+                s.get("sentence_id") == sentence_id for s in entry["flagged_sentences"]
+            ):
+                entry["flagged_sentences"].append({"sentence_id": sentence_id, "text": sentence_text})
             for phrase in sentence_phrases:
                 if phrase not in entry["predictable_phrases"]:
                     entry["predictable_phrases"].append(phrase)
@@ -223,6 +231,10 @@ def _bounded_explainer_input(explainer_input: dict[str, Any]) -> dict[str, Any]:
                 _clip(phrase, max_finding_chars)
                 for phrase in (row.get("predictable_phrases") or [])[:12]
             ],
+            "flagged_sentences": [
+                {"sentence_id": s.get("sentence_id"), "text": _clip(s.get("text"), max_finding_chars)}
+                for s in (row.get("flagged_sentences") or [])[:12]
+            ],
             "findings": bounded_findings,
         })
     return {"paragraphs": rows}
@@ -249,7 +261,12 @@ def _prompt(payload: dict[str, Any]) -> str:
         "- Do not add facts, examples, citations, or course details not present in the paragraph.\n"
         "- Avoid phrases such as predictable phrasing, semantic drift, low originality, signal, detector, score, or flagged unless explaining uncertainty.\n"
         "- Prefer plain wording like 'The paragraph makes the point, but the reason is still broad' over technical labels.\n"
-        "- Keep each field short enough for a report side panel.\n\n"
+        "- Keep each field short enough for a report side panel.\n"
+        "- Each paragraph includes flagged_sentences: the exact sentences the scanner flagged. For "
+        "EACH one, write a sentence_suggestions entry: one short, specific fix (max ~1 sentence) that "
+        "names what to change in THAT sentence's actual wording and what concrete detail to add. Keep "
+        "sentence_id identical to the input. Make each suggestion different — tied to that sentence, not "
+        "a generic line repeated. Never invent facts, names, numbers, citations, or course details.\n\n"
         "Return JSON with this shape:\n"
         "{\n"
         '  "paragraphs": [\n'
@@ -260,6 +277,9 @@ def _prompt(payload: dict[str, Any]) -> str:
         '      "main_issue": "the single most important fix",\n'
         '      "why_flagged": ["plain reason tied to the paragraph", "plain reason tied to the paragraph"],\n'
         '      "recommendation": "specific paragraph-level edit instruction",\n'
+        '      "sentence_suggestions": [\n'
+        '        {"sentence_id": "s1", "suggestion": "specific one-line fix for this exact sentence"}\n'
+        "      ],\n"
         '      "rewrite_hint": "optional one-sentence example of the kind of edit to make",\n'
         '      "confidence": "low|medium|high"\n'
         "    }\n"
@@ -293,10 +313,44 @@ def _normalize_explanations(parsed: Any, source_rows: list[dict[str, Any]]) -> l
             "main_issue": _clean_text(row.get("main_issue"), 260),
             "why_flagged": _string_list(row.get("why_flagged"), limit=4, item_limit=180),
             "recommendation": _clean_text(row.get("recommendation"), 360),
+            "sentence_suggestions": _sentence_suggestions(
+                row.get("sentence_suggestions"), source.get("flagged_sentences") or source.get("sentence_ids"),
+            ),
             "rewrite_hint": _clean_text(row.get("rewrite_hint"), 300),
             "confidence": _confidence(row.get("confidence")),
         })
     return normalized
+
+
+def _sentence_suggestions(value: Any, allowed_sentences: Any) -> list[dict[str, str]]:
+    """Clean the LLM's per-sentence suggestions into [{sentence_id, suggestion}].
+
+    Only keeps entries whose sentence_id matches a sentence actually flagged in this paragraph
+    (guards against the model inventing ids), clips length, and drops empties/dupes."""
+    if not isinstance(value, list):
+        return []
+    allowed: set[str] = set()
+    for item in allowed_sentences or []:
+        if isinstance(item, dict) and item.get("sentence_id"):
+            allowed.add(str(item.get("sentence_id")))
+        elif isinstance(item, str):
+            allowed.add(item)
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        sid = str(item.get("sentence_id") or "").strip()
+        suggestion = _clean_text(item.get("suggestion"), 220)
+        if not sid or not suggestion or sid in seen:
+            continue
+        if allowed and sid not in allowed:
+            continue
+        seen.add(sid)
+        rows.append({"sentence_id": sid, "suggestion": suggestion})
+        if len(rows) >= 12:
+            break
+    return rows
 
 
 def _parse_json(raw: str) -> Any:
