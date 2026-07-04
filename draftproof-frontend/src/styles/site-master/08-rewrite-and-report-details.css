@@ -826,7 +826,8 @@
 
 .authorship-breakdown-row {
   display: grid;
-  grid-template-columns: minmax(120px, 180px) 1fr 64px;
+  /* 3rd col wide enough to keep "Little · 14%" on ONE line (was 64px -> wrapped). */
+  grid-template-columns: minmax(120px, 180px) 1fr 96px;
   align-items: center;
   gap: .65rem;
 }
@@ -862,6 +863,7 @@
 .authorship-breakdown-row-band {
   flex: none;
   text-align: right;
+  white-space: nowrap;   /* keep "Some · 34%" on one line */
   font-size: .78rem;
   font-weight: 700;
   color: var(--navy-700, #334155);
