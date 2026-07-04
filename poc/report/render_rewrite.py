@@ -75,6 +75,16 @@ def _display_ai_score(value: float) -> float:
     return _metric_percent(value, clamp=False) or 0.0
 
 
+def _deep_scan_pct(report: dict) -> float | None:
+    """V7 deberta deep-scan proportion (percent) for a scan report, or None when the deep-scan
+    didn't run (flags off / unavailable). Sourced from badge.tier_authority.proportion — the same
+    number the scan page's fused score is built from. None -> the hero omits the deep-scan KPI."""
+    badge = _badge(report)
+    ta = badge.get("tier_authority") if isinstance(badge, dict) and isinstance(badge.get("tier_authority"), dict) else None
+    prop = ta.get("proportion") if ta else None
+    return round(float(prop) * 100, 1) if isinstance(prop, (int, float)) else None
+
+
 def _ai_reference_suffix(score) -> str | None:
     if not isinstance(score, (int, float)):
         return None
@@ -771,6 +781,7 @@ def render_rewrite_report(
             orig_ai=_display_ai_score(orig_ai), new_ai=_display_ai_score(new_ai),
             orig_human=orig_human, new_human=new_human, orig_wq=orig_wq, new_wq=new_wq,
             o_total=o_total, n_total=n_total,
+            orig_deep_scan=_deep_scan_pct(orig_scan), new_deep_scan=_deep_scan_pct(new_scan),
         ))
         lines.append("")
 

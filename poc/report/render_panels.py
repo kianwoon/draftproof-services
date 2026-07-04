@@ -479,11 +479,14 @@ def _num(v):
 
 def rewrite_hero(*, result_label, explanation, outcome, ai_improved, score_worse,
                  original_preserved, orig_ai, new_ai, orig_human, new_human,
-                 orig_wq, new_wq, o_total, n_total) -> str:
+                 orig_wq, new_wq, o_total, n_total,
+                 orig_deep_scan=None, new_deep_scan=None) -> str:
     """Hero result panel + before→after KPI row for the rewrite report.
 
     Mirrors the scan report's hero/KPI design. All values are pre-computed by
-    render_rewrite_report (already in the right units)."""
+    render_rewrite_report (already in the right units). orig/new_deep_scan are the V7
+    deberta deep-scan proportions (percent); None when deep-scan is off — then the
+    deep-scan chip/KPI are simply omitted (fail-open, never fabricated)."""
     good = (str(outcome) == "ai_mitigated") or (ai_improved and not score_worse)
     kind = "good" if good else ("info" if original_preserved else "warn")
 
@@ -491,6 +494,9 @@ def rewrite_hero(*, result_label, explanation, outcome, ai_improved, score_worse
     if _num(orig_ai) is not None and _num(new_ai) is not None:
         chips.append((f"AI likelihood {orig_ai:.0f}→{new_ai:.0f}%",
                       "good" if new_ai < orig_ai else ("warn" if new_ai > orig_ai else "info")))
+    if _num(orig_deep_scan) is not None and _num(new_deep_scan) is not None:
+        chips.append((f"Deep-scan {orig_deep_scan:.0f}→{new_deep_scan:.0f}%",
+                      "good" if new_deep_scan < orig_deep_scan else ("warn" if new_deep_scan > orig_deep_scan else "info")))
     if _num(orig_human) is not None and _num(new_human) is not None:
         chips.append((f"Human {orig_human:.0f}→{new_human:.0f}%",
                       "good" if new_human >= orig_human else "warn"))
@@ -508,6 +514,8 @@ def rewrite_hero(*, result_label, explanation, outcome, ai_improved, score_worse
     kpis = []
     if _num(new_ai) is not None:
         kpis.append((f"{new_ai:.0f}%", f"AI likelihood (was {orig_ai:.0f}%)"))
+    if _num(new_deep_scan) is not None and _num(orig_deep_scan) is not None:
+        kpis.append((f"{new_deep_scan:.0f}%", f"Deep-scan AI (was {orig_deep_scan:.0f}%)"))
     if _num(new_human) is not None:
         kpis.append((f"{new_human:.0f}%", f"Human contribution (was {orig_human:.0f}%)"))
     if _num(new_wq) is not None:
