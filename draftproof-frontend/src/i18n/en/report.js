@@ -344,7 +344,7 @@ export const report = {
       "writing_quality": "Writing quality",
       "genericity": "Genericity",
       "ai_signal_deberta": "Learned-classifier AI signal",
-      "ai_signal_deep_scan": "Deep-scan AI signal"
+      "ai_signal_deep_scan": "Passages to review (beta deep-scan)"
     },
     "descriptions": {
       "topk_pattern": "How often the writing chooses very expected words. A very high score means the wording follows common predictable paths. Lower is better.",
