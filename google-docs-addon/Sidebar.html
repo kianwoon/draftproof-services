@@ -74,6 +74,15 @@
       .issue-block { margin-top: 6px; }
       .issue-label { display: block; font-size: 11px; font-weight: 700; color: var(--green-dark); text-transform: uppercase; letter-spacing: .03em; }
       .issue-block p { margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; }
+      .section-value { margin-top: 2px; font-size: 13px; font-weight: 700; color: #1a1a2e; }
+      .muted { color: var(--muted); }
+      .dim-list { margin: 6px 0 0; padding: 0; list-style: none; }
+      .dim-list li { display: flex; justify-content: space-between; font-size: 12.5px; padding: 2px 0; }
+      .dim-score { color: var(--muted); font-weight: 600; }
+      .fix-list { margin: 4px 0 0; padding: 0; list-style: none; }
+      .fix-list li { margin: 0 0 8px; }
+      .fix-sentence { display: block; font-size: 12px; color: var(--muted); line-height: 1.5; font-style: italic; }
+      .fix-suggestion { display: block; margin-top: 2px; font-size: 12.5px; color: var(--green-dark); font-weight: 600; line-height: 1.5; }
       .lowconf { margin-top: 12px; padding: 8px 10px; background: #fdf3e2; border-radius: 6px; color: #7a5410; font-size: 12.5px; }
       .report-link { display: inline-block; margin-top: 14px; font-weight: 600; font-size: 13px; }
     </style>
@@ -323,7 +332,18 @@
           }).join('');
           p.push('<div class="section"><div class="section-title">Critical thinking</div><p class="section-note">Questions to sharpen your thinking — the answers are yours to write.</p><ul class="q-list">' + q + '</ul></div>');
         } else if (ct && (ct.status || ct.score != null)) {
-          p.push('<div class="section"><div class="section-title">Critical thinking</div><div>' + esc(ct.status || '—') + (ct.score != null ? ' · ' + Math.round(ct.score) + '/100' : '') + '</div></div>');
+          // Page parity: show the lead-dimension action, the per-dimension control scores, and the
+          // caveat (not just a bare "status · score"), matching the web report + the Word add-in.
+          var ctHead = esc(ct.status || '—') + (ct.score != null ? ' · ' + Math.round(ct.score) + '/100' : '');
+          var ctBody = '';
+          if (ct.action) ctBody += '<p class="section-note"><strong>' + esc(ct.lead || 'Focus') + ':</strong> ' + esc(ct.action) + '</p>';
+          if (ct.dimensions && ct.dimensions.length) {
+            ctBody += '<ul class="dim-list">' + ct.dimensions.map(function (d) {
+              return '<li><span>' + esc(d.label || '') + '</span><span class="dim-score">' + Math.round(d.control) + '/100</span></li>';
+            }).join('') + '</ul>';
+          }
+          if (ct.caveat) ctBody += '<p class="section-note muted">' + esc(ct.caveat) + '</p>';
+          p.push('<div class="section"><div class="section-title">Critical thinking</div><div class="section-value">' + ctHead + '</div>' + ctBody + '</div>');
         }
 
         var sr = rep.submission_risk;
@@ -336,7 +356,9 @@
             'Turnitin result. Detectors over-flag fluent writing and may flag this even though it\'s ' +
             'yours (a warning, not a verdict). The AI % above is NOT a Turnitin score.';
           if (sr.reason) srNote = sr.reason + ' ' + srNote;
-          p.push('<div class="section"><div class="section-title">Submitted content</div><div>' + head + '</div><p class="section-note">' + esc(srNote) + '</p></div>');
+          // Page parity: this is the SUBMISSION-RISK section; the flagged-sentence panel below is
+          // the page's "Submitted content".
+          p.push('<div class="section"><div class="section-title">Submission risk</div><div>' + head + '</div><p class="section-note">' + esc(srNote) + '</p></div>');
         }
 
         var pis = rep.paragraph_issues || [];
@@ -349,10 +371,18 @@
             if (it.snippet) b += '<p class="issue-snippet locate" data-scope="paragraph" data-find="' + escAttr(findNeedle(it.snippet, 120)) + '" title="Click to highlight this paragraph in your document">' + esc(it.snippet) + '</p>';
             if (it.reader_summary) b += '<p class="issue-summary">' + esc(it.reader_summary) + '</p>';
             if (it.main_issue) b += '<div class="issue-block"><span class="issue-label">Main issue to fix</span><p>' + esc(it.main_issue) + '</p></div>';
-            if (it.recommendation) b += '<div class="issue-block"><span class="issue-label">How to improve</span><p>' + esc(it.recommendation) + '</p></div>';
+            // Page parity: prefer per-sentence tailored fixes; fall back to the single paragraph
+            // recommendation only when none exist (mirrors the web report).
+            if (it.sentence_fixes && it.sentence_fixes.length) {
+              b += '<div class="issue-block"><span class="issue-label">Suggested fixes</span><ul class="fix-list">' + it.sentence_fixes.map(function (f) {
+                return '<li><span class="fix-sentence">“' + esc(f.text) + '”</span><span class="fix-suggestion">' + esc(f.suggestion) + '</span></li>';
+              }).join('') + '</ul></div>';
+            } else if (it.recommendation) {
+              b += '<div class="issue-block"><span class="issue-label">How to improve</span><p>' + esc(it.recommendation) + '</p></div>';
+            }
             return '<div class="issue">' + (chips ? '<div class="issue-chips">' + chips + '</div>' : '') + b + '</div>';
           }).join('');
-          p.push('<div class="section"><div class="section-title">Issues</div>' + cards + '</div>');
+          p.push('<div class="section"><div class="section-title">Submitted content</div>' + cards + '</div>');
         }
 
         if (lowConfidence) p.push('<p class="lowconf">Short selection — this read is indicative only. Scan a fuller passage (100+ words) for a confident result.</p>');
