@@ -1229,6 +1229,14 @@ function summarizeSentenceIds(segments) {
 function buildSubmittedContentModel(report) {
   const results = report?.results_json || {};
   const intel = results.scan_intelligence || {};
+  // Per-sentence suggestions from the LLM explainer, keyed by sentence_id. When present they
+  // replace the single paragraph-level recommendation with a targeted fix per flagged sentence.
+  const suggestionBySentence = new Map();
+  ((results.paragraph_explanations || {}).paragraphs || []).forEach((p) => {
+    (p?.sentence_suggestions || []).forEach((s) => {
+      if (s && s.sentence_id && s.suggestion) suggestionBySentence.set(String(s.sentence_id), s.suggestion);
+    });
+  });
   const rawSegments = intel.document?.segments || results.highlight_segments || [];
   const issueById = new Map((report?.issues || []).map((issue) => [String(issue.id), issue]));
   const issuesBySentence = new Map();
@@ -1312,6 +1320,7 @@ function buildSubmittedContentModel(report) {
           tier: signal.tier || '',
           recommendation: signal.recommendation || '',
           reader_summary: signal.reader_summary || '',
+          suggestion: suggestionBySentence.get(String(segment.sentence_id)) || '',
         })))
       .sort((a, b) => (b.score || 0) - (a.score || 0));
     paragraph.text = text;
@@ -1321,6 +1330,10 @@ function buildSubmittedContentModel(report) {
     paragraph.sentence_ids = uniqueCompact(paragraph.segments.map((segment) => segment.sentence_id));
     paragraph.signalCount = paragraph.segments.reduce((count, segment) => count + segment.signals.length, 0);
     paragraph.flaggedSentences = flaggedSentences;
+    // True when at least one flagged sentence has a tailored LLM suggestion. The issue card uses
+    // this to choose per-sentence suggestions (preferred) vs the single paragraph recommendation
+    // below (fail-open fallback when the explainer produced none).
+    paragraph.hasSentenceSuggestions = flaggedSentences.some((s) => s.suggestion);
     // Paragraph-dominant guidance from the strongest flagged sentence (DeBERTa-native). The
     // band-level text is templated, so we anchor it to the actual sentence the classifier flagged
     // — naming the words to change makes the advice concrete instead of generic boilerplate.

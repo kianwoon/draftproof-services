@@ -1283,8 +1283,17 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
     # with its score + band color, matching the web page's evidence list. Only shown when
     # there are DeBERTa scanner findings (the authoritative path).
     deberta_evidence_html = ""
+    has_sentence_suggestions = False
     deberta_finds = [f for f in group_findings if getattr(f, "scanner", "") == "deberta"]
     if deberta_finds:
+        # Per-sentence tailored fixes from the LLM explainer, keyed by sentence_id. When present,
+        # each flagged sentence shows its own fix and the single paragraph recommendation is dropped.
+        expl = group.get("explanation") or {}
+        suggestion_by_sid = {
+            str(s.get("sentence_id") or ""): s.get("suggestion")
+            for s in (expl.get("sentence_suggestions") or [])
+            if isinstance(s, dict) and s.get("sentence_id") and s.get("suggestion")
+        } if isinstance(expl, dict) else {}
         _BAND_COLORS = {"low": "#f59e0b", "medium": "#f97316", "high": "#dc2626"}
         rows = []
         for f in sorted(deberta_finds, key=lambda x: -(x.metadata.get("deberta_score", 0))):
@@ -1293,9 +1302,15 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
                 "high" if sc >= 99 else "medium" if sc >= 80 else "low", "#94a3b8")
             sid = f.sentence_id or ""
             snippet = _truncate(f.evidence or "", 120)
+            suggestion = suggestion_by_sid.get(str(sid))
+            suggestion_html = (
+                f'<div class="dp-evidence-suggestion">{_e(suggestion)}</div>' if suggestion else ""
+            )
+            if suggestion:
+                has_sentence_suggestions = True
             rows.append(
                 f'<li><span class="dp-evidence-score" style="background:{band_color}">{round(sc)}%</span>'
-                f'<span class="dp-evidence-text">{_e(snippet)}</span></li>'
+                f'<span class="dp-evidence-text">{_e(snippet)}{suggestion_html}</span></li>'
             )
         if rows:
             deberta_evidence_html = f"""
@@ -1313,7 +1328,6 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
     <div class="dp-finding-count">#{finding_num}</div>
   </div>
   <div class="dp-finding-body">
-    {(f'<blockquote class="dp-finding-paragraph">{_e(_truncate(group.get("text") or "", 400))}</blockquote>') if group.get("text") else ""}
     {(f'<p class="dp-finding-description">{_e(summary)}</p>') if summary else ""}
     <div class="dp-finding-strength-row">
       <span class="dp-finding-strength-label">SIGNAL STRENGTH</span>
@@ -1326,7 +1340,7 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
     {also_html}
     {_subsection("MAIN ISSUE TO FIX", main_issue)}
     {bullets_html}
-    {_subsection("HOW TO IMPROVE THIS PARAGRAPH", recommendation)}
+    {_subsection("HOW TO IMPROVE THIS PARAGRAPH", "" if has_sentence_suggestions else recommendation)}
     {deberta_evidence_html}
     {_subsection("REWRITE HINT", rewrite_hint)}
   </div>
@@ -1565,6 +1579,9 @@ def _deberta_paragraph_groups(data: dict) -> list[dict]:
         str(p.get("paragraph_id") or ""): p
         for p in paragraphs if p.get("paragraph_id")
     }
+    # Per-paragraph LLM explanations carry the tailored per-sentence suggestions (sentence_suggestions).
+    # Attach them so the PDF card can show a fix per flagged sentence, mirroring the web page.
+    explanation_map = explanations_by_paragraph(data.get("paragraph_explanations"))
     groups = {}
     ordered_keys = []
     for seg in segments:
@@ -1579,7 +1596,7 @@ def _deberta_paragraph_groups(data: dict) -> list[dict]:
                 "sentence_ids": list(p.get("sentence_ids") or []),
                 "text": p.get("text") or seg.get("text") or "",
                 "findings": [],
-                "explanation": None,
+                "explanation": explanation_map.get(pid),
                 "deberta_reader_summary": p.get("reader_summary"),
                 "deberta_recommendation": p.get("recommendation"),
                 "deberta_flagged_sentences": p.get("flagged_sentences") or [],

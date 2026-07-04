@@ -170,7 +170,6 @@ export default function SignalHighlights({
               const signal = paragraph.primarySignal;
               const isOpen = openId === paragraph.id;
               const tier = signal?.tier;
-              const snippet = (paragraph.text || '').slice(0, 160);
               return (
                 <article key={paragraph.id}
                   data-issue-id={paragraph.id}
@@ -189,7 +188,6 @@ export default function SignalHighlights({
                         {signal && <em className="issue-chip">{signalLabel(signal.key, signal.label, t)}</em>}
                         <em className="issue-chip">{t('report.submitted.paragraphSignals', { count: paragraph.signalCount || paragraph.signals.length })}</em>
                       </span>
-                      <span className="issue-card-snippet">{snippet}{paragraph.text.length > 160 ? '…' : ''}</span>
                     </span>
                     <span className="issue-card-caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
                   </button>
@@ -200,7 +198,8 @@ export default function SignalHighlights({
                           {selectedParagraph.readerSummary && (
                             <p className="issue-card-summary">{selectedParagraph.readerSummary}</p>
                           )}
-                          {selectedParagraph.recommendation && (
+                          {/* Fallback only: shown when NO flagged sentence has a tailored suggestion. */}
+                          {!selectedParagraph.hasSentenceSuggestions && selectedParagraph.recommendation && (
                             <div className="issue-action">
                               <span className="issue-action-label">{t('report.submitted.recommendation')}</span>
                               <p>{selectedParagraph.recommendation}</p>
@@ -225,6 +224,9 @@ export default function SignalHighlights({
                                   <li key={sent.sentence_id}>
                                     <span className="deberta-evidence-score">{Math.round(sent.score)}%</span>
                                     <span className="deberta-evidence-text">{sent.text}</span>
+                                    {sent.suggestion && (
+                                      <span className="deberta-evidence-suggestion">{sent.suggestion}</span>
+                                    )}
                                   </li>
                                 ))}
                               </ul>
