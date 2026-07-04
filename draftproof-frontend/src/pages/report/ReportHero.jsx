@@ -22,9 +22,7 @@ export default function ReportHero({
   onRewrite,
   onCancelRewrite,
   repairSummary,
-  repairMainRiskLabel,
   repairActionLabel,
-  repairActionHint,
   onRepairAction,
   submissionRiskView = null,
   isRewrittenView = false,
@@ -117,18 +115,11 @@ export default function ReportHero({
         {submissionRiskView && <SubmissionRiskBand t={t} sr={submissionRiskView} />}
 
         {repairSummary && (
-          <div className="report-hero-repair" aria-label={t('report.repairSummary.ariaLabel')}>
-            <div className="report-hero-repair-plan">
-              <span className="report-hero-repair-kicker">{t('report.repairSummary.kicker')}</span>
-              <strong>{repairSummary.status}</strong>
-              <p>{repairSummary.nextAction}</p>
-              <span className="report-hero-repair-note">{repairSummary.confidenceNote}</span>
-            </div>
-            <div className="report-hero-repair-risk">
-              <span>{repairMainRiskLabel}</span>
-              <strong>{repairSummary.mainRisk}</strong>
-              {repairActionHint && <p className="report-hero-repair-action-hint">{repairActionHint}</p>}
-            </div>
+          <div className="report-hero-repair is-cta-only" aria-label={t('report.repairSummary.ariaLabel')}>
+            {/* Repair-plan + main-risk text removed (owner decision 2026-07-04):
+                the V7 panel + submission-risk chips now carry that guidance, so the
+                text was redundant. The rewrite CTAs stay — they're the primary
+                (credit-monetized) action and are gated exactly as before. */}
             {(canStartRewrite || rewriteLoading || rewriteInProgress || (repairActionLabel && onRepairAction)) && (
               <div className="report-hero-repair-cta">
                 {(canStartRewrite || rewriteLoading || rewriteInProgress) && (

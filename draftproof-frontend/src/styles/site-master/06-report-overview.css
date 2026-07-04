@@ -470,6 +470,13 @@
   border-top: 1px solid rgba(13, 27, 42, .08);
 }
 
+/* CTA-only variant: the repair-plan + main-risk text was removed, so the block
+   now holds just the rewrite buttons — drop the 2-column grid and let the CTA
+   row sit clean and full-width. */
+.report-hero-repair.is-cta-only {
+  display: block;
+}
+
 .report-hero-repair-kicker {
   display: block;
   color: #64748b;
