@@ -13,9 +13,12 @@ Run:  cd poc/report && python demo.py
 import sys
 import os
 import re
+import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
 from report.authorship_evidence import build_authorship_evidence, strengthen_anchor_sentences
@@ -1314,17 +1317,30 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     # DeBERTa heatmap → the SOLE signal source for Signal highlights (per Turnitin: learned
     # classifier replaces the perplexity family). Colors the map AND rebuilds the tile headline
     # from the same per-sentence scores, so the two sections can never disagree.
+    # Provenance of the LAST _compute_deberta_heatmap() call, so the document dict can tell the
+    # frontend which detector actually produced the highlight map (fakespot vs deep-scan), for
+    # the legend copy — set inside the closure below, read after the call in _scan_intelligence.
+    heatmap_source = {"value": "fakespot"}
+
     def _compute_deberta_heatmap() -> list:
-        """Return the per-sentence DeBERTa heatmap, computed from _source_segments(complete=True) —
-        the EXACT sentence list the map renders. This is the single source of truth: the map colors
-        from it AND the tile headline is rebuilt from it, so the two sections can never disagree on
-        which passages are flagged. (build()'s structured_sentence_segments cache is deliberately
-        NOT used: it splits sentences differently than _source_segments, which caused the
-        tile-vs-map flag mismatch in production. See _sync_deberta_headline_from_heatmap.)"""
-        try:
-            from detect.deberta_signal import compose_from_sentences  # noqa: E402
-        except Exception:
-            return []
+        """Return the per-sentence heatmap that drives Signal-highlights + fix-first, computed
+        from _source_segments(complete=True) — the EXACT sentence list the map renders. This is
+        the single source of truth: the map colors from it AND the tile headline is rebuilt from
+        it, so the two sections can never disagree on which passages are flagged. (build()'s
+        structured_sentence_segments cache is deliberately NOT used: it splits sentences
+        differently than _source_segments, which caused the tile-vs-map flag mismatch in
+        production. See _sync_deberta_headline_from_heatmap.)
+
+        SOURCE SWITCH (2026-07-04): when the V7 deep-scan detector is enabled
+        (detect_v7.pipeline_bridge.is_deep_scan_enabled()) and actually returns a usable
+        heatmap, that becomes the source — so the whole panel (headline fused score +
+        highlights + fix-first) reads from ONE consistent model. Fail-open: disabled/
+        unavailable/error falls back to the existing ai_signal_deberta fakespot heatmap,
+        byte-unchanged. The segment-signal key stays "ai_signal_deberta" either way (the
+        frontend filters on that key and does not care about provenance) — this keeps
+        SignalHighlights/FixFirstChecklist and the DebertaSignal second-opinion tile's
+        consumer (badge.ai_signal_deberta, a SEPARATE field never touched here) both
+        working unchanged."""
         sens = []
         for item in _source_segments(complete=True):
             sens.append({
@@ -1333,6 +1349,25 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "text": item.get("sentence", ""),
             })
         if not sens:
+            return []
+
+        try:
+            from detect_v7.pipeline_bridge import is_deep_scan_enabled  # noqa: E402
+            from detect_v7.deep_scan_heatmap import compose_deep_scan_heatmap  # noqa: E402
+            if is_deep_scan_enabled():
+                deep_result = compose_deep_scan_heatmap(sens)
+                if deep_result and deep_result.get("available"):
+                    heatmap_source["value"] = "deep_scan"
+                    return deep_result.get("sentence_scores") or []
+        except Exception:
+            logger.exception(
+                "report.report: deep-scan heatmap failed; falling back to ai_signal_deberta "
+                "fakespot heatmap (additive, non-fatal)."
+            )
+
+        try:
+            from detect.deberta_signal import compose_from_sentences  # noqa: E402
+        except Exception:
             return []
         result = compose_from_sentences(sens)
         if not result or not result.get("available"):
@@ -2764,6 +2799,12 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 "word_count": len(report.original_text.split()) if report.original_text else 0,
                 "sentence_count": len(display_segments),
                 "paragraph_count": len({s.get("paragraph_id") for s in display_segments if s.get("paragraph_id")}),
+                # Which detector produced the Signal-highlights/fix-first per-sentence scores on
+                # THIS report: "deep_scan" (V7 Modal detector, same one the panel headlines) or
+                # "fakespot" (fail-open default — deep scan off/unavailable). Lets the frontend
+                # legend (SignalHighlights.jsx) label the map's actual source instead of always
+                # saying "second opinion" when it is really the primary deep-scan detector.
+                "signal_highlight_source": heatmap_source["value"],
                 "segments": display_segments,
                 "paragraphs": display_paragraph_rows,
                 "authorship_window_profile": authorship_window_profile,
