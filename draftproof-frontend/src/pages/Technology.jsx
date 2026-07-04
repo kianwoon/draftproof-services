@@ -48,6 +48,58 @@ export default function Technology() {
   );
 }
 
+// Greedily wraps `label` into at most 2 lines of at most `maxChars` characters each,
+// without breaking a single word (an overlong word is left to overflow its own line).
+// Threshold derived from measured getBBox() widths at this box's 11-12px/weight-600 text:
+// "Pattern-based analysis" (22 chars) renders at 134px and must stay on one line inside
+// the 150px-wide box, while "A separate deep-reading model" (30 chars, 183px) must wrap.
+// ~6.1px/char at this font size => 22 chars keeps ~6px margin inside the 150px box.
+function wrapLabelLines(label, maxChars = 22) {
+  const text = String(label ?? '').trim();
+  if (!text) return [];
+  const words = text.split(/\s+/);
+
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxChars || !current) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+      if (lines.length === 1) {
+        // Already used our one allowed break; let the rest run onto this second line.
+        const rest = words.slice(words.indexOf(word));
+        current = rest.join(' ');
+        break;
+      }
+    }
+  }
+  if (current) lines.push(current);
+
+  return lines.slice(0, 2);
+}
+
+// Renders a label as a centered <text> with one <tspan> per wrapped line.
+function WrappedSignalLabel({ label, centerX, centerY, fontSize = 12, fill = 'var(--ink)' }) {
+  const lines = wrapLabelLines(label);
+  if (lines.length <= 1) {
+    return (
+      <text x={centerX} y={centerY} fontSize={fontSize} fill={fill} textAnchor="middle" fontWeight="600">
+        {lines[0] ?? ''}
+      </text>
+    );
+  }
+
+  return (
+    <text x={centerX} y={centerY} fontSize={fontSize} fill={fill} textAnchor="middle" fontWeight="600">
+      <tspan x={centerX} dy="-7">{lines[0]}</tspan>
+      <tspan x={centerX} dy="16">{lines[1]}</tspan>
+    </text>
+  );
+}
+
 function SignalFusionDiagram({ data }) {
   if (!data) return null;
   const chips = Array.isArray(data.chips) ? data.chips : [];
@@ -56,10 +108,10 @@ function SignalFusionDiagram({ data }) {
     <div className="fusion-diagram">
       <svg viewBox="0 0 460 170" width="100%" height="190" role="img" aria-label={`${data.signal1} + ${data.signal2} → ${data.fusedLabel} → ${data.bandLabel}`}>
         <rect x="10" y="14" width="150" height="48" rx="8" fill="none" stroke="var(--navy-900)" strokeWidth="1.5" />
-        <text x="85" y="34" fontSize="12" fill="var(--ink)" textAnchor="middle" fontWeight="600">{data.signal1}</text>
+        <WrappedSignalLabel label={data.signal1} centerX={85} centerY={34} />
 
         <rect x="10" y="104" width="150" height="48" rx="8" fill="none" stroke="var(--navy-900)" strokeWidth="1.5" />
-        <text x="85" y="124" fontSize="12" fill="var(--ink)" textAnchor="middle" fontWeight="600">{data.signal2}</text>
+        <WrappedSignalLabel label={data.signal2} centerX={85} centerY={124} />
 
         <line x1="160" y1="38" x2="220" y2="85" stroke="rgba(13, 27, 42, .25)" strokeWidth="1.5" />
         <line x1="160" y1="128" x2="220" y2="85" stroke="rgba(13, 27, 42, .25)" strokeWidth="1.5" />
