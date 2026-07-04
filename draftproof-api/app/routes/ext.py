@@ -116,6 +116,18 @@ def _build_paragraph_issues(results_json: dict, limit: int) -> list[dict]:
         top = top or {}
         expl = expl or {}
         text = " ".join((x.get("text") or "") for x in segs).strip()
+        # Per-sentence tailored fixes — same source the web page shows under each flagged
+        # sentence (paragraph_explanations.sentence_suggestions, keyed by sentence_id).
+        _sugg_by_sid = {
+            str(s.get("sentence_id")): s.get("suggestion")
+            for s in (expl.get("sentence_suggestions") or [])
+            if isinstance(s, dict) and s.get("sentence_id") and s.get("suggestion")
+        }
+        sentence_fixes = []
+        for x in flagged:
+            _sugg = _sugg_by_sid.get(str(x.get("sentence_id") or ""))
+            if _sugg:
+                sentence_fixes.append({"text": (x.get("text") or "")[:200], "suggestion": _sugg})
         issues.append({
             "snippet": text[:220],
             "tier": top.get("tier") or None,
@@ -123,6 +135,7 @@ def _build_paragraph_issues(results_json: dict, limit: int) -> list[dict]:
             "reader_summary": expl.get("reader_summary") or expl.get("summary") or None,
             "main_issue": expl.get("main_issue") or None,
             "recommendation": expl.get("recommendation") or top.get("recommendation") or None,
+            "sentence_fixes": sentence_fixes,
         })
         if len(issues) >= limit:
             break

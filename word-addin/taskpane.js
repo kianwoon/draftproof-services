@@ -410,7 +410,9 @@
         "Turnitin result. Detectors over-flag fluent writing and may flag this even though it's " +
         "yours (a warning, not a verdict). The AI % above is NOT a Turnitin score.";
       if (sr.reason) srNote = sr.reason + " " + srNote;
-      p.push(section("Submitted content", srHead, "dp-level-" + escapeAttr(sr.level || "unknown"), srNote));
+      // Page parity: this is the SUBMISSION-RISK section on the web report. The flagged-sentence
+      // panel below is the page's "Submitted content".
+      p.push(section("Submission risk", srHead, "dp-level-" + escapeAttr(sr.level || "unknown"), srNote));
     }
 
     // allow-hardcode: HTML render templates + CSS class names (presentation); all
@@ -436,14 +438,23 @@
           b += '<div class="dp-issue-block"><span class="dp-issue-label">Main issue to fix</span><p>' +
             escapeHtml(it.main_issue) + "</p></div>";
         }
-        if (it.recommendation) {
+        // Page parity: prefer the per-sentence tailored fixes (sentence_fixes) the web report shows
+        // under each flagged sentence; fall back to the single paragraph recommendation only when
+        // no per-sentence fix exists (mirrors the page's hasSentenceSuggestions logic).
+        if (it.sentence_fixes && it.sentence_fixes.length) {
+          b += '<div class="dp-issue-block"><span class="dp-issue-label">Suggested fixes</span>' +
+            '<ul class="dp-fix-list">' + it.sentence_fixes.map(function (f) {
+              return '<li><span class="dp-fix-sentence">“' + escapeHtml(f.text) + '”</span>' +
+                '<span class="dp-fix-suggestion">' + escapeHtml(f.suggestion) + "</span></li>";
+            }).join("") + "</ul></div>";
+        } else if (it.recommendation) {
           b += '<div class="dp-issue-block"><span class="dp-issue-label">How to improve</span><p>' +
             escapeHtml(it.recommendation) + "</p></div>";
         }
         return '<article class="dp-issue-card">' +
           (chips ? '<div class="dp-issue-chips">' + chips + "</div>" : "") + b + "</article>";
       }).join("");
-      p.push('<div class="dp-section"><div class="dp-section-title">Issues</div>' + cards + "</div>");
+      p.push('<div class="dp-section"><div class="dp-section-title">Submitted content</div>' + cards + "</div>");
     } else {
       var sig = report.signal_highlights || [];
       if (sig.length) {
