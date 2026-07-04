@@ -25,16 +25,20 @@ DEBERTA_HEAT_DESCRIPTIONS = {
     "moderate": "The second-opinion detector sees strong AI-like signal (below its high-confidence bar).",
     "high": "The second-opinion detector is >=99% confident this passage is AI-like.",
 }
-# Band-specific, student-facing edit guidance. Drives the issue-card "recommendation" so the
-# advice is native to the learned-classifier signal (not the abandoned perplexity family).
+# Band-specific, student-facing edit guidance. Drives the issue-card "recommendation".
+# V7-aligned (2026-07-04): leads with the GROUNDING action (V7's model — the risk is
+# content-lacking, not "a detector thinks this is AI"), and mentions the detector flag only
+# as honest secondary context (heads-up, not verdict). The old copy led with accusation
+# ("the classifier is highly confident this is AI-generated") — reframed to coaching.
 DEBERTA_HEAT_RECOMMENDATIONS = {
-    "moderate": "This sentence reads as strongly AI-like under the learned classifier. Rewrite it around a specific, verifiable detail from your experience, and vary the sentence rhythm so it does not follow a common template.",
-    "high": "The learned classifier is highly confident this sentence is AI-generated. Revoice it entirely in your own words and tie every claim to a concrete detail only you would know (a name, a number, an observation).",
+    "moderate": "This passage leans generic and template-like — the kind of writing detectors over-flag. Make it unmistakably yours: anchor it to a specific, verifiable detail from your own work (a name, a number, an observation) and vary the phrasing.",
+    "high": "This passage is broad and unanchored — fluent but missing the specifics that show the thinking is yours (which is also what reads as AI to detectors). Ground each claim in a concrete detail only you would know — a name, a number, an observation — and put it in your own voice.",
 }
-# Plain-language reader summary per band — what a human reviewer would notice.
+# Plain-language reader summary per band — what a human reviewer would notice. V7: lead with
+# the missing grounding, not the AI-accusation.
 DEBERTA_HEAT_READER_SUMMARY = {
-    "moderate": "A reader may notice this sentence follows a familiar, template-like structure common in AI-assisted writing.",
-    "high": "A reader may notice this sentence reads as machine-generated — fluent but generic, without the texture of personal experience.",
+    "moderate": "This passage follows a familiar, template-like pattern and could use more of your own specific detail.",
+    "high": "This passage is fluent but generic — it lacks the specific, lived detail that shows the thinking is yours.",
 }
 
 
