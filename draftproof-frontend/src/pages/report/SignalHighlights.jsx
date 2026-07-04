@@ -4,12 +4,13 @@ import { signalClassName, signalLabel, signalDescription } from './reportHelpers
 import ParagraphSeverityBar from '../../components/ParagraphSeverityBar';
 import EditPencilIcon from './EditPencilIcon';
 
-// Highlight intensity is CAPPED by the document's authoritative tier so the
-// highlights never scream red on a Low-Risk (green) document (owner decision
-// 2026-07-04). A green-tier doc shows every flagged sentence as a calm amber
-// "review" underline; only orange/red-tier docs earn the hot graduated colors.
+// Highlight intensity is CAPPED by the document's authoritative tier (owner
+// decision 2026-07-04). On a Low-Risk (green) document we mark NOTHING in the
+// full-document view — marks only crowd a page the report already calls low
+// risk (the flagged passages still live in the Issues tab). amber/orange/red
+// tiers earn progressively hotter graduated colors.
 // Ranks: 0 none, 1 review, 2 medium, 3 high, 4 critical.
-const _TIER_CEILING = { green: 1, amber: 2, orange: 3, red: 4 };
+const _TIER_CEILING = { green: 0, amber: 2, orange: 3, red: 4 };
 const _SEV_CLASS = ['', 'is-review', 'is-severity-medium', 'is-severity-high', 'is-severity-critical'];
 
 export default function SignalHighlights({
