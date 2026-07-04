@@ -148,6 +148,122 @@ def _truncate(text: str, limit: int = 220) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+# Category display order + labels, mirroring draftproof-frontend/src/i18n/en/report.js
+# authorshipBreakdown.categories (and AuthorshipClarityBreakdown.jsx CATEGORY_ORDER).
+# allow-hardcode: presentation copy for machine category CODES, not a scoring/matching list.
+_ACB_CATEGORY_ORDER = (
+    "student_owned",
+    "ai_assisted_polished",
+    "ai_paraphrased",
+    "ai_generated_like",
+)
+_ACB_CATEGORY_LABELS = {
+    "student_owned": "Student-owned",
+    "ai_assisted_polished": "AI-assisted / polished",
+    "ai_paraphrased": "AI-paraphrased",
+    "ai_generated_like": "AI-generated-like",
+}
+_ACB_BAND_LABELS = {"Strong": "Strong", "Some": "Some", "Little": "Little", "None": "None"}
+_ACB_FUSED_BAND_LABELS = {"low": "Low", "moderate": "Moderate", "high": "High", "critical": "Critical"}
+_ACB_TIER_TO_BAND = {"green": "low", "amber": "moderate", "orange": "high", "red": "critical"}
+_ACB_DEEP_SCAN_BAND_LABELS = {"amber": "Amber", "orange": "Orange", "red": "Red"}
+
+
+def render_authorship_breakdown(report_data: dict) -> str:
+    """HTML panel mirroring draftproof-frontend's AuthorshipClarityBreakdown.jsx:
+    fused AI-likelihood headline (or deep-scan-only fallback), the 4 category bars,
+    and the verbatim disclaimer. '' when badge.authorship_breakdown is absent
+    (flag off / older report) — additive, fail-open, no hardcoded thresholds
+    (band labels/cutoffs are read from the badge's own fields, never invented)."""
+    badge = (report_data or {}).get("ai_risk_badge") or {}
+    breakdown = badge.get("authorship_breakdown")
+    if not breakdown:
+        return ""
+
+    raw_shares = breakdown.get("document_breakdown_raw") or {}
+    band_shares = breakdown.get("document_breakdown_bands") or {}
+    tier_authority = badge.get("tier_authority")
+    authoritative_tier = badge.get("tier")
+
+    out: list[str] = []
+    out.append('<div class="authorship-breakdown">')
+    out.append('<p class="dp-callout-title">Authorship clarity breakdown <span class="dp-statchip dp-statchip--info">Beta</span></p>')
+    out.append(
+        '<p class="dp-hero-sub">How this document\'s writing signals distribute across four '
+        "authorship styles. The shares always add up to 100% — a composition of the mix, not an "
+        "AI-probability. The deep-scan estimate below comes from a separate beta detector and may "
+        "differ from Text-pattern risk in the summary above — different models, and both are "
+        "signals rather than verdicts.</p>"
+    )
+
+    # ── Headline: FUSED score when tier_authority fired, else deep-scan-only ──
+    if isinstance(tier_authority, dict) and isinstance(tier_authority.get("fused_score"), (int, float)):
+        fused_score = tier_authority["fused_score"]
+        composite = tier_authority.get("composite_score")
+        proportion = tier_authority.get("proportion")
+        deep_scan_pct = round((proportion or 0) * 100)
+        band_chip = ""
+        if authoritative_tier in _ACB_TIER_TO_BAND:
+            band = _ACB_TIER_TO_BAND[authoritative_tier]
+            band_chip = _statchip(_ACB_FUSED_BAND_LABELS.get(band, band), _level_kind(band))
+        evidence = ""
+        if isinstance(composite, (int, float)):
+            evidence = (
+                f"Behind this score: composite detector {round(composite)}%, "
+                f"deep-scan detector {deep_scan_pct}% (sentence-level). See the DraftProof scale above."
+            )
+        out.append(
+            '<div class="dp-hero">'
+            '<p class="dp-hero-read">DraftProof AI-likelihood '
+            f'<b>{round(fused_score)}%</b> {band_chip}</p>'
+            + (f'<p class="dp-hero-sub">{escape(evidence)}</p>' if evidence else "")
+            + "</div>"
+        )
+    else:
+        deep_scan = breakdown.get("deep_scan") or {}
+        band = deep_scan.get("band")
+        if band and band in ("insufficient", "amber", "orange", "red"):
+            proportion = deep_scan.get("proportion")
+            if band == "insufficient" or not isinstance(proportion, (int, float)):
+                out.append(
+                    '<div class="dp-hero"><p class="dp-hero-read">Deep-scan AI estimate '
+                    f'{_statchip("insufficient evidence", "info")}</p>'
+                    '<p class="dp-hero-sub">sentence-level signal — not a Turnitin score</p></div>'
+                )
+            else:
+                band_label = _ACB_DEEP_SCAN_BAND_LABELS.get(band, band)
+                out.append(
+                    '<div class="dp-hero"><p class="dp-hero-read">Deep-scan AI estimate '
+                    f'<b>{round(proportion * 100)}%</b> {_statchip(band_label, _level_kind(band))}</p>'
+                    '<p class="dp-hero-sub">sentence-level signal — not a Turnitin score</p></div>'
+                )
+
+    # ── 4 category bars (raw share drives bar width; band label always shown with %) ──
+    rows = []
+    for category in _ACB_CATEGORY_ORDER:
+        raw = raw_shares.get(category)
+        band = band_shares.get(category)
+        has_raw = isinstance(raw, (int, float))
+        width_pct = max(0.0, min(100.0, raw * 100)) if has_raw else 0.0
+        band_label = _ACB_BAND_LABELS.get(band, band) if band else _ACB_BAND_LABELS["None"]
+        text = f"{band_label} · {round(width_pct)}%" if has_raw else band_label
+        rows.append(
+            '<div class="dp-abd-row">'
+            f'<span class="dp-abd-label">{escape(_ACB_CATEGORY_LABELS.get(category, category))}</span>'
+            '<span class="dp-abd-bar-track">'
+            f'<span class="dp-abd-bar-fill" style="width:{width_pct}%"></span></span>'
+            f'<span class="dp-abd-band">{escape(text)}</span></div>'
+        )
+    out.append('<div class="dp-abd-bars">' + "".join(rows) + "</div>")
+
+    disclaimer = breakdown.get("disclaimer")
+    if disclaimer:
+        out.append(f'<p class="dp-hero-sub">{escape(str(disclaimer))}</p>')
+
+    out.append("</div>")
+    return "\n".join(out)
+
+
 def render_scan_lead(report, data) -> str:
     """Hero + KPI row + priority fixes + '1. Submission and policy view'.
 
