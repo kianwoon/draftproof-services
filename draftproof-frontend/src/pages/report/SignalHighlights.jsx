@@ -17,7 +17,7 @@ export default function SignalHighlights({
   onEditParagraph, onCopyGuidance,
 }) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState('issues'); // 'issues' | 'document'
+  const [tab, setTab] = useState('document'); // 'document' | 'issues' — default to the full read
   const [openId, setOpenId] = useState(highlightedParagraphs[0]?.id ?? null);
   const toggleCard = (id) => setOpenId((cur) => (cur === id ? null : id));
   const issuesRef = useRef(null);
