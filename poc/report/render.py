@@ -1642,7 +1642,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     # ── LEAD: enhanced hero + KPI row + priority fixes + policy view ──
     # (Submitted Text is moved to an appendix before the footer; the verdict +
     #  policy view + findings lead instead.)
-    from .render_panels import render_scan_lead, render_authenticity_dashboard, render_deberta_signal
+    from .render_panels import render_scan_lead, render_authorship_breakdown
     _lead = render_scan_lead(report, data) if report.ai_risk_badge else ""
     if _lead:
         lines.append(_lead)
@@ -1660,16 +1660,16 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
         lines.append("")
 
-    # ── Authenticity Dashboard panel (additive, gated by kill-switch) ─────────
+    # ── Authorship Clarity Breakdown panel (additive, mirrors the scan page's
+    # centerpiece: fused AI-likelihood headline + 4 category bars). '' when
+    # badge.authorship_breakdown is absent (flag off / older report).
+    # NOTE: the authenticity-dashboard and second-opinion DeBERTa panels were
+    # REMOVED here (2026-07-04) — both tiles were removed from the /report
+    # scan page, so the PDF no longer renders them either.
     if report.ai_risk_badge:
-        _authn_panel = render_authenticity_dashboard({"ai_risk_badge": report.ai_risk_badge})
-        if _authn_panel:
-            lines.append(_authn_panel)
-            lines.append("")
-        # ── Second-opinion DeBERTa AI signal (additive, advisory only) ──────────
-        _deberta_panel = render_deberta_signal({"ai_risk_badge": report.ai_risk_badge})
-        if _deberta_panel:
-            lines.append(_deberta_panel)
+        _acb_panel = render_authorship_breakdown({"ai_risk_badge": report.ai_risk_badge})
+        if _acb_panel:
+            lines.append(_acb_panel)
             lines.append("")
 
     # ── 2. CALIBRATION SUMMARY ────────────────────────────────────

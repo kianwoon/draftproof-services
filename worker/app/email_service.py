@@ -23,6 +23,15 @@ _EXTERNAL_BAND_LABELS = {
     "high": "likely to be flagged",
 }
 
+# Mirrors draftproof-frontend/src/i18n/en/report.js authorshipBreakdown.categories —
+# keep the wording in sync with AuthorshipClarityBreakdown.jsx CATEGORY_ORDER labels.
+_AUTHORSHIP_CATEGORY_LABELS = {
+    "student_owned": "mostly student-owned",
+    "ai_assisted_polished": "mostly AI-assisted / polished",
+    "ai_paraphrased": "mostly AI-paraphrased",
+    "ai_generated_like": "mostly AI-generated-like",
+}
+
 # Keep in sync with report.render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED. The badge carries DraftProof's
 # grouped external-detector proxy, so email surfaces it only as an estimate.
 EXTERNAL_ESTIMATE_DISPLAY_ENABLED = True
@@ -147,6 +156,7 @@ def build_scan_completion_email(
     finding_count: int | None = None,
     submission_risk: dict | None = None,
     policy_risk: dict | None = None,
+    authorship_breakdown: dict | None = None,
     pdf_bytes: bytes | None = None,
     pdf_filename: str | None = None,
     settings,
@@ -179,6 +189,12 @@ def build_scan_completion_email(
         details.append(f"Writing score: {formatted_writing_score}%")
     if finding_count is not None:
         details.append(f"Findings: {finding_count}")
+    # Additive one-line authorship-clarity summary (fail-open: absent on older
+    # reports / flag off). Mirrors the /report page's Authorship Clarity
+    # Breakdown centerpiece without dumping all 4 category shares into the email.
+    primary_category = (authorship_breakdown or {}).get("primary_category")
+    if primary_category and primary_category in _AUTHORSHIP_CATEGORY_LABELS:
+        details.append(f"Authorship read: {_AUTHORSHIP_CATEGORY_LABELS[primary_category]}")
     details_text = "\n".join(details)
 
     subject = "Your DraftProof scan report is ready"
@@ -305,6 +321,7 @@ def send_scan_completion_email(
     finding_count: int | None = None,
     submission_risk: dict | None = None,
     policy_risk: dict | None = None,
+    authorship_breakdown: dict | None = None,
     pdf_bytes: bytes | None = None,
     settings,
 ) -> bool:
@@ -329,6 +346,7 @@ def send_scan_completion_email(
             finding_count=finding_count,
             submission_risk=submission_risk,
             policy_risk=policy_risk,
+            authorship_breakdown=authorship_breakdown,
             pdf_bytes=pdf_bytes,
             settings=settings,
         )
