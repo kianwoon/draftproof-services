@@ -5,6 +5,7 @@ import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
 import SubmissionRiskBand from './report/SubmissionRiskBand';
 import PolicyRiskView from './report/PolicyRiskView';
+import AuthorshipClarityBreakdown from './report/AuthorshipClarityBreakdown';
 import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 // Representative Submission-risk shape for the marketing sample report. Mirrors the
@@ -26,6 +27,31 @@ const SAMPLE_SUBMISSION_RISK = {
     defence_readiness: { level: 'high' },
     policy_declaration: { level: 'unknown' },
   },
+};
+
+// Illustrative V7 authorship-clarity breakdown for the marketing sample report.
+// Mirrors the real ai_risk_badge.authorship_breakdown + tier_authority shape
+// (poc/detect_v7/breakdown_composer.py, poc/report/builder.py). Values are a
+// fixed illustrative example, not a scoring oracle.
+const SAMPLE_AUTHORSHIP_BREAKDOWN = {
+  document_breakdown_raw: {
+    student_owned: 0.62,
+    ai_assisted_polished: 0.24,
+    ai_paraphrased: 0.09,
+    ai_generated_like: 0.05,
+  },
+  document_breakdown_bands: {
+    student_owned: 'Strong',
+    ai_assisted_polished: 'Some',
+    ai_paraphrased: 'Little',
+    ai_generated_like: 'None',
+  },
+};
+
+const SAMPLE_TIER_AUTHORITY = {
+  fused_score: 34,
+  composite_score: 29,
+  proportion: 0.18,
 };
 
 export default function Landing() {
@@ -803,7 +829,7 @@ function SignalPanel({ label, signals, guardrails, punch }) {
 
 function SampleReportPreview() {
   const { t } = useTranslation();
-  const [activeSection, setActiveSection] = useState('aiSignal');
+  const [activeSection, setActiveSection] = useState('authorshipBreakdown');
   const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [isHoverPaused, setIsHoverPaused] = useState(false);
   const sampleReportNotes = t('landing.sampleReportNotes', { returnObjects: true });
@@ -859,6 +885,14 @@ function SampleReportPreview() {
       </div>
 
       <div className="sample-preview-panel" role="tabpanel" aria-label={currentTab?.label}>
+        {activeSection === 'authorshipBreakdown' && (
+          <AuthorshipClarityBreakdown
+            t={t}
+            breakdown={SAMPLE_AUTHORSHIP_BREAKDOWN}
+            authoritativeTier="green"
+            tierAuthority={SAMPLE_TIER_AUTHORITY}
+          />
+        )}
         {activeSection === 'aiSignal' && (
           <>
             <SubmissionRiskBand t={t} sr={SAMPLE_SUBMISSION_RISK} />

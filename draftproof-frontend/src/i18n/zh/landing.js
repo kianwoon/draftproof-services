@@ -402,6 +402,11 @@ export const landing = {
   "reportPreviewTabsLabel": "示例报告部分",
   "reportPreviewTabs": [
     {
+      "id": "authorshipBreakdown",
+      "label": "作者身份细分",
+      "summary": "四类构成"
+    },
+    {
       "id": "aiSignal",
       "label": "AI 信号",
       "summary": "作者身份模式"

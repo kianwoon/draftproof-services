@@ -404,6 +404,11 @@ export const landing = {
   "reportPreviewTabsLabel": "Sample report sections",
   "reportPreviewTabs": [
     {
+      "id": "authorshipBreakdown",
+      "label": "Authorship Breakdown",
+      "summary": "4-way composition"
+    },
+    {
       "id": "aiSignal",
       "label": "AI Signal",
       "summary": "Authorship pattern"
