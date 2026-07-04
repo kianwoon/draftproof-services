@@ -15,6 +15,7 @@ import { buy } from './en/buy.js';
 import { history } from './en/history.js';
 import { signin } from './en/signin.js';
 import { whyPage } from './en/whyPage.js';
+import { technologyPage } from './en/technologyPage.js';
 import { legal } from './en/legal.js';
 import { authorshipEvidence } from './en/authorshipEvidence.js';
 import { rewriteFraming } from './en/rewriteFraming.js';
@@ -46,6 +47,7 @@ export const enTranslation = {
   "history": history,
   "signin": signin,
   "whyPage": whyPage,
+  "technologyPage": technologyPage,
   "legal": legal,
   "authorshipEvidence": authorshipEvidence,
   "rewriteFraming": rewriteFraming,

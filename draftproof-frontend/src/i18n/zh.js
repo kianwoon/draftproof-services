@@ -16,6 +16,7 @@ import { history } from './zh/history.js';
 import { signin } from './zh/signin.js';
 import { legal } from './zh/legal.js';
 import { whyPage } from './zh/whyPage.js';
+import { technologyPage } from './zh/technologyPage.js';
 import { authorshipEvidence } from './zh/authorshipEvidence.js';
 import { rewriteFraming } from './zh/rewriteFraming.js';
 import { dialog } from './zh/dialog.js';
@@ -47,6 +48,7 @@ export const zhTranslation = {
   "signin": signin,
   "legal": legal,
   "whyPage": whyPage,
+  "technologyPage": technologyPage,
   "authorshipEvidence": authorshipEvidence,
   "rewriteFraming": rewriteFraming,
   "dialog": dialog,
