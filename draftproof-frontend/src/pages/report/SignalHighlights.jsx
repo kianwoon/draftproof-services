@@ -4,14 +4,10 @@ import { signalClassName, signalLabel, signalDescription } from './reportHelpers
 import ParagraphSeverityBar from '../../components/ParagraphSeverityBar';
 import EditPencilIcon from './EditPencilIcon';
 
-// Highlight intensity is CAPPED by the document's authoritative tier (owner
-// decision 2026-07-04). On a Low-Risk (green) document we mark NOTHING in the
-// full-document view — marks only crowd a page the report already calls low
-// risk (the flagged passages still live in the Issues tab). amber/orange/red
-// tiers earn progressively hotter graduated colors.
-// Ranks: 0 none, 1 review, 2 medium, 3 high, 4 critical.
-const _TIER_CEILING = { green: 0, amber: 2, orange: 3, red: 4 };
-const _SEV_CLASS = ['', 'is-review', 'is-severity-medium', 'is-severity-high', 'is-severity-critical'];
+// Flagged finding sentences render in RED FONT (owner decision 2026-07-04): they
+// must stay visible on EVERY document — including Low-Risk (green) ones — so the
+// reader sees exactly which sentences the deep-scan flagged. Severity graduates by
+// red shade + font weight (80-89 < 90-98 < >=99), not by document tier.
 
 export default function SignalHighlights({
   submittedContent, selectedParagraph, selectedParagraphId, highlightedParagraphs,
@@ -19,7 +15,6 @@ export default function SignalHighlights({
   selectedCriticalThinking,
   showSubmittedEditEntry, onSelectParagraph, onPreviewParagraph, onAdjacent,
   onEditParagraph, onCopyGuidance,
-  authoritativeTier,
 }) {
   const { t } = useTranslation();
   const [tab, setTab] = useState('issues'); // 'issues' | 'document'
@@ -38,19 +33,13 @@ export default function SignalHighlights({
 
   if (!submittedContent?.paragraphs?.length) return null;
 
-  // DeBERTa score -> raw severity rank, then CAPPED by the authoritative tier so a
-  // green-tier document never renders hot red highlights (see _TIER_CEILING above).
+  // DeBERTa score -> severity class (red-font flag). Shown on every tier.
   const debertaSeverityClass = (score) => {
     const s = Number(score);
-    let raw;
-    if (!Number.isFinite(s) || s < 80) raw = 0;             // clean — no highlight
-    else if (s >= 99) raw = 4;                              // >=0.99 high-confidence
-    else if (s >= 90) raw = 3;                              // 90-98
-    else raw = 2;                                           // 80-89
-    if (raw === 0) return '';
-    // Unknown/absent tier -> full graduation (backward-compatible with older reports).
-    const ceiling = _TIER_CEILING[authoritativeTier] ?? 4;
-    return _SEV_CLASS[Math.min(raw, ceiling)];
+    if (!Number.isFinite(s) || s < 80) return '';          // clean — no flag
+    if (s >= 99) return 'is-severity-critical';            // >=0.99 high-confidence
+    if (s >= 90) return 'is-severity-high';                // 90-98
+    return 'is-severity-medium';                           // 80-89
   };
 
   const FullDocument = (
@@ -140,14 +129,10 @@ export default function SignalHighlights({
             const label = signal.key === 'ai_signal_deberta' && submittedContent.signalSource === 'deep_scan'
               ? t('report.signals.labels.ai_signal_deep_scan', { defaultValue: signalLabel(signal.key, signal.label, t) })
               : signalLabel(signal.key, signal.label, t);
-            // On a Low-Risk (green) document the authoritative tier — not the raw
-            // deberta band — governs how loud the legend reads. A calm amber dot keeps
-            // the review framing honest instead of flashing solid red at student writing.
-            const calmDot = authoritativeTier === 'green';
             return (
               <span key={signal.key}
-                className={`submitted-signal-chip signal-style-${signalClassName(signal.key)}${calmDot ? ' is-review' : ''}`}
-                style={{ '--signal-color': calmDot ? '#f59e0b' : signal.color }}>
+                className={`submitted-signal-chip signal-style-${signalClassName(signal.key)}`}
+                style={{ '--signal-color': signal.color }}>
                 <i aria-hidden="true" />{label}<strong>{signal.count}</strong>
               </span>
             );
