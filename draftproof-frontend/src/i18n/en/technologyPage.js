@@ -1,5 +1,6 @@
 // allow-hardcode: i18n marketing copy for the /technology page (human-authored UI text,
 // not a detection/scoring allow-list or matching oracle) — same pattern as en/whyPage.js.
+// allow-hardcode: i18n marketing copy including diagram labels and chip text (human-authored UI text, not detection/scoring logic)
 export const technologyPage = {
   "eyebrow": "The Technology Behind DraftProof",
   "title": "We didn't build another AI detector. We built the engineering discipline a new era of education actually needs.",
@@ -9,7 +10,20 @@ export const technologyPage = {
     {
       "title": "No single black-box score decides anything.",
       "body": "A single AI-detector call is noisy and easy to game in either direction. DraftProof combines multiple independent detection signals — pattern-based analysis and a separate deep-reading model — before any tier or score is shown, so no single miscalibrated signal can swing a verdict on its own.",
-      "whyItMatters": "For students: one flaky detector can't wrongly flag your work. For educators: a verdict backed by agreement across independent signals is more defensible than a single tool's number."
+      "whyItMatters": "For students: one flaky detector can't wrongly flag your work. For educators: a verdict backed by agreement across independent signals is more defensible than a single tool's number.",
+      // allow-hardcode: diagram labels and capability chips (human-authored marketing copy)
+      "diagram": {
+        "signal1": "Pattern-based analysis",
+        "signal2": "A separate deep-reading model",
+        "fusedLabel": "Fused score",
+        "bandLabel": "Low",
+        "bandCaption": "labeled band",
+        "chips": [
+          "Tested against real student writing",
+          "Spans ESL & multilingual proficiency levels",
+          "Re-validated across multiple AI-writing systems"
+        ]
+      }
     },
     {
       "title": "Validated against real multilingual student writing — not just native-English samples.",

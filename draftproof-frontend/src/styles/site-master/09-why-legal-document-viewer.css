@@ -652,3 +652,26 @@ details.ai-likelihood-calibration > summary {
   color: #475569;
 }
 details.ai-likelihood-calibration[open] > summary { margin-bottom: 10px; }
+
+.fusion-diagram {
+  margin: 1.25rem 0;
+  padding: 1rem 1.25rem 1.25rem;
+  border: 0.5px solid rgba(13, 27, 42, .10);
+  border-radius: var(--radius-md);
+}
+
+.fusion-diagram-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.fusion-diagram-chip {
+  border: 0.5px solid rgba(13, 27, 42, .15);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: transparent;
+}

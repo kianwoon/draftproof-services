@@ -9,7 +9,20 @@ export const technologyPage = {
     {
       "title": "没有任何单一的黑箱分数能决定结果。",
       "body": "单一的 AI 检测调用充满噪声，也容易被规避。DraftProof 在给出任何等级或分数之前，会综合多个独立的检测信号——基于模式的分析和一个独立的深度阅读模型——因此不会有单一失准的信号左右最终结论。",
-      "whyItMatters": "对学生而言：一个不稳定的检测器不会错误地标记你的作品。对教育者而言：由多个独立信号共同支持的结论，比单一工具给出的数字更站得住脚。"
+      "whyItMatters": "对学生而言：一个不稳定的检测器不会错误地标记你的作品。对教育者而言：由多个独立信号共同支持的结论，比单一工具给出的数字更站得住脚。",
+      // allow-hardcode: diagram labels and capability chips (human-authored marketing copy)
+      "diagram": {
+        "signal1": "基于模式的分析",
+        "signal2": "一个独立的深度阅读模型",
+        "fusedLabel": "综合分数",
+        "bandLabel": "低",
+        "bandCaption": "标注区间",
+        "chips": [
+          "针对真实学生写作进行测试",
+          "涵盖 ESL 与多语言写作水平",
+          "针对多个 AI 写作系统持续重新验证"
+        ]
+      }
     },
     {
       "title": "针对真实的多语言学生写作进行验证——而不仅仅是母语英语样本。",
