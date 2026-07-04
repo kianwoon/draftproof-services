@@ -1534,11 +1534,20 @@ class ReportBuilder:
         # UNDER DEBERTA AUTHORITATIVE: skip the floor entirely. The tier IS the DeBERTa badge
         # tier — no perplexity-finding inflation. A 14% document reads green/low, not medium.
         is_deberta_authoritative = ai_risk_badge.get("signal_source") == "deberta_authoritative"
+        _v7_ta = ai_risk_badge.get("tier_authority") if isinstance(ai_risk_badge.get("tier_authority"), dict) else None
+        is_v7_fused = ai_risk_badge.get("signal_source") == "v7_fused" and _v7_ta is not None
         if is_deberta_authoritative and authoritative_score and authoritative_score.get("available"):
             # Tier follows DeBERTa directly: green->LOW, amber->MEDIUM, orange->HIGH, red->CRITICAL
             _deb_tier_map = {"green": Tier.LOW, "amber": Tier.MEDIUM,
                              "orange": Tier.HIGH, "red": Tier.CRITICAL}
             adjusted_tier = _deb_tier_map.get(authoritative_tier or "", adjusted_tier)
+        elif is_v7_fused:
+            # V7 fused authority set the BADGE tier (see ai_risk_badge["tier"] above); the OVERALL tier
+            # + reason must follow it too, else the PDF hero reads "Overall tier is HIGH" while the fused
+            # badge is LOW. The fused score IS the authoritative tier -> skip the badge floor.
+            _fused_tier_map = {"green": Tier.LOW, "amber": Tier.MEDIUM,
+                               "orange": Tier.HIGH, "red": Tier.CRITICAL}
+            adjusted_tier = _fused_tier_map.get(authoritative_tier or "", adjusted_tier)
         else:
             pre_floor_tier = adjusted_tier
             adjusted_tier = self._floor_tier_to_badge(adjusted_tier, ai_risk_badge.get("tier"))
@@ -1591,6 +1600,19 @@ class ReportBuilder:
                 reason_codes.append("predictability_unconfirmed")
             if not rewrite_is_recommended:
                 reason_codes.append("rewrite_not_recommended")
+
+        # V7 fused authority: the reason must name the FUSED re-base (composite + deep-scan), not the
+        # stale layer3 "Overall tier is HIGH" text — else the PDF hero (the only surface that renders
+        # overall_tier_reason) contradicts the fused LOW badge. Reason_codes keep the generic set above.
+        if is_v7_fused:
+            _comp = _v7_ta.get("composite_score")
+            _deep = round((_v7_ta.get("proportion") or 0) * 100)
+            _comp_str = f"composite {round(_comp)}% + " if isinstance(_comp, (int, float)) else ""
+            overall_tier_reason = (
+                f"Overall tier is {adjusted_tier.value.upper()}: the fused AI-likelihood is "
+                f"{badge_ai_score:.0%} ({_comp_str}deep-scan {_deep}% sentence-level). This re-bases the "
+                f"tier to the calibrated fused score; the perplexity-family signals are a secondary read."
+            )
 
         # Inject detect scan scores into the rewrite summary so the rewrite report shows
         # the same risk scores the user sees in the scan report. Must run BEFORE the
