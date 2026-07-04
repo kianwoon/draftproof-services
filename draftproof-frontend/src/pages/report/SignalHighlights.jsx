@@ -118,13 +118,21 @@ export default function SignalHighlights({
 
       {submittedContent.legend?.length > 0 && (
         <div className="submitted-signal-legend" aria-label={t('report.submitted.legend')}>
-          {submittedContent.legend.slice(0, 6).map((signal) => (
-            <span key={signal.key}
-              className={`submitted-signal-chip signal-style-${signalClassName(signal.key)}`}
-              style={{ '--signal-color': signal.color }}>
-              <i aria-hidden="true" />{signalLabel(signal.key, signal.label, t)}<strong>{signal.count}</strong>
-            </span>
-          ))}
+          {submittedContent.legend.slice(0, 6).map((signal) => {
+            // Legend label reflects which detector actually produced these highlights on THIS
+            // report: the V7 deep-scan detector (same one the panel headlines) when
+            // signalSource === 'deep_scan', else the existing fakespot copy, byte-unchanged.
+            const label = signal.key === 'ai_signal_deberta' && submittedContent.signalSource === 'deep_scan'
+              ? t('report.signals.labels.ai_signal_deep_scan', { defaultValue: signalLabel(signal.key, signal.label, t) })
+              : signalLabel(signal.key, signal.label, t);
+            return (
+              <span key={signal.key}
+                className={`submitted-signal-chip signal-style-${signalClassName(signal.key)}`}
+                style={{ '--signal-color': signal.color }}>
+                <i aria-hidden="true" />{label}<strong>{signal.count}</strong>
+              </span>
+            );
+          })}
         </div>
       )}
 

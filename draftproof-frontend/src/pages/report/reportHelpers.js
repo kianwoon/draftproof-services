@@ -1351,6 +1351,12 @@ function buildSubmittedContentModel(report) {
     segments,
     legend,
     highlightedCount: paragraphs.filter((paragraph) => paragraph.signals.length > 0).length,
+    // Which detector produced these per-sentence ai_signal_deberta scores on this report:
+    // "deep_scan" (V7 Modal detector, same one the panel headlines) or "fakespot" (fail-open
+    // default). Backend: poc/report/report.py's document.signal_highlight_source. Lets the
+    // legend label the map's actual source instead of always implying the fakespot second
+    // opinion when deep scan is really driving it.
+    signalSource: intel.document?.signal_highlight_source || 'fakespot',
   };
 }
 
