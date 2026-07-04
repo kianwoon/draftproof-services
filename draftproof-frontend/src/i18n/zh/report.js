@@ -339,7 +339,7 @@ export const report = {
       "writing_quality": "写作质量",
       "genericity": "泛化程度",
       "ai_signal_deberta": "学习型分类器 AI 信号",
-      "ai_signal_deep_scan": "深度扫描 AI 信号"
+      "ai_signal_deep_scan": "待复核段落（测试版深度扫描）"
     },
     "descriptions": {
       "topk_pattern": "写作选择高度预期词语的频率。分数很高表示措辞遵循常见可预测路径。越低越好。",

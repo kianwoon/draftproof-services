@@ -1994,6 +1994,7 @@ export default function Report() {
             onAdjacent={selectAdjacentHighlightedParagraph}
             onEditParagraph={openSubmittedEditorForParagraph}
             onCopyGuidance={copySelectedParagraphGuidance}
+            authoritativeTier={badge?.tier || report?.tier}
           />
         )}
         {/* Advanced-signals drawer removed (owner decision 2026-07-04): the
