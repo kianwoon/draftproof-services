@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -159,6 +161,7 @@ def run_rewrite_pipeline_v6(
                 final_text,
                 provided=None,
                 fallback_scan=document.final_scan.to_dict(),
+                deep_scan=False,  # intermediate: composite ai_score suffices for the topk-repair guard
             )
             repair_gateway = _highlight_repair_gateway(
                 model=resolved_writer_model,
@@ -185,6 +188,7 @@ def run_rewrite_pipeline_v6(
                     repaired_text,
                     provided=None,
                     fallback_scan=repaired_scan.to_dict(),
+                    deep_scan=False,  # intermediate: compared to pre_highlight_report (also composite)
                 )
                 if _scan_score_worse(repaired_report, pre_highlight_report):
                     repair_trace = dict(repair_trace)
@@ -541,11 +545,49 @@ def _enrich_badge_diagnoses(scan_report: dict[str, Any] | None) -> dict[str, Any
     return scan_report
 
 
-def _scan_report_for_summary(text: str, *, provided: dict[str, Any] | None, fallback_scan: dict[str, Any]) -> dict[str, Any]:
+@contextmanager
+def _deep_scan_suppressed():
+    """Skip the paid per-sentence Modal deep-scan for an INTERMEDIATE rewrite re-scan.
+
+    A single rewrite runs ``ReportBuilder.build()`` up to 4x (pre-highlight, repaired, bracket,
+    and the final "after" summary), each of which — when the V7 flags are on — makes a full
+    per-sentence Modal deep-scan call. Only the FINAL "after" report (the one shown to the user)
+    needs the fused deep-scan score; the intermediate guard re-scans only compare the composite
+    ``ai_score`` (better/worse checks). ``ReportBuilder`` reads the deep-scan kill switches from
+    the environment at build time (``is_deep_scan_enabled`` / ``is_tier_authority_enabled``), so
+    we temporarily force them off around an intermediate build and restore them after.
+
+    Safe under the single-task worker (``celery -c 1`` — one task per process at a time, so no
+    concurrent scan observes the toggled env). The ``finally`` restores the exact prior values.
+    """
+    keys = ("DRAFTPROOF_V7_TIER_AUTHORITY", "DRAFTPROOF_V7_DEEP_SCAN")
+    saved = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ[k] = "0"
+    try:
+        yield
+    finally:
+        for k, prior in saved.items():
+            if prior is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = prior
+
+
+def _scan_report_for_summary(
+    text: str,
+    *,
+    provided: dict[str, Any] | None,
+    fallback_scan: dict[str, Any],
+    deep_scan: bool = True,
+) -> dict[str, Any]:
     if _has_full_report_shape(provided):
         return _enrich_badge_diagnoses(dict(provided or {}))
     try:
-        report = _scan_report(text)
+        # deep_scan=False on intermediate guard re-scans avoids ~3 redundant paid Modal
+        # deep-scans per rewrite; the composite ai_score is enough for those better/worse checks.
+        with (nullcontext() if deep_scan else _deep_scan_suppressed()):
+            report = _scan_report(text)
         if _has_full_report_shape(report):
             return _enrich_badge_diagnoses(report)
     except Exception:
