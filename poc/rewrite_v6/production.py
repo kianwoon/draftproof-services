@@ -230,7 +230,10 @@ def run_rewrite_pipeline_v6(
         ),
     )
     external_guard = _external_guard_decision(original_scan_report, rewritten_scan_report)
-    if external_guard.get("blocked"):
+    if external_guard.get("blocked") and not _external_guard_advisory():
+        # Legacy HARD-REVERT (escape hatch: DRAFTPROOF_V6_EXTERNAL_GUARD_ADVISORY=0) — discards the
+        # whole rewrite back to the original. Kept only as a kill switch; it violates the objective
+        # (source_preserved = the user sees no solution, learns nothing), so it is NOT the default.
         final_text = original_text
         document = _replace_document(
             document,
@@ -247,6 +250,21 @@ def run_rewrite_pipeline_v6(
         rewritten_scan_report = original_scan_report
         status = "original_preserved_external_guard"
     else:
+        # DEFAULT: ADVISORY. Guards ANNOTATE, never SUPPRESS. When the external-estimate guard would
+        # have blocked, KEEP the rewrite (the shown solution) and record the concern as a review flag
+        # the user verifies — instead of reverting to the original.
+        if external_guard.get("blocked"):
+            external_guard = {**external_guard, "advisory": True, "reverted": False}
+            document = _replace_document(
+                document,
+                pass_trace=list(document.pass_trace) + [{
+                    "selected_source": "external_detector_guard",
+                    "status": "advisory",
+                    "reason": external_guard.get("reason"),
+                    "original_external_score": external_guard.get("original_score"),
+                    "candidate_external_score": external_guard.get("candidate_score"),
+                }],
+            )
         status = ""
     final_text = _strip_markdown_emphasis(final_text)
     # TRUE last stage: ground generic sentences -> clean text + colour spans (green = qwen improved,
@@ -767,6 +785,15 @@ def _external_guard_enabled() -> bool:
     import os
 
     return os.environ.get("DRAFTPROOF_V6_EXTERNAL_GUARD", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _external_guard_advisory() -> bool:
+    """Default TRUE: when the external-detector guard fires it ANNOTATES (a review flag) and keeps the
+    rewrite, instead of reverting the whole document to the original (objective: guards annotate, never
+    suppress). Set DRAFTPROOF_V6_EXTERNAL_GUARD_ADVISORY=0 to restore the legacy hard-revert."""
+    import os
+
+    return os.environ.get("DRAFTPROOF_V6_EXTERNAL_GUARD_ADVISORY", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _external_guard_severe_threshold() -> float:

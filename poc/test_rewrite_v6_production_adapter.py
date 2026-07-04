@@ -207,9 +207,58 @@ def test_v6_production_passes_scan_json_aligned_source_scan(tmp_path, monkeypatc
     assert summary["rewrite_effective_config"]["source_scan"] == "scan_json_aligned"
 
 
-def test_v6_external_guard_preserves_original_on_severe_regression(tmp_path, monkeypatch):
+def test_v6_external_guard_advisory_keeps_rewrite_on_severe_regression(tmp_path, monkeypatch):
     original = "Original classroom note with stable detector risk."
     rewritten = "Candidate classroom note with worse detector risk."
+    scan = scan_text(original)
+
+    def fake_run_v6_rewrite_all(_text, **_kwargs):
+        return SimpleNamespace(
+            initial_scan=scan,
+            final_scan=scan_text(rewritten),
+            passes=[],
+            pass_trace=[],
+            rewritten_text=rewritten,
+            final_text_before_quality_repair=None,
+            quality_repair=None,
+        )
+
+    def fake_scan_report(text, **_kwargs):
+        score = 52 if text == original else 86
+        return _report_with_external_score(text, score)
+
+    monkeypatch.setattr(v6_production, "run_v6_rewrite_all", fake_run_v6_rewrite_all)
+    monkeypatch.setattr(v6_production, "render_pdf", lambda _md, path: Path(path).write_bytes(b"%PDF"))
+    monkeypatch.setattr(v6_production, "render_rewrite_report", lambda **_kwargs: "# Rewrite")
+    monkeypatch.setattr(v6_production, "_sentence_comparison", lambda original_text, final_text: [{"original": original_text, "final": final_text}])
+    monkeypatch.setattr(v6_production, "_scan_report_for_summary", fake_scan_report)
+
+    result = v6_production.run_rewrite_pipeline_v6(
+        detect_json={"input_text": original},
+        output_dir=str(tmp_path),
+        model="writer-model",
+    )
+    summary = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+
+    # ADVISORY default: the guard fired (blocked) but the rewrite is KEPT (annotate, don't suppress);
+    # the concern rides along as an advisory pass-trace flag instead of reverting to the original.
+    assert summary["status"] != "original_preserved_external_guard"
+    assert summary["final_text"] == rewritten
+    assert summary["external_detector_guard"]["blocked"] is True
+    assert summary["external_detector_guard"].get("reverted") is False
+    assert summary["external_detector_guard"]["candidate_score"] == 86
+    assert summary["external_detector_guard"]["original_score"] == 52
+    assert any(
+        row.get("selected_source") == "external_detector_guard" and row.get("status") == "advisory"
+        for row in summary["v6_pass_trace"]
+    )
+
+
+def test_v6_external_guard_legacy_revert_when_advisory_disabled(tmp_path, monkeypatch):
+    """Kill switch DRAFTPROOF_V6_EXTERNAL_GUARD_ADVISORY=0 restores the legacy hard-revert."""
+    monkeypatch.setenv("DRAFTPROOF_V6_EXTERNAL_GUARD_ADVISORY", "0")
+    original = "Original classroom note with stable detector risk."
+    rewritten = "Candidate classroom note with severe detector risk."
     scan = scan_text(original)
 
     def fake_run_v6_rewrite_all(_text, **_kwargs):
@@ -243,9 +292,6 @@ def test_v6_external_guard_preserves_original_on_severe_regression(tmp_path, mon
     assert summary["status"] == "original_preserved_external_guard"
     assert summary["final_text"] == original
     assert summary["external_detector_guard"]["blocked"] is True
-    assert summary["external_detector_guard"]["candidate_score"] == 86
-    assert summary["external_detector_guard"]["original_score"] == 52
-    assert any(row.get("selected_source") == "external_detector_guard" for row in summary["v6_pass_trace"])
 
 
 def test_v6_external_guard_allows_non_regression(tmp_path, monkeypatch):
