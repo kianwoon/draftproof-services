@@ -308,7 +308,7 @@ export default function Landing() {
           </div>
           <nav aria-label={t('footer.product')}>
             <a href="#product">{t('footer.product')}</a>
-            <a href="#engine">{t('footer.howItWorks')}</a>
+            <Link to={publicPath('/technology')}>{t('footer.howItWorks')}</Link>
             <a href="#report">{t('footer.sampleReport')}</a>
             <Link to={publicPath('/content-checker')}>{t('footer.essayChecker')}</Link>
             <Link to={publicPath('/academic-integrity-ai')}>{t('footer.academicIntegrity')}</Link>

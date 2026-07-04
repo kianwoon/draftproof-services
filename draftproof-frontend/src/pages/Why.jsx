@@ -61,7 +61,7 @@ export default function Why() {
           <p className="why-highlight">{t('whyPage.ctaHighlight')}</p>
           <div className="hero-actions" style={{ justifyContent: 'center' }}>
             <Link to="/signin?next=/scan" className="btn btn-primary">{t('whyPage.ctaRun')}</Link>
-            <Link to={publicPath('/#engine')} className="btn btn-secondary">{t('whyPage.ctaHow')}</Link>
+            <Link to={publicPath('/technology')} className="btn btn-secondary">{t('whyPage.ctaHow')}</Link>
           </div>
         </section>
 

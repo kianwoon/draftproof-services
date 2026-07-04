@@ -51,6 +51,14 @@ export const PAGE_META = {
     schemaType: 'WebPage',
     freshness: { type: 'reviewed', date: '2026-06-19' },
   },
+  '/technology': {
+    titleKey: 'seo.technologyTitle',
+    descriptionKey: 'seo.technologyDescription',
+    socialDescriptionKey: 'seo.technologySocialDescription',
+    canonical: '/technology',
+    schemaType: 'AboutPage',
+    freshness: { type: 'reviewed', date: '2026-07-05' },
+  },
   '/content-checker': {
     titleKey: 'seo.essayCheckerTitle',
     descriptionKey: 'seo.essayCheckerDescription',

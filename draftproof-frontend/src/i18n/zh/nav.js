@@ -13,6 +13,7 @@ export const nav = {
   "apiKeys": "API 密钥",
   "why": "为什么选择我们",
   "features": "功能对比",
+  "technology": "技术",
   "essayChecker": "内容检查器",
   "pricing": "价格",
   "faq": "常见问题",

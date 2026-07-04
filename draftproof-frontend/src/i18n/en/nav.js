@@ -13,6 +13,7 @@ export const nav = {
   "apiKeys": "API keys",
   "why": "Why",
   "features": "Features",
+  "technology": "Technology",
   "essayChecker": "Content checker",
   "pricing": "Pricing",
   "faq": "FAQ",
