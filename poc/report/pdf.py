@@ -370,6 +370,52 @@ img[src^="https://img.shields.io"] { height: 18px; }
 .dp-statchip--info { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
 .dp-statchip--warn { color: #b45309; background: #fffbeb; border-color: #fde68a; }
 
+/* ── Authorship clarity breakdown (4 category bars) — mirrors the web page's
+   authorship-breakdown rows so the PDF is not just jammed label+share text. ── */
+.dp-abd-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 5pt;
+    margin: 9pt 0 4pt;
+}
+.dp-abd-row {
+    display: flex;
+    align-items: center;
+    gap: 8pt;
+}
+.dp-abd-label {
+    flex: 0 0 132pt;
+    font-size: 8.5pt;
+    font-weight: 700;
+    color: #243b53;
+}
+.dp-abd-bar-track {
+    flex: 1 1 auto;
+    height: 7pt;
+    border-radius: 999pt;
+    background: #eef2f6;
+    overflow: hidden;
+}
+.dp-abd-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: 999pt;
+    background: #16a34a;
+}
+.dp-abd-band {
+    flex: 0 0 auto;
+    min-width: 64pt;
+    text-align: right;
+    white-space: nowrap;
+    font-size: 8pt;
+    font-weight: 700;
+    color: #334155;
+}
+.dp-abd-row:nth-child(1) .dp-abd-bar-fill { background: #16a34a; }
+.dp-abd-row:nth-child(2) .dp-abd-bar-fill { background: #d97706; }
+.dp-abd-row:nth-child(3) .dp-abd-bar-fill { background: #ea580c; }
+.dp-abd-row:nth-child(4) .dp-abd-bar-fill { background: #dc2626; }
+
 /* ── KPI stat row ── */
 .dp-kpi-row {
     display: flex;
