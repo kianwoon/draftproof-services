@@ -15,8 +15,6 @@ import RewriteNoticeDialog from './report/RewriteNoticeDialog';
 import SignalHighlights from './report/SignalHighlights';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import CriticalThinkingControl from './report/CriticalThinkingControl';
-import AuthenticityDashboard from './report/AuthenticityDashboard';
-import DebertaSignal from './report/DebertaSignal';
 import AuthorshipClarityBreakdown from './report/AuthorshipClarityBreakdown';
 import ReportHero from './report/ReportHero';
 import PolicyRiskView from './report/PolicyRiskView';
@@ -1998,24 +1996,14 @@ export default function Report() {
             onCopyGuidance={copySelectedParagraphGuidance}
           />
         )}
-        <details className="report-advanced-signals">
-          <summary>{t('report.advancedSignals.summary')}</summary>
-          <div className="report-advanced-signals-content">
-            {!hasRewriteSignalComparison && (
-              transformationScorecard ? (
-                <section className="report-overview-card" aria-label={t('report.overview')}>
-                  {transformationScorecard}
-                </section>
-              ) : (
-                reportSummaryBar
-              )
-            )}
-            {scoreProfileSection}
-            <AuthenticityDashboard t={t} dashboard={(badge && badge.authenticity_dashboard) || null} />
-            <DebertaSignal t={t} signal={(badge && badge.ai_signal_deberta) || null} compositeTier={badge.tier || report.tier} />
-            <CriticalThinkingControl badge={badge} t={t} />
-          </div>
-        </details>
+        {/* Advanced-signals drawer removed (owner decision 2026-07-04): the
+            writing-signal scorecard, score-profile, authenticity dashboard, and
+            DeBERTa second-opinion tile were old-methodology internals / redundant
+            with the V7 panel + deep-scan (the second-opinion tile stopped being a
+            distinct detector after the highlights switched to deep-scan). Critical
+            Thinking is the one V7-native, actionable, non-redundant panel, so it's
+            promoted to a visible section here rather than buried in a drawer. */}
+        <CriticalThinkingControl badge={badge} t={t} />
         {submittedEditorOpen && (
           <div className={`submitted-editor-backdrop${submittedEditorClosing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-label={t('report.submitted.editor.title')}>
             <div className="submitted-editor-sheet">
