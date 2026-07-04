@@ -159,9 +159,9 @@ export default function Landing() {
         <div className="section-inner trust-bar-inner">
           <span>{t('landing.builtFor')}</span>
           <strong>{t('landing.students')}</strong>
-          <strong>{t('landing.researchers')}</strong>
-          <strong>{t('landing.educators')}</strong>
-          <strong>{t('landing.policyWriters')}</strong>
+          <strong>{t('landing.gradWriters')}</strong>
+          <strong>{t('landing.eslWriters')}</strong>
+          <strong>{t('landing.independentWriters')}</strong>
           <span>{t('landing.tokenRate')}</span>
           <span>{t('landing.pdfReport')}</span>
           <span>{t('landing.citationGrounding')}</span>
