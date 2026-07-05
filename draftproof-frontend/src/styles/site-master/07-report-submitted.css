@@ -1902,6 +1902,10 @@ button.paragraph-severity-seg {
 
 /* ── Signal highlights: tabs ─────────────────────────────────────── */
 .submitted-tabs { display: flex; gap: .25rem; padding: 0 1.15rem; border-bottom: 1px solid #e2e8f0; }
+/* Cap the "Read full document" panel so a long submission scrolls inside the
+   box instead of stretching the whole report page. auto = scrollbar only
+   appears when content actually overflows; short docs stay flush. */
+#sh-panel-document { max-height: 55vh; overflow-y: auto; overscroll-behavior: contain; }
 .submitted-tab {
   appearance: none; border: 1px solid transparent; border-bottom: none; background: none;
   padding: .65rem 1rem; font: inherit; font-weight: 700; font-size: .9rem; color: #64748b;
