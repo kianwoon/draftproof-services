@@ -49,3 +49,33 @@ def test_deep_scan_only_when_no_tier_authority():
     html = render_authorship_breakdown({"ai_risk_badge": badge})
     assert html
     assert "31" in html
+
+
+def test_merged_render_shows_ai_likelihood_once():
+    from report.render_panels import render_merged_authorship_risk
+    # Minimal report with both an authorship breakdown (fused) and a submission-risk section.
+    report = _make_report_with_breakdown_and_sr()  # helper below
+    data = {"document_context": {"word_count": 400}, "overall_tier_reason": ""}
+    html = render_merged_authorship_risk(report, data)
+    # The composition bars are present (authorship co-located).
+    assert "dp-abd-bars" in html
+    # The richer submission section is preserved.
+    assert "1. Submission and policy view" in html
+    # The AI-likelihood % appears exactly once (de-duped): count the fused headline phrase.
+    assert html.count("DraftProof AI-likelihood") == 1
+
+
+def _make_report_with_breakdown_and_sr():
+    from types import SimpleNamespace
+    badge = {
+        "tier": "green",
+        "authorship_breakdown": {
+            "document_breakdown_raw": {"student_owned": 0.34, "ai_assisted_polished": 0.23, "ai_paraphrased": 0.14, "ai_generated_like": 0.29},
+            "document_breakdown_bands": {"student_owned": "Some", "ai_assisted_polished": "Little", "ai_paraphrased": "Little", "ai_generated_like": "Some"},
+            "disclaimer": "DraftProof provides authorship clarity signals.",
+        },
+        "tier_authority": {"fused_score": 24, "composite_score": 14, "proportion": 0.31},
+        "submission_risk": {"overall": {"level": "low"}, "axes": {"text_pattern": {"level": "low", "display_score": 24}}},
+        "ai_likelihood_score": 24,
+    }
+    return SimpleNamespace(ai_risk_badge=badge)

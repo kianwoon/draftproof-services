@@ -1659,8 +1659,16 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     # ── LEAD: enhanced hero + KPI row + priority fixes + policy view ──
     # (Submitted Text is moved to an appendix before the footer; the verdict +
     #  policy view + findings lead instead.)
-    from .render_panels import render_scan_lead, render_authorship_breakdown
-    _lead = render_scan_lead(report, data) if report.ai_risk_badge else ""
+    # ── Merged authorship + submission-risk block: co-locates the authorship
+    # composition bars with the richer submission-risk lead (KPI row, priority
+    # fixes, policy cards, axis table, verdict), surfacing the AI-likelihood
+    # number exactly once instead of twice (previously render_scan_lead +
+    # render_authorship_breakdown each printed their own headline).
+    # NOTE: the authenticity-dashboard and second-opinion DeBERTa panels were
+    # REMOVED here (2026-07-04) — both tiles were removed from the /report
+    # scan page, so the PDF no longer renders them either.
+    from .render_panels import render_merged_authorship_risk
+    _lead = render_merged_authorship_risk(report, data) if report.ai_risk_badge else ""
     if _lead:
         lines.append(_lead)
         lines.append("")
@@ -1676,18 +1684,6 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     else:
         lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
         lines.append("")
-
-    # ── Authorship Clarity Breakdown panel (additive, mirrors the scan page's
-    # centerpiece: fused AI-likelihood headline + 4 category bars). '' when
-    # badge.authorship_breakdown is absent (flag off / older report).
-    # NOTE: the authenticity-dashboard and second-opinion DeBERTa panels were
-    # REMOVED here (2026-07-04) — both tiles were removed from the /report
-    # scan page, so the PDF no longer renders them either.
-    if report.ai_risk_badge:
-        _acb_panel = render_authorship_breakdown({"ai_risk_badge": report.ai_risk_badge})
-        if _acb_panel:
-            lines.append(_acb_panel)
-            lines.append("")
 
     # ── 2. CALIBRATION SUMMARY ────────────────────────────────────
     lines.append("## 2. Calibration summary")

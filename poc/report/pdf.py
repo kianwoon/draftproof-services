@@ -411,10 +411,10 @@ img[src^="https://img.shields.io"] { height: 18px; }
     font-weight: 700;
     color: #334155;
 }
-.dp-abd-row:nth-child(1) .dp-abd-bar-fill { background: #16a34a; }
-.dp-abd-row:nth-child(2) .dp-abd-bar-fill { background: #d97706; }
-.dp-abd-row:nth-child(3) .dp-abd-bar-fill { background: #ea580c; }
-.dp-abd-row:nth-child(4) .dp-abd-bar-fill { background: #dc2626; }
+.dp-abd-fill--student_owned { background: #1D9E75; }
+.dp-abd-fill--ai_assisted_polished { background: #888780; }
+.dp-abd-fill--ai_paraphrased { background: #D85A30; }
+.dp-abd-fill--ai_generated_like { background: #D85A30; }
 
 /* ── KPI stat row ── */
 .dp-kpi-row {
