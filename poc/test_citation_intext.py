@@ -11,6 +11,7 @@ non-citation spans asserted against the regex), not a scoring or matching oracle
 compared against document text.
 """
 from citation.scanner import APA_MULTI_RE, APA_RE
+from detect.citation import CitationDetector
 
 
 def test_apa_multi_matches_page_locators_and_and_joiner():
@@ -50,3 +51,46 @@ def test_regex_counts_two_inline_cites():
             "Displacement effects are contested (Acemoglu and Restrepo, 2020).")
     hits = APA_MULTI_RE.findall(text)
     assert len(hits) == 2, f"expected 2 inline cites, got {len(hits)}: {hits}"
+
+
+# ── Bib-gating decoupling: in-text count populated without a reference list ──
+# Guards the 2026-07-05 change to detect/citation.py: a doc with valid inline
+# citations but NO bibliography must still populate in_text_count (so the report
+# citation axis sees "this doc cites sources") WITHOUT firing cross-check or
+# uncited_claim findings.
+
+_INLINE_NO_BIB = (
+    "Automation raised output sharply over the decade (Siemens, 2023, p.41). "
+    "The displacement effect on wages remains contested "
+    "(Acemoglu and Restrepo, 2020)."
+)
+
+
+def test_no_bib_still_counts_inline_cites():
+    result = CitationDetector().detect(_INLINE_NO_BIB)
+    assert result.raw is not None, "no-bib path must return a raw CitationResult"
+    assert len(result.raw.in_text_citations) == 2, (
+        f"expected 2 inline cites, got {len(result.raw.in_text_citations)}"
+    )
+    assert result.raw.stats["in_text_count"] == 2
+
+
+def test_no_bib_emits_no_findings_and_zero_risk():
+    # The count is not a risk signal; without a bib we must NOT cross-check or
+    # flag uncited claims (that over-flags ESL/claim-heavy prose).
+    result = CitationDetector().detect(_INLINE_NO_BIB)
+    assert result.findings == []
+    assert result.overall_risk == 0.0
+    assert result.raw.bib_entries == []
+
+
+def test_no_cites_no_bib_is_inert():
+    # The dominant corpus case: no inline cites, no bib. raw is populated but
+    # in_text_count is 0 and bib is empty, so downstream sees no change.
+    result = CitationDetector().detect(
+        "This paragraph makes a general claim with no citation at all."
+    )
+    assert result.raw is not None
+    assert result.raw.stats["in_text_count"] == 0
+    assert result.raw.bib_entries == []
+    assert result.findings == []

@@ -55,15 +55,15 @@ class CitationDetector(BaseDetector):
                 bib_text = bib
 
         if not bib_text:
-            return DetectResult(
-                scanner=self.name,
-                overall_risk=0.0,
-                confidence="low",
-                confidence_reason="No bibliography provided and auto-extraction found nothing.",
-                findings=[],
-                policy_message=self.policy_message,
-                detector_version=self.detector_version,
-            )
+            # No bibliography: we cannot cross-check (missing_from_bib /
+            # uncited_in_body need a reference list). But in-text citation
+            # EXTRACTION only needs the body, so still count inline cites and
+            # emit a raw CitationResult. This populates in_text_count downstream
+            # (report/builder.py citation axis) for inline-cited-but-no-bib docs.
+            # Deliberately NO cross-check and NO uncited_claim findings here:
+            # firing those without a bib over-flags claim-heavy ESL prose, which
+            # the grounding-gated citation axis already handles.
+            return self._extract_only_result(content)
 
         self._ensure_scanner()
         result = self._scanner.scan(content, bib_text)
@@ -111,6 +111,48 @@ class CitationDetector(BaseDetector):
             findings=findings,
             policy_message=self.policy_message,
             raw=result,
+            detector_version=self.detector_version,
+        )
+
+    def _extract_only_result(self, content: str) -> DetectResult:
+        """Count in-text citations without a bibliography cross-check.
+
+        Runs only the extraction half of the scanner (`_detect_in_text` needs
+        just the body) and returns a CitationResult with in_text_citations
+        populated, bib_entries empty, and no findings. overall_risk stays 0.0 —
+        counting cites is not a risk signal; it only lets downstream code see
+        that the doc cites sources.
+        """
+        from citation.scanner import CitationResult
+
+        self._ensure_scanner()
+        citations = self._scanner._detect_in_text(content)
+        style = self._scanner._detect_citation_style(citations)
+        raw = CitationResult(
+            citation_style=style,
+            in_text_citations=citations,
+            bib_entries=[],
+            findings=[],
+            stats={
+                "in_text_count": len(citations),
+                "bib_count": 0,
+                "missing_from_bib": 0,
+                "uncited_in_body": 0,
+                "uncited_claims": 0,
+            },
+        )
+        return DetectResult(
+            scanner=self.name,
+            overall_risk=0.0,
+            confidence="low",
+            confidence_reason=(
+                "No bibliography provided; counted in-text citations only "
+                "(no cross-check performed)."
+            ),
+            risk_distribution={},
+            findings=[],
+            policy_message=self.policy_message,
+            raw=raw,
             detector_version=self.detector_version,
         )
 
