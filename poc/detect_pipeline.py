@@ -17,8 +17,15 @@ import os
 import json
 import time
 import argparse
+import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# Deep-scan progress heartbeat tuning. The single blocking Modal call has no
+# sub-progress, so a timer ticks the bar up while it runs. Ceiling stays below
+# the next real checkpoint (88 "Rendering markdown report") to avoid overshoot.
+_DEEP_SCAN_HEARTBEAT_INTERVAL_S = 5.0
+_DEEP_SCAN_HEARTBEAT_CEILING = 87
 
 from poc.detect.run import DetectionRunner
 from poc.detect.document_structure import normalize_submitted_text
@@ -56,14 +63,60 @@ def run_detect(
     det_report = runner.run_all(text, progress_callback=progress_callback, **kwargs)
     elapsed = time.time() - t0
 
+    # ReportBuilder.build() runs a synchronous deep-scan (sentence-level Modal
+    # inference + V7 fusion) when tier-authority is enabled — the single longest
+    # silent step, with no sub-progress. Name it honestly so the bar doesn't read
+    # as "frozen at 82%". Fall back to a neutral label when deep-scan is off.
+    _deep_scan_on = False
     if progress_callback:
-        progress_callback(82, "Building report")
-    builder = ReportBuilder()
-    builder.add_detection_report(det_report)
-    if det_report.postprocess_results:
-        builder.add_postprocess_results(det_report.postprocess_results)
-    builder.set_meta(scan_time=elapsed, original_text=text)
-    draft_report = builder.build()
+        try:
+            from detect_v7.pipeline_bridge import is_tier_authority_enabled as _is_ta
+            _deep_scan_on = bool(_is_ta())
+        except Exception:
+            _deep_scan_on = False
+        progress_callback(
+            82,
+            "Deep-scanning sentences — this can take a moment"
+            if _deep_scan_on
+            else "Building report",
+        )
+
+    # The deep-scan is ONE atomic, blocking Modal call (no client-side per-batch
+    # boundary), so the bar can't track true per-sentence progress. Instead, tick
+    # it up 82→87 on a timer from a daemon thread while build() blocks, then stop
+    # and let the real checkpoints (88+) take over. Time estimate, not true
+    # progress; capped below the next real checkpoint (88) so it never overshoots.
+    _hb_stop = threading.Event()
+    _hb_thread = None
+
+    def _deep_scan_heartbeat() -> None:
+        pct = 82
+        while not _hb_stop.wait(_DEEP_SCAN_HEARTBEAT_INTERVAL_S):
+            if pct >= _DEEP_SCAN_HEARTBEAT_CEILING:
+                continue
+            pct += 1
+            try:
+                progress_callback(pct, "Deep-scanning sentences — this can take a moment")
+            except Exception:
+                pass
+
+    if progress_callback and _deep_scan_on:
+        _hb_thread = threading.Thread(
+            target=_deep_scan_heartbeat, name="deep-scan-heartbeat", daemon=True
+        )
+        _hb_thread.start()
+
+    try:
+        builder = ReportBuilder()
+        builder.add_detection_report(det_report)
+        if det_report.postprocess_results:
+            builder.add_postprocess_results(det_report.postprocess_results)
+        builder.set_meta(scan_time=elapsed, original_text=text)
+        draft_report = builder.build()
+    finally:
+        _hb_stop.set()
+        if _hb_thread is not None:
+            _hb_thread.join(timeout=1.0)
 
     # Write output files
     os.makedirs(output_dir, exist_ok=True)
