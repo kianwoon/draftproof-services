@@ -907,7 +907,10 @@ export default function Report() {
     pattern: transformation,
     t,
   });
-  const fixFirstItems = buildFixFirstItems({ submittedContent, authorshipEvidence, t });
+  const fixFirstItems = buildFixFirstItems({ submittedContent, t });
+  // Scale the repair-plan framing to the tier: a Low/green report reads as
+  // "polish", not "repair" (owner review 2026-07-05).
+  const fixFirstLowTone = ['green', 'low'].includes(String(report.tier || '').toLowerCase());
   // The "Repair Summary" band and "Repair Plan" checklist describe the ORIGINAL
   // submission's findings. Once a rewrite has completed, the rewrite completion band
   // and the (rewrite-aware) editor drive the flow, so the original-content guidance is
@@ -1971,9 +1974,9 @@ export default function Report() {
           <FixFirstChecklist
             items={fixFirstItems}
             onSelectParagraph={lockAndScrollParagraph}
-            title={t('report.whatToFixFirst.title')}
-            kicker={t('report.whatToFixFirst.kicker')}
-            intro={t('report.whatToFixFirst.intro')}
+            title={t(fixFirstLowTone ? 'report.whatToFixFirst.titleLow' : 'report.whatToFixFirst.title')}
+            kicker={t(fixFirstLowTone ? 'report.whatToFixFirst.kickerLow' : 'report.whatToFixFirst.kicker')}
+            intro={t(fixFirstLowTone ? 'report.whatToFixFirst.introLow' : 'report.whatToFixFirst.intro')}
           />
         )}
 

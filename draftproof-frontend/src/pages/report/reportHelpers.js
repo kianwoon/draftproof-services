@@ -1663,7 +1663,7 @@ function buildRepairSummary({
   };
 }
 
-function buildFixFirstItems({ submittedContent, authorshipEvidence, t }) {
+function buildFixFirstItems({ submittedContent, t }) {
   const items = [];
   const seen = new Set();
   const addItem = (item) => {
@@ -1697,13 +1697,6 @@ function buildFixFirstItems({ submittedContent, authorshipEvidence, t }) {
         // restatement of paragraph.recommendation (which duplicated the highlights).
       });
     });
-
-  (authorshipEvidence?.strengthen_examples || []).slice(0, 2).forEach((example, index) => {
-    addItem({
-      title: t('report.whatToFixFirst.exampleTitle', { count: index + 1 }),
-      body: example,
-    });
-  });
 
   if (!items.length) {
     addItem({

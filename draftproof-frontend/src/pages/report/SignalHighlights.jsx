@@ -107,12 +107,6 @@ export default function SignalHighlights({
             <strong>{submittedContent.highlightedCount}</strong>
             <span>{t('report.submitted.highlightedSections')}</span>
           </div>
-          {showSubmittedEditEntry && (
-            <button type="button" className="btn btn-secondary submitted-edit-button"
-              onClick={() => onEditParagraph()}>
-              <EditPencilIcon />{t('report.submitted.editor.editDraft')}
-            </button>
-          )}
         </div>
       </div>
 
