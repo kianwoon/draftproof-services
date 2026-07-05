@@ -15,8 +15,8 @@ import RewriteNoticeDialog from './report/RewriteNoticeDialog';
 import SignalHighlights from './report/SignalHighlights';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import CriticalThinkingControl from './report/CriticalThinkingControl';
-import AuthorshipClarityBreakdown from './report/AuthorshipClarityBreakdown';
 import ReportHero from './report/ReportHero';
+import MergedAuthorshipRisk from './report/MergedAuthorshipRisk';
 import PolicyRiskView from './report/PolicyRiskView';
 import useTextareaCaretOverlay from './report/useTextareaCaretOverlay';
 import { buildTrackedDiff, trackedDiffToPlainText, trackedDiffToHtml } from './report/trackedDiff';
@@ -734,12 +734,6 @@ export default function Report() {
     }
     : report;
   const heroTier = rewrittenHeroView ? (TIER_CONFIG[rewrittenTierKey] || tier) : tier;
-  // Rewritten writing score is frequently null; fall back to the original rather than
-  // render a bare "-" (readability rarely changes meaningfully in a rewrite anyway).
-  const heroWritingScore = rewrittenHeroView ? (rewrittenWritingScore ?? writingScore) : writingScore;
-  const heroFindingsCount = rewrittenHeroView
-    ? (rewriteResultSummary?.rewritten_findings ?? issues.length)
-    : issues.length;
   // Additive Submission-risk view for the hero (null when the diagnosis abstained,
   // or when an older report predates the field — the hero then leads as before).
   const heroSubmissionRisk = submissionRisk(rewrittenHeroView ? rewrittenBadge : originalComparisonBadge);
@@ -1891,9 +1885,6 @@ export default function Report() {
           locale={locale}
           report={heroReport}
           tier={heroTier}
-          issuesCount={heroFindingsCount}
-          writingScore={heroWritingScore}
-          submissionRiskView={heroSubmissionRisk}
           isRewrittenView={rewrittenHeroView}
           onDownloadRewrittenPdf={handleDownloadRewrittenPdf}
           canStartRewrite={canStartRewrite}
@@ -1909,7 +1900,15 @@ export default function Report() {
           repairActionLabel={t('report.submitted.editor.editDraft')}
           repairActionHint={t('report.repairSummary.editDraftHint')}
           onRepairAction={showSubmittedEditEntry ? () => openSubmittedEditorForParagraph() : null}
-          afterTitle={<AuthorshipClarityBreakdown t={t} breakdown={(badge && badge.authorship_breakdown) || null} authoritativeTier={badge.tier || report.tier} tierAuthority={(badge && badge.tier_authority) || null} />}
+          mergedCard={
+            <MergedAuthorshipRisk
+              t={t}
+              breakdown={(badge && badge.authorship_breakdown) || null}
+              sr={heroSubmissionRisk}
+              authoritativeTier={badge.tier || report.tier}
+              tierAuthority={(badge && badge.tier_authority) || null}
+            />
+          }
         />
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>

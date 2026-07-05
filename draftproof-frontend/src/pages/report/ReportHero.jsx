@@ -1,18 +1,12 @@
 import { Link } from 'react-router-dom';
-import {
-  formatDate,
-  formatMetricPercent,
-} from './reportHelpers';
+import { formatDate } from './reportHelpers';
 import EditPencilIcon from './EditPencilIcon';
-import SubmissionRiskBand from './SubmissionRiskBand';
 
 export default function ReportHero({
   t,
   locale,
   report,
   tier,
-  issuesCount,
-  writingScore,
   canStartRewrite,
   rewriteLoading,
   rewriteCanceling,
@@ -24,10 +18,9 @@ export default function ReportHero({
   repairSummary,
   repairActionLabel,
   onRepairAction,
-  submissionRiskView = null,
   isRewrittenView = false,
   onDownloadRewrittenPdf,
-  afterTitle = null,
+  mergedCard = null,
 }) {
   // Download PDF lives in the info column (under the date). The rewrite CTAs (Auto
   // Rewrite + cancel) live inside the Repair Summary risk box, next to Manual Rewrite —
@@ -69,18 +62,10 @@ export default function ReportHero({
             )}
           </div>
           <div className="report-hero-side">
-            <div className="report-hero-stats" aria-label={t('report.overview')}>
+            <div className="report-hero-stats is-single" aria-label={t('report.overview')}>
               <div className="report-hero-stat">
                 <span>{t('report.summary.riskTier')}</span>
                 <strong style={{ color: tier.color }}>{t(`report.tiers.${report.tier}`, { defaultValue: tier.label })}</strong>
-              </div>
-              <div className="report-hero-stat">
-                <span>{t('report.summary.writingScore')}</span>
-                <strong>{writingScore != null ? formatMetricPercent(writingScore, 0) : '-'}</strong>
-              </div>
-              <div className="report-hero-stat">
-                <span>{t('reports.findings')}</span>
-                <strong>{issuesCount}</strong>
               </div>
             </div>
             {isRewrittenView && onDownloadRewrittenPdf ? (
@@ -107,12 +92,8 @@ export default function ReportHero({
           </div>
         </div>
 
-        {/* V7 re-base (owner decision 2026-07-04): the Authorship Clarity Breakdown
-            renders here, directly under the title/stats row, as the report's center
-            of gravity — before the submission-risk chips and repair summary. */}
-        {afterTitle}
-
-        {submissionRiskView && <SubmissionRiskBand t={t} sr={submissionRiskView} />}
+        {/* V7 unified card: one AI-likelihood headline + composition/risk lenses + scale. */}
+        {mergedCard}
 
         {repairSummary && (
           <div className="report-hero-repair is-cta-only" aria-label={t('report.repairSummary.ariaLabel')}>
