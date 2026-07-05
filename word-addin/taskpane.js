@@ -375,7 +375,7 @@
       var qHtml = ct.questions.map(function (q, i) {
         var quote = q.quote
           ? '<p class="dp-q-quote dp-locate" data-scope="text" data-find="' +
-            escapeAttr(findNeedle(q.quote, 200)) +
+            escapeHtml(findNeedle(q.quote, 200)) +
             '" title="Click to highlight this in your document">“' +
             escapeHtml(q.quote) + '”</p>'
           : "";
@@ -444,7 +444,7 @@
             ? { find: findNeedle(it.anchor, 200), scope: "text", tip: "Click to highlight this sentence in your document" }
             : { find: findNeedle(it.snippet, 120), scope: "paragraph", tip: "Click to highlight this paragraph in your document" };
           b += '<p class="dp-issue-snippet dp-locate" data-scope="' + loc.scope + '" data-find="' +
-            escapeAttr(loc.find) +
+            escapeHtml(loc.find) +
             '" title="' + loc.tip + '">' +
             escapeHtml(it.snippet) + "</p>";
         }

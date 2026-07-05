@@ -351,7 +351,7 @@
         var ct = rep.critical_thinking;
         if (ct && ct.questions && ct.questions.length) {
           var q = ct.questions.map(function (x, i) {
-            var quote = x.quote ? '<p class="q-quote locate" data-scope="text" data-find="' + escAttr(findNeedle(x.quote, 200)) + '" title="Click to highlight this in your document">“' + esc(x.quote) + '”</p>' : '';
+            var quote = x.quote ? '<p class="q-quote locate" data-scope="text" data-find="' + esc(findNeedle(x.quote, 200)) + '" title="Click to highlight this in your document">“' + esc(x.quote) + '”</p>' : '';
             return '<li><span class="q-num">' + (i + 1) + '</span><div>' + quote + '<p class="q-text">' + esc(x.question) + '</p></div></li>';
           }).join('');
           p.push('<div class="section"><div class="section-title">Critical thinking</div><p class="section-note">Questions to sharpen your thinking — the answers are yours to write.</p><ul class="q-list">' + q + '</ul></div>');
@@ -396,7 +396,7 @@
               var loc = it.anchor
                 ? { find: findNeedle(it.anchor, 200), scope: 'text', tip: 'Click to highlight this sentence in your document' }
                 : { find: findNeedle(it.snippet, 120), scope: 'paragraph', tip: 'Click to highlight this paragraph in your document' };
-              b += '<p class="issue-snippet locate" data-scope="' + loc.scope + '" data-find="' + escAttr(loc.find) + '" title="' + loc.tip + '">' + esc(it.snippet) + '</p>';
+              b += '<p class="issue-snippet locate" data-scope="' + loc.scope + '" data-find="' + esc(loc.find) + '" title="' + loc.tip + '">' + esc(it.snippet) + '</p>';
             }
             if (it.reader_summary) b += '<p class="issue-summary">' + esc(it.reader_summary) + '</p>';
             if (it.main_issue) b += '<div class="issue-block"><span class="issue-label">Main issue to fix</span><p>' + esc(it.main_issue) + '</p></div>';
