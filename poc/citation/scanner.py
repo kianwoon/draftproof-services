@@ -23,17 +23,20 @@ APA_RE = re.compile(
     r"[A-Z][a-zäëïöü]+"
     r"(?:\s+(?:et\s+al\.|&\s+[A-Z][a-zäëïöü]+|and\s+[A-Z][a-zäëïöü]+))*"
     r",\s*\d{4}[a-z]?"
+    r"(?:,\s*(?:pp?\.?\s*)?\d+(?:\s*[-–—]\s*\d+)?)?"  # optional page locator, e.g. ", p. 41"
     r"\)"
 )
 
 # Multiple authors in one bracket: (Smith & Jones, 2022; Lee, 2021)
 APA_MULTI_RE = re.compile(
     r"\("
-    r"[A-Z][a-z]+(?:\s+(?:et\s+al\.|&\s+[A-Z][a-z]+))*"
+    r"[A-Z][a-z]+(?:\s+(?:et\s+al\.|&\s+[A-Z][a-z]+|and\s+[A-Z][a-z]+))*"
     r",\s*\d{4}[a-z]?"
+    r"(?:,\s*(?:pp?\.?\s*)?\d+(?:\s*[-–—]\s*\d+)?)?"  # optional page locator
     r"(?:\s*;\s*"
-    r"[A-Z][a-z]+(?:\s+(?:et\s+al\.|&\s+[A-Z][a-z]+))*"
+    r"[A-Z][a-z]+(?:\s+(?:et\s+al\.|&\s+[A-Z][a-z]+|and\s+[A-Z][a-z]+))*"
     r",\s*\d{4}[a-z]?"
+    r"(?:,\s*(?:pp?\.?\s*)?\d+(?:\s*[-–—]\s*\d+)?)?"  # optional page locator
     r")*"
     r"\)"
 )

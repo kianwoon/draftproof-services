@@ -1085,11 +1085,18 @@ class ReportBuilder:
             or getattr(self._cite_summary, "bib_entry_count", 0) > 0))
         if cite_count >= 2:
             axis_scores["citation"] = "attention"
-        elif cite_count == 1:
-            axis_scores["citation"] = "review"
         elif has_citations:
+            # The doc demonstrably cites sources: 0-1 flagged citation problems is not
+            # enough to call the whole doc's citation risk elevated. A single citation
+            # finding is often suppressed from the displayed report, which produced an
+            # *unexplained* Medium on a properly-cited doc (empirically confirmed). Only
+            # 2+ problems escalate a cited doc.
             axis_scores["citation"] = "clear"
+        elif cite_count == 1:
+            # No citations detected AND a citation-problem finding fired.
+            axis_scores["citation"] = "review"
         elif spec_risk >= 0.30:
+            # No citations + generic/ungrounded claims -> nudge to add grounding.
             axis_scores["citation"] = "review"
         else:
             axis_scores["citation"] = "clear"
