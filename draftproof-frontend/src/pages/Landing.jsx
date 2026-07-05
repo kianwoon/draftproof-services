@@ -3,9 +3,8 @@ import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
-import SubmissionRiskBand from './report/SubmissionRiskBand';
 import PolicyRiskView from './report/PolicyRiskView';
-import AuthorshipClarityBreakdown from './report/AuthorshipClarityBreakdown';
+import MergedAuthorshipRisk from './report/MergedAuthorshipRisk';
 import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 // Representative Submission-risk shape for the marketing sample report. Mirrors the
@@ -886,16 +885,16 @@ function SampleReportPreview() {
 
       <div className="sample-preview-panel" role="tabpanel" aria-label={currentTab?.label}>
         {activeSection === 'authorshipBreakdown' && (
-          <AuthorshipClarityBreakdown
+          <MergedAuthorshipRisk
             t={t}
             breakdown={SAMPLE_AUTHORSHIP_BREAKDOWN}
+            sr={SAMPLE_SUBMISSION_RISK}
             authoritativeTier="green"
             tierAuthority={SAMPLE_TIER_AUTHORITY}
           />
         )}
         {activeSection === 'aiSignal' && (
           <>
-            <SubmissionRiskBand t={t} sr={SAMPLE_SUBMISSION_RISK} />
             <PolicyRiskView t={t} pr={SAMPLE_POLICY_RISK} />
             <div className="sample-report-pattern">
               <div className="sample-report-pattern-main">
