@@ -1060,20 +1060,41 @@ class ReportBuilder:
         has_sim_issue = any(f.category == "similarity" and f.tier in (Tier.HIGH, Tier.MEDIUM)
                            for f in self._findings)
         axis_scores["similarity"] = "attention" if has_sim_issue else "clear"
-        # Citation axis
-        cite_count = sum(1 for f in self._findings if f.category == "citation"
-                        and f.tier.value not in ("low", "clean"))
-        if cite_count >= 2:
-            axis_scores["citation"] = "attention"
-        elif cite_count == 1:
-            axis_scores["citation"] = "review"
-        else:
-            axis_scores["citation"] = "clear"
-        # Specificity axis
+        # Specificity signal (per-doc), computed once here so it can drive BOTH the
+        # specificity axis below and the citation axis's no-citations grounding gate.
         spec_risk = 0.0
         for f in self._findings:
             if f.title == "low_specificity" and f.metadata:
                 spec_risk = f.metadata.get("specificity_risk", 0.0)
+
+        # Citation axis. cite_count counts citation PROBLEM findings only. 0 problems
+        # is "clear" when the doc actually cites sources (in_text/bib > 0). But an
+        # UNSOURCED doc also raises 0 citation findings -- reading that as "clear" (Low)
+        # is false reassurance for exactly the ungrounded-claims case DraftProof exists
+        # to catch (empirically confirmed: an unsourced generic-claims essay scored
+        # Citation risk Low). With no citations detected, gate on grounding: generic /
+        # ungrounded prose (specificity concern) -> "review" (actionable: tie claims to
+        # sources); concretely grounded prose (specificity clear) -> "clear" (its claims
+        # are anchored in real detail even without formal cites). This flags the risk
+        # helpfully without over-flagging well-grounded or ESL writing. has_citations
+        # uses in_text_count so inline cites (e.g. "(Smith, 2020)") count too.
+        cite_count = sum(1 for f in self._findings if f.category == "citation"
+                        and f.tier.value not in ("low", "clean"))
+        has_citations = bool(self._cite_summary and (
+            getattr(self._cite_summary, "in_text_count", 0) > 0
+            or getattr(self._cite_summary, "bib_entry_count", 0) > 0))
+        if cite_count >= 2:
+            axis_scores["citation"] = "attention"
+        elif cite_count == 1:
+            axis_scores["citation"] = "review"
+        elif has_citations:
+            axis_scores["citation"] = "clear"
+        elif spec_risk >= 0.30:
+            axis_scores["citation"] = "review"
+        else:
+            axis_scores["citation"] = "clear"
+
+        # Specificity axis (reuses spec_risk computed above)
         if spec_risk >= 0.50:
             axis_scores["specificity"] = "attention"
         elif spec_risk >= 0.30:
