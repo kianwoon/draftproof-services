@@ -27,10 +27,12 @@ A second, related problem (owner, 2026-07-05): the hero stat row shows **Writing
 | AI-likelihood % + tier | **V7-fused** (when tier_authority on) | fused in [builder.py:1265](../../../poc/report/builder.py) | Headline of merged card |
 | Authorship composition (4 bars) | **V7** | [aggregate.py:83](../../../poc/detect_v7/aggregate.py) | Composition lens |
 | Submission-risk axes | Legacy composite / submission_risk | `sr.axes` | Risk lens |
-| **Writing Score** (e.g. 37%) | **Legacy only** | [layer3_scoring.py:1462](../../../poc/detect/layer3_scoring.py) → [builder.py:1454](../../../poc/report/builder.py) | **Remove chip** (page + PDF) |
-| **Findings** (e.g. 17) | **Legacy only** | `len(self._findings)` [builder.py:1626](../../../poc/report/builder.py) | **Remove chip**; findings list body stays |
+| **Writing Score** (e.g. 37%) | **Legacy only** | [layer3_scoring.py:1462](../../../poc/detect/layer3_scoring.py) → [builder.py:1454](../../../poc/report/builder.py) | **Remove chip** (web hero only — see note) |
+| **Findings** (e.g. 17) | **Legacy only** | `len(self._findings)` [builder.py:1626](../../../poc/report/builder.py) | **Remove chip** (web hero only); findings list body stays |
 
-Guardrail: the merge must **not** relabel any remaining legacy figure as "V7". The report-JSON fields (`writing_quality_score`, findings array) are **not** removed from the backend — only the two hero chips are dropped from the page + PDF render. Other surfaces (reports list, extension) are out of scope and keep consuming the JSON unchanged.
+**Correction (verified 2026-07-05):** the Writing Score / Findings chips are a **web-hero-only** construct ([ReportHero.jsx:77-84](../../../draftproof-frontend/src/pages/report/ReportHero.jsx)). The **PDF never renders them** — its KPI row shows *Text-pattern trigger / Human contribution / Words scanned* ([render_panels.py:360-376](../../../poc/report/render_panels.py)). So chip removal is **web-only**; there is nothing to remove in the PDF. The page's second stat block `reportSummaryBar` ([Report.jsx:1353](../../../draftproof-frontend/src/pages/Report.jsx)) is **dead code** (defined, never rendered) — out of scope, left as-is.
+
+Guardrail: the merge must **not** relabel any remaining legacy figure as "V7". The report-JSON fields (`writing_quality_score`, findings array) are **not** removed from the backend — only the two web-hero chips are dropped. Other surfaces (reports list, extension) are out of scope and keep consuming the JSON unchanged.
 
 ## Design
 
@@ -78,13 +80,17 @@ The card degrades gracefully — same "render nothing if data absent" contract b
 - New CSS for `.merged-authorship-risk` in the report stylesheet; retire the old `.authorship-breakdown-*` / `.submission-risk-*` rules that are no longer referenced.
 - **Remove the Writing Score + Findings stat chips** from the hero stat row ([ReportHero.jsx:77-84](../../../draftproof-frontend/src/pages/report/ReportHero.jsx)). This leaves only **Risk Tier**. Plan decision: with a single value, drop the 3-up `.report-hero-stats` grid and render Risk Tier as a lone label — OR fold Risk Tier into the merged card's verdict band (which already carries the tier chip) and remove the stat row entirely. Preferred: keep a minimal Risk Tier stat, remove the grid styling that assumed 3 columns. Stop passing `writingScore` / `issuesCount` where they only fed these chips (keep `issuesCount`/`report.issues` wherever the findings list body still needs it).
 
-### PDF (Python)
+### PDF (Python) — co-locate + de-dupe (owner decision 2026-07-05)
 
-- Merge `render_authorship_breakdown()` + `render_scan_lead()` in [render_panels.py](../../../poc/report/render_panels.py) (555 lines — has headroom; **do not** grow [render.py](../../../poc/report/render.py), already 1930 lines) into a single `render_merged_authorship_risk(report, data)` returning one HTML block with the same top-to-bottom structure.
+The PDF's `render_scan_lead()` is richer than the web panel (policy cards, priority fixes, axis table, verdict) and must NOT be flattened to the web card shape. Instead:
+
+- **Co-locate** the authorship composition bars + the single AI-likelihood headline from `render_authorship_breakdown()` into the **top** of the combined PDF block, immediately with the submission-risk overall-read, so the two lenses sit together — but **keep every richer section** of `render_scan_lead()` (KPI row, priority fixes, policy cards, axis table, verdict) intact below.
+- **De-dupe the AI-likelihood**: the PDF currently surfaces the AI number in `render_authorship_breakdown`'s fused headline AND in `render_scan_lead`'s "Text-pattern trigger" KPI / axis-table note. Keep it in **one** place (the co-located headline); drop the redundant surfacing so the number appears once.
+- Both functions live in [render_panels.py](../../../poc/report/render_panels.py) (555 lines — headroom). Introduce a thin `render_merged_authorship_risk(report, data)` that calls the shared pieces; **do not** grow [render.py](../../../poc/report/render.py) (already 1930 lines).
 - PDF strings stay **hardcoded English** (existing PDF pattern — no `t()`), mirroring the frontend copy.
-- Update the integration in `render.py::render_report()` — today it calls `render_scan_lead()` then `render_authorship_breakdown()` (note: PDF order is risk-first, page is authorship-first; the merged card fixes the order to one canonical sequence). Replace both calls with the single merged call.
-- Merge/rename the CSS in [pdf.py](../../../poc/report/pdf.py) (`.dp-abd-*`, `.dp-hero`, `.dp-statchip`) to back the unified block; color-coded bars must match the page (`#1D9E75` / `#888780` / `#D85A30`).
-- **Remove the Writing Score + Findings chips** from the PDF hero (locate the `.dp-statchip` / stat-row emit in [render.py](../../../poc/report/render.py) / [render_panels.py](../../../poc/report/render_panels.py) that renders writing_quality_score + finding_count; drop both, keep Risk Tier). Keep the findings body/detail section of the PDF unchanged.
+- Update the integration in `render.py::render_report()`: today it calls `render_scan_lead()` then `render_authorship_breakdown()`. Replace with the single co-located call (authorship bars now lead, richer submission sections follow).
+- Add the color-coded bar fills to the PDF CSS in [pdf.py](../../../poc/report/pdf.py) `.dp-abd-bar-fill` so bars match the page (`#1D9E75` student_owned, `#888780` ai_assisted_polished, `#D85A30` ai_paraphrased + ai_generated_like).
+- **No chip removal in the PDF** — the PDF never rendered Writing Score / Findings chips (see Correction above). PDF findings body/detail section unchanged.
 
 ## Constraints
 
