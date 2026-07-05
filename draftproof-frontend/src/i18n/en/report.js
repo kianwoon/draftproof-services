@@ -159,6 +159,7 @@ export const report = {
   "whatToFixFirst": {
     "kicker": "Repair Plan",
     "title": "What to fix first",
+    "intro": "These paragraphs are driving the report. Ground each claim in a specific only you could know — a name, a number, an observation — then put it in your own voice. Sentence-level fixes are in the highlights below.",
     "paragraphFallbackTitle": "Review this highlighted paragraph",
     "authorshipFallbackTitle": "Strengthen authorship evidence",
     "authorshipFallbackBody": "Add concrete details that only you can verify.",

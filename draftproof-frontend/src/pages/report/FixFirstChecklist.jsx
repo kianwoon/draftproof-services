@@ -1,4 +1,4 @@
-export default function FixFirstChecklist({ items, onSelectParagraph, title, kicker }) {
+export default function FixFirstChecklist({ items, onSelectParagraph, title, kicker, intro }) {
   if (!Array.isArray(items) || items.length === 0) return null;
 
   return (
@@ -7,6 +7,7 @@ export default function FixFirstChecklist({ items, onSelectParagraph, title, kic
         <span>{kicker}</span>
         <h2>{title}</h2>
       </div>
+      {intro && <p className="fix-first-intro">{intro}</p>}
       <div className="fix-first-list">
         {items.map((item, index) => {
           const clickable = item.paragraphId && typeof onSelectParagraph === 'function';
@@ -15,7 +16,7 @@ export default function FixFirstChecklist({ items, onSelectParagraph, title, kic
               <span className="fix-first-index">{index + 1}</span>
               <span className="fix-first-copy">
                 <strong>{item.title}</strong>
-                <em>{item.body}</em>
+                {item.body && <em>{item.body}</em>}
               </span>
               {item.label && <span className="fix-first-label">{item.label}</span>}
             </>

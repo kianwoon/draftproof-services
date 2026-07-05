@@ -155,6 +155,7 @@ export const report = {
   "whatToFixFirst": {
     "kicker": "修订计划",
     "title": "优先修复内容",
+    "intro": "这些段落是影响报告的主要部分。用只有你才知道的具体细节（一个名字、一个数字、一次观察）来支撑每一个论点，再用你自己的语言重新表述。逐句修改建议见下方的高亮部分。",
     "paragraphFallbackTitle": "审阅这个高亮段落",
     "authorshipFallbackTitle": "加强作者身份证据",
     "authorshipFallbackBody": "加入只有你能核实的具体细节。",

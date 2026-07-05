@@ -1691,20 +1691,12 @@ function buildFixFirstItems({ submittedContent, authorshipEvidence, t }) {
           signalLabel(signal.key, signal.label, t),
           t('report.whatToFixFirst.paragraphFallbackTitle')
         ),
-        body: firstNonEmpty(
-          paragraph.recommendation,
-          signal.recommendation,
-          signalDescription(signal.key, signal.description, t)
-        ),
+        // body intentionally omitted: the per-sentence fix guidance lives in
+        // Signal highlights below. This row is a prioritized, clickable locator
+        // (the grounding instruction is stated once in the section intro), not a
+        // restatement of paragraph.recommendation (which duplicated the highlights).
       });
     });
-
-  (authorshipEvidence?.thin_signals || []).slice(0, 2).forEach((signal) => {
-    addItem({
-      title: firstNonEmpty(signal.label, t('report.whatToFixFirst.authorshipFallbackTitle')),
-      body: firstNonEmpty(signal.action, t('report.whatToFixFirst.authorshipFallbackBody')),
-    });
-  });
 
   (authorshipEvidence?.strengthen_examples || []).slice(0, 2).forEach((example, index) => {
     addItem({

@@ -1973,6 +1973,7 @@ export default function Report() {
             onSelectParagraph={lockAndScrollParagraph}
             title={t('report.whatToFixFirst.title')}
             kicker={t('report.whatToFixFirst.kicker')}
+            intro={t('report.whatToFixFirst.intro')}
           />
         )}
 

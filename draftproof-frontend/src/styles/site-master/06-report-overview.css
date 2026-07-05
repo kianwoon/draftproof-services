@@ -2084,3 +2084,5 @@ button.fix-first-item:focus-visible {
 
 /* Stat row collapses to a single Risk Tier stat once Writing Score + Findings are removed. */
 .report-hero-stats.is-single { grid-template-columns: 1fr; max-width: 220px; }
+
+.fix-first-intro { font-size: 14px; color: #4b5563; line-height: 1.6; margin: 2px 0 10px; }
