@@ -41,6 +41,10 @@
       .wc-low { color: var(--gold); }
       .status { margin-top: 10px; color: var(--muted); min-height: 1em; }
       .status:empty { display: none; }
+      .progress { margin-top: 10px; }
+      .progress-track { height: 6px; border-radius: 999px; background: #eef2f6; overflow: hidden; }
+      .progress-fill { height: 100%; width: 0; border-radius: 999px; background: var(--green-dark); transition: width .25s ease; }
+      .progress-label { margin-top: 5px; font-size: 12px; color: var(--muted); }
       .result { margin-top: 8px; }
       .metrics { display: grid; grid-template-columns: auto auto; gap: 6px 14px; margin: 0; }
       .metrics dt { color: var(--muted); } .metrics dd { margin: 0; font-weight: 600; text-align: right; }
@@ -116,6 +120,10 @@
         </div>
         <button id="scanBtn" class="btn btn-primary">Scan selected text</button>
         <div id="status" class="status" role="status" aria-live="polite"></div>
+        <div id="progressWrap" class="progress" role="progressbar" aria-live="polite" hidden>
+          <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+          <div id="progressLabel" class="progress-label"></div>
+        </div>
         <div id="versionRow" class="version-row" hidden>
           <label for="versionSelect">Version</label>
           <select id="versionSelect" class="version-select"></select>
@@ -131,7 +139,7 @@
       var POLL_MS = 2000, POLL_MAX = 60;
 
       document.addEventListener('DOMContentLoaded', function () {
-        ['apiKey','saveKey','setupError','keyPrefix','changeKey','refreshSel','selText','wordCount','scanBtn','status','result','setup','scanner','headScores','versionRow','versionSelect','newScanBtn']
+        ['apiKey','saveKey','setupError','keyPrefix','changeKey','refreshSel','selText','wordCount','scanBtn','status','progressWrap','progressFill','progressLabel','result','setup','scanner','headScores','versionRow','versionSelect','newScanBtn']
           .forEach(function (id) { els[id] = document.getElementById(id); });
         els.saveKey.addEventListener('click', onSaveKey);
         els.changeKey.addEventListener('click', onChangeKey);
@@ -196,22 +204,38 @@
         clearResult();
         busy(true);
         setStatus('Scanning… this can take up to a minute.');
+        setProgress(0, 'Starting');
         google.script.run
           .withSuccessHandler(function (r) { poll(r.scanId, r.lowConfidence, 0); })
-          .withFailureHandler(function (e) { busy(false); handleErr(e); })
+          .withFailureHandler(function (e) { busy(false); setProgress(null); handleErr(e); })
           .submitScan();
       }
 
       function poll(scanId, lowConfidence, attempt) {
-        if (attempt >= POLL_MAX) { busy(false); setStatus('Still working — check the DraftProof dashboard shortly.'); return; }
+        if (attempt >= POLL_MAX) { busy(false); setProgress(null); setStatus('Still working — check the DraftProof dashboard shortly.'); return; }
         google.script.run
           .withSuccessHandler(function (data) {
-            if (data.status === 'completed') { loadReport(scanId, lowConfidence); }
-            else if (data.status === 'failed') { busy(false); setStatus('The scan failed. Please try again.'); }
-            else { setTimeout(function () { poll(scanId, lowConfidence, attempt + 1); }, POLL_MS); }
+            if (data.status === 'completed') { setProgress(null); loadReport(scanId, lowConfidence); }
+            else if (data.status === 'failed') { busy(false); setProgress(null); setStatus('The scan failed. Please try again.'); }
+            else {
+              // Live progress from the same job the web page's bar reads.
+              setProgress(data.progress_percent, data.progress_message);
+              setTimeout(function () { poll(scanId, lowConfidence, attempt + 1); }, POLL_MS);
+            }
           })
-          .withFailureHandler(function (e) { busy(false); handleErr(e); })
+          .withFailureHandler(function (e) { busy(false); setProgress(null); handleErr(e); })
           .getScanStatus(scanId);
+      }
+
+      // Scan progress bar. pct null → hide. Reads progress_percent/message from the poll
+      // (same job data the web report's progress bar uses).
+      function setProgress(pct, msg) {
+        if (!els.progressWrap) return;
+        if (pct == null) { els.progressWrap.hidden = true; return; }
+        var v = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+        els.progressWrap.hidden = false;
+        els.progressFill.style.width = v + '%';
+        els.progressLabel.textContent = (msg ? msg + ' · ' : '') + v + '%';
       }
 
       // allow-hardcode: the strings below are HTML <option> render templates + data
@@ -395,7 +419,7 @@
       function show(el) { el.hidden = false; } function hide(el) { el.hidden = true; }
       function busy(on) { scanning = on; els.scanBtn.disabled = on; }
       function setStatus(m) { els.status.textContent = m || ''; }
-      function clearResult() { els.result.innerHTML = ''; hide(els.result); setStatus(''); setHeadScores(null); }
+      function clearResult() { els.result.innerHTML = ''; hide(els.result); setStatus(''); setProgress(null); setHeadScores(null); }
       // Reset to the clean scanning state so it's obvious you can select new text
       // and scan again. Past versions stay saved (the picker returns after the next scan).
       function onNewScan() {
