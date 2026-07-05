@@ -733,6 +733,16 @@ export const report = {
     "feedbackAction": "Tell us",
     "disclaimer": "DraftProof provides authorship clarity signals and writing-risk analysis. It does not determine misconduct. Final judgement belongs to the school, teacher, or relevant academic policy."
   },
+  // allow-hardcode: i18n UI copy for the merged authorship+submission-risk card
+  // (static labels/subtitle, not a scoring/matching oracle over document content)
+  "merged": {
+    "title": "Authorship & submission risk",
+    "subtitle": "One read on how this document scores — the headline number, how the writing distributes, and where the risk sits.",
+    "compositionLens": "How the writing reads",
+    "compositionLensNote": "sums to 100%",
+    "riskLens": "Where the risk sits",
+    "riskLensNote": "independent"
+  },
   "advancedSignals": {
     "summary": "Advanced signals"
   }

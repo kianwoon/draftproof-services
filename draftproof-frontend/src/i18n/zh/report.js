@@ -726,6 +726,16 @@ export const report = {
     "feedbackAction": "告诉我们",
     "disclaimer": "DraftProof 提供作者归属清晰度信号与写作风险分析，并不据此判定学术不端。最终判断权属于学校、教师或相关学术政策。"
   },
+  // allow-hardcode: i18n UI copy for the merged authorship+submission-risk card
+  // (static labels/subtitle, not a scoring/matching oracle over document content)
+  "merged": {
+    "title": "作者归属与提交风险",
+    "subtitle": "对本文档评分的综合解读——核心数值、写作构成分布，以及风险所在。",
+    "compositionLens": "写作构成解读",
+    "compositionLensNote": "合计为 100%",
+    "riskLens": "风险所在",
+    "riskLensNote": "各自独立"
+  },
   "advancedSignals": {
     "summary": "高级信号"
   }
