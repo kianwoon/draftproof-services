@@ -215,6 +215,12 @@ def test_build_paragraph_issues_joins_segments_and_explanations():
     assert issue["tier"] == "medium"  # highest-severity segment wins
     assert issue["main_issue"] == "Too generic"
     assert issue["recommendation"] == "Add a concrete example"
+    # Highlight anchor is a SINGLE verbatim sentence (the first flagged one), NOT the
+    # joined multi-sentence snippet -- a joined needle can span a sentence/paragraph
+    # break that Word body.search / GDocs findText cannot match across, so those
+    # findings never highlighted. A single sentence is a contiguous run in the doc.
+    assert issue["anchor"] == "First sentence."
+    assert issue["anchor"] != issue["snippet"]
 
 
 def test_ext_scan_report_404_when_missing(client):

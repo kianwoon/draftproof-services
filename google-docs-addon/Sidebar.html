@@ -392,7 +392,12 @@
             if (it.tier) chips += '<span class="issue-tier t-' + escAttr(it.tier) + '">' + esc(it.tier) + '</span>';
             if (it.signal_label) chips += '<span class="issue-sig">' + esc(humanize(it.signal_label)) + '</span>';
             var b = '';
-            if (it.snippet) b += '<p class="issue-snippet locate" data-scope="paragraph" data-find="' + escAttr(findNeedle(it.snippet, 120)) + '" title="Click to highlight this paragraph in your document">' + esc(it.snippet) + '</p>';
+            if (it.snippet) {
+              var loc = it.anchor
+                ? { find: findNeedle(it.anchor, 200), scope: 'text', tip: 'Click to highlight this sentence in your document' }
+                : { find: findNeedle(it.snippet, 120), scope: 'paragraph', tip: 'Click to highlight this paragraph in your document' };
+              b += '<p class="issue-snippet locate" data-scope="' + loc.scope + '" data-find="' + escAttr(loc.find) + '" title="' + loc.tip + '">' + esc(it.snippet) + '</p>';
+            }
             if (it.reader_summary) b += '<p class="issue-summary">' + esc(it.reader_summary) + '</p>';
             if (it.main_issue) b += '<div class="issue-block"><span class="issue-label">Main issue to fix</span><p>' + esc(it.main_issue) + '</p></div>';
             // Page parity: prefer per-sentence tailored fixes; fall back to the single paragraph

@@ -128,8 +128,19 @@ def _build_paragraph_issues(results_json: dict, limit: int) -> list[dict]:
             _sugg = _sugg_by_sid.get(str(x.get("sentence_id") or ""))
             if _sugg:
                 sentence_fixes.append({"text": (x.get("text") or "")[:200], "suggestion": _sugg})
+        # Highlight anchor: a SINGLE verbatim sentence (the first flagged sentence, else
+        # the paragraph's first sentence) so the add-ins can find a CONTIGUOUS run in the
+        # document. The multi-sentence `snippet` can span a sentence/paragraph break, which
+        # neither Word body.search nor GDocs findText can match across -> some findings
+        # never highlighted. A single sentence is contiguous in the doc.
+        anchor = ""
+        if flagged:
+            anchor = (flagged[0].get("text") or "").strip()
+        if not anchor and segs:
+            anchor = (segs[0].get("text") or "").strip()
         issues.append({
             "snippet": text[:220],
+            "anchor": anchor or None,
             "tier": top.get("tier") or None,
             "signal_label": top.get("label") or None,
             "reader_summary": expl.get("reader_summary") or expl.get("summary") or None,

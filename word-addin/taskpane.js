@@ -436,9 +436,16 @@
         if (it.signal_label) chips += '<span class="dp-issue-sig">' + escapeHtml(humanize(it.signal_label)) + "</span>";
         var b = "";
         if (it.snippet) {
-          b += '<p class="dp-issue-snippet dp-locate" data-scope="paragraph" data-find="' +
-            escapeAttr(findNeedle(it.snippet, 120)) +
-            '" title="Click to highlight this paragraph in your document">' +
+          // Prefer a single verbatim sentence anchor (it.anchor) so body.search finds a
+          // CONTIGUOUS run; the multi-sentence snippet could span a paragraph/line break,
+          // which search can't match across. Fall back to the old snippet+paragraph scope
+          // for older reports that predate the anchor field.
+          var loc = it.anchor
+            ? { find: findNeedle(it.anchor, 200), scope: "text", tip: "Click to highlight this sentence in your document" }
+            : { find: findNeedle(it.snippet, 120), scope: "paragraph", tip: "Click to highlight this paragraph in your document" };
+          b += '<p class="dp-issue-snippet dp-locate" data-scope="' + loc.scope + '" data-find="' +
+            escapeAttr(loc.find) +
+            '" title="' + loc.tip + '">' +
             escapeHtml(it.snippet) + "</p>";
         }
         if (it.reader_summary) b += '<p class="dp-issue-summary">' + escapeHtml(it.reader_summary) + "</p>";
