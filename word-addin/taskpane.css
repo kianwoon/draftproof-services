@@ -129,6 +129,11 @@ input[type="password"]:focus {
    between the Scan button and the result. */
 .dp-status:empty { display: none; }
 .dp-muted { color: var(--dp-muted); }
+/* Scan progress bar (reads progress_percent/message from the poll, same as the web page). */
+.dp-progress { margin-top: 10px; }
+.dp-progress-track { height: 6px; border-radius: 999px; background: #eef2f6; overflow: hidden; }
+.dp-progress-fill { height: 100%; width: 0; border-radius: 999px; background: var(--dp-green-dark); transition: width .25s ease; }
+.dp-progress-label { margin-top: 5px; font-size: 12px; color: var(--dp-muted); }
 
 /* Selected-text preview — resizable so the user can drag to enlarge it. */
 .dp-selection {

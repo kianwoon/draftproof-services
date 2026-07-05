@@ -48,6 +48,10 @@
         </div>
         <button id="scanBtn" class="dp-btn dp-btn-primary">Scan selected text</button>
         <div id="status" class="dp-status" role="status" aria-live="polite"></div>
+        <div id="progressWrap" class="dp-progress" role="progressbar" aria-live="polite" hidden>
+          <div class="dp-progress-track"><div id="progressFill" class="dp-progress-fill"></div></div>
+          <div id="progressLabel" class="dp-progress-label"></div>
+        </div>
         <div id="versionRow" class="dp-version-row" hidden>
           <label for="versionSelect">Version</label>
           <select id="versionSelect" class="dp-version-select"></select>

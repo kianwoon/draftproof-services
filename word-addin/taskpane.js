@@ -37,6 +37,7 @@
     [
       "setup", "apiKey", "saveKey", "setupError",
       "scanner", "keyPrefix", "changeKey", "scanBtn", "status", "result",
+      "progressWrap", "progressFill", "progressLabel",
       "selectionPreview", "wordCount", "docState", "headScores",
       "versionRow", "versionSelect", "newScanBtn",
     ].forEach(function (id) { els[id] = document.getElementById(id); });
@@ -220,6 +221,7 @@
   function submitScan(text) {
     busy(true);
     setStatus("Scanning… this can take up to a minute.");
+    setProgress(0, "Starting");
     return fetch(EXT + "/scan", {
       method: "POST",
       headers: authHeaders(),
@@ -246,12 +248,18 @@
       .then(handleAuthThenJson)
       .then(function (data) {
         if (data.status === "completed") {
+          setProgress(100, data.progress_message || "Done");
           busy(false);
+          setProgress(null);
           fetchAndRenderReport(scanId, lowConfidence);
         } else if (data.status === "failed") {
           busy(false);
+          setProgress(null);
           setStatus("The scan failed. Please try again.");
         } else {
+          // Live progress from the same job the web page's bar reads (progress_percent /
+          // progress_message, updated by the worker throughout the scan).
+          setProgress(data.progress_percent, data.progress_message);
           return delay(POLL_INTERVAL_MS).then(function () {
             return poll(scanId, lowConfidence, attempt + 1);
           });
@@ -653,7 +661,17 @@
   function hide(el) { if (el) el.hidden = true; }
   function busy(on) { scanning = on; els.scanBtn.disabled = on; }
   function setStatus(msg) { els.status.textContent = msg || ""; }
-  function clearResult() { els.result.innerHTML = ""; hide(els.result); setStatus(""); setHeadScores(null); }
+  // Progress bar during a scan. pct null → hide. Reads progress_percent/message from the
+  // poll response (same job data the web report's progress bar uses).
+  function setProgress(pct, msg) {
+    if (!els.progressWrap) return;
+    if (pct == null) { els.progressWrap.hidden = true; return; }
+    var v = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+    els.progressWrap.hidden = false;
+    els.progressFill.style.width = v + "%";
+    els.progressLabel.textContent = (msg ? msg + " · " : "") + v + "%";
+  }
+  function clearResult() { els.result.innerHTML = ""; hide(els.result); setStatus(""); setProgress(null); setHeadScores(null); }
   function setupError(msg) {
     if (!msg) { els.setupError.hidden = true; els.setupError.textContent = ""; return; }
     els.setupError.textContent = msg; els.setupError.hidden = false;
