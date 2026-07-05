@@ -169,47 +169,25 @@
 
   // Jump to + highlight the passage a finding refers to. scope "paragraph"
   // selects the whole containing paragraph (issues); else the matched run (CT).
-  // Candidate needles for a passage: the full text first, then progressively
-  // shorter LEADING word-prefixes. A soft/hard line break inside the passage means
-  // the full string isn't a contiguous run in the doc -- Word search (even with
-  // ignoreSpace) can't match across a paragraph/line mark -- so a shorter opening
-  // phrase that sits before the break still matches. Descending length, deduped.
-  function needleCandidates(needle) {
-    var words = String(needle).replace(/\s+/g, " ").trim().split(" ");
-    var lens = [words.length, 12, 8, 5], out = [], seen = {};
-    for (var i = 0; i < lens.length; i++) {
-      var n = Math.min(lens[i], words.length);
-      if (n < 3) continue;
-      var cand = words.slice(0, n).join(" ");
-      if (!seen[cand]) { seen[cand] = 1; out.push(cand); }
-    }
-    return out;
-  }
-
   function locateInDoc(needle, scope) {
     if (!needle || typeof Word === "undefined" || !Word.run) return;
-    var candidates = needleCandidates(needle);
     Word.run(function (context) {
-      function attempt(idx) {
-        if (idx >= candidates.length) {
+      var results = context.document.body.search(needle, {
+        matchCase: false, ignoreSpace: true, ignorePunct: true,
+      });
+      results.load("items");
+      return context.sync().then(function () {
+        if (!results.items.length) {
           setStatus("Couldn’t find that passage in the document.");
           return context.sync();
         }
-        var results = context.document.body.search(candidates[idx], {
-          matchCase: false, ignoreSpace: true, ignorePunct: true,
-        });
-        results.load("items");
-        return context.sync().then(function () {
-          if (!results.items.length) return attempt(idx + 1);
-          var target = scope === "paragraph"
-            ? results.items[0].paragraphs.getFirst()
-            : results.items[0];
-          target.select();
-          setStatus("");
-          return context.sync();
-        });
-      }
-      return attempt(0);
+        var target = scope === "paragraph"
+          ? results.items[0].paragraphs.getFirst()
+          : results.items[0];
+        target.select();
+        setStatus("");
+        return context.sync();
+      });
     }).catch(function () {
       setStatus("Couldn’t highlight that passage in the document.");
     });

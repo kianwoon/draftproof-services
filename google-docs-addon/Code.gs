@@ -145,45 +145,24 @@ function highlightInDoc(needle, scope) {
   try {
     var doc = DocumentApp.getActiveDocument();
     var body = doc.getBody();
-    // Try the full passage, then progressively shorter LEADING word-prefixes. A
-    // soft/hard line break inside the passage means the full string isn't a
-    // contiguous run (findText can't span paragraph elements); a shorter opening
-    // phrase before the break still matches.
-    var candidates = _needleCandidates(needle);
-    for (var i = 0; i < candidates.length; i++) {
-      var rx = String(candidates[i])
-        .replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
-        .replace(/['‘’]/g, "['‘’]")
-        .replace(/["“”]/g, '["“”]');
-      var found = body.findText(rx);
-      if (!found) continue;
-      var textEl = found.getElement();
-      var range = doc.newRange();
-      if (scope === 'paragraph') {
-        range.addElement(textEl.getParent());          // whole paragraph / list item
-      } else {
-        range.addElement(textEl.asText(), found.getStartOffset(), found.getEndOffsetInclusive());
-      }
-      doc.setSelection(range.build());
-      return true;
+    var rx = String(needle)
+      .replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
+      .replace(/['‘’]/g, "['‘’]")
+      .replace(/["“”]/g, '["“”]');
+    var found = body.findText(rx);
+    if (!found) return false;
+    var textEl = found.getElement();
+    var range = doc.newRange();
+    if (scope === 'paragraph') {
+      range.addElement(textEl.getParent());          // whole paragraph / list item
+    } else {
+      range.addElement(textEl.asText(), found.getStartOffset(), found.getEndOffsetInclusive());
     }
-    return false;
+    doc.setSelection(range.build());
+    return true;
   } catch (e) {
     return false;
   }
-}
-
-// Full passage first, then shorter leading word-prefixes (descending, deduped).
-function _needleCandidates(needle) {
-  var words = String(needle).replace(/\s+/g, ' ').trim().split(' ');
-  var lens = [words.length, 12, 8, 5], out = [], seen = {};
-  for (var i = 0; i < lens.length; i++) {
-    var n = Math.min(lens[i], words.length);
-    if (n < 3) continue;
-    var cand = words.slice(0, n).join(' ');
-    if (!seen[cand]) { seen[cand] = 1; out.push(cand); }
-  }
-  return out;
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
