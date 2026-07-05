@@ -363,7 +363,10 @@ def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> s
         kpis.append((f"{round(contribution['hcr'])}%", "Human contribution"))
     if wc:
         kpis.append((f"{wc}", "Words scanned"))
-    if len(kpis) >= 2:
+    # >= 1 (not 2): the merged block suppresses the AI-likelihood KPI (it shows once
+    # in the co-located headline), so this row can legitimately carry a single stat
+    # (e.g. "Words scanned") — never drop it just because it is alone.
+    if len(kpis) >= 1:
         out.append(
             '<div class="dp-kpi-row">'
             + "".join(f'<div class="dp-kpi"><b>{escape(v)}</b><span>{escape(c)}</span></div>' for v, c in kpis)
