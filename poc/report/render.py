@@ -1301,6 +1301,13 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
         rows = []
         for f in sorted(deberta_finds, key=lambda x: -(x.metadata.get("deberta_score", 0))):
             sc = f.metadata.get("deberta_score", 0)
+            # Scale guard: builder.py stores deberta_score on the 0-1 scale
+            # (round(_sc_syn, 3), threshold 0.99) but this renderer's bands and
+            # chip assume 0-100 — a 1.00 sentence rendered as an amber '1%'
+            # next to text saying '>=99% confident' (observed in a live PDF
+            # 2026-07-06). Normalize once, here at the display boundary.
+            if isinstance(sc, (int, float)) and 0 < sc <= 1.0:
+                sc = sc * 100
             band_color = _BAND_COLORS.get(
                 "high" if sc >= 99 else "medium" if sc >= 80 else "low", "#94a3b8")
             sid = f.sentence_id or ""
