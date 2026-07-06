@@ -2,6 +2,8 @@
 calls are counting fakes."""
 from __future__ import annotations
 
+import json
+
 from poc.calibration.retune import deepscan_cache as dc
 
 
@@ -17,8 +19,15 @@ def test_content_key_checkpoint_sensitive():
     assert k1 != k2
 
 
-def test_default_cache_outside_staging():
-    assert "staging" not in str(dc.DEFAULT_CACHE)
+def test_default_cache_outside_staging(tmp_path):
+    # A substring check on the path (e.g. "staging" not in str(path)) false-fails if
+    # the repo checkout path itself happens to contain "staging". Assert the actual
+    # path relationship instead: the default cache is not inside a per-run staging dir.
+    run_staging = tmp_path / "staging" / "run-2026-07-06T00-00-00Z"
+    run_staging.mkdir(parents=True)
+    resolved_cache = dc.DEFAULT_CACHE.resolve()
+    assert run_staging.resolve() not in resolved_cache.parents
+    assert resolved_cache != run_staging.resolve()
     assert dc.DEFAULT_CACHE.parent.name == "cache"
 
 
@@ -111,3 +120,30 @@ def test_checkpoint_tag_default(monkeypatch):
 def test_checkpoint_tag_env_override(monkeypatch):
     monkeypatch.setenv("DRAFTPROOF_MODAL_CHECKPOINT", "some/other-ckpt")
     assert dc.checkpoint_tag() == "some/other-ckpt"
+
+
+def test_checkpoint_tag_env_override_changes_cache_key(monkeypatch):
+    # A checkpoint change must produce a different cache key, else stale scores
+    # from an old checkpoint would silently be served as if from the new one.
+    monkeypatch.delenv("DRAFTPROOF_MODAL_CHECKPOINT", raising=False)
+    default_tag = dc.checkpoint_tag()
+    default_key = dc.content_key("essay text", default_tag)
+
+    monkeypatch.setenv("DRAFTPROOF_MODAL_CHECKPOINT", "some/other-ckpt")
+    overridden_tag = dc.checkpoint_tag()
+    overridden_key = dc.content_key("essay text", overridden_tag)
+
+    assert overridden_tag == "some/other-ckpt"
+    assert overridden_key != default_key
+
+
+def test_load_cache_skips_torn_last_line(tmp_path):
+    cache_path = tmp_path / "torn.jsonl"
+    good_row = json.dumps({"key": "abc123", "scores": [0.1, 0.2]})
+    torn_row = '{"key": "def456", "scores": [0.3, 0.'  # truncated mid-write
+    cache_path.write_text(good_row + "\n" + torn_row)
+
+    loaded = dc.load_cache(cache_path)
+
+    assert loaded == {"abc123": [0.1, 0.2]}
+    assert "def456" not in loaded

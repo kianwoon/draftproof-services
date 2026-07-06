@@ -18,8 +18,15 @@ def test_cache_default_matches_persistent_default():
     assert Path(args.cache) == deepscan_cache.DEFAULT_CACHE
 
 
-def test_default_cache_resolves_outside_any_staging_path():
-    assert "staging" not in str(deepscan_cache.DEFAULT_CACHE).split("/")
+def test_default_cache_resolves_outside_any_staging_path(tmp_path):
+    # A path-segment substring check ("staging" not in path.split("/")) still false-fails
+    # if the checkout itself has a directory literally named "staging". Assert the real
+    # relationship instead: the default cache is not nested under a per-run staging dir.
+    run_staging = tmp_path / "staging" / "run-2026-07-06T00-00-00Z"
+    run_staging.mkdir(parents=True)
+    resolved_cache = deepscan_cache.DEFAULT_CACHE.resolve()
+    assert run_staging.resolve() not in resolved_cache.parents
+    assert resolved_cache != run_staging.resolve()
 
 
 def test_resolve_paths_carries_cache(tmp_path):

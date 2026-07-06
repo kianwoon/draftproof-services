@@ -26,6 +26,8 @@ DEFAULT_CHECKPOINT = "desklib/ai-text-detector-academic-v1.01"
 
 def checkpoint_tag() -> str:
     import os
+    from . import intake
+    intake.load_env()
     return os.environ.get("DRAFTPROOF_MODAL_CHECKPOINT", DEFAULT_CHECKPOINT)
 
 
@@ -42,7 +44,12 @@ def load_cache(path: Path) -> dict[str, list[float]]:
         line = line.strip()
         if not line:
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            # Torn/partial line (e.g. crash mid-append). Skip it — the affected
+            # essay simply re-scores on the next run; safe to drop.
+            continue
         cache[row["key"]] = row["scores"]
     return cache
 
