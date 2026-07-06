@@ -299,13 +299,37 @@ def _per_paragraph_proportions(
     rides along for consumers to judge reliability. Returns None (key
     omitted) when there are fewer than 2 paragraphs or any mapping
     inconsistency — fail-open, never raises.
+
+    Heading blocks are EXCLUDED from the emitted rows (their sentences still
+    count in the document-level proportion, unchanged): a standalone title
+    like "Critical Analysis: ..." is one blank-line block, so without this it
+    surfaced as "Paragraph 1 — 100% (1 sentence)" and shifted every body
+    paragraph's number by one versus what the user sees as paragraphs
+    (observed on a live report 2026-07-06: panel showed 4 paragraphs for a
+    3-paragraph essay with a title). Heading detection reuses the SAME
+    heuristic as the report's display segmentation
+    (poc/detect/document_structure._looks_like_heading), applied only to
+    single-line blocks. ``index`` is therefore the body-paragraph ordinal
+    (0-based), matching how a reader counts paragraphs.
     """
     try:
+        import re as _re
+
+        from poc.detect.document_structure import _looks_like_heading
         from poc.detect.layer3_scoring import split_paragraphs
 
         paragraphs = split_paragraphs(document_text)
         if len(paragraphs) < 2 or len(sentences) != len(chunk_scores):
             return None
+        # Raw blocks via the SAME split regex as split_paragraphs, same
+        # filtering — indices stay aligned with the normalized list. A block
+        # is a heading only if it is a single raw line that passes the
+        # display segmentation's heading heuristic.
+        raw_blocks = [b for b in _re.split(r"\n\s*\n+", document_text.strip()) if b.strip()]
+        is_heading = [
+            "\n" not in b.strip() and _looks_like_heading(b.strip())
+            for b in raw_blocks
+        ] if len(raw_blocks) == len(paragraphs) else [False] * len(paragraphs)
         norm = " ".join(paragraphs)
         # Paragraph k covers norm[start_k : start_k + len(p)] (+1 joiner space).
         ranges = []
@@ -325,20 +349,26 @@ def _per_paragraph_proportions(
                 para_idx += 1
             per_paragraph[para_idx].append(float(score))
         rows = []
+        body_ordinal = 0
         for i, scores in enumerate(per_paragraph):
             if not scores:
                 continue
+            if is_heading[i]:
+                continue  # titles/headings are not paragraphs — see docstring
             p_flagged = sum(1 for s in scores if s >= sent_threshold)
             p_prop = p_flagged / len(scores)
             rows.append(
                 {
-                    "index": i,
+                    "index": body_ordinal,
                     "sentence_count": len(scores),
                     "proportion": round(p_prop, 4),
                     "band": _deep_scan_band(p_prop),
                 }
             )
-        return rows or None
+            body_ordinal += 1
+        # A single body paragraph (e.g. title + one paragraph) is not a
+        # breakdown — same rationale as the <2-paragraph early return.
+        return rows if len(rows) >= 2 else None
     except Exception:
         logger.exception(
             "detect_v7.pipeline_bridge: per-paragraph deep-scan grouping failed; "

@@ -629,3 +629,37 @@ class TestDeepScanPerParagraphProportions:
         deep = result.get("deep_scan")
         assert deep is not None
         assert "paragraphs" not in deep
+
+    def test_title_heading_is_not_a_paragraph_row(self, monkeypatch):
+        """Live-report regression (2026-07-06): a standalone title block was
+        emitted as 'Paragraph 1 — 100% (1 sentence)' and shifted body
+        paragraph numbering (panel showed 4 paragraphs for a 3-paragraph
+        essay). Headings are excluded from rows; body ordinals start at 0;
+        the document proportion still counts the title's sentence."""
+        monkeypatch.setenv(_ENV_VAR, "1")
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+        text = (
+            "Critical Analysis of Over-Accommodation Standards\n\n"
+            "First body paragraph sentence one. First body sentence two.\n\n"
+            "Second body paragraph sentence one. Second body sentence two. Third one here.\n\n"
+            "Third body paragraph sentence."
+        )
+
+        # split_sentences merges the unpunctuated title into the following
+        # sentence in the normalized stream; don't assert an exact sentence
+        # count in the fake — accept whatever segmentation produces.
+        def fake_call(chunks, timeout_s=60.0):
+            return {
+                "available": True,
+                "calibrated": True,
+                "chunk_scores": [1.0] * len(chunks),
+                "document_score": 1.0,
+            }
+
+        monkeypatch.setattr(modal_client, "call_deep_scan", fake_call)
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result(text=text))
+        assert result is not None
+        rows = (result.get("deep_scan") or {}).get("paragraphs")
+        assert rows is not None
+        assert len(rows) == 3  # the title is NOT a paragraph row
+        assert [r["index"] for r in rows] == [0, 1, 2]  # body ordinals, no gap
