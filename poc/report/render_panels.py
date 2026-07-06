@@ -274,12 +274,17 @@ def _authorship_bars_html(breakdown: dict) -> str:
         width_pct = max(0.0, min(100.0, raw * 100)) if has_raw else 0.0
         band_label = _ACB_BAND_LABELS.get(band, band) if band else _ACB_BAND_LABELS["None"]
         text = f"{band_label} · {round(width_pct)}%" if has_raw else band_label
+        # Two-row layout matching the web's .merged-comp-row (label+band head, then a
+        # full-width track below). A single flex row with an empty flex:1 track collapses
+        # to zero width in WeasyPrint, so the colored bar vanished in the PDF.
         rows.append(
             '<div class="dp-abd-row">'
+            '<span class="dp-abd-head">'
             f'<span class="dp-abd-label">{escape(_ACB_CATEGORY_LABELS.get(category, category))}</span>'
+            f'<span class="dp-abd-band">{escape(text)}</span></span>'
             '<span class="dp-abd-bar-track">'
             f'<span class="dp-abd-bar-fill dp-abd-fill--{category}" style="width:{width_pct}%"></span></span>'
-            f'<span class="dp-abd-band">{escape(text)}</span></div>'
+            '</div>'
         )
     out = '<div class="dp-abd-bars">' + "".join(rows) + "</div>"
     disclaimer = breakdown.get("disclaimer")

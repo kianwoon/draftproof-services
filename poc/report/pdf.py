@@ -383,33 +383,34 @@ img[src^="https://img.shields.io"] { height: 18px; }
     margin: 9pt 0 4pt;
 }
 .dp-abd-row {
+    display: block;
+}
+.dp-abd-head {
     display: flex;
-    align-items: center;
-    gap: 8pt;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 3pt;
 }
 .dp-abd-label {
-    flex: 0 0 132pt;
     font-size: 8.5pt;
     font-weight: 700;
     color: #243b53;
 }
 .dp-abd-bar-track {
-    flex: 1 1 auto;
-    height: 7pt;
-    border-radius: 999pt;
-    background: #eef2f6;
+    display: block;
+    width: 100%;
+    height: 6pt;
+    border-radius: 3pt;
+    background: #f3f4f6;
     overflow: hidden;
 }
 .dp-abd-bar-fill {
     display: block;
     height: 100%;
-    border-radius: 999pt;
+    border-radius: 3pt;
     background: #16a34a;
 }
 .dp-abd-band {
-    flex: 0 0 auto;
-    min-width: 64pt;
-    text-align: right;
     white-space: nowrap;
     font-size: 8pt;
     font-weight: 700;
