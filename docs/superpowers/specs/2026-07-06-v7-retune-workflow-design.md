@@ -197,9 +197,9 @@ production V7 behavior is traceable to an exact corpus+calibration+checkpoint tr
 | GPU fine-tune overfits to a single new model | Test split held out; gate uses the diverse multi-family set |
 | Provider API drift (Cerebras UA 403, id 404s) | Unified generator carries the known gotchas; `models.json` ids validated against live `/models` |
 
-## 12. Open Questions (for user review)
+## 12. Decisions (resolved 2026-07-06)
 
-1. First implementation scope: **Phase 1 + Phase 2 + orchestrator/runbook** now, Phase 3
-   (Modal training) specced-only? (Recommended.)
-2. Should `run_cycle.py` also be wrapped as a Claude Code `Workflow()` from day one, or is a
-   plain CLI enough to start?
+1. **First implementation scope: Phase 1 + Phase 2 + orchestrator/runbook.** Phase 3 (Modal
+   GPU fine-tune) is **specced-only** — built later, only if re-calibration fails the bar.
+2. **Orchestrator form: plain CLI** (`run_cycle.py`) to start. No Claude Code `Workflow()`
+   wrapper day one; may add later if the cadence warrants it.
