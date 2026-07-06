@@ -24,10 +24,12 @@ Usage (from repo root):  python poc/calibration/v7_fused_gate_run.py
 """
 from __future__ import annotations
 
+import argparse
 import glob
 import json
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 _POC = Path(__file__).resolve().parents[1]
@@ -51,27 +53,52 @@ HERE = Path(__file__).resolve().parent
 PROGRESS = HERE / "v7_fused_gate_progress.jsonl"
 OUT_PATH = HERE / "v7_fused_gate_result.json"
 DIVERSITY = HERE / "v7_deberta_diversity_v2.json"
+DEFAULT_WEIGHTS = _POC / "detect_v7" / "weights.json"
 
 
-def _weights_cfg() -> tuple[float, float, float]:
-    w = json.loads((_POC / "detect_v7" / "weights.json").read_text())
+@dataclass(frozen=True)
+class ResolvedPaths:
+    out: Path
+    progress: Path
+    corpus: str
+    weights: Path
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--out", default=str(OUT_PATH), help="where to write the fused-gate result JSON")
+    ap.add_argument("--progress", default=str(PROGRESS), help="incremental progress cache (jsonl)")
+    ap.add_argument("--corpus", default=str(DEFAULT_CORPUS), help="SCoCESLE corpus dir")
+    ap.add_argument("--weights", default=str(DEFAULT_WEIGHTS), help="fusion weights.json to read")
+    return ap
+
+
+def resolve_paths(args: argparse.Namespace) -> ResolvedPaths:
+    return ResolvedPaths(
+        out=Path(args.out), progress=Path(args.progress),
+        corpus=args.corpus, weights=Path(args.weights),
+    )
+
+
+def _weights_cfg(weights_path: Path = DEFAULT_WEIGHTS) -> tuple[float, float, float]:
+    w = json.loads(Path(weights_path).read_text())
     fusion = w["fusion_weights"]["deep_scan_2detector"]
     sent_thr = w["deep_scan_calibration"]["sent_threshold"]
     return float(fusion["fakespot"]), float(fusion["deberta_large"]), float(sent_thr)
 
 
-def _load_progress() -> dict[str, dict]:
+def _load_progress(progress_path: Path = PROGRESS) -> dict[str, dict]:
     done: dict[str, dict] = {}
-    if PROGRESS.exists():
-        for line in PROGRESS.read_text().splitlines():
+    if progress_path.exists():
+        for line in progress_path.read_text().splitlines():
             if line.strip():
                 row = json.loads(line)
                 done[row["id"]] = row
     return done
 
 
-def _append_progress(row: dict) -> None:
-    with PROGRESS.open("a") as f:
+def _append_progress(row: dict, progress_path: Path = PROGRESS) -> None:
+    with progress_path.open("a") as f:
         f.write(json.dumps(row) + "\n")
 
 
@@ -92,18 +119,21 @@ def _fpr(vals: list[float], thr: float) -> float | None:
 
 
 def main() -> None:
+    args = _build_arg_parser().parse_args()
+    paths = resolve_paths(args)
+
     env = _load_env()
     url, token = env.get("DRAFTPROOF_MODAL_ENDPOINT_URL"), env.get("DRAFTPROOF_MODAL_ENDPOINT_TOKEN")
     if not url or not token:
         print("Modal endpoint env missing", file=sys.stderr)
         raise SystemExit(2)
-    fw_fakespot, fw_deberta, sent_thr = _weights_cfg()
+    fw_fakespot, fw_deberta, sent_thr = _weights_cfg(paths.weights)
     print(f"fusion weights: fakespot={fw_fakespot} deberta={fw_deberta}; sent_threshold={sent_thr}", flush=True)
 
-    groups = _proficiency_groups(DEFAULT_CORPUS)
+    groups = _proficiency_groups(paths.corpus)
     ai_files = sorted(glob.glob(str(AI_CASES / "ai_*.json"))) + sorted(glob.glob(str(CASES_V2 / "ai_*.json")))
     prepaid = _prepaid_proportions()
-    done = _load_progress()
+    done = _load_progress(paths.progress)
     runner = DetectionRunner()
     t0 = time.time()
 
@@ -145,7 +175,7 @@ def main() -> None:
         if proportion is None:
             continue
         row = {"id": rid, "kind": kind, "composite": round(composite, 2), "proportion": round(proportion, 4)}
-        _append_progress(row)
+        _append_progress(row, paths.progress)
         done[rid] = row
         if (i + 1) % 10 == 0:
             elapsed = time.time() - t0
@@ -192,8 +222,8 @@ def main() -> None:
     }
     result["verdict"]["gate_pass"] = all(
         result["verdict"][k] for k in ("fpr_rise_ok", "auc_drop_ok", "parity_widen_ok"))
-    OUT_PATH.write_text(json.dumps(result, indent=1))
-    print(f"\nsaved {OUT_PATH}", flush=True)
+    paths.out.write_text(json.dumps(result, indent=1))
+    print(f"\nsaved {paths.out}", flush=True)
     print(json.dumps(result["scores"], indent=1), flush=True)
     print("VERDICT:", json.dumps(result["verdict"]), flush=True)
 
