@@ -1397,19 +1397,14 @@ export default function Report() {
     </div>
   );
 
-  // `policyOnly`: when the column already leads with the scan card's fused verdict +
-  // composition + risk axes (comparison mode), the "AI-writing signal" narrative and
-  // grounding-driver contributor bars REPEAT that story in a different vocabulary
-  // (and its "main thing to fix" can contradict the card's) — render only the policy
-  // cards, whose scores/coaching match the scan page's dual headline.
-  const renderAiLikelihoodHeadline = (variantBadge, policyOnly = false) => {
+  const renderAiLikelihoodHeadline = (variantBadge) => {
     const bands = aiLikelihoodBands(variantBadge);
     if (!bands.draftproof) return null;
     const dp = bands.draftproof;
     const ext = bands.external;
     const ratingLabel = variantBadge?.authorship_rating_label;
     const diag = groundingDiagnosis(variantBadge);
-    const driver = !policyOnly && GROUNDING_DIAGNOSIS_LEAD_ENABLED && diag?.primary_driver ? diag : null;
+    const driver = GROUNDING_DIAGNOSIS_LEAD_ENABLED && diag?.primary_driver ? diag : null;
     const driverBuckets = driver?.buckets || {};
     // Driver bar first (emphasized), remaining dimensions by gap score descending.
     const orderedDriverKeys = driver
@@ -1431,12 +1426,8 @@ export default function Report() {
       + (driverLabelText ? ` ${t('report.aiLikelihood.verdictFix', { driver: driverLabelText })}` : '');
     return (
       <div className="ai-likelihood-block">
-        {!policyOnly && (
-          <>
-            <div className="ai-likelihood-caption">{t('report.aiLikelihood.title')}</div>
-            <div className="ai-likelihood-verdict" style={{ fontWeight: 600, fontSize: '15px', margin: '2px 0 14px', lineHeight: 1.45 }}>{verdictLine}</div>
-          </>
-        )}
+        <div className="ai-likelihood-caption">{t('report.aiLikelihood.title')}</div>
+        <div className="ai-likelihood-verdict" style={{ fontWeight: 600, fontSize: '15px', margin: '2px 0 14px', lineHeight: 1.45 }}>{verdictLine}</div>
         {driver && (
           <div className="ai-likelihood-driver" style={{ marginBottom: '12px' }}>
             <div className="ai-likelihood-driver-label" style={{ fontWeight: 500 }}>
@@ -1537,11 +1528,9 @@ export default function Report() {
     const fusedCard = hasRewriteSignalComparison ? renderFusedVerdictBand(variantBadge) : null;
     return (
       <div className={`transformation-detail ${variant === 'rewritten' ? 'is-rewritten' : 'is-original'}`}>
-        {fusedCard}
-        {renderAiLikelihoodHeadline(variantBadge, Boolean(fusedCard))}
-        {/* In single-scan mode the scan label/pattern just repeats the card header h2, so it is
-            hidden. In comparison mode the per-column "Original/Rewritten Scan" labels (and rating
-            badge) distinguish the two columns, so they are kept. */}
+        {/* Column identity FIRST — "Original/Rewritten Scan" is the label a reader orients
+            by; below the content it read as a stray footer. In single-scan mode the label
+            just repeats the card header h2, so it stays hidden there. */}
         {(hasRewriteSignalComparison || ratingBadge?.label) && (
           <div className="transformation-detail-head">
             <div>
@@ -1563,6 +1552,11 @@ export default function Report() {
             </div>
           </div>
         )}
+        {/* Comparison column = the scan card, nothing else. The AI-writing-signal
+            narrative and the policy cards both repeat the card's story in other
+            vocabularies (live feedback 2026-07-07); columns without V7 data (legacy
+            rewrites) keep the previous full layout. */}
+        {fusedCard || renderAiLikelihoodHeadline(variantBadge)}
       </div>
     );
   };
