@@ -429,6 +429,21 @@ export const landing = {
       "summary": "Sharpen your thinking"
     }
   ],
+  "sampleVerdictCaption": "AI-writing signal",
+  "sampleVerdictLine": "Low AI-writing signal — low on our scale — but detectors over-flag fluent writing, so they may still flag it (a warning, not a verdict).",
+  "sampleMainFixLabel": "Main thing to fix",
+  "sampleMainFixDriver": "Grounding gap",
+  "sampleMainFixAction": "Add concrete anchors, named evidence, and specifics.",
+  "sampleRiskContributorsHeading": "Risk contributors",
+  "sampleLowerIsBetter": "Lower is better",
+  // allow-hardcode: illustrative sample-report bar values shown on the landing page —
+  // fixed marketing example, never compared against document content, not a scoring oracle.
+  "sampleGroundingBuckets": [
+    { "label": "Grounding gap", "value": 58 },
+    { "label": "Authorship uncertainty", "value": 34 },
+    { "label": "AI-like patterning", "value": 22 },
+    { "label": "Generic language texture", "value": 15 }
+  ],
   // allow-hardcode: static sample-report UI copy (illustrative reflective questions
   // shown on the landing page), anchored to the fixed sample essay above — never
   // compared against any user document, not a scoring/matching oracle.
@@ -460,27 +475,6 @@ export const landing = {
   "findingsSampleMainIssue": "Use of generic transitional phrase and predictable wording that reduces originality.",
   "findingsRewriteHint": "Rewrite Hint",
   "findingsSampleRewriteHint": "Example: \"Beyond its economy, American cinema reaches audiences in over 190 countries each year.\"",
-  "transformationPattern": "Transformation Pattern",
-  "humanUncertain": "Human / uncertain pattern",
-  "lowConfidence": "Low Confidence",
-  "notVerdict": "Not a Verdict",
-  "aiSignal": "AI Signal",
-  "lowAiSignal": "Low AI-writing signal",
-  "calibratedTopk": "41% calibrated top-k · below 20% reference",
-  "originalScan": "Original Scan",
-  "originalScanScore": "18%",
-  "calibratedAiRisk": "Calibrated AI risk 15%",
-  "humanAnchorDiscount": "Human anchor discount 38%",
-  "calibrationConfidence": "Calibration confidence 61%",
-  "reportingSuppression": "Reporting suppression 39%",
-  "turnitinReference": "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage because low-range results are less reliable. DraftProof scores are review signals, not verdicts.",
-  "authorshipRating": "Authorship Rating",
-  "good": "GOOD",
-  "calibratedRisk": "11% calibrated risk",
-  "estimatedContribution": "Estimated Contribution",
-  "contributionBody": "Human anchoring dominates, with limited AI transformation signal.",
-  "humanContribution": "Human Contribution",
-  "aiTransformation": "AI Transformation",
   "actionPlan": "Action Plan",
   "actionPlanTitle": "Fix the highest-impact issues first",
   "actionPlanBody": "The report turns scan signals into a practical review order before you revise or download the PDF.",
@@ -500,11 +494,6 @@ export const landing = {
       "body": "Replace broad AI-style wording with specific reasoning and evidence.",
       "tone": "positive"
     }
-  ],
-  "sampleReportNotes": [
-    "No single transformation pattern dominates",
-    "Human anchor reduced AI certainty",
-    "PDF report included"
   ],
   "checks": [
     {

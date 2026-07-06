@@ -427,6 +427,21 @@ export const landing = {
       "summary": "深化你的思考"
     }
   ],
+  "sampleVerdictCaption": "AI 写作信号",
+  "sampleVerdictLine": "AI 写作信号低——在我们的量表上属于低风险——但检测工具容易误判流畅的写作，因此仍可能被标记（这是一个提醒，不是判定）。",
+  "sampleMainFixLabel": "首要修复项",
+  "sampleMainFixDriver": "依据缺口",
+  "sampleMainFixAction": "补充具体的依据、指名的证据和细节。",
+  "sampleRiskContributorsHeading": "风险构成因素",
+  "sampleLowerIsBetter": "数值越低越好",
+  // allow-hardcode: illustrative sample-report bar values shown on the landing page —
+  // fixed marketing example, never compared against document content, not a scoring oracle.
+  "sampleGroundingBuckets": [
+    { "label": "依据缺口", "value": 58 },
+    { "label": "作者身份不确定性", "value": 34 },
+    { "label": "AI 式行文模式", "value": 22 },
+    { "label": "泛化语言质感", "value": 15 }
+  ],
   // allow-hardcode: static sample-report UI copy (illustrative reflective questions
   // shown on the landing page), anchored to the fixed sample essay above — never
   // compared against any user document, not a scoring/matching oracle.
@@ -458,27 +473,6 @@ export const landing = {
   "findingsSampleMainIssue": "使用了通用过渡短语和可预测措辞，降低了文章的原创性。",
   "findingsRewriteHint": "改写提示",
   "findingsSampleRewriteHint": "示例：\"超越经济领域，美国电影每年覆盖全球190多个国家的观众。\"",
-  "transformationPattern": "转换模式",
-  "humanUncertain": "人类 / 不确定模式",
-  "lowConfidence": "低置信度",
-  "notVerdict": "不是判定",
-  "aiSignal": "AI 信号",
-  "lowAiSignal": "AI 写作信号低",
-  "calibratedTopk": "41% 校准 top-k · 低于 20% 参考线",
-  "originalScan": "原始扫描",
-  "originalScanScore": "18%",
-  "calibratedAiRisk": "校准 AI 风险 15%",
-  "humanAnchorDiscount": "人类锚点折扣 38%",
-  "calibrationConfidence": "校准置信度 61%",
-  "reportingSuppression": "报告抑制 39%",
-  "turnitinReference": "Turnitin 参考：低于 20% 的 AI 分数可能显示为 *%，而不是精确百分比，因为低分区间结果可靠性较低。DraftProof 分数仅供审阅，不是判定。",
-  "authorshipRating": "作者身份评级",
-  "good": "良好",
-  "calibratedRisk": "11% 校准风险",
-  "estimatedContribution": "估计贡献",
-  "contributionBody": "人类锚点占主导，AI 转换信号有限。",
-  "humanContribution": "人类贡献",
-  "aiTransformation": "AI 转换",
   "actionPlan": "行动计划",
   "actionPlanTitle": "先修复影响最大的问题",
   "actionPlanBody": "报告会把扫描信号转化为实用的审阅顺序，帮助你在修改或下载 PDF 前知道先处理什么。",
@@ -498,11 +492,6 @@ export const landing = {
       "body": "用更具体的推理和证据替换宽泛的 AI 风格措辞。",
       "tone": "positive"
     }
-  ],
-  "sampleReportNotes": [
-    "没有单一转换模式占主导",
-    "人类锚点降低了 AI 不确定性",
-    "包含 PDF 报告"
   ],
   "checks": [
     {

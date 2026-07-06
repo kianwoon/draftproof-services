@@ -831,7 +831,7 @@ function SampleReportPreview() {
   const [activeSection, setActiveSection] = useState('authorshipBreakdown');
   const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [isHoverPaused, setIsHoverPaused] = useState(false);
-  const sampleReportNotes = t('landing.sampleReportNotes', { returnObjects: true });
+  const sampleGroundingBuckets = t('landing.sampleGroundingBuckets', { returnObjects: true });
   const sampleActionItems = t('landing.sampleActionItems', { returnObjects: true });
   const sampleCriticalQuestions = t('landing.sampleCriticalQuestions', { returnObjects: true });
   const previewTabs = t('landing.reportPreviewTabs', { returnObjects: true });
@@ -895,62 +895,25 @@ function SampleReportPreview() {
         {activeSection === 'aiSignal' && (
           <>
             <PolicyRiskView t={t} pr={SAMPLE_POLICY_RISK} />
-            <div className="sample-report-pattern">
-              <div className="sample-report-pattern-main">
-                <div className="sample-transformation-icon" aria-hidden="true">
-                  <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
-                    <path d="M6 8.5h12.5M6 15h18M6 21.5h10" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
-                    <path d="M21 7l3 3-3 3M18 18l-3 3 3 3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </div>
-                <div>
-                  <span>{t('landing.transformationPattern')}</span>
-                  <h3>{t('landing.humanUncertain')}</h3>
-                  <div className="sample-report-tags">
-                    <em>{t('landing.lowConfidence')}</em>
-                    <em>{t('landing.notVerdict')}</em>
-                  </div>
-                </div>
+            <div className="sample-section-card">
+              <div className="sample-section-card-head">
+                <span>{t('landing.sampleVerdictCaption')}</span>
+                <h3>{t('landing.sampleVerdictLine')}</h3>
               </div>
-              <div className="sample-authorship-badge">
-                <span>{t('landing.aiSignal')}</span>
-                <strong>{t('landing.lowAiSignal')}</strong>
-                <small>{t('landing.calibratedTopk')}</small>
+              <p>
+                <strong>{t('landing.sampleMainFixLabel')}: {t('landing.sampleMainFixDriver')}</strong>
+                {' — '}
+                {t('landing.sampleMainFixAction')}
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em', margin: '12px 0 6px' }}>
+                <span>{t('landing.sampleRiskContributorsHeading')}</span>
+                <span>{t('landing.sampleLowerIsBetter')}</span>
               </div>
-            </div>
-
-            <div className="sample-report-chart">
-              <div className="sample-original-scan">
-                <div className="sample-original-head">
-                  <div>
-                    <span>{t('landing.originalScan')}</span>
-                    <strong>{t('landing.humanUncertain')}</strong>
-                  </div>
-                  <em>{t('landing.originalScanScore')}</em>
-                </div>
-
-                <div className="sample-contribution">
-                  <span>{t('landing.estimatedContribution')}</span>
-                  <p>{t('landing.contributionBody')}</p>
-                  <div className="sample-report-tags">
-                    <em>{t('landing.calibratedAiRisk')}</em>
-                    <em>{t('landing.humanAnchorDiscount')}</em>
-                    <em>{t('landing.calibrationConfidence')}</em>
-                    <em>{t('landing.reportingSuppression')}</em>
-                  </div>
-                  <div className="sample-contribution-bars">
-                    <SampleSignalBar label={t('landing.humanContribution')} value={100} tone="human" />
-                    <SampleSignalBar label={t('landing.aiTransformation')} value={0} tone="ai" />
-                  </div>
-                </div>
-              </div>
-
-              <div className="sample-report-notes">
-                {sampleReportNotes.map((note) => (
-                  <span key={note}>{note}</span>
+              <div className="sample-profile-bars">
+                {sampleGroundingBuckets.map((bucket) => (
+                  <SampleSignalBar key={bucket.label} label={bucket.label} value={bucket.value} tone="ai" />
                 ))}
               </div>
-              <p className="sample-reference-note">{t('landing.turnitinReference')}</p>
             </div>
           </>
         )}
