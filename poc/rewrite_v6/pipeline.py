@@ -21,7 +21,6 @@ from .runtime import acceptable_progress as _acceptable_progress
 from .runtime import can_start_llm_request as _has_runtime_for_llm
 from .runtime import compose as _compose
 from .runtime import cross_paragraph_regression as _cross_paragraph_regression
-from .runtime import improved as _improved
 from .runtime import rewrite_progress_percent as _rewrite_progress_percent
 from .runtime import same_text as _same_text
 from .scan import Scan, findings_for_paragraph, scan_text

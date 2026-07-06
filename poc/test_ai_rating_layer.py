@@ -52,7 +52,7 @@ def assert_true(value, message):
 
 cases = [
     (0.10, Tier.GREEN, "low_ai_signal", "Low AI Signal"),
-    (0.24, Tier.GREEN, "unlikely_ai", "Unlikely AI"),
+    (0.24, Tier.GREEN, "unlikely_ai", "Low AI-writing signal"),
     (0.39, Tier.AMBER, "possible_ai_assisted", "Possible AI-Assisted"),
     (0.55, Tier.ORANGE, "possible_ai_assisted", "Possible AI-Assisted"),
     (0.72, Tier.RED, "ai_generated_signals", "AI-Generated / AI-Paraphrased Signals"),
@@ -82,14 +82,18 @@ assert_true(
     ) >= 0.80,
     "unsupported-claim risk remains high for dense uncited assertions",
 )
+# Author-owned context is now detected via closed-class patterns only (first-person
+# pronouns, alphanumeric unit codes, exemplification markers) — domain-vocabulary
+# hardcodes were removed in the scan de-hardcode work (e8ee6994, ef0ddc30).
+# allow-hardcode: test fixture sentences exercising the detector, not a matching oracle
 assert_true(
     estimate_unsupported_claim_risk(
-        "At Box Hill Institute, SHBHCUT003 graduated haircut requires learners to control sectioning and projection. "
-        "Learners must keep tension steady while they move from mannequin practice to a client model. "
+        "In my SHBHCUT003 class, I ask learners to control sectioning and projection. "
+        "I keep their tension steady while we move from mannequin practice to a client model. "
         "I usually ask them to compare their guide line with mine before they continue cutting. "
-        "That pause helps them notice whether the weight line is forming where they intended."
+        "In my experience that pause helps them notice whether the weight line is forming where they intended."
     ) <= 0.40,
-    "author-owned practical domain context discounts unsupported-claim risk",
+    "first-person author-owned context discounts unsupported-claim risk",
 )
 source_relation_text = (
     "The Centre for Education Statistics and Evaluation (CESE, 2017) states that working memory has limits. "
@@ -810,6 +814,12 @@ domain_builder._findings.append(Finding(
         "domain_terms": ["SHBHCUT003", "graduated haircut", "sectioning", "projection"],
         "specificity_score": 0.82,
         "word_count": 24,
+        # Concrete anchors required since 8abb4a2d: unanchored domain vocabulary is
+        # capped at 30; real subject-matter grounding carries at least one anchor.
+        "named_entities": 2,
+        "numbers": 0,
+        "dates": 0,
+        "quotes": 0,
     },
     finding_id="f_domain_grounding",
     sentence_id="s001",
@@ -845,11 +855,13 @@ assert_true(
     'class="dp-core-bars"' not in scan_markdown and "Core Signals" not in scan_markdown,
     "PDF markdown hides the executive transformation signal chart",
 )
+# The old "Score `X%`" header lines were replaced by the clarity-reframe layout:
+# calibrated scores now render as KPI chips in the dp-kpi-row masthead block.
 assert_true(
-    "Score `5%`" in scan_markdown
-    and "Score `54%`" in scan_markdown
+    'class="dp-kpi-row"' in scan_markdown
+    and "Text-pattern trigger" in scan_markdown
     and 'class="dp-summary-bar"' not in scan_markdown,
-    "PDF markdown calibrates header scores and omits the duplicate summary band",
+    "PDF markdown renders calibrated KPI header and omits the duplicate summary band",
 )
 rewrite_markdown = render_rewrite_report(
     {
@@ -869,10 +881,12 @@ rewrite_markdown = render_rewrite_report(
     [],
     [],
 )
+# The 0.5 display multiplier was removed (00352fec) so the rewrite PDF shows the same
+# canonical AI-likelihood percent as the report page, scan PDF, and email.
 assert_true(
-    "| **AI Likelihood** | `20%` | `15%` | `-5%` |" in rewrite_markdown
-    and "| **Turnitin-like AI Score** | `20%` | `15%` target < `18%` | `+5% drop` |" in rewrite_markdown,
-    "rewrite markdown/PDF calibrates original and rewritten AI score displays",
+    "| **AI Likelihood** | `40%` | `30%` | `-10%` |" in rewrite_markdown
+    and "| **Turnitin-like AI Score** | `40%` | `30%` target < `35%` | `+10% drop` |" in rewrite_markdown,
+    "rewrite markdown/PDF shows un-halved original and rewritten AI score displays",
 )
 assert_true(
     scan_json.get("highlight_segments") == intel["document"]["segments"],
