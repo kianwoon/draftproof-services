@@ -519,6 +519,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             rewrite_id=rewrite_id,
             scan_id=scan_id,
             final_text=rewritten_text,
+            rewrite_summary=checkpoint_json.get("summary") if isinstance(checkpoint_json.get("summary"), dict) else {},
             pdf_bytes=checkpoint_pdf_bytes,
             settings=settings,
         )
@@ -913,6 +914,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             rewrite_id=rewrite_id,
             scan_id=scan_id,
             final_text=rewritten_text,
+            rewrite_summary=rewrite_json.get("summary") if isinstance(rewrite_json.get("summary"), dict) else {},
             pdf_bytes=pdf_bytes,
             settings=settings,
         )

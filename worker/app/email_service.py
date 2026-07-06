@@ -89,12 +89,75 @@ def _scan_report_outcome_label(tier: str | None) -> str | None:
     return SCAN_REPORT_OUTCOME_LABELS.get(normalized) or str(tier).strip()
 
 
+def _badge(scan: dict | None) -> dict:
+    return (scan or {}).get("ai_risk_badge") or {} if isinstance(scan, dict) else {}
+
+
+def _scan_ai_percent(scan: dict | None) -> float | None:
+    """Fused ai_likelihood_score for a stored rewrite scan (badge or top-level ai_score).
+    Mirrors poc.report.render_rewrite._ai_score / _display_ai_score: when the V7 tier-authority
+    flag applied, ai_likelihood_score IS the fused number — no separate 'fused' field to read."""
+    if not isinstance(scan, dict):
+        return None
+    badge = _badge(scan)
+    value = scan.get("ai_score")
+    if value is None:
+        value = badge.get("ai_likelihood_score")
+    return _metric_percent(value)
+
+
+def _scan_deep_scan_evidence(scan: dict | None) -> dict | None:
+    """tier_authority evidence (composite + deep-scan proportion) for a stored rewrite scan,
+    or None when the V7 flag didn't apply (legacy rewrite / deep scan unavailable).
+    Mirrors poc.report.render_rewrite._deep_scan_pct — same badge.tier_authority.proportion."""
+    ta = _badge(scan).get("tier_authority")
+    if not isinstance(ta, dict):
+        return None
+    proportion = ta.get("proportion")
+    composite = ta.get("composite_score")
+    if not isinstance(proportion, (int, float)):
+        return None
+    return {
+        "deep_scan_percent": round(float(proportion) * 100, 1),
+        "composite_score": _metric_percent(composite) if isinstance(composite, (int, float)) else None,
+    }
+
+
+def _rewrite_fused_lead_lines(rewrite_summary: dict | None) -> list[str]:
+    """Build the fused before/after lead lines for the rewrite email, mirroring the /rewrite
+    page and PDF hero (poc/report/render_rewrite.py::_ai_score, _deep_scan_pct). Reads the
+    same detect_scan_original_saved / detect_scan_rewritten scans the PDF renders from
+    (production.py sets these; rewrite_scan_compaction.py's SCAN_BADGE_KEYS keeps
+    tier_authority through storage — see commit cb8ddfa7). Returns [] when no before/after
+    detect scan is available (legacy rewrite / scan-comparison never ran) so callers can
+    fail open to the plain rewritten-content email."""
+    summary = rewrite_summary if isinstance(rewrite_summary, dict) else {}
+    orig_scan = summary.get("detect_scan_original_saved") or summary.get("detect_scan_original")
+    new_scan = summary.get("detect_scan_rewritten")
+    orig_ai = _scan_ai_percent(orig_scan)
+    new_ai = _scan_ai_percent(new_scan)
+    if orig_ai is None or new_ai is None:
+        return []
+
+    lines = [f"AI likelihood: {orig_ai:.0f}% -> {new_ai:.0f}%"]
+    orig_evidence = _scan_deep_scan_evidence(orig_scan)
+    new_evidence = _scan_deep_scan_evidence(new_scan)
+    if orig_evidence and new_evidence:
+        lines.append(
+            "Evidence: composite "
+            f"{orig_evidence['composite_score']:.0f} -> {new_evidence['composite_score']:.0f}, "
+            f"deep-scan {orig_evidence['deep_scan_percent']:.1f}% -> {new_evidence['deep_scan_percent']:.1f}%"
+        )
+    return lines
+
+
 def build_rewrite_completion_email(
     *,
     recipient_email: str,
     rewrite_id: str,
     scan_id: str,
     final_text: str,
+    rewrite_summary: dict | None = None,
     pdf_bytes: bytes | None = None,
     pdf_filename: str | None = None,
     settings,
@@ -106,12 +169,20 @@ def build_rewrite_completion_email(
     if truncated:
         delivered_text = f"{delivered_text}\n\n[Content truncated in email. Please open DraftProof to view the full rewrite.]"
 
+    # Lead with the same fused before/after the /rewrite page and PDF hero show (V7 tier-authority).
+    # Falls back to nothing (not a composite/legacy-only headline) when no comparison is available —
+    # see _rewrite_fused_lead_lines' docstring for why that never happens for legacy rewrites either
+    # (they simply have no detect_scan_original_saved/detect_scan_rewritten to read).
+    fused_lines = _rewrite_fused_lead_lines(rewrite_summary)
+    lead_block = ("\n".join(fused_lines) + "\n\n") if fused_lines else ""
+
     subject = "Your DraftProof rewrite is complete"
     text = (
         "Hi,\n\n"
         "Your DraftProof rewrite is complete. The rewritten content is below.\n\n"
         f"Rewrite ID: {rewrite_id}\n"
         f"Scan ID: {scan_id}\n\n"
+        f"{lead_block}"
         "Rewritten content\n"
         "-----------------\n"
         f"{delivered_text}\n\n"
@@ -307,6 +378,7 @@ def send_rewrite_completion_email(
     rewrite_id: str,
     scan_id: str,
     final_text: str,
+    rewrite_summary: dict | None = None,
     pdf_bytes: bytes | None = None,
     settings,
 ) -> bool:
@@ -325,6 +397,7 @@ def send_rewrite_completion_email(
             rewrite_id=rewrite_id,
             scan_id=scan_id,
             final_text=final_text,
+            rewrite_summary=rewrite_summary,
             pdf_bytes=pdf_bytes,
             settings=settings,
         )

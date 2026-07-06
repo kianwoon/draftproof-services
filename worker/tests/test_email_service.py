@@ -63,6 +63,81 @@ def test_build_rewrite_completion_email_attaches_pdf():
     ]
 
 
+def test_build_rewrite_completion_email_leads_with_v7_fused_before_after():
+    # Mirrors the /rewrite page + PDF hero lead (poc/report/render_rewrite.py _ai_score /
+    # _deep_scan_pct): fused ai_likelihood_score before->after, plus composite + deep-scan
+    # evidence when tier_authority (V7) is present. Fixture matches the live rewrite
+    # 9a29e56a numbers from commit cb8ddfa7 (fused 16.29 -> 6.82, deep 23.8% -> 8.7%).
+    rewrite_summary = {
+        "detect_scan_original_saved": {
+            "ai_score": 16.29,
+            "ai_risk_badge": {
+                "ai_likelihood_score": 16.29,
+                "tier_authority": {
+                    "source": "v7_fused", "fused_score": 16.29, "composite_score": 5.0, "proportion": 0.238,
+                },
+            },
+        },
+        "detect_scan_rewritten": {
+            "ai_score": 6.82,
+            "ai_risk_badge": {
+                "ai_likelihood_score": 6.82,
+                "tier_authority": {
+                    "source": "v7_fused", "fused_score": 6.82, "composite_score": 4.0, "proportion": 0.087,
+                },
+            },
+        },
+    }
+    payload = build_rewrite_completion_email(
+        recipient_email="student@example.com",
+        rewrite_id="rewrite-1",
+        scan_id="scan-1",
+        final_text="Rewritten content here.",
+        rewrite_summary=rewrite_summary,
+        settings=_settings(),
+    )
+
+    assert "AI likelihood: 16% -> 7%" in payload["text"]
+    assert "Evidence: composite 5 -> 4, deep-scan 23.8% -> 8.7%" in payload["text"]
+
+
+def test_build_rewrite_completion_email_legacy_before_after_without_tier_authority():
+    # Legacy rewrite (no V7 tier_authority block): still shows the before/after AI-likelihood
+    # lead from the plain ai_score, but never fabricates composite/deep-scan evidence lines.
+    rewrite_summary = {
+        "detect_scan_original_saved": {"ai_score": 40.0, "ai_risk_badge": {"ai_likelihood_score": 40.0}},
+        "detect_scan_rewritten": {"ai_score": 12.0, "ai_risk_badge": {"ai_likelihood_score": 12.0}},
+    }
+    payload = build_rewrite_completion_email(
+        recipient_email="student@example.com",
+        rewrite_id="rewrite-1",
+        scan_id="scan-1",
+        final_text="Rewritten content here.",
+        rewrite_summary=rewrite_summary,
+        settings=_settings(),
+    )
+
+    assert "AI likelihood: 40% -> 12%" in payload["text"]
+    assert "Evidence:" not in payload["text"]
+
+
+def test_build_rewrite_completion_email_no_summary_omits_fused_lead():
+    # No rewrite_summary at all (absent detect-scan comparison) -> fails open to the plain
+    # rewritten-content email; must not crash and must not print a fabricated lead.
+    payload = build_rewrite_completion_email(
+        recipient_email="student@example.com",
+        rewrite_id="rewrite-1",
+        scan_id="scan-1",
+        final_text="Rewritten content here.",
+        rewrite_summary=None,
+        settings=_settings(),
+    )
+
+    assert "AI likelihood:" not in payload["text"]
+    assert "Evidence:" not in payload["text"]
+    assert "Rewritten content here." in payload["text"]
+
+
 def test_build_rewrite_completion_email_truncates_large_content():
     payload = build_rewrite_completion_email(
         recipient_email="student@example.com",
