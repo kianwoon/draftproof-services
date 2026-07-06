@@ -316,7 +316,20 @@ def render_authorship_breakdown(report_data: dict) -> str:
 
 
 def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> str:
-    """Hero + KPI row + priority fixes + '1. Submission and policy view'.
+    """Scan-PDF lead. PAGE-PARITY contract (owner rule 2026-07-06: the PDF must
+    show what the scan page shows — nothing more):
+
+    In merged/V7 mode (``suppress_ai_likelihood=True``, i.e. an authorship
+    breakdown is present) this renders ONLY the scan page's merged-card
+    content: the hero verdict, the "Where the risk sits" axis levels, and the
+    score-scale table. The old PDF-only blocks — KPI row, "Priority fixes",
+    numeric policy cards ("AI allowed with declaration 34" etc.), the axis
+    "What it means" column, and the "Plain-English verdict" — exist on the
+    web ONLY in rewrite-comparison mode (Report.jsx gates PolicyRiskView on
+    hasRewriteSignalComparison), so scan PDFs must not show them.
+
+    Legacy mode (no breakdown — pre-V7 stored reports) keeps the original
+    richer lead unchanged.
 
     Returns "" when the submission-risk diagnosis abstained, so render_report
     keeps the legacy lead as a fallback.
@@ -397,7 +410,11 @@ def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> s
         + "</div></div>"
     )
 
-    # ── KPI stat row ───────────────────────────────────────────────
+    # Page-parity mode: the merged/V7 path (see docstring). Everything below
+    # that the scan page does not render is skipped in this mode.
+    page_parity = bool(suppress_ai_likelihood)
+
+    # ── KPI stat row (legacy mode only — the scan page has no KPI row) ──
     contribution = {}
     try:
         transformation = badge.get("transformation_classification") or {}
@@ -422,7 +439,7 @@ def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> s
     # >= 1 (not 2): the merged block suppresses the AI-likelihood KPI (it shows once
     # in the co-located headline), so this row can legitimately carry a single stat
     # (e.g. "Words scanned") — never drop it just because it is alone.
-    if len(kpis) >= 1:
+    if not page_parity and len(kpis) >= 1:
         out.append(
             '<div class="dp-kpi-row">'
             + "".join(f'<div class="dp-kpi"><b>{escape(v)}</b><span>{escape(c)}</span></div>' for v, c in kpis)
@@ -435,7 +452,7 @@ def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> s
         (k for k in _DIAG_BUCKET_LABELS if k in buckets and k in _DIAG_BUCKET_FIX),
         key=lambda k: -(buckets[k].get("score") or 0),
     )[:3]
-    if ranked:
+    if ranked and not page_parity:
         items = "".join(f"<li>{escape(_DIAG_BUCKET_FIX[k])}</li>" for k in ranked)
         out.append(
             '<div class="dp-callout dp-callout--good">'
@@ -443,17 +460,25 @@ def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> s
             f"<ol>{items}</ol></div>"
         )
 
-    # ── 1. Submission and policy view ──────────────────────────────
-    out.append("## 1. Submission and policy view")
-    out.append(
-        '<p class="dp-section-intro">This separates three things students often mix up: '
-        "school policy, external-detector attention, and whether you can defend the work as your own.</p>"
-    )
+    # ── 1. Where the risk sits (page parity) / Submission and policy view (legacy) ──
+    if page_parity:
+        out.append("## 1. Where the risk sits")
+        out.append(
+            '<p class="dp-section-intro">Independent risk axes — the same read as the '
+            "report page's merged card.</p>"
+        )
+    else:
+        out.append("## 1. Submission and policy view")
+        out.append(
+            '<p class="dp-section-intro">This separates three things students often mix up: '
+            "school policy, external-detector attention, and whether you can defend the work as your own.</p>"
+        )
 
     pr = badge.get("policy_risk") or {}
     pa, prr = pr.get("ai_allowed") or {}, pr.get("ai_restricted") or {}
     policy_cards = []
-    if pa.get("level") and pa["level"] != "unknown":
+    # Numeric policy cards are rewrite-comparison-page content — never on scan PDFs.
+    if not page_parity and pa.get("level") and pa["level"] != "unknown":
         policy_cards.append(
             '<div class="dp-policy-head"><span class="dp-ph-name">Policy view</span>'
             '<span class="dp-ph-issue">Main issue</span></div>'
@@ -506,23 +531,51 @@ def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> s
         axis_rows.append((label, current, meaning))
     if axis_rows:
         out.append("")
-        out.append("| Axis | Current read | What it means |")
-        out.append("|------|--------------|----------------|")
-        for a, c, m in axis_rows:
-            out.append(f"| {a} | {c} | {m} |")
+        if page_parity:
+            # Page parity: the merged card shows axis name + level only.
+            out.append("| Axis | Current read |")
+            out.append("|------|--------------|")
+            for a, c, _m in axis_rows:
+                out.append(f"| {a} | {c} |")
+        else:
+            out.append("| Axis | Current read | What it means |")
+            out.append("|------|--------------|----------------|")
+            for a, c, m in axis_rows:
+                out.append(f"| {a} | {c} | {m} |")
         out.append("")
 
-    # Plain-English verdict callout (amber).
-    verdict = "The draft is not primarily risky because it looks AI-written. "
-    if driver_label:
-        verdict += f"It is risky because it reads too broad and under-evidenced — the main gap is {driver_label.lower()}."
+    if page_parity:
+        # Score-scale table — the page's "What do these numbers mean?" details
+        # block. Also grounds the fused headline's "See the DraftProof scale"
+        # reference, which previously pointed at nothing in the PDF.
+        # allow-hardcode: display copy — KEEP IN SYNC with
+        # draftproof-frontend/src/i18n/en/report.js report.submissionRisk.scale.
+        out.append("**What do these numbers mean?**")
+        out.append("")
+        out.append("| DraftProof score | Reads as | What we measured |")
+        out.append("|------------------|----------|-------------------|")
+        out.append("| 0–32 | Low | ~6% or fewer real ESL students score this high — most human writing lands well under this |")
+        out.append("| 32–48 | Medium | uncommon for genuine human writing (0.4% false-positive rate measured) |")
+        out.append("| 48–65 | High | rare for genuine human writing (<1% false-positive rate measured) |")
+        out.append("| 65+ | Critical | essentially never seen in genuine human writing in our testing (0% false-positive rate measured) |")
+        out.append("")
+        out.append(
+            '<p class="dp-hero-sub">DraftProof\'s score is not comparable to Turnitin\'s '
+            "percentage — the two tools measure different things on different scales.</p>"
+        )
     else:
-        verdict += "It is risky when claims are broad and under-evidenced for a student submission."
-    out.append(
-        '<div class="dp-callout dp-callout--warn">'
-        '<span class="dp-callout-title">Plain-English verdict</span>'
-        f"<p>{escape(verdict)}</p></div>"
-    )
+        # Plain-English verdict callout (amber) — legacy lead only; the scan
+        # page has no such box.
+        verdict = "The draft is not primarily risky because it looks AI-written. "
+        if driver_label:
+            verdict += f"It is risky because it reads too broad and under-evidenced — the main gap is {driver_label.lower()}."
+        else:
+            verdict += "It is risky when claims are broad and under-evidenced for a student submission."
+        out.append(
+            '<div class="dp-callout dp-callout--warn">'
+            '<span class="dp-callout-title">Plain-English verdict</span>'
+            f"<p>{escape(verdict)}</p></div>"
+        )
 
     return "\n".join(out)
 
@@ -608,15 +661,18 @@ def rewrite_hero(*, result_label, explanation, outcome, ai_improved, score_worse
     return hero + "\n" + kpi
 
 
-def render_question_cards(badge) -> str:
-    """Restyled Critical-Thinking questions as purple cards. "" when no questions."""
+def render_question_cards(badge, section_no: int = 3) -> str:
+    """Restyled Critical-Thinking questions as purple cards. "" when no questions.
+
+    ``section_no`` is supplied by render.py's dynamic numbering (sections
+    render conditionally per page parity, so the number can't be a literal)."""
     ctc = (badge or {}).get("critical_thinking_control") or {}
     rows = [q for q in (ctc.get("questions") or [])
             if isinstance(q, dict) and str(q.get("question") or "").strip()]
     if not rows:
         return ""
     out = [
-        "## 3. Questions to sharpen your thinking",
+        f"## {section_no}. Questions to sharpen your thinking",
         '<p class="dp-section-intro">These are not accusations. They push you to add evidence, '
         "scope, and judgement — the answers are yours to write.</p>",
     ]

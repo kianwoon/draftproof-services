@@ -59,8 +59,15 @@ def test_merged_render_shows_ai_likelihood_once():
     html = render_merged_authorship_risk(report, data)
     # The composition bars are present (authorship co-located).
     assert "dp-abd-bars" in html
-    # The richer submission section is preserved.
-    assert "1. Submission and policy view" in html
+    # PAGE PARITY (owner rule 2026-07-06): the merged scan lead mirrors the
+    # page's card — axis levels + scale, WITHOUT the rewrite-only policy
+    # cards / plain-English verdict / priority fixes.
+    assert "1. Where the risk sits" in html
+    assert "Submission and policy view" not in html
+    assert "AI allowed with declaration" not in html
+    assert "Plain-English verdict" not in html
+    assert "Priority fixes" not in html
+    assert "What do these numbers mean?" in html
     # The AI-likelihood % appears exactly once (de-duped): count the fused headline phrase.
     assert html.count("DraftProof AI-likelihood") == 1
 

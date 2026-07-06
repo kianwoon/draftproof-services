@@ -68,7 +68,11 @@ def test_markdown_leads_with_draftproof_and_orders_before_calibration():
     # estimate first; it must still appear before the calibration section.
     assert "DraftProof AI-style estimate" in md
     assert "42%" in md
-    assert md.index("DraftProof AI-style estimate") < md.index("Calibration summary")
+    # PAGE PARITY (owner rule 2026-07-06): "Calibration summary" is rewrite-
+    # comparison content — a plain SCAN markdown must not contain it, and the
+    # lead must precede the Findings section.
+    assert "Calibration summary" not in md
+    assert md.index("DraftProof AI-style estimate") < md.index("Findings")
     if EXTERNAL_ESTIMATE_DISPLAY_ENABLED:
         assert "~60%" in md and "likely to be flagged" in md
     else:

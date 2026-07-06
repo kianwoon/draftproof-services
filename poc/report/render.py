@@ -1695,76 +1695,89 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
         lines.append("")
 
-    # ── 2. CALIBRATION SUMMARY ────────────────────────────────────
-    lines.append("## 2. Calibration summary")
-    lines.append(
-        '<p class="dp-section-intro">How DraftProof reads the writing signal — shown with its '
-        "uncertainty, not hidden.</p>"
-    )
-    lines.append("")
-
-    # At-a-glance severity strip (findings breakdown the chart doesn't show).
-    _glance = [
-        (k, n, lbl)
-        for k, n, lbl in (
-            ("critical", n_critical, "Critical"),
-            ("high", n_high, "High"),
-            ("medium", n_medium, "Medium"),
-            ("low", n_low, "Low"),
+    # ── CALIBRATION SUMMARY (rewrite PDFs only — page parity) ─────
+    # The writing-signal pattern card ("Human / uncertain pattern", severity
+    # chips) exists on the web ONLY in rewrite-comparison mode (Report.jsx
+    # gates the transformation scorecard on hasRewriteSignalComparison); a
+    # plain scan page never shows it, so scan PDFs must not either (owner
+    # rule 2026-07-06: PDF == scan page).
+    # The merged/V7 lead renders "## 1. Where the risk sits" (and the legacy
+    # rich lead renders "## 1. Submission and policy view"); the fallback
+    # headline lead has no numbered section, so numbering starts at 0 there.
+    _section_no = 1 if _lead else 0
+    if report.rewrite:
+        _section_no += 1
+        lines.append(f"## {_section_no}. Calibration summary")
+        lines.append(
+            '<p class="dp-section-intro">How DraftProof reads the writing signal — shown with its '
+            "uncertainty, not hidden.</p>"
         )
-        if n
-    ]
-    if _glance:
-        _spans = "".join(
-            f'<span class="dp-glance--{k}"><b>{n}</b> {lbl}</span>' for k, n, lbl in _glance
-        )
-        lines.append(f'<div class="dp-glance">{_spans}</div>')
         lines.append("")
 
-    signal_chart = _executive_signal_chart_html(
-        report,
-        data,
-        n_critical=n_critical,
-        n_high=n_high,
-        n_medium=n_medium,
-        n_low=n_low,
-        total=total,
-    )
-    if signal_chart:
-        lines.append(signal_chart)
-    else:
-        display_tier = tier.value.upper()
-        if report.ai_risk_badge:
-            badge_tier_val = str(report.ai_risk_badge.get("tier", "")).upper()
-            if badge_tier_val:
-                display_tier = _BADGE_TIER_LABELS.get(badge_tier_val, badge_tier_val)
+        # At-a-glance severity strip (findings breakdown the chart doesn't show).
+        _glance = [
+            (k, n, lbl)
+            for k, n, lbl in (
+                ("critical", n_critical, "Critical"),
+                ("high", n_high, "High"),
+                ("medium", n_medium, "Medium"),
+                ("low", n_low, "Low"),
+            )
+            if n
+        ]
+        if _glance:
+            _spans = "".join(
+                f'<span class="dp-glance--{k}"><b>{n}</b> {lbl}</span>' for k, n, lbl in _glance
+            )
+            lines.append(f'<div class="dp-glance">{_spans}</div>')
+            lines.append("")
 
-        lines.append("| Metric | Value |")
-        lines.append("|--------|-------|")
-        lines.append(f"| **Integrity Tier** | **{display_tier}** |")
-        lines.append(f"| **Total Findings** | **{total}** |")
-        lines.append(f"| Scan Time | `{report.scan_time_seconds:.1f}s` |")
-        if report.generated_at:
-            lines.append(f"| Generated | {report.generated_at} |")
-        sev_parts = []
-        if n_critical: sev_parts.append(f"{n_critical} Critical")
-        if n_high: sev_parts.append(f"{n_high} High")
-        if n_medium: sev_parts.append(f"{n_medium} Medium")
-        if n_low: sev_parts.append(f"{n_low} Low")
-        if sev_parts:
-            lines.append(f"| **Breakdown** | {' / '.join(sev_parts)} |")
-        lines.append("")
+        signal_chart = _executive_signal_chart_html(
+            report,
+            data,
+            n_critical=n_critical,
+            n_high=n_high,
+            n_medium=n_medium,
+            n_low=n_low,
+            total=total,
+        )
+        if signal_chart:
+            lines.append(signal_chart)
+        else:
+            display_tier = tier.value.upper()
+            if report.ai_risk_badge:
+                badge_tier_val = str(report.ai_risk_badge.get("tier", "")).upper()
+                if badge_tier_val:
+                    display_tier = _BADGE_TIER_LABELS.get(badge_tier_val, badge_tier_val)
 
-    # ── 3. QUESTIONS TO SHARPEN YOUR THINKING ─────────────────────
+            lines.append("| Metric | Value |")
+            lines.append("|--------|-------|")
+            lines.append(f"| **Integrity Tier** | **{display_tier}** |")
+            lines.append(f"| **Total Findings** | **{total}** |")
+            lines.append(f"| Scan Time | `{report.scan_time_seconds:.1f}s` |")
+            if report.generated_at:
+                lines.append(f"| Generated | {report.generated_at} |")
+            sev_parts = []
+            if n_critical: sev_parts.append(f"{n_critical} Critical")
+            if n_high: sev_parts.append(f"{n_high} High")
+            if n_medium: sev_parts.append(f"{n_medium} Medium")
+            if n_low: sev_parts.append(f"{n_low} Low")
+            if sev_parts:
+                lines.append(f"| **Breakdown** | {' / '.join(sev_parts)} |")
+            lines.append("")
+
+    # ── QUESTIONS TO SHARPEN YOUR THINKING ────────────────────────
     from .render_panels import render_question_cards
-    _ct_questions = render_question_cards(report.ai_risk_badge)
+    _ct_questions = render_question_cards(report.ai_risk_badge, section_no=_section_no + 1)
     if _ct_questions:
+        _section_no += 1
         lines.append("")
         lines.append(_ct_questions)
 
-    # ── FINDINGS (numbered 3 or 4 depending on whether questions showed) ──
+    # ── FINDINGS (numbering follows whichever sections rendered) ──
+    _section_no += 1
     lines.append("")
-    lines.append(f"## {4 if _ct_questions else 3}. Findings")
+    lines.append(f"## {_section_no}. Findings")
     lines.append("")
 
     finding_num = 0
