@@ -38,3 +38,6 @@ poc/calibration/_persuade_raw/
 
 # V7 re-tune generated manifest (contains local_only SCoCESLE rows; never commit)
 poc/calibration/retune/corpus/
+
+# V7 re-tune paid-recalibration staging (candidate artifacts only; never committed baselines)
+poc/calibration/retune/staging/
