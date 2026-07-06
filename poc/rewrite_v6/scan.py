@@ -59,9 +59,10 @@ def scan_text_with_report(text: str, report: dict[str, Any] | None) -> Scan:
         return base
     scan = _scan_from_paragraphs(base.source_text, paragraphs)
     report_findings = _report_findings(report, paragraphs)
-    if not report_findings:
+    deep_scan_findings = _deep_scan_findings(report, paragraphs)
+    if not report_findings and not deep_scan_findings:
         return scan
-    findings = _merge_findings(scan.findings, report_findings)
+    findings = _merge_findings(scan.findings, [*report_findings, *deep_scan_findings])
     return Scan(
         source_text=scan.source_text,
         paragraphs=scan.paragraphs,
@@ -70,6 +71,7 @@ def scan_text_with_report(text: str, report: dict[str, Any] | None) -> Scan:
             **scan.scores,
             "finding_count": float(len(findings)),
             "report_finding_count": float(len(report_findings)),
+            "deep_scan_finding_count": float(len(deep_scan_findings)),
         },
     )
 
@@ -267,6 +269,72 @@ def _report_findings(report: dict[str, Any], paragraphs: list[Paragraph]) -> lis
                 tags=tags,
                 severity=round(max(12.0, float(entry["severity"])), 3),
                 evidence=evidence,
+            )
+        )
+    return findings
+
+
+def _deep_scan_findings(report: dict[str, Any], paragraphs: list[Paragraph]) -> list[Finding]:
+    """Rewrite targets from the V7 deep-scan per-paragraph rows.
+
+    The scan's user-facing verdict is the V7 fused score, whose per-paragraph evidence lives at
+    ``badge.tier_authority.paragraphs`` (poc/detect_v7/pipeline_bridge._per_paragraph_proportions) —
+    NOT in the legacy findings/highlight_segments the rewrite already consumes. Without this, a
+    paragraph flagged ONLY by the deep scan is never rewritten, so the rewrite fails to mitigate
+    the exact signal the user was shown. Rows use a body-paragraph ordinal that EXCLUDES
+    single-line heading blocks; the mapping below reuses the SAME heading heuristic the bridge
+    used to build the rows, and fails open (no findings) on any mismatch — never a wrong target.
+    Rows banded "insufficient" (below the weights.json reliability floor) carry no verdict weight
+    on the scan page, so they do not drive targeting either.
+    """
+    badge = report.get("ai_risk_badge") if isinstance(report.get("ai_risk_badge"), dict) else {}
+    tier_authority = badge.get("tier_authority") if isinstance(badge.get("tier_authority"), dict) else {}
+    rows = tier_authority.get("paragraphs")
+    if not isinstance(rows, list) or not rows or not paragraphs:
+        return []
+    try:
+        from poc.detect.document_structure import _looks_like_heading
+    except ImportError:
+        try:
+            from detect.document_structure import _looks_like_heading
+        except ImportError:
+            return []
+    body_paragraphs = [
+        paragraph
+        for paragraph in paragraphs
+        if not ("\n" not in paragraph.text.strip() and _looks_like_heading(paragraph.text.strip()))
+    ]
+    findings: list[Finding] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("band") or "") == "insufficient":
+            continue
+        try:
+            ordinal = int(row.get("index"))
+            proportion = float(row.get("proportion"))
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= ordinal < len(body_paragraphs):
+            continue
+        paragraph = body_paragraphs[ordinal]
+        if not paragraph.sentences:
+            continue
+        anchor = paragraph.sentences[0]
+        findings.append(
+            Finding(
+                sentence_id=anchor.id,
+                paragraph_id=paragraph.id,
+                tags=["deep_scan_ai_flag"],
+                severity=round(max(12.0, proportion * 100.0), 3),
+                evidence={
+                    "text": anchor.text,
+                    "source": "v7_deep_scan",
+                    "proportion": proportion,
+                    "flagged_count": row.get("flagged_count"),
+                    "sentence_count": row.get("sentence_count"),
+                    "band": row.get("band"),
+                },
             )
         )
     return findings
