@@ -72,3 +72,45 @@ def test_policy_composer_fields_in_keep_list():
     # Lock the contract: PDF + page both read these off the stored badge.
     for key in ("policy_risk", "submission_risk", "grounding_diagnosis", "critical_thinking_control"):
         assert key in SCAN_BADGE_KEYS
+
+def test_compaction_retains_v7_fused_evidence():
+    # Regression (rewrite 9a29e56a, 2026-07-07): the rewrite's before/after scans stored
+    # only the bare ai_likelihood_score — the number WAS V7-fused, but tier_authority &
+    # friends were stripped, so every surface (page, PDF, stored JSON) rendered the
+    # composite-era framing and the rewrite comparison looked "still V6". The fused
+    # provenance must survive storage; tier_authority also feeds render_rewrite's
+    # deep-scan KPI (_deep_scan_pct reads badge.tier_authority.proportion).
+    scan = {
+        "ai_risk_badge": {
+            "ai_likelihood_score": 6.82,
+            "tier": "green",
+            "tier_authority": {
+                "source": "v7_fused",
+                "fused_score": 6.82,
+                "composite_score": 4.0,
+                "proportion": 0.087,
+                "paragraphs": [
+                    {"index": 0, "sentence_count": 5, "flagged_count": 1,
+                     "proportion": 0.2, "band": "amber"},
+                ],
+            },
+            "tier_authority_status": {"enabled": True, "applied": True},
+            "authorship_breakdown": {"paragraph_count": 4},
+            "ai_signal_deberta": {"available": True},
+            "signal_source": "deberta_authoritative",
+        }
+    }
+    badge = compact_rewrite_scan_summary(scan)["ai_risk_badge"]
+    assert badge["tier_authority"]["source"] == "v7_fused"
+    assert badge["tier_authority"]["proportion"] == 0.087
+    assert badge["tier_authority"]["paragraphs"][0]["band"] == "amber"
+    assert badge["tier_authority_status"] == {"enabled": True, "applied": True}
+    assert badge["authorship_breakdown"] == {"paragraph_count": 4}
+    assert badge["ai_signal_deberta"] == {"available": True}
+    assert badge["signal_source"] == "deberta_authoritative"
+
+
+def test_v7_keys_locked_in_contract():
+    for key in ("tier_authority", "tier_authority_status", "authorship_breakdown",
+                "ai_signal_deberta", "signal_source"):
+        assert key in SCAN_BADGE_KEYS, key

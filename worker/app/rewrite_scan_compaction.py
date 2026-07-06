@@ -26,6 +26,17 @@ SCAN_BADGE_KEYS = (
     "submission_risk",
     "grounding_diagnosis",
     "critical_thinking_control",
+    # V7 fused-score evidence (badge fields from report builder when the V7 flags are on).
+    # WITHOUT these the rewrite's stored before/after scans carry only the bare
+    # ai_likelihood_score: the number IS fused, but every surface loses the proof and
+    # renders the composite-era framing — the rewrite comparison looked "still V6" while
+    # the underlying scores were fused (observed live on rewrite 9a29e56a, 2026-07-07).
+    # tier_authority also feeds render_rewrite's deep-scan KPI (_deep_scan_pct).
+    "tier_authority",
+    "tier_authority_status",
+    "authorship_breakdown",
+    "ai_signal_deberta",
+    "signal_source",
 )
 
 TRANSFORMATION_KEYS = (
