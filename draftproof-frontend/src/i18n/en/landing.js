@@ -429,21 +429,6 @@ export const landing = {
       "summary": "Sharpen your thinking"
     }
   ],
-  "sampleVerdictCaption": "AI-writing signal",
-  "sampleVerdictLine": "Low AI-writing signal — low on our scale — but detectors over-flag fluent writing, so they may still flag it (a warning, not a verdict).",
-  "sampleMainFixLabel": "Main thing to fix",
-  "sampleMainFixDriver": "Grounding gap",
-  "sampleMainFixAction": "Add concrete anchors, named evidence, and specifics.",
-  "sampleRiskContributorsHeading": "Risk contributors",
-  "sampleLowerIsBetter": "Lower is better",
-  // allow-hardcode: illustrative sample-report bar values shown on the landing page —
-  // fixed marketing example, never compared against document content, not a scoring oracle.
-  "sampleGroundingBuckets": [
-    { "label": "Grounding gap", "value": 58 },
-    { "label": "Authorship uncertainty", "value": 34 },
-    { "label": "AI-like patterning", "value": 22 },
-    { "label": "Generic language texture", "value": 15 }
-  ],
   // allow-hardcode: static sample-report UI copy (illustrative reflective questions
   // shown on the landing page), anchored to the fixed sample essay above — never
   // compared against any user document, not a scoring/matching oracle.

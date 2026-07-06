@@ -427,21 +427,6 @@ export const landing = {
       "summary": "深化你的思考"
     }
   ],
-  "sampleVerdictCaption": "AI 写作信号",
-  "sampleVerdictLine": "AI 写作信号低——在我们的量表上属于低风险——但检测工具容易误判流畅的写作，因此仍可能被标记（这是一个提醒，不是判定）。",
-  "sampleMainFixLabel": "首要修复项",
-  "sampleMainFixDriver": "依据缺口",
-  "sampleMainFixAction": "补充具体的依据、指名的证据和细节。",
-  "sampleRiskContributorsHeading": "风险构成因素",
-  "sampleLowerIsBetter": "数值越低越好",
-  // allow-hardcode: illustrative sample-report bar values shown on the landing page —
-  // fixed marketing example, never compared against document content, not a scoring oracle.
-  "sampleGroundingBuckets": [
-    { "label": "依据缺口", "value": 58 },
-    { "label": "作者身份不确定性", "value": 34 },
-    { "label": "AI 式行文模式", "value": 22 },
-    { "label": "泛化语言质感", "value": 15 }
-  ],
   // allow-hardcode: static sample-report UI copy (illustrative reflective questions
   // shown on the landing page), anchored to the fixed sample essay above — never
   // compared against any user document, not a scoring/matching oracle.

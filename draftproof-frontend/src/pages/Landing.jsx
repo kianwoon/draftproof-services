@@ -3,20 +3,12 @@ import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
-import PolicyRiskView from './report/PolicyRiskView';
 import MergedAuthorshipRisk from './report/MergedAuthorshipRisk';
 import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 // Representative Submission-risk shape for the marketing sample report. Mirrors the
 // real ai_risk_badge.submission_risk object; values are an illustrative example, not
 // a scoring oracle (the band's labels come from i18n report.submissionRisk.*).
-// Representative two-policy-score sample for the marketing card. Same draft reads
-// differently by school policy (the whole point). Illustrative, not a scoring oracle.
-const SAMPLE_POLICY_RISK = {
-  ai_allowed: { score: 38, level: 'moderate', main_issue: 'grounding_gap', confirm_factor: 'declaration_gap', confirm_delta: 7, confirm_level: 'moderate' },
-  ai_restricted: { score: 52, level: 'high', main_issue: 'surface_ai_text_signal', confirm_factor: 'process_defensibility_gap', confirm_delta: 5, confirm_level: 'high' },
-};
-
 const SAMPLE_SUBMISSION_RISK = {
   overall: { level: 'high', main_reason_code: 'ownership' },
   axes: {
@@ -831,7 +823,6 @@ function SampleReportPreview() {
   const [activeSection, setActiveSection] = useState('authorshipBreakdown');
   const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [isHoverPaused, setIsHoverPaused] = useState(false);
-  const sampleGroundingBuckets = t('landing.sampleGroundingBuckets', { returnObjects: true });
   const sampleActionItems = t('landing.sampleActionItems', { returnObjects: true });
   const sampleFlaggedSentences = t('landing.sampleFlaggedSentences', { returnObjects: true });
   const sampleCriticalQuestions = t('landing.sampleCriticalQuestions', { returnObjects: true });
@@ -887,6 +878,7 @@ function SampleReportPreview() {
         {activeSection === 'authorshipBreakdown' && (
           <MergedAuthorshipRisk
             t={t}
+            sections={['header', 'composition']}
             breakdown={SAMPLE_AUTHORSHIP_BREAKDOWN}
             sr={SAMPLE_SUBMISSION_RISK}
             authoritativeTier="green"
@@ -894,29 +886,14 @@ function SampleReportPreview() {
           />
         )}
         {activeSection === 'aiSignal' && (
-          <>
-            <PolicyRiskView t={t} pr={SAMPLE_POLICY_RISK} />
-            <div className="sample-section-card">
-              <div className="sample-section-card-head">
-                <span>{t('landing.sampleVerdictCaption')}</span>
-                <h3>{t('landing.sampleVerdictLine')}</h3>
-              </div>
-              <p>
-                <strong>{t('landing.sampleMainFixLabel')}: {t('landing.sampleMainFixDriver')}</strong>
-                {' — '}
-                {t('landing.sampleMainFixAction')}
-              </p>
-              <div className="sample-risk-contributors-head">
-                <span>{t('landing.sampleRiskContributorsHeading')}</span>
-                <span>{t('landing.sampleLowerIsBetter')}</span>
-              </div>
-              <div className="sample-profile-bars">
-                {sampleGroundingBuckets.map((bucket) => (
-                  <SampleSignalBar key={bucket.label} label={bucket.label} value={bucket.value} tone="ai" />
-                ))}
-              </div>
-            </div>
-          </>
+          <MergedAuthorshipRisk
+            t={t}
+            sections={['verdict', 'riskAxes', 'disclaimer']}
+            breakdown={SAMPLE_AUTHORSHIP_BREAKDOWN}
+            sr={SAMPLE_SUBMISSION_RISK}
+            authoritativeTier="green"
+            tierAuthority={SAMPLE_TIER_AUTHORITY}
+          />
         )}
 
         {activeSection === 'actionPlan' && (
@@ -1000,19 +977,5 @@ function SampleReportPreview() {
         )}
       </div>
     </article>
-  );
-}
-
-function SampleSignalBar({ label, value, tone }) {
-  return (
-    <div className="sample-signal-row">
-      <div className="sample-signal-row-label">
-        <span>{label}</span>
-        <strong>{value}%</strong>
-      </div>
-      <div className="sample-signal-track">
-        <i className={`is-${tone}`} style={{ width: `${value}%` }} />
-      </div>
-    </div>
   );
 }

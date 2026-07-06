@@ -137,10 +137,19 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority }) {
   );
 }
 
-export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority }) {
+// `sections` lets a caller render only a slice of this real card (e.g. the landing
+// page's marketing preview splits the composition lens and the verdict+risk lens
+// across two tabs) instead of re-implementing the markup as a separate mockup.
+// Omitting `sections` (every Report.jsx call site) renders every section, unchanged.
+const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'scale', 'disclaimer'];
+
+export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, sections }) {
   const hasBreakdown = !!breakdown;
   const hasSr = !!(sr && sr.overall && sr.overall.level);
   if (!hasBreakdown && !hasSr) return null;
+
+  const activeSections = sections || ALL_SECTIONS;
+  const show = (name) => activeSections.includes(name);
 
   const rawShares = (breakdown && breakdown.document_breakdown_raw) || {};
   const bandShares = (breakdown && breakdown.document_breakdown_bands) || {};
@@ -150,59 +159,65 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
 
   return (
     <section className="merged-authorship-risk" aria-label={t('report.merged.title')}>
-      <div className="merged-head">
-        <h3>
-          {t('report.merged.title')}
-          <span className="merged-beta-chip">{t('report.authorshipBreakdown.betaChip')}</span>
-        </h3>
-        <p className="merged-subtitle">{t('report.merged.subtitle')}</p>
-      </div>
+      {show('header') && (
+        <div className="merged-head">
+          <h3>
+            {t('report.merged.title')}
+            <span className="merged-beta-chip">{t('report.authorshipBreakdown.betaChip')}</span>
+          </h3>
+          <p className="merged-subtitle">{t('report.merged.subtitle')}</p>
+        </div>
+      )}
 
-      <VerdictBand
-        t={t}
-        breakdown={breakdown}
-        sr={hasSr ? sr : null}
-        authoritativeTier={authoritativeTier}
-        tierAuthority={tierAuthority}
-      />
+      {show('verdict') && (
+        <VerdictBand
+          t={t}
+          breakdown={breakdown}
+          sr={hasSr ? sr : null}
+          authoritativeTier={authoritativeTier}
+          tierAuthority={tierAuthority}
+        />
+      )}
 
-      <div className="merged-lenses">
-        {hasBreakdown && (
-          <div className="merged-lens">
-            <p className="merged-lens-head">
-              {t('report.merged.compositionLens')}{' '}
-              <span className="merged-lens-note">· {t('report.merged.compositionLensNote')}</span>
-            </p>
-            <div className="merged-comp-bars">
-              {CATEGORY_ORDER.map((category) => (
-                <CategoryBar key={category} t={t} category={category} raw={rawShares[category]} band={bandShares[category]} />
-              ))}
+      {(show('composition') || show('riskAxes')) && (
+        <div className="merged-lenses">
+          {show('composition') && hasBreakdown && (
+            <div className="merged-lens">
+              <p className="merged-lens-head">
+                {t('report.merged.compositionLens')}{' '}
+                <span className="merged-lens-note">· {t('report.merged.compositionLensNote')}</span>
+              </p>
+              <div className="merged-comp-bars">
+                {CATEGORY_ORDER.map((category) => (
+                  <CategoryBar key={category} t={t} category={category} raw={rawShares[category]} band={bandShares[category]} />
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {hasSr && (
-          <div className="merged-lens">
-            <p className="merged-lens-head">
-              {t('report.merged.riskLens')}{' '}
-              <span className="merged-lens-note">· {t('report.merged.riskLensNote')}</span>
-            </p>
-            <div className="merged-risk-axes">
-              {SUBMISSION_RISK_AXES.map((key) => {
-                const lvl = (axes[key] || {}).level || 'unknown';
-                return (
-                  <div className={`merged-axis is-${lvl}`} key={key}>
-                    <span>{t(`report.submissionRisk.axes.${key}`)}</span>
-                    <strong>{t(`report.submissionRisk.levels.${lvl}`)}</strong>
-                  </div>
-                );
-              })}
+          {show('riskAxes') && hasSr && (
+            <div className="merged-lens">
+              <p className="merged-lens-head">
+                {t('report.merged.riskLens')}{' '}
+                <span className="merged-lens-note">· {t('report.merged.riskLensNote')}</span>
+              </p>
+              <div className="merged-risk-axes">
+                {SUBMISSION_RISK_AXES.map((key) => {
+                  const lvl = (axes[key] || {}).level || 'unknown';
+                  return (
+                    <div className={`merged-axis is-${lvl}`} key={key}>
+                      <span>{t(`report.submissionRisk.axes.${key}`)}</span>
+                      <strong>{t(`report.submissionRisk.levels.${lvl}`)}</strong>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
-      {hasSr && hasScore && (
+      {show('scale') && hasSr && hasScore && (
         <details className="merged-scale" open>
           <summary>{t('report.submissionRisk.scale.toggle')}</summary>
           <div className="merged-scale-content">
@@ -226,19 +241,23 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
         </details>
       )}
 
-      <p className="merged-disclaimer">
-        {(breakdown && breakdown.disclaimer) || t('report.authorshipBreakdown.disclaimer')}
-      </p>
-      <p className="merged-feedback">
-        {t('report.authorshipBreakdown.feedbackPrompt')}{' '}
-        <button
-          type="button"
-          className="merged-feedback-link"
-          onClick={() => window.dispatchEvent(new Event('draftproof:open-feedback'))}
-        >
-          {t('report.authorshipBreakdown.feedbackAction')}
-        </button>
-      </p>
+      {show('disclaimer') && (
+        <>
+          <p className="merged-disclaimer">
+            {(breakdown && breakdown.disclaimer) || t('report.authorshipBreakdown.disclaimer')}
+          </p>
+          <p className="merged-feedback">
+            {t('report.authorshipBreakdown.feedbackPrompt')}{' '}
+            <button
+              type="button"
+              className="merged-feedback-link"
+              onClick={() => window.dispatchEvent(new Event('draftproof:open-feedback'))}
+            >
+              {t('report.authorshipBreakdown.feedbackAction')}
+            </button>
+          </p>
+        </>
+      )}
     </section>
   );
 }
