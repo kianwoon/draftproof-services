@@ -492,6 +492,27 @@ img[src^="https://img.shields.io"] { height: 18px; }
 /* Keep the whole "Where the risk sits" section (heading + all rows) together so
    pagination breaks BEFORE it instead of splitting the risk list mid-way. */
 .dp-cmp-col .dp-cmp-risk-group { break-inside: avoid; page-break-inside: avoid; }
+/* Compact colored risk bands — mirror the web's .merged-axis (06-report-overview.css):
+   label left, level word right, full-row tint by level. Far more compact than the old
+   bordered chip cards, so the whole comparison card now fits without an ugly split. */
+.dp-cmp-axis {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 8pt;
+    padding: 3.5pt 6pt;
+    margin: 3pt 0;
+    border-radius: 4pt;
+    background: #f3f4f6;
+    color: #6b7280;
+    break-inside: avoid;
+}
+.dp-cmp-axis-name { font-weight: 600; }
+.dp-cmp-axis-level { font-weight: 700; }
+.dp-cmp-axis--low { background: #dcfce7; color: #15803d; }
+.dp-cmp-axis--medium { background: #fef3c7; color: #b45309; }
+.dp-cmp-axis--high,
+.dp-cmp-axis--critical { background: #fee2e2; color: #b91c1c; }
 .dp-cmp-kicker {
     margin: 0 0 3pt;
     color: var(--dp-muted);
