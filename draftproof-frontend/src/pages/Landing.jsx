@@ -906,7 +906,7 @@ function SampleReportPreview() {
                 {' — '}
                 {t('landing.sampleMainFixAction')}
               </p>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em', margin: '12px 0 6px' }}>
+              <div className="sample-risk-contributors-head">
                 <span>{t('landing.sampleRiskContributorsHeading')}</span>
                 <span>{t('landing.sampleLowerIsBetter')}</span>
               </div>
