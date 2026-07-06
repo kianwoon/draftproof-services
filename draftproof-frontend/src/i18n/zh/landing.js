@@ -459,20 +459,25 @@ export const landing = {
       "question": "是什么推理让你把这种影响力称为“强大”？你是否权衡过任何反例？"
     }
   ],
-  "findingsSampleId": "S004–S006",
   "findingsSampleType": "AI 可能性",
-  "findingsSampleParagraph": "除经济领域外，美国还拥有强大的文化影响力。美国的电影、音乐、时尚和社交媒体潮流在全球范围内被广泛消费。好莱坞娱乐产业已成为史上最强大的文化出口之一。",
   "findingsSampleDescription": "该段落使用了标准过渡词\"除……之外\"以及其他若干常见短语，使文章读起来较为程式化。",
-  "findingsSignalStrength": "信号强度",
-  "findingsSampleChip1": "段落中 8 个发现",
-  "findingsSampleChip2": "中等优先级",
-  "findingsSampleChip3": "可自动修复",
-  "findingsAlsoDetected": "同时检测到",
-  "findingsSampleAlso": "通用措辞",
-  "findingsMainIssue": "主要问题",
-  "findingsSampleMainIssue": "使用了通用过渡短语和可预测措辞，降低了文章的原创性。",
-  "findingsRewriteHint": "改写提示",
-  "findingsSampleRewriteHint": "示例：\"超越经济领域，美国电影每年覆盖全球190多个国家的观众。\"",
+  "findingsSamplePosition": "2/5",
+  "findingsSampleCount": "段落中有 3 个被标记的句子",
+  // allow-hardcode: illustrative sample flagged-sentence evidence shown on the landing
+  // page — fixed marketing example built from the same sample paragraph used elsewhere
+  // on this page, never compared against document content, not a scoring/matching oracle.
+  "sampleFlaggedSentences": [
+    {
+      "text": "除经济领域外，美国还拥有强大的文化影响力。",
+      "score": 61,
+      "suggestion": "应锚定到具体的例子或来源，而不是泛泛而谈的论断。"
+    },
+    {
+      "text": "好莱坞娱乐产业已成为史上最强大的文化出口之一。",
+      "score": 74,
+      "suggestion": "超越经济领域，美国电影每年覆盖全球190多个国家的观众。"
+    }
+  ],
   "sampleActionItems": [
     {
       "title": "补充引用支撑",

@@ -461,20 +461,25 @@ export const landing = {
       "question": "What reasoning led you to call this influence \"strong\", and did you weigh any counter-examples?"
     }
   ],
-  "findingsSampleId": "S004–S006",
   "findingsSampleType": "AI Likelihood",
-  "findingsSampleParagraph": "In addition to economics, the United States has a strong cultural influence. American movies, music, fashion, and social media trends are consumed globally. The entertainment industry in Hollywood has become one of the most powerful cultural exports in history.",
   "findingsSampleDescription": "The paragraph uses a standard transition \"In addition\" and several other familiar phrases that make the writing sound formulaic.",
-  "findingsSignalStrength": "Signal Strength",
-  "findingsSampleChip1": "8 Findings In Paragraph",
-  "findingsSampleChip2": "MEDIUM Priority",
-  "findingsSampleChip3": "Auto-Fixable",
-  "findingsAlsoDetected": "Also Detected",
-  "findingsSampleAlso": "Generic Phrasing",
-  "findingsMainIssue": "Main Issue to Fix",
-  "findingsSampleMainIssue": "Use of generic transitional phrase and predictable wording that reduces originality.",
-  "findingsRewriteHint": "Rewrite Hint",
-  "findingsSampleRewriteHint": "Example: \"Beyond its economy, American cinema reaches audiences in over 190 countries each year.\"",
+  "findingsSamplePosition": "2/5",
+  "findingsSampleCount": "3 flagged sentences in paragraph",
+  // allow-hardcode: illustrative sample flagged-sentence evidence shown on the landing
+  // page — fixed marketing example built from the same sample paragraph used elsewhere
+  // on this page, never compared against document content, not a scoring/matching oracle.
+  "sampleFlaggedSentences": [
+    {
+      "text": "In addition to economics, the United States has a strong cultural influence.",
+      "score": 61,
+      "suggestion": "Anchor to a specific example or source instead of a general claim."
+    },
+    {
+      "text": "The entertainment industry in Hollywood has become one of the most powerful cultural exports in history.",
+      "score": 74,
+      "suggestion": "Beyond its economy, American cinema reaches audiences in over 190 countries each year."
+    }
+  ],
   "sampleActionItems": [
     {
       "title": "Add citation support",
