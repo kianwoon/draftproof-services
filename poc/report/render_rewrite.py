@@ -535,16 +535,88 @@ def _split_paragraphs(text: str) -> List[str]:
     return [p.strip() for p in re.split(r"\n\s*\n", str(text or "")) if p.strip()]
 
 
-def _highlighted_rewritten_content(sentence_comparison: List[Dict[str, Any]],
-                                   final_text: str) -> List[str]:
-    """'Rewritten Content' with paragraph-level green (changed) / amber (kept) highlights.
+# Sentence-precise span highlight styles — MATCH the web rewrite view's reading
+# (Rewrite.jsx bracketSpans: kind 'improved' -> green, 'kept' -> amber, else plain).
+# allow-hardcode: presentation CSS keyed by machine span-kind codes, not a matching list.
+_SPAN_KIND_STYLE = {
+    "improved": "background:#ecfdf5;border-bottom:2px solid #16a34a;color:#065f46",
+    "kept": "background:#fffbeb;border-bottom:2px dotted #f59e0b;color:#92400e",
+}
 
-    The rewrite pipeline's sentence_comparison is a whole-document before/after entry
-    (index 1, original + rewritten full text, changed flag) — NOT sentence-granular — so
-    highlighting is done per PARAGRAPH: align the original vs rewritten paragraphs and mark
-    each rewritten paragraph GREEN when it differs from its original counterpart, AMBER when
-    it was kept verbatim (source_preserved). Falls open to the plain block when
-    sentence_comparison is empty or unusable."""
+
+def _valid_bracket_spans(spans: Any, text_len: int) -> List[Dict[str, Any]]:
+    """Validate/clamp bracket_grounding_spans against the final text: keep only dicts with
+    int offsets, 0 <= start < end <= len(final_text), a colorable kind, and no overlap with
+    an earlier kept span (sorted by start; overlapping spans are skipped, matching the
+    producer's non-overlap construction in bracket_grounding.py)."""
+    rows = []
+    for sp in (spans or []) if isinstance(spans, list) else []:
+        if not isinstance(sp, dict):
+            continue
+        start, end = sp.get("start"), sp.get("end")
+        if not (isinstance(start, int) and isinstance(end, int)):
+            continue
+        start, end = max(0, start), min(text_len, end)
+        if not (0 <= start < end <= text_len):
+            continue
+        if str(sp.get("kind") or "") not in _SPAN_KIND_STYLE:
+            continue  # unknown kinds render plain — same as the web view
+        rows.append({"start": start, "end": end, "kind": str(sp["kind"])})
+    rows.sort(key=lambda r: r["start"])
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        if out and r["start"] < out[-1]["end"]:
+            continue
+        out.append(r)
+    return out
+
+
+def _escape_with_breaks(text: str) -> str:
+    """HTML-escape a text chunk, preserving paragraph/line breaks inside the flow."""
+    safe = html.escape(text)
+    safe = safe.replace("\n\n", '<br/><span style="display:block;height:6pt"></span>')
+    return safe.replace("\n", "<br/>")
+
+
+def _span_highlighted_rewritten(final_text: str, spans: List[Dict[str, Any]]) -> str:
+    """Render final_text with char-offset-precise green/amber inline spans (the web
+    rewrite view's bracket_grounding_spans reading). '' when no valid spans."""
+    text = str(final_text or "")
+    valid = _valid_bracket_spans(spans, len(text))
+    if not valid:
+        return ""
+    parts: List[str] = []
+    cursor = 0
+    for sp in valid:
+        if sp["start"] > cursor:
+            parts.append(_escape_with_breaks(text[cursor:sp["start"]]))
+        style = _SPAN_KIND_STYLE[sp["kind"]]
+        parts.append(f'<span style="{style}">{_escape_with_breaks(text[sp["start"]:sp["end"]])}</span>')
+        cursor = sp["end"]
+    if cursor < len(text):
+        parts.append(_escape_with_breaks(text[cursor:]))
+    return ('<div class="dp-doc-flow"><div class="dp-hero" style="border-left-color:#94a3b8">'
+            f'<p class="dp-hero-sub">{html.escape(_REWRITE_LEGEND)}</p>'
+            f'<p style="margin:0">{"".join(parts)}</p></div></div>')
+
+
+def _highlighted_rewritten_content(sentence_comparison: List[Dict[str, Any]],
+                                   final_text: str,
+                                   bracket_grounding_spans: Any = None) -> List[str]:
+    """'Rewritten Content' with green (improved) / amber (kept) highlights.
+
+    Precision order (matches the web rewrite view):
+    1. bracket_grounding_spans — char-offset spans over the FINAL text produced by
+       poc/rewrite_v6/bracket_grounding.py (summary.bracket_grounding_spans); kind
+       'improved' -> green, 'kept' -> amber, everything else plain. Sentence-precise.
+    2. Paragraph-level fallback from sentence_comparison (whole-document before/after
+       entry — NOT sentence-granular): rewritten paragraph GREEN when changed, AMBER
+       when kept verbatim.
+    3. Plain text block when neither source is usable."""
+    span_html = _span_highlighted_rewritten(final_text, bracket_grounding_spans)
+    if span_html:
+        return ["## Rewritten Content", "", span_html, ""]
+
     rows = [r for r in (sentence_comparison or []) if isinstance(r, dict)]
     if not rows:
         return _document_section("Rewritten Content", final_text)
@@ -1221,7 +1293,11 @@ def render_rewrite_report(
     _orig_scan_for_highlight = summary.get("detect_scan_original_saved") or summary.get("detect_scan_original") or {}
     lines.extend(_highlighted_submitted_content(
         _orig_scan_for_highlight, original_text, original_scan_report=original_scan_report))
-    lines.extend(_highlighted_rewritten_content(sentence_comparison, final_text))
+    lines.extend(_highlighted_rewritten_content(
+        sentence_comparison, final_text,
+        # Sentence-precise colour spans over the final text (production.py stores them in
+        # the summary; the web view reads the same field).
+        bracket_grounding_spans=summary.get("bracket_grounding_spans")))
     lines.extend(_author_review_card_section(summary))
 
     # ── User-facing action list ─────────────────────────────────────
