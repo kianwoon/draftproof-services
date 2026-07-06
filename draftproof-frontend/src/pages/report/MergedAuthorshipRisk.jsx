@@ -233,10 +233,15 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
                 <span className="merged-dsp-label">
                   {t('report.authorshipBreakdown.deepScan.paragraphs.row', { index: p.index + 1 })}
                 </span>
+                {/* Same pattern as the verdict line: plain bold value + band-label
+                    chip — never a raw number inside a colored chip. */}
+                {p.band !== 'insufficient' && (
+                  <strong className="merged-dsp-value">{Math.round((p.proportion || 0) * 100)}%</strong>
+                )}
                 <span className={`merged-verdict-chip is-${p.band}`}>
                   {p.band === 'insufficient'
-                    ? t('report.authorshipBreakdown.deepScan.paragraphs.insufficient')
-                    : `${Math.round((p.proportion || 0) * 100)}%`}
+                    ? t('report.authorshipBreakdown.deepScan.insufficientChip')
+                    : t(`report.authorshipBreakdown.deepScan.bands.${p.band}`)}
                 </span>
                 <span className="merged-lens-note">
                   {t('report.authorshipBreakdown.deepScan.paragraphs.sentences', { count: p.sentence_count })}

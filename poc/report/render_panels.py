@@ -233,7 +233,8 @@ def _deep_scan_paragraphs_html(breakdown: dict) -> str:
         else:
             chip = _statchip(_ACB_DEEP_SCAN_BAND_LABELS.get(band, band or ""), _level_kind(band))
             value = f"<b>{round(proportion * 100)}%</b> "
-        sentences = f" · {count} sentences" if isinstance(count, int) else ""
+        sentences = (f" · {count} sentence{'' if count == 1 else 's'}"
+                     if isinstance(count, int) else "")
         rows.append(
             '<p class="dp-hero-sub dp-dsp-row">'
             f"Paragraph {idx + 1}: {value}{chip}{escape(sentences)}</p>"
