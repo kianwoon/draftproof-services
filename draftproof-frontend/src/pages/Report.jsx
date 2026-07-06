@@ -1497,14 +1497,35 @@ export default function Report() {
     );
   };
 
+  // The scan section leads with the fused V7 verdict (VerdictBand: fused %, composite +
+  // deep-scan evidence). Without the same band here, the comparison's columns read as a
+  // different, unrelated scoring system — the original column showed axis scores that
+  // appear nowhere in the scan section above it. Render the IDENTICAL card slice
+  // (sections=['verdict']) per column so original = the scan's own headline and
+  // rewritten = the same read recomputed. Falls back to nothing for legacy rewrites
+  // whose stored badges predate the V7 compaction keep-list (component returns null).
+  const renderFusedVerdictBand = (variantBadge) => {
+    if (!variantBadge?.tier_authority && !variantBadge?.authorship_breakdown) return null;
+    return (
+      <MergedAuthorshipRisk
+        t={t}
+        breakdown={variantBadge.authorship_breakdown || null}
+        sr={submissionRisk(variantBadge)}
+        authoritativeTier={variantBadge.tier || report.tier}
+        tierAuthority={variantBadge.tier_authority || null}
+        sections={['verdict']}
+      />
+    );
+  };
+
   const renderTransformationDetails = (variant, pattern, summary, _variantAiScore, ratingBadge = null) => {
+    const variantBadge = variant === 'rewritten'
+      ? { ...rewrittenBadge, ai_likelihood_score: rewrittenBadge.ai_likelihood_score ?? rewrittenAiScore }
+      : { ...originalComparisonBadge, ai_likelihood_score: originalComparisonBadge.ai_likelihood_score ?? aiScore };
     return (
       <div className={`transformation-detail ${variant === 'rewritten' ? 'is-rewritten' : 'is-original'}`}>
-        {renderAiLikelihoodHeadline(
-          variant === 'rewritten'
-            ? { ...rewrittenBadge, ai_likelihood_score: rewrittenBadge.ai_likelihood_score ?? rewrittenAiScore }
-            : { ...originalComparisonBadge, ai_likelihood_score: originalComparisonBadge.ai_likelihood_score ?? aiScore },
-        )}
+        {hasRewriteSignalComparison && renderFusedVerdictBand(variantBadge)}
+        {renderAiLikelihoodHeadline(variantBadge)}
         {/* In single-scan mode the scan label/pattern just repeats the card header h2, so it is
             hidden. In comparison mode the per-column "Original/Rewritten Scan" labels (and rating
             badge) distinguish the two columns, so they are kept. */}
