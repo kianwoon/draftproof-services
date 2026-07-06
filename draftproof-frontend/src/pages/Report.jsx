@@ -1497,13 +1497,16 @@ export default function Report() {
     );
   };
 
-  // The scan section leads with the fused V7 verdict (VerdictBand: fused %, composite +
-  // deep-scan evidence). Without the same band here, the comparison's columns read as a
-  // different, unrelated scoring system — the original column showed axis scores that
-  // appear nowhere in the scan section above it. Render the IDENTICAL card slice
-  // (sections=['verdict']) per column so original = the scan's own headline and
-  // rewritten = the same read recomputed. Falls back to nothing for legacy rewrites
-  // whose stored badges predate the V7 compaction keep-list (component returns null).
+  // The scan section's card is the read users learn the document through: fused verdict
+  // (fused %, composite + deep-scan evidence), "How the writing reads" composition, and
+  // "Where the risk sits" axes. The comparison columns previously spoke a different
+  // vocabulary (transformation contributor bars / grounding-driver numbers that appear
+  // nowhere in the scan card), so the original column looked unrelated to the scan the
+  // user just read. Render the IDENTICAL card slices per column: original = the scan's
+  // own card, rewritten = the same card recomputed on the rewritten text. The coaching
+  // block (main-fix driver + policy cards) stays below as secondary detail. Falls back
+  // to nothing for legacy rewrites whose stored badges predate the V7 compaction
+  // keep-list (component renders only the sections whose data is present).
   const renderFusedVerdictBand = (variantBadge) => {
     if (!variantBadge?.tier_authority && !variantBadge?.authorship_breakdown) return null;
     return (
@@ -1513,7 +1516,7 @@ export default function Report() {
         sr={submissionRisk(variantBadge)}
         authoritativeTier={variantBadge.tier || report.tier}
         tierAuthority={variantBadge.tier_authority || null}
-        sections={['verdict']}
+        sections={['verdict', 'composition', 'riskAxes']}
       />
     );
   };
