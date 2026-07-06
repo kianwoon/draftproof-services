@@ -99,13 +99,21 @@ def test_scan_markdown_and_pdf_group_findings_by_paragraph():
     markdown = render_markdown(report)
     payload = report_to_dict(report)
 
-    assert "### High (1 paragraph, 2 findings)" in markdown
-    assert "| # | Src | Sig | Findings | Paragraph | Suggestions |" in markdown
-    assert "p001 (s001-s002)" in markdown
+    # Findings render as one card per paragraph (card layout replaced the old
+    # tier-header + table): both sentence findings of p001 fold into a single card.
+    assert "*1 paragraph, 2 findings*" in markdown
+    assert "s001–s002" in markdown
+    assert (
+        "Use a more specific paragraph route.; Replace generic phrasing with concrete detail."
+        in markdown
+    )
     assert payload["scan_intelligence"]["document"]["paragraphs"][0]["text"].startswith(
         "This paragraph opens"
     )
-    assert payload["scan_intelligence"]["document"]["paragraphs"][0]["primary_signal"]
+    # primary_signal is DeBERTa-only now (perplexity secondaries dropped); with no
+    # DeBERTa heatmap in this fixture the key must exist but be empty.
+    assert "primary_signal" in payload["scan_intelligence"]["document"]["paragraphs"][0]
+    assert not payload["scan_intelligence"]["document"]["paragraphs"][0]["primary_signal"]
 
     with tempfile.TemporaryDirectory() as tmpdir:
         pdf_path = os.path.join(tmpdir, "report.pdf")
@@ -176,7 +184,8 @@ def test_paragraph_explainer_generates_once_from_grouped_findings():
     report.paragraph_explanations = explanations
     markdown = render_markdown(report)
     assert "A reader may understand" in markdown
-    assert "Main fix: Connect the broad" in markdown
+    # main_issue renders without the old "Main fix:" prefix in the card layout.
+    assert "Connect the broad" in markdown
     assert "Add one concrete teaching" in markdown
     assert "For example, add a sentence" in markdown
 
