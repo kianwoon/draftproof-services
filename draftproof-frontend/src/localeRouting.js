@@ -9,16 +9,18 @@ export function getLocaleFromPathname(pathname = '/') {
 
 export function stripLocaleFromPathname(pathname = '/') {
   const normalized = normalizePath(pathname);
-  if (normalized === '/zh') return '/';
-  if (normalized.startsWith('/zh/')) return normalized.slice(3) || '/';
+  const [base, suffix = ''] = normalized.split(/([?#].*)/, 2);
+  if (base === '/zh') return `/${suffix}`;
+  if (base.startsWith('/zh/')) return `${base.slice(3) || '/'}${suffix}`;
   return normalized;
 }
 
 export function localizePath(path, locale = DEFAULT_LOCALE) {
   const normalized = normalizePath(path);
   if (locale !== 'zh') return normalized;
-  if (normalized === '/') return '/zh';
-  return `/zh${normalized}`;
+  const [base, suffix = ''] = normalized.split(/([?#].*)/, 2);
+  if (base === '/') return `/zh${suffix}`;
+  return `/zh${base}${suffix}`;
 }
 
 export function isLocalizablePublicPath(pathname = '/') {
