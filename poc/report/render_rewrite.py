@@ -1101,6 +1101,22 @@ def render_rewrite_report(
             ))
             lines.append("")
 
+        # DraftProof score scale — the same reference the web card shows, so users can read
+        # the fused scores above against measured human false-positive rates. Copy matches
+        # the frontend i18n (report.submissionRisk.scale) verbatim; rendered as a markdown
+        # table so it picks up the PDF's teal-header table styling.
+        lines.append("### What the DraftProof score means")
+        lines.append("")
+        lines.append("| DraftProof score | Reads as | What we measured |")
+        lines.append("|------------------|----------|------------------|")
+        lines.append("| 0–32 | Low | ~6% or fewer real ESL students score this high — most human writing lands well under this |")
+        lines.append("| 32–48 | Medium | uncommon for genuine human writing (0.4% false-positive rate measured) |")
+        lines.append("| 48–65 | High | rare for genuine human writing (<1% false-positive rate measured) |")
+        lines.append("| 65+ | Critical | essentially never seen in genuine human writing in our testing (0% false-positive rate measured) |")
+        lines.append("")
+        lines.append("*DraftProof's score is not comparable to Turnitin's percentage — the two tools measure different things on different scales.*")
+        lines.append("")
+
         # Detect Scan Comparison table, Formula-Gap breakdown, and Findings-by-Severity
         # table intentionally NOT rendered — owner decision 2026-07-07: the two-column V7
         # cards above ARE the comparison; these raw internal-metric tables are redundant
