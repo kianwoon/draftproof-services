@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
 from app.email_service import (
-    EXTERNAL_ESTIMATE_DISPLAY_ENABLED,
     build_rewrite_completion_email,
     build_scan_completion_email,
     send_email,
@@ -77,13 +76,18 @@ def test_build_rewrite_completion_email_truncates_large_content():
 
 
 def test_build_scan_completion_email_attaches_report_pdf():
-    # authorship_rating_label provided → used directly; ai_score NOT halved
+    # Email leads with the web report's lead: Submission risk + policy scores.
     payload = build_scan_completion_email(
         recipient_email="student@example.com",
         scan_id="scan-1",
         tier="possible AI-assisted",
         ai_score=42.5,
         authorship_rating_label="Possible AI-Assisted",
+        submission_risk={"overall": {"level": "medium", "main_reason": "Several unattributed claims"}},
+        policy_risk={
+            "ai_allowed": {"level": "moderate", "score": 41.4},
+            "ai_restricted": {"level": "high", "score": 67.6},
+        },
         writing_score=81,
         finding_count=3,
         pdf_bytes=b"%PDF-1.7 scan",
@@ -94,8 +98,9 @@ def test_build_scan_completion_email_attaches_report_pdf():
     assert payload["from"] == "DraftProof Support <support@draftproof.app>"
     assert payload["subject"] == "Your DraftProof scan report is ready"
     assert "Scan ID: scan-1" in payload["text"]
-    assert "Report outcome: Possible AI-Assisted" in payload["text"]
-    assert "AI likelihood score: 42%" in payload["text"]  # full score, NOT halved
+    assert "Submission risk: Medium — Several unattributed claims" in payload["text"]
+    assert "If AI is allowed (with declaration): Moderate (41)" in payload["text"]
+    assert "If AI is not allowed: High (68)" in payload["text"]
     assert "Writing score: 81%" in payload["text"]
     assert "Findings: 3" in payload["text"]
     assert "keeps scan report records in the system for 3 days" in payload["text"]
@@ -110,28 +115,36 @@ def test_build_scan_completion_email_attaches_report_pdf():
     ]
 
 
-def test_build_scan_completion_email_formats_page_aligned_outcome_and_ai_score():
-    # authorship_rating_label=None → falls back to tier-based label; ai_score NOT halved
+def test_build_scan_completion_email_formats_page_aligned_lead():
+    # Policy scores are rounded; the non-accusatory disclaimer accompanies them.
     payload = build_scan_completion_email(
         recipient_email="student@example.com",
         scan_id="4957c85d-f913-40eb-892c-addf0850b02f",
         tier="amber",
         ai_score=36.66,
         authorship_rating_label=None,
+        submission_risk={"overall": {"level": "high", "main_reason": "Generic, unanchored assertions"}},
+        policy_risk={
+            "ai_allowed": {"level": "low", "score": 12.6},
+            "ai_restricted": {"level": "severe", "score": 88.4},
+        },
         writing_score=44.05,
         finding_count=37,
         pdf_bytes=b"%PDF-1.7 scan",
         settings=_settings(),
     )
 
-    assert "Report outcome: Moderate Risk" in payload["text"]  # tier-based fallback
-    assert "AI likelihood score: 37%" in payload["text"]  # round(36.66) = 37, full score
+    assert "Submission risk: High — Generic, unanchored assertions" in payload["text"]
+    assert "If AI is allowed (with declaration): Low (13)" in payload["text"]  # round(12.6)
+    assert "If AI is not allowed: Severe (88)" in payload["text"]  # round(88.4)
+    assert "These scores do not prove AI use" in payload["text"]
     assert "Writing score: 44.05%" in payload["text"]
     assert "Findings: 37" in payload["text"]
 
 
-def test_build_scan_completion_email_uses_authorship_rating_label():
-    # authorship_rating_label takes precedence over tier
+def test_build_scan_completion_email_does_not_surface_legacy_ai_score_lines():
+    # ai_score / authorship_rating_label are accepted for backward compatibility
+    # but intentionally NOT rendered (email mirrors the V7 page lead instead).
     payload = build_scan_completion_email(
         recipient_email="student@example.com",
         scan_id="181952b4-73bd-4a66-bb4f-c89d0e8d2aa9",
@@ -144,14 +157,15 @@ def test_build_scan_completion_email_uses_authorship_rating_label():
         settings=_settings(),
     )
 
-    assert "Report outcome: Possible AI-Assisted" in payload["text"]
-    assert "AI likelihood score: 42%" in payload["text"]  # full score, NOT halved
+    assert "Report outcome:" not in payload["text"]
+    assert "AI likelihood score:" not in payload["text"]
+    assert "Possible AI-Assisted" not in payload["text"]
     assert "Writing score: 59.33%" in payload["text"]
     assert "Findings: 28" in payload["text"]
 
 
-def test_build_scan_completion_email_includes_turnitin_estimate():
-    # external_estimate with band "high" → Turnitin line present
+def test_build_scan_completion_email_does_not_surface_turnitin_estimate():
+    # external_estimate is accepted for backward compatibility but no longer rendered.
     payload = build_scan_completion_email(
         recipient_email="student@example.com",
         scan_id="scan-ext",
@@ -165,15 +179,9 @@ def test_build_scan_completion_email_includes_turnitin_estimate():
         settings=_settings(),
     )
 
-    if EXTERNAL_ESTIMATE_DISPLAY_ENABLED:
-        assert "Turnitin / external estimate: ~60% (likely to be flagged)" in payload["text"]
-        assert "risk heads-up, not a target" in payload["text"]
-    else:
-        # INTERIM: external estimate demoted (it over-flags real Turnitin) -> no predicted %.
-        assert "Turnitin / external estimate: ~" not in payload["text"]
-        assert "~60%" not in payload["text"]
-        assert "don't surface a predicted score" in payload["text"]
-        assert "authorship evidence" in payload["text"]
+    assert "Turnitin" not in payload["text"]
+    assert "~60%" not in payload["text"]
+    assert "Scan ID: scan-ext" in payload["text"]
 
 
 def test_build_scan_completion_email_omits_turnitin_when_no_estimate():
