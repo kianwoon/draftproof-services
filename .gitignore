@@ -35,3 +35,6 @@ poc/calibration/_persuade_raw/
 
 # Brainstorming visual-companion artifacts
 .superpowers/
+
+# V7 re-tune generated manifest (contains local_only SCoCESLE rows; never commit)
+poc/calibration/retune/corpus/
