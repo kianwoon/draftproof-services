@@ -28,7 +28,8 @@ class CalibrationResult:
 
 
 def run_calibration(staging_dir: Path, corpus: Path | None, weights_path: Path | None,
-                    limit: int | None, runner=subprocess.run) -> CalibrationResult:
+                    limit: int | None, runner=subprocess.run,
+                    cache_path: Path | None = None) -> CalibrationResult:
     staging_dir = Path(staging_dir)
     staging_dir.mkdir(parents=True, exist_ok=True)
     steps: list[str] = []
@@ -54,6 +55,8 @@ def run_calibration(staging_dir: Path, corpus: Path | None, weights_path: Path |
         fused_cmd += ["--weights", str(weights_path)]
     if corpus is not None:
         fused_cmd += ["--corpus", str(corpus)]
+    if cache_path is not None:
+        fused_cmd += ["--cache", str(cache_path)]
 
     proc = runner(fused_cmd, capture_output=True, text=True)
     steps.append("fused")

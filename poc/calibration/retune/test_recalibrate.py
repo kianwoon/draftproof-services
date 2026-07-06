@@ -24,8 +24,9 @@ def test_run_calibration_builds_commands_and_parses_verdict(tmp_path):
         return _FakeCompleted(0)
 
     weights_path = tmp_path / "weights.json"
+    persistent_cache = tmp_path / "persistent_cache" / "deepscan_scores.jsonl"
     result = run_calibration(staging, corpus=Path("/some/corpus"), weights_path=weights_path,
-                             limit=10, runner=fake_runner)
+                             limit=10, runner=fake_runner, cache_path=persistent_cache)
 
     assert isinstance(result, CalibrationResult)
     assert result.ran is True
@@ -44,6 +45,8 @@ def test_run_calibration_builds_commands_and_parses_verdict(tmp_path):
     assert "--progress" in fused_cmd and str(staging / "fused_progress.jsonl") in fused_cmd
     assert "--weights" in fused_cmd and str(weights_path) in fused_cmd
     assert "--corpus" in fused_cmd and str(Path("/some/corpus")) in fused_cmd
+    assert "--cache" in fused_cmd and str(persistent_cache) in fused_cmd
+    assert not str(persistent_cache).startswith(str(staging))
 
     assert result.fused_verdict == {"gate_pass": True}
 
@@ -62,6 +65,7 @@ def test_run_calibration_no_optional_args(tmp_path):
     assert "--limit-per-group" not in academic_cmd
     assert "--weights" not in fused_cmd
     assert "--corpus" not in fused_cmd
+    assert "--cache" not in fused_cmd
     assert result.fused_verdict == "unknown"
 
 

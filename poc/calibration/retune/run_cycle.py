@@ -10,6 +10,7 @@ from .intake import write_manifest_only, load_env, generate_ai_essays, TOPICS, D
 from .generators import load_generators
 from .gate import run_fpr_gate, GateResult
 from .recalibrate import run_calibration
+from . import deepscan_cache
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_LOG = HERE / "RETUNE_LOG.md"
@@ -30,7 +31,7 @@ def run_cycle(ai_dir: Path, scocesle_dir: Path | None, manifest_path: Path, log_
               now_iso: str, generate: bool, gate_fn=run_fpr_gate, generate_fn=None,
               paid: bool = False, staging_dir: Path | None = None,
               weights_path: Path | None = None, limit: int | None = None,
-              calibrate_fn=run_calibration) -> GateResult:
+              calibrate_fn=run_calibration, cache_path: Path | None = None) -> GateResult:
     if generate:
         load_env()
         (generate_fn or generate_ai_essays)(ai_dir, load_generators(), TOPICS)
@@ -46,7 +47,8 @@ def run_cycle(ai_dir: Path, scocesle_dir: Path | None, manifest_path: Path, log_
         safe_now_iso = now_iso.replace(":", "-").replace("+", "-").replace(".", "-")
         run_staging = Path(base_staging) / f"run-{safe_now_iso}"
         run_staging.mkdir(parents=True, exist_ok=True)
-        cal_result = calibrate_fn(run_staging, scocesle_dir, weights_path, limit)
+        effective_cache = cache_path if cache_path is not None else deepscan_cache.DEFAULT_CACHE
+        cal_result = calibrate_fn(run_staging, scocesle_dir, weights_path, limit, effective_cache)
         calibration = cal_result.fused_verdict
 
     append_log(log_path, {"version": now_iso, "n_rows": n_rows, "families": _families(rows),
@@ -65,12 +67,15 @@ def main() -> int:
     ap.add_argument("--staging", type=Path, default=DEFAULT_STAGING, help="staging dir for candidate artifacts (never committed)")
     ap.add_argument("--weights", type=Path, default=None, help="candidate weights.json to score with (paid only)")
     ap.add_argument("--limit", type=int, default=None, help="--limit-per-group passthrough for a cheap smoke (paid only)")
+    ap.add_argument("--cache", type=Path, default=deepscan_cache.DEFAULT_CACHE,
+                     help="persistent content-hash deep-scan cache (paid only); essays already "
+                          "scored under the same checkpoint are never re-paid")
     args = ap.parse_args()
     now_iso = datetime.now(timezone.utc).isoformat()
     scocesle = args.scocesle if args.scocesle.exists() else None
     res = run_cycle(args.out, scocesle, args.manifest, args.log, now_iso, args.generate,
                     paid=args.paid, staging_dir=args.staging, weights_path=args.weights,
-                    limit=args.limit)
+                    limit=args.limit, cache_path=args.cache)
     return 0 if (res.passed or not res.corpus_available) else 1
 
 if __name__ == "__main__":
