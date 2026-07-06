@@ -112,16 +112,33 @@ def compose_authorship_breakdown(
     if any(_paragraph_has_no_comparison(p) for p in paragraph_results):
         uncertainty_flags.append(_UNCERTAINTY_FLAG_NO_COMPARISON)
 
+    confidence = _document_confidence(paragraph_results)
+    degraded_display = degraded_ratio_high or mixed_signals_predominant
+
+    # primary_category is only safe to ASSERT (e.g. the one-line email summary)
+    # when the breakdown's own guards are quiet: confidence not "low" (flatness
+    # gap rule) and the display not degraded (missing signals / mixed-signals
+    # predominance). Derived entirely from the two fields above — no new
+    # threshold. Measured 2026-07-06 on 24 SCoCESLE human + 16 AI docs
+    # (quick-scan path): 58% of human ESL essays got primary_category
+    # "ai_generated_like", and every document in both classes had
+    # degraded_display=True (the two unbuilt Phase-1C signals are always
+    # missing), so surfaces that state the category while ignoring these
+    # guards make unreliable accusations. Consumers MUST NOT headline
+    # primary_category when this is False.
+    primary_category_reliable = (confidence != "low") and not degraded_display
+
     return {
         "schema_version": "v7_phase1a",
         "document_breakdown_raw": raw_shares,
         "document_breakdown_bands": banded_shares,
         "primary_category": document_aggregate["primary_category"],
-        "confidence": _document_confidence(paragraph_results),
+        "primary_category_reliable": primary_category_reliable,
+        "confidence": confidence,
         "paragraph_count": paragraph_count,
         "degraded_paragraph_count": degraded_paragraph_count,
         "display_mode": "bands",
-        "degraded_display": degraded_ratio_high or mixed_signals_predominant,
+        "degraded_display": degraded_display,
         "uncertainty_flags": uncertainty_flags,
         "disclaimer": DISCLAIMER,
     }

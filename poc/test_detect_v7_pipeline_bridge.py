@@ -562,3 +562,70 @@ class TestDeepScanDisplayBand:
         result = _run_with_proportion(monkeypatch, flagged=flagged)
         assert result is not None
         assert result["deep_scan"]["band"] in {"insufficient", "amber", "orange", "red"}
+
+
+class TestDeepScanPerParagraphProportions:
+    """Additive per-paragraph grouping of the SAME per-sentence Modal scores
+    (zero extra Modal cost; document-level math untouched)."""
+
+    _TEXT = (
+        "First para sentence one. First para sentence two.\n\n"
+        "Second para sentence."
+    )
+
+    def test_multi_paragraph_payload_carries_per_paragraph_proportions(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+
+        def _fake_call(chunks, timeout_s=60.0):
+            assert len(chunks) == 3  # 2 sentences para 1 + 1 sentence para 2
+            return {
+                "available": True,
+                "calibrated": True,
+                "chunk_scores": [1.0, 1.0, 0.0],
+                "document_score": 0.9,
+            }
+
+        monkeypatch.setattr(modal_client, "call_deep_scan", _fake_call)
+        result = pipeline_bridge.run_v7_breakdown(
+            _realistic_detection_result(text=self._TEXT)
+        )
+        assert result is not None
+        deep = result.get("deep_scan")
+        assert deep is not None
+        # document proportion unchanged by the grouping: 2/3 flagged
+        assert deep["proportion"] == pytest.approx(2 / 3, abs=1e-6)
+        rows = deep.get("paragraphs")
+        assert rows is not None and len(rows) == 2
+        assert rows[0] == {
+            "index": 0,
+            "sentence_count": 2,
+            "proportion": 1.0,
+            "band": "red",
+        }
+        assert rows[1]["index"] == 1
+        assert rows[1]["sentence_count"] == 1
+        assert rows[1]["proportion"] == 0.0
+        assert rows[1]["band"] == "insufficient"
+
+    def test_single_paragraph_omits_paragraphs_key(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+
+        monkeypatch.setattr(
+            modal_client,
+            "call_deep_scan",
+            lambda chunks, timeout_s=60.0: {
+                "available": True,
+                "calibrated": True,
+                "chunk_scores": [1.0] * len(chunks),
+                "document_score": 1.0,
+            },
+        )
+        result = pipeline_bridge.run_v7_breakdown(
+            _realistic_detection_result(text="One paragraph only. Two sentences here.")
+        )
+        assert result is not None
+        deep = result.get("deep_scan")
+        assert deep is not None
+        assert "paragraphs" not in deep

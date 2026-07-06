@@ -148,3 +148,26 @@ def test_document_confidence_low_if_any_paragraph_low():
     paragraphs = [_paragraph_result(confidence=None), _paragraph_result(confidence="low")]
     result = breakdown_composer.compose_authorship_breakdown(agg, paragraphs)
     assert result["confidence"] == "low"
+
+
+def test_primary_category_reliable_true_when_guards_quiet():
+    agg = _aggregate(paragraph_count=2, degraded_paragraph_count=0)
+    paragraphs = [_paragraph_result(), _paragraph_result()]
+    result = breakdown_composer.compose_authorship_breakdown(agg, paragraphs)
+    assert result["primary_category_reliable"] is True
+
+
+def test_primary_category_reliable_false_when_confidence_low():
+    agg = _aggregate(paragraph_count=2, degraded_paragraph_count=0)
+    paragraphs = [_paragraph_result(confidence="low"), _paragraph_result()]
+    result = breakdown_composer.compose_authorship_breakdown(agg, paragraphs)
+    assert result["confidence"] == "low"
+    assert result["primary_category_reliable"] is False
+
+
+def test_primary_category_reliable_false_when_degraded_display():
+    agg = _aggregate(paragraph_count=4, degraded_paragraph_count=3)
+    paragraphs = [_paragraph_result(degraded=(i < 3)) for i in range(4)]
+    result = breakdown_composer.compose_authorship_breakdown(agg, paragraphs)
+    assert result["degraded_display"] is True
+    assert result["primary_category_reliable"] is False

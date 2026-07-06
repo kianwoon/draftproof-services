@@ -255,16 +255,96 @@ def get_deep_scan_proportion(detection_result: Any) -> Optional[dict[str, Any]]:
     flagged = sum(1 for s in chunk_scores if s >= sent_threshold)
     proportion = flagged / len(chunk_scores)
     deberta_score = max(0.0, min(1.0, float(proportion)))
+    payload = {
+        "proportion": deberta_score,
+        "band": _deep_scan_band(deberta_score),
+        "calibrated": modal_response.get("calibrated") is True,
+    }
+    # Additive per-paragraph proportions: pure post-processing of the SAME
+    # per-sentence Modal scores (zero extra Modal cost, document math above
+    # untouched). Fail-open: a mapping failure just omits the key.
+    paragraph_rows = _per_paragraph_proportions(
+        document_text, sentences, chunk_scores, sent_threshold
+    )
+    if paragraph_rows:
+        payload["paragraphs"] = paragraph_rows
     return {
         "proportion": deberta_score,
         "uncalibrated": modal_response.get("calibrated") is not True,
         "below_floor": proportion < doc_floor,
-        "payload": {
-            "proportion": deberta_score,
-            "band": _deep_scan_band(deberta_score),
-            "calibrated": modal_response.get("calibrated") is True,
-        },
+        "payload": payload,
     }
+
+
+def _per_paragraph_proportions(
+    document_text: str,
+    sentences: list[str],
+    chunk_scores: list,
+    sent_threshold: float,
+) -> Optional[list[dict[str, Any]]]:
+    """Group the existing per-sentence deep-scan scores by paragraph.
+
+    Mapping construction (deterministic, no re-splitting): ``split_sentences``
+    normalizes ALL whitespace to single spaces before splitting, and
+    ``split_paragraphs`` (poc/detect/layer3_scoring.py) produces the same
+    normalization per paragraph block — so ``" ".join(paragraphs)``
+    reconstructs exactly the normalized string the sentences were split from.
+    Each sentence is located in that normalized string with a forward cursor
+    (sentences appear in order) and assigned to the paragraph whose
+    normalized char range contains its start. The document-level proportion
+    is NOT recomputed here — this is presentation-side grouping only.
+
+    Bands reuse the document display-band cutoffs (weights.json — no new
+    constants); short paragraphs are naturally noisy, so ``sentence_count``
+    rides along for consumers to judge reliability. Returns None (key
+    omitted) when there are fewer than 2 paragraphs or any mapping
+    inconsistency — fail-open, never raises.
+    """
+    try:
+        from poc.detect.layer3_scoring import split_paragraphs
+
+        paragraphs = split_paragraphs(document_text)
+        if len(paragraphs) < 2 or len(sentences) != len(chunk_scores):
+            return None
+        norm = " ".join(paragraphs)
+        # Paragraph k covers norm[start_k : start_k + len(p)] (+1 joiner space).
+        ranges = []
+        pos = 0
+        for p in paragraphs:
+            ranges.append((pos, pos + len(p)))
+            pos += len(p) + 1
+        per_paragraph: list[list[float]] = [[] for _ in paragraphs]
+        cursor = 0
+        para_idx = 0
+        for sentence, score in zip(sentences, chunk_scores):
+            start = norm.find(sentence, cursor)
+            if start < 0:
+                return None  # mapping inconsistency — omit rather than guess
+            cursor = start + len(sentence)
+            while para_idx < len(ranges) - 1 and start >= ranges[para_idx][1]:
+                para_idx += 1
+            per_paragraph[para_idx].append(float(score))
+        rows = []
+        for i, scores in enumerate(per_paragraph):
+            if not scores:
+                continue
+            p_flagged = sum(1 for s in scores if s >= sent_threshold)
+            p_prop = p_flagged / len(scores)
+            rows.append(
+                {
+                    "index": i,
+                    "sentence_count": len(scores),
+                    "proportion": round(p_prop, 4),
+                    "band": _deep_scan_band(p_prop),
+                }
+            )
+        return rows or None
+    except Exception:
+        logger.exception(
+            "detect_v7.pipeline_bridge: per-paragraph deep-scan grouping failed; "
+            "omitting paragraphs (additive, non-fatal)."
+        )
+        return None
 
 
 def _extract_document_text(detection_result: Any) -> Optional[str]:
