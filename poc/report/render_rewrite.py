@@ -407,8 +407,12 @@ def _cmp_risk_axes_html(badge: dict) -> str:
     if not isinstance(axes, dict) or not axes:
         return ""
     # Level -> chip family + display word (mirrors render_panels._level_kind + _SR_LEVEL_LABELS).
-    level_kind = {"low": "good", "moderate": "info", "medium": "info",
-                  "high": "warn", "severe": "warn", "critical": "warn"}
+    # Compact colored bands matching the web's .merged-axis (label left, level word
+    # right, full-row tint by level) — NOT big bordered chip cards. Level -> CSS class
+    # + display word use the same set as the frontend's submission_risk.levels.
+    level_class = {"low": "low", "moderate": "medium", "medium": "medium",
+                   "high": "high", "severe": "critical", "critical": "critical",
+                   "unknown": "unknown"}
     level_word = {"low": "Low", "moderate": "Moderate", "medium": "Medium",
                   "high": "High", "severe": "Severe", "critical": "Critical", "unknown": "Unknown"}
     order = ["text_pattern", "ownership", "citation", "defence_readiness", "policy_declaration"]
@@ -418,15 +422,12 @@ def _cmp_risk_axes_html(badge: dict) -> str:
         ax = axes.get(key) or {}
         label = ax.get("label") or key.replace("_", " ").title()
         lvl = str(ax.get("level") or "unknown").lower()
-        if key == "policy_declaration" and lvl == "unknown":
-            chip = _cmp_chip("Self-declare", "info")
-        else:
-            chip = _cmp_chip(level_word.get(lvl, lvl.title() or "Unknown"),
-                             level_kind.get(lvl, "info"))
+        cls = level_class.get(lvl, "unknown")
+        word = level_word.get(lvl, lvl.title() or "Unknown")
         rows.append(
-            '<div class="dp-policy-row dp-policy-row--info">'
-            f'<span class="dp-policy-name">{html.escape(str(label))}</span>'
-            f'<span class="dp-policy-issue">{chip}</span></div>'
+            f'<div class="dp-cmp-axis dp-cmp-axis--{cls}">'
+            f'<span class="dp-cmp-axis-name">{html.escape(str(label))}</span>'
+            f'<strong class="dp-cmp-axis-level">{html.escape(word)}</strong></div>'
         )
     if not rows:
         return ""
