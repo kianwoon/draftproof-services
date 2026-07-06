@@ -1,9 +1,15 @@
 """Phase 1 intake: generate AI essays from models.json and PERSIST them to disk
 (one JSON per case) so the corpus is never a set of numbers that silently drifts."""
 from __future__ import annotations
-import json, os, re, urllib.request
+import argparse
+import json
+import os
+import re
+import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
-from .generators import Generator, PROVIDER_BASE_URLS
+from .generators import Generator, PROVIDER_BASE_URLS, load_generators
+from .manifest import build_manifest, assert_no_leakage
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent.parent  # poc/ -> repo root
@@ -91,11 +97,6 @@ def generate_ai_essays(out_dir: Path, generators: list[Generator], topics: list[
     print(f"\nwrote {made} AI cases to {out_dir}")
     return made
 
-import argparse
-from datetime import datetime, timezone
-from .generators import load_generators
-from .manifest import build_manifest, assert_no_leakage
-
 DEFAULT_MANIFEST = HERE / "corpus" / "manifest.json"
 DEFAULT_SCOCESLE = Path.home() / "Downloads" / "Small Corpus of Colombian English as a Second Language Essays (SCoCESLE)"
 
@@ -110,7 +111,6 @@ def write_manifest_only(ai_dir: Path, scocesle_dir: Path | None, manifest_path: 
 def main() -> int:
     ap = argparse.ArgumentParser(description="V7 re-tune Phase 1: intake + manifest")
     ap.add_argument("--generate", action="store_true", help="generate AI essays from models.json")
-    ap.add_argument("--rebuild-manifest", action="store_true", help="(re)build the corpus manifest")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--scocesle", type=Path, default=DEFAULT_SCOCESLE)
     ap.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
