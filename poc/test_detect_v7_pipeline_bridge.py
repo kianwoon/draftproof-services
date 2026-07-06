@@ -125,6 +125,8 @@ class TestRunV7BreakdownEnabled:
             "ai_generated_like",
         }
         assert "disclaimer" in result
+        assert "esl_guard_unavailable" in result["uncertainty_flags"]
+        assert result["granularity"] == "document"
 
     def test_enabled_true_spelling_also_works(self, monkeypatch):
         monkeypatch.setenv(_ENV_VAR, "true")

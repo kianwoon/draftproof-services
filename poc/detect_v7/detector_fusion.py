@@ -1,9 +1,15 @@
 """V7 detector fusion — combines whichever calibrated AI-detector scores are
-available (quick scan: fakespot alone; deep scan: fakespot + deberta_large)
+available (quick scan: composite alone; deep scan: composite + deberta_large)
 into a single ``calibrated_detector_score`` in [0, 1].
 
+The "composite" input is the badge's composite calibrated
+``ai_likelihood_score`` (which may itself be DeBERTa-authoritative when that
+path fires) — the only calibrated detector score available at the quick-scan
+call site; there is no isolated raw-fakespot signal at this call site (see
+``pipeline_bridge.py``'s module docstring for the full trace).
+
 This module performs FUSION ONLY, not calibration: every input score is
-assumed to already be calibrated/ESL-safe (e.g. fakespot's isotonic
+assumed to already be calibrated/ESL-safe (e.g. the composite's isotonic
 calibrator, or an equivalently calibrated deberta_large score). No weight or
 threshold literal lives in this file — every number comes from
 ``detect_v7/weights.json`` via ``config.get_fusion_weights`` (CLAUDE.md
@@ -29,8 +35,8 @@ def compute_calibrated_detector_score(
     ----------
     detector_scores:
         Mapping of detector name -> calibrated score in [0, 1]. Recognized
-        combinations (see ``config.get_fusion_weights``): {"fakespot"}
-        (quick scan) or {"fakespot", "deberta_large"} (deep scan, 2-detector).
+        combinations (see ``config.get_fusion_weights``): {"composite"}
+        (quick scan) or {"composite", "deberta_large"} (deep scan, 2-detector).
         Any other combination raises ``ValueError`` (propagated from
         ``config.get_fusion_weights``, not swallowed here).
 
@@ -71,7 +77,7 @@ def compute_detector_disagreement(
     the OLD, larger detector ensemble used throughout ``poc/detect/``. This
     function instead measures disagreement specifically among the 1-2
     calibrated detectors available to the V7 deep-scan fusion path
-    (fakespot / deberta_large) — a narrower, deep-scan-specific notion the
+    (composite / deberta_large) -- a narrower, deep-scan-specific notion the
     old ensemble signal does not capture. ``category_scoring.py`` should
     prefer the adapter's ``detector_disagreement`` signal as the primary
     source for the ESL co-trigger guard; this function is provided

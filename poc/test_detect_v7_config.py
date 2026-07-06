@@ -65,18 +65,18 @@ def test_unknown_category_raises_value_error():
 
 
 def test_fusion_quick_scan_sums_to_one():
-    weights = v7config.get_fusion_weights(["fakespot"])
+    weights = v7config.get_fusion_weights(["composite"])
     assert abs(sum(weights.values()) - 1.0) < _TOL
 
 
 def test_fusion_deep_scan_2detector_sums_to_one():
-    weights = v7config.get_fusion_weights(["fakespot", "deberta_large"])
+    weights = v7config.get_fusion_weights(["composite", "deberta_large"])
     assert abs(sum(weights.values()) - 1.0) < _TOL
 
 
 def test_fusion_unsupported_combination_raises_value_error():
     with pytest.raises(ValueError):
-        v7config.get_fusion_weights(["fakespot", "deberta_large", "ou_advacheck"])
+        v7config.get_fusion_weights(["composite", "deberta_large", "ou_advacheck"])
     with pytest.raises(ValueError):
         v7config.get_fusion_weights([])
     with pytest.raises(ValueError):

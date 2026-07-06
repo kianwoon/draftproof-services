@@ -24,17 +24,20 @@ guessed; see ``poc/report/builder.py`` ~L1267-1420 and ``poc/detect/run.py``
   ``signal_adapter.py``'s expected ``criterion_scores`` keys exactly.
 - ``transformation.features`` (``poc/detect/transformation.py``, via
   ``classify_transformation_from_scan``) is likewise document-level.
-- The calibrated fakespot/deberta detector score used by ``detector_fusion.py``
-  is NOT separately available as an isolated "fakespot score" object in
+- The calibrated composite/deberta detector score used by ``detector_fusion.py``
+  is NOT separately available as an isolated raw "fakespot score" object in
   builder.py; the closest existing calibrated score is
   ``ai_risk_badge["ai_likelihood_score"]`` (0-100 scale; already the
   authoritative/calibrated composite — DeBERTa-authoritative when that path
   fires, else perplexity Layer3). This bridge treats that single composite as
-  the "fakespot" fusion input for Phase 1A (quick-scan, 1-detector fusion) —
+  the "composite" fusion input for Phase 1A (quick-scan, 1-detector fusion) —
   it is the only calibrated score builder.py actually exposes at this call
-  site. Using a second, genuinely separate detector (e.g. true fakespot raw
-  vs. deberta_large) for 2-detector fusion is future scope (Modal/deep-scan),
-  NOT implemented here — this is stated explicitly rather than fabricated.
+  site (the fusion key was renamed from the historically mislabeled
+  "fakespot" — there never was an isolated raw fakespot-detector score at
+  this call site, only the badge composite). Using a second, genuinely
+  separate detector (e.g. true fakespot raw vs. deberta_large) for
+  2-detector fusion is future scope (Modal/deep-scan), NOT implemented here
+  — this is stated explicitly rather than fabricated.
 
 ## Granularity gap (documented honestly, not silently smoothed over)
 
@@ -67,6 +70,7 @@ _TRUTHY = {"1", "true"}
 
 _UNCERTAINTY_FLAG_DEEP_SCAN_UNCALIBRATED = "deep_scan_uncalibrated"
 _UNCERTAINTY_FLAG_DEEP_SCAN_BELOW_FLOOR = "deep_scan_below_reliability_floor"
+_UNCERTAINTY_FLAG_ESL_GUARD_UNAVAILABLE = "esl_guard_unavailable"
 
 
 def _deep_scan_band(proportion: float) -> str:
@@ -108,10 +112,14 @@ def is_deep_scan_enabled() -> bool:
 
     Reads ``DRAFTPROOF_V7_DEEP_SCAN`` with the exact same strict "1"/"true"
     truthy contract as ``is_v7_enabled()`` (see that function's docstring).
-    Default is OFF. MUST stay OFF in production until the Modal
-    ``deberta_large`` checkpoint is SCoCESLE-calibrated (see
-    ``modal_endpoints/README.md`` "Remaining Task 1B.0 work") — this function
-    only reads the env var, it never hardcodes a default-on value.
+    Default is OFF. The Modal desklib/ai-text-detector-academic-v1.01
+    checkpoint was SCoCESLE-calibrated 2026-07-04 via sentence
+    threshold-proportion (see ``weights.json``'s
+    ``deep_scan_calibration._provenance``); this env var is now an
+    operational kill switch (cost/latency of the paid Modal call), not a
+    calibration gate — the runtime per-scan ``uncalibrated`` flag
+    (``get_deep_scan_proportion``'s return value) reflects whether the
+    Modal endpoint reports the calibrated checkpoint tag for that call.
     """
     raw = os.getenv(_DEEP_SCAN_ENV_VAR, "")
     return raw.strip().lower() in _TRUTHY
@@ -399,6 +407,18 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
       V7 signals (insufficient input);
     - ANY exception occurs anywhere in the computation.
 
+    The returned breakdown always carries ``"granularity": "document"``:
+    per-paragraph V7 scoring is not yet implemented (the whole document is
+    treated as one "paragraph" unit — see module docstring's "Granularity
+    gap" section), so this value is hardwired until true per-paragraph
+    scoring exists.
+
+    The returned breakdown's ``uncertainty_flags`` always includes
+    ``"esl_guard_unavailable"``: no per-document ESL-likelihood estimator
+    exists yet (unbuilt Phase-2 work), so ``esl_score`` is always passed as
+    ``None`` to ``category_scoring.score_paragraph`` and the esl_guard
+    damping/co-trigger logic in ``weights.json`` can never fire.
+
     Deliberate exception-swallowing: this function wraps its entire body in a
     broad ``try/except Exception`` and returns ``None`` instead of raising,
     logging the failure via the standard ``logging`` module. This is
@@ -424,10 +444,10 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
         deep_scan_uncalibrated = False
         deep_scan_below_floor = False
         deep_scan_payload: Optional[dict[str, Any]] = None
-        detector_scores = {"fakespot": calibrated_score}
+        detector_scores = {"composite": calibrated_score}
         deep_scan_result = get_deep_scan_proportion(detection_result)
         if deep_scan_result is not None:
-            detector_scores = {"fakespot": calibrated_score, "deberta_large": deep_scan_result["proportion"]}
+            detector_scores = {"composite": calibrated_score, "deberta_large": deep_scan_result["proportion"]}
             deep_scan_uncalibrated = deep_scan_result["uncalibrated"]
             deep_scan_below_floor = deep_scan_result["below_floor"]
             deep_scan_payload = deep_scan_result["payload"]
@@ -443,6 +463,14 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
             return None
 
         v7_signals = signal_adapter.adapt_paragraph_signals(raw_signals)
+        # esl_score is always None: no per-document ESL-likelihood estimator
+        # exists in this codebase yet (unbuilt Phase-2 work, spec §5, row
+        # `esl_false_positive_risk`). ESL protection currently lives in
+        # detector-level corpus calibration (fakespot isotonic + deep-scan
+        # SCoCESLE thresholds), not in this per-paragraph esl_guard damping/
+        # co-trigger logic, which can therefore never fire in practice. The
+        # esl_guard_unavailable uncertainty flag (appended below) surfaces
+        # that honestly instead of silently no-oping.
         paragraph_result = category_scoring.score_paragraph(
             v7_signals,
             fused_score,
@@ -454,6 +482,12 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
         document_aggregate = aggregate.aggregate_document([paragraph_result], [word_count])
 
         breakdown = breakdown_composer.compose_authorship_breakdown(document_aggregate, [paragraph_result])
+        # Granularity honesty: this bridge treats the whole document as ONE
+        # paragraph unit (see module docstring's "Granularity gap" section) --
+        # per-paragraph V7 scoring is not yet implemented, so this value is
+        # hardwired to "document" until it is. "document" is a factual
+        # descriptive label, not a tunable numeric constant.
+        breakdown["granularity"] = "document"
         if deep_scan_uncalibrated:
             flags = breakdown.setdefault("uncertainty_flags", [])
             if _UNCERTAINTY_FLAG_DEEP_SCAN_UNCALIBRATED not in flags:
@@ -467,6 +501,12 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
             # only present when the deep scan actually succeeded (frontend
             # null-checks the key's absence for disabled/failed/no-text).
             breakdown["deep_scan"] = deep_scan_payload
+        # esl_score is always None today (see comment at the score_paragraph
+        # call site above) -- always append this flag so callers are never
+        # given a false impression that the ESL guard is protecting them.
+        flags = breakdown.setdefault("uncertainty_flags", [])
+        if _UNCERTAINTY_FLAG_ESL_GUARD_UNAVAILABLE not in flags:
+            flags.append(_UNCERTAINTY_FLAG_ESL_GUARD_UNAVAILABLE)
         return breakdown
     except Exception:
         logger.exception("detect_v7.pipeline_bridge: run_v7_breakdown failed; returning None (additive, non-fatal).")

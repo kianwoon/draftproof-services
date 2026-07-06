@@ -194,6 +194,7 @@ class TestTierAuthorityFlagOffByteIdentical:
         badge = result.get("ai_risk_badge") or {}
         assert "tier_authority" not in badge
         assert badge.get("signal_source") != "v7_fused"
+        assert "tier_authority_status" not in badge
 
 
 class TestTierAuthorityFailOpenNoDeepScan:
@@ -215,6 +216,11 @@ class TestTierAuthorityFailOpenNoDeepScan:
         assert badge_on.get("ai_likelihood_score") == badge_base.get("ai_likelihood_score")
         assert badge_on.get("tier") == badge_base.get("tier")
         assert badge_on.get("signal_source") != "v7_fused"
+        assert badge_on.get("tier_authority_status") == {
+            "enabled": True,
+            "applied": False,
+            "reason": "deep_scan_unavailable",
+        }
 
 
 class TestTierAuthorityFlagOnWithDeepScan:
@@ -259,6 +265,7 @@ class TestTierAuthorityFlagOnWithDeepScan:
         # which test_flag_off_identical_to_baseline's differing tier proves).
         assert "submission_risk" in badge
         assert "policy_risk" in badge
+        assert badge.get("tier_authority_status") == {"enabled": True, "applied": True}
 
 
 class TestPrecomputedDeepScanReuse:
