@@ -473,7 +473,22 @@ img[src^="https://img.shields.io"] { height: 18px; }
     border: 1px solid var(--dp-line);
     border-radius: 8pt;
     background: #fff;
+    /* When the column is taller than one page it must fragment (the two-column
+       scan card is genuinely > 1 page). box-decoration-break: clone makes each
+       page fragment carry its own complete border+padding+radius, so the risk
+       cards that land on page 2 stay inside a bordered box instead of orphaning
+       (WeasyPrint honors this on block children of table-cells). */
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
 }
+/* Keep each atomic card whole across the page break — never split a fused hero
+   card, a risk row, or the writing-reads bar group down the middle. */
+.dp-cmp-col .dp-hero,
+.dp-cmp-col .dp-policy-row,
+.dp-cmp-col .dp-abd-bars,
+.dp-cmp-col .dp-abd-row { break-inside: avoid; page-break-inside: avoid; }
+/* A subhead ("Where the risk sits") must not be the last thing on a page. */
+.dp-cmp-subhead { break-after: avoid; page-break-after: avoid; }
 .dp-cmp-kicker {
     margin: 0 0 3pt;
     color: var(--dp-muted);
