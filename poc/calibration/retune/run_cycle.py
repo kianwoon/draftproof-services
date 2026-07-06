@@ -3,6 +3,7 @@ appends a RETUNE_LOG.md decision row. Produces CANDIDATE artifacts only — prom
 production is a separate, human-approved step (see docs/runbooks/v7-retune.md)."""
 from __future__ import annotations
 import argparse
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from .intake import write_manifest_only, load_env, generate_ai_essays, TOPICS, DEFAULT_OUT, DEFAULT_SCOCESLE, DEFAULT_MANIFEST
@@ -29,7 +30,6 @@ def run_cycle(ai_dir: Path, scocesle_dir: Path | None, manifest_path: Path, log_
         load_env()
         (generate_fn or generate_ai_essays)(ai_dir, load_generators(), TOPICS)
     n_rows = write_manifest_only(ai_dir, scocesle_dir, manifest_path, now_iso)
-    import json
     rows = json.loads(manifest_path.read_text())["rows"]
     result = gate_fn(corpus=scocesle_dir)
     verdict = "PASS" if result.passed else ("NO-CORPUS" if not result.corpus_available else "FAIL")

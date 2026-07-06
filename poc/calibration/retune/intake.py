@@ -9,7 +9,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from .generators import Generator, PROVIDER_BASE_URLS, load_generators
-from .manifest import build_manifest, assert_no_leakage
+from .manifest import build_manifest, assert_no_leakage, assert_committable
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent.parent  # poc/ -> repo root
@@ -103,6 +103,12 @@ DEFAULT_SCOCESLE = Path.home() / "Downloads" / "Small Corpus of Colombian Englis
 def write_manifest_only(ai_dir: Path, scocesle_dir: Path | None, manifest_path: Path, now_iso: str) -> int:
     m = build_manifest(ai_dir, scocesle_dir, now_iso)
     assert_no_leakage(m["rows"])
+    # License guard: SCoCESLE local_only rows can only be written inside the gitignored corpus dir
+    corpus_dir = (HERE / "corpus").resolve()
+    target = manifest_path.resolve()
+    inside_corpus = corpus_dir == target.parent or corpus_dir in target.parents
+    if not inside_corpus:
+        assert_committable(m["rows"])
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(m, indent=2, ensure_ascii=False))
     print(f"wrote manifest: {len(m['rows'])} rows -> {manifest_path}")
