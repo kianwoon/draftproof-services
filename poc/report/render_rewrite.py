@@ -362,6 +362,223 @@ def _document_section(title: str, text: str) -> List[str]:
     ]
 
 
+# ── Executive-summary two-column comparison (mirrors the web rewrite view) ────
+# allow-hardcode: presentation copy/markup + machine-band -> display maps for the
+# PDF comparison cards. Band words are read from the badge's own tier field, never
+# invented; these are display strings, never matched against document text.
+_CMP_TIER_TO_BAND = {"green": "low", "amber": "moderate", "orange": "high", "red": "critical"}
+_CMP_BAND_LABEL = {"low": "Low", "moderate": "Moderate", "high": "High", "critical": "Critical"}
+_CMP_BAND_KIND = {"low": "good", "moderate": "info", "high": "warn", "critical": "warn"}
+_CMP_NOT_TURNITIN = (
+    "This is DraftProof's own AI-likelihood on our scale — not a Turnitin score, and not "
+    "comparable to the 20% line. Detectors over-flag fluent writing; treat it as a review "
+    "signal, not a verdict."
+)
+
+
+def _cmp_pattern_label(badge: dict) -> str:
+    tc = (badge.get("transformation_classification") or {}) if isinstance(badge, dict) else {}
+    return str(tc.get("label") or tc.get("short_label") or tc.get("headline") or "").strip()
+
+
+def _cmp_rating_chip(badge: dict) -> str:
+    """Fused-scale rating chip 'LOW · 16%' from badge.tier + tier_authority.fused_score.
+    '' when the fused score is absent (legacy badge)."""
+    ta = badge.get("tier_authority") if isinstance(badge, dict) else None
+    fused = ta.get("fused_score") if isinstance(ta, dict) else None
+    if not isinstance(fused, (int, float)):
+        return ""
+    band = _CMP_TIER_TO_BAND.get(str(badge.get("tier") or "").lower())
+    if not band:
+        return ""
+    label = _CMP_BAND_LABEL.get(band, band.title())
+    return _cmp_chip(f"{label.upper()} · {round(fused)}%", _CMP_BAND_KIND.get(band, "info"))
+
+
+def _cmp_chip(text: str, kind: str) -> str:
+    return f'<span class="dp-statchip dp-statchip--{kind}">{html.escape(text)}</span>'
+
+
+def _cmp_risk_axes_html(badge: dict) -> str:
+    """'Where the risk sits · independent' rows from badge.submission_risk.axes
+    (label + level chip). '' when no axes (legacy badge)."""
+    sr = (badge.get("submission_risk") or {}) if isinstance(badge, dict) else {}
+    axes = sr.get("axes") or {}
+    if not isinstance(axes, dict) or not axes:
+        return ""
+    # Level -> chip family + display word (mirrors render_panels._level_kind + _SR_LEVEL_LABELS).
+    level_kind = {"low": "good", "moderate": "info", "medium": "info",
+                  "high": "warn", "severe": "warn", "critical": "warn"}
+    level_word = {"low": "Low", "moderate": "Moderate", "medium": "Medium",
+                  "high": "High", "severe": "Severe", "critical": "Critical", "unknown": "Unknown"}
+    order = ["text_pattern", "ownership", "citation", "defence_readiness", "policy_declaration"]
+    keys = [k for k in order if k in axes] + [k for k in axes if k not in order]
+    rows = []
+    for key in keys:
+        ax = axes.get(key) or {}
+        label = ax.get("label") or key.replace("_", " ").title()
+        lvl = str(ax.get("level") or "unknown").lower()
+        if key == "policy_declaration" and lvl == "unknown":
+            chip = _cmp_chip("Self-declare", "info")
+        else:
+            chip = _cmp_chip(level_word.get(lvl, lvl.title() or "Unknown"),
+                             level_kind.get(lvl, "info"))
+        rows.append(
+            '<div class="dp-policy-row dp-policy-row--info">'
+            f'<span class="dp-policy-name">{html.escape(str(label))}</span>'
+            f'<span class="dp-policy-issue">{chip}</span></div>'
+        )
+    if not rows:
+        return ""
+    return ('<p class="dp-cmp-subhead">Where the risk sits · independent</p>'
+            + "".join(rows))
+
+
+def _cmp_column(kicker: str, scan: dict, *, review_required: bool = False) -> str:
+    """One comparison column: kicker, pattern label, rating chip (or 'Review required'),
+    the fused verdict card, the 4 writing-reads bars, and the risk axes. Each sub-block
+    fails open independently — an absent block is simply omitted (legacy rewrites)."""
+    from .render_panels import _authorship_headline_html, _authorship_bars_html
+
+    badge = _badge(scan)
+    breakdown = badge.get("authorship_breakdown") if isinstance(badge, dict) else None
+
+    parts = [f'<p class="dp-cmp-kicker">{html.escape(kicker)}</p>']
+
+    pattern = _cmp_pattern_label(badge)
+    if pattern:
+        parts.append(f'<p class="dp-cmp-pattern">{html.escape(pattern)}</p>')
+
+    if review_required:
+        parts.append(_cmp_chip("Review required", "warn"))
+    else:
+        chip = _cmp_rating_chip(badge)
+        if chip:
+            parts.append(chip)
+
+    # Fused verdict card (reuse the scan PDF's helper: 'DraftProof AI-likelihood 16%' +
+    # band chip + 'Behind this score: composite X%, deep-scan Y%').
+    if isinstance(breakdown, dict):
+        headline = _authorship_headline_html(badge, breakdown)
+        if headline:
+            parts.append(headline)
+        # Defend-lead line + not-a-Turnitin note.
+        ta = badge.get("tier_authority") if isinstance(badge, dict) else None
+        if isinstance(ta, dict) and isinstance(ta.get("fused_score"), (int, float)):
+            band = _CMP_TIER_TO_BAND.get(str(badge.get("tier") or "").lower())
+            defend = ("You can defend this as your own work."
+                      if band == "low" else
+                      "Strengthen this before you can fully defend it as your own.")
+            parts.append(f'<p class="dp-hero-sub">{html.escape(defend)}</p>')
+            parts.append(f'<p class="dp-ai-reference-note">{html.escape(_CMP_NOT_TURNITIN)}</p>')
+        # 'How the writing reads · sums to 100%' — the 4 category bars.
+        bars = _authorship_bars_html(breakdown)
+        if bars:
+            parts.append('<p class="dp-cmp-subhead">How the writing reads · sums to 100%</p>')
+            parts.append(bars)
+
+    axes = _cmp_risk_axes_html(badge)
+    if axes:
+        parts.append(axes)
+
+    return '<div class="dp-cmp-col">' + "".join(parts) + "</div>"
+
+
+def _executive_comparison_html(summary: dict, *, review_required: bool) -> str:
+    """Two-column 'Original vs rewritten' scan cards. '' when neither scan carries the
+    V7 fused badge (legacy rewrite) — caller then keeps the legacy hero/KPI lead."""
+    orig = summary.get("detect_scan_original_saved") or summary.get("detect_scan_original") or {}
+    new = summary.get("detect_scan_rewritten") or {}
+    orig_fused = isinstance((_badge(orig).get("tier_authority") or {}).get("fused_score"), (int, float))
+    new_fused = isinstance((_badge(new).get("tier_authority") or {}).get("fused_score"), (int, float))
+    if not (orig_fused or new_fused):
+        return ""
+    left = _cmp_column("ORIGINAL SCAN", orig)
+    right = _cmp_column("REWRITTEN SCAN", new, review_required=review_required)
+    return ('<div class="dp-cmp-grid">'
+            '<div class="dp-cmp-cell">' + left + "</div>"
+            '<div class="dp-cmp-cell">' + right + "</div>"
+            "</div>")
+
+
+def _highlighted_submitted_content(scan: dict, original_text: str) -> List[str]:
+    """'Submitted Content' with scan-flagged sentences highlighted, reusing the scan PDF's
+    render_highlighted_document. Falls open to the plain-text block when the compacted scan
+    carries no segment highlight data (the common case — highlight spans live in the scan
+    report, not the compacted rewrite scan)."""
+    from .render_panels import render_highlighted_document
+    try:
+        highlighted = render_highlighted_document(scan or {}, original_text or "")
+    except Exception:
+        highlighted = ""
+    if not highlighted:
+        return _document_section("Submitted Content", original_text)
+    return ["## Submitted Content", "", highlighted, ""]
+
+
+_REWRITE_LEGEND = (
+    "Green: improved — text the rewrite improved. "
+    "Amber: edit yourself — kept because the system could not safely improve it."
+)
+
+
+def _split_paragraphs(text: str) -> List[str]:
+    return [p.strip() for p in re.split(r"\n\s*\n", str(text or "")) if p.strip()]
+
+
+def _highlighted_rewritten_content(sentence_comparison: List[Dict[str, Any]],
+                                   final_text: str) -> List[str]:
+    """'Rewritten Content' with paragraph-level green (changed) / amber (kept) highlights.
+
+    The rewrite pipeline's sentence_comparison is a whole-document before/after entry
+    (index 1, original + rewritten full text, changed flag) — NOT sentence-granular — so
+    highlighting is done per PARAGRAPH: align the original vs rewritten paragraphs and mark
+    each rewritten paragraph GREEN when it differs from its original counterpart, AMBER when
+    it was kept verbatim (source_preserved). Falls open to the plain block when
+    sentence_comparison is empty or unusable."""
+    rows = [r for r in (sentence_comparison or []) if isinstance(r, dict)]
+    if not rows:
+        return _document_section("Rewritten Content", final_text)
+
+    # Build an original-paragraph set to detect kept-verbatim paragraphs.
+    orig_text = ""
+    for r in rows:
+        if r.get("original"):
+            orig_text = str(r.get("original"))
+            break
+    orig_paras = set(_split_paragraphs(orig_text)) if orig_text else set()
+
+    # Determine the rendered text: prefer the entry's rewritten field, else final_text.
+    rewritten_text = ""
+    for r in rows:
+        if r.get("rewritten"):
+            rewritten_text = str(r.get("rewritten"))
+            break
+    rewritten_text = rewritten_text or str(final_text or "")
+    new_paras = _split_paragraphs(rewritten_text)
+    if not new_paras:
+        return _document_section("Rewritten Content", final_text)
+
+    # Whole-document 'changed' flag as a fallback signal when we can't diff paragraphs.
+    doc_changed = any(bool(r.get("changed")) for r in rows)
+
+    paras_html = []
+    for para in new_paras:
+        kept = para in orig_paras or (not orig_paras and not doc_changed)
+        safe = html.escape(para)
+        if kept:
+            style = "background:#fffbeb;border-left:3px solid #f59e0b;padding:3pt 6pt;color:#92400e"
+        else:
+            style = "background:#ecfdf5;border-left:3px solid #16a34a;padding:3pt 6pt;color:#065f46"
+        paras_html.append(f'<p style="{style};margin:0 0 6pt">{safe}</p>')
+    if not paras_html:
+        return _document_section("Rewritten Content", final_text)
+    block = ('<div class="dp-hero" style="border-left-color:#94a3b8">'
+             f'<p class="dp-hero-sub">{html.escape(_REWRITE_LEGEND)}</p>'
+             + "".join(paras_html) + "</div>")
+    return ["## Rewritten Content", "", block, ""]
+
+
 def _author_review_card_section(summary: dict) -> List[str]:
     cards = summary.get("author_review_cards") if isinstance(summary.get("author_review_cards"), list) else []
     if not cards:
@@ -773,19 +990,30 @@ def render_rewrite_report(
         else:
             _expl = "Review the revision plan below before making another pass."
 
-        # Hero result panel + before→after KPI row (mirrors the scan report design).
-        from .render_panels import rewrite_hero
-        lines.append(rewrite_hero(
-            result_label=result_label, explanation=_expl, outcome=outcome,
-            ai_improved=ai_improved, score_worse=score_worse, original_preserved=original_preserved,
-            orig_ai=_display_ai_score(orig_ai), new_ai=_display_ai_score(new_ai),
-            orig_human=orig_human, new_human=new_human, orig_wq=orig_wq, new_wq=new_wq,
-            o_total=o_total, n_total=n_total,
-            orig_deep_scan=_deep_scan_pct(orig_scan), new_deep_scan=_deep_scan_pct(new_scan),
-        ))
-        lines.append("")
+        # Two-column 'Original vs rewritten' scan cards (mirror the web comparison view):
+        # per-column pattern label, fused-scale rating chip, the fused verdict card, the
+        # 'How the writing reads' bars, and the independent risk axes. Falls back to the
+        # legacy hero + KPI row when neither scan carries the V7 fused badge (older rewrites).
+        _cmp_html = _executive_comparison_html(
+            summary, review_required=_requires_author_review(summary))
+        if _cmp_html:
+            lines.append(_cmp_html)
+            lines.append("")
+        else:
+            from .render_panels import rewrite_hero
+            lines.append(rewrite_hero(
+                result_label=result_label, explanation=_expl, outcome=outcome,
+                ai_improved=ai_improved, score_worse=score_worse, original_preserved=original_preserved,
+                orig_ai=_display_ai_score(orig_ai), new_ai=_display_ai_score(new_ai),
+                orig_human=orig_human, new_human=new_human, orig_wq=orig_wq, new_wq=new_wq,
+                o_total=o_total, n_total=n_total,
+                orig_deep_scan=_deep_scan_pct(orig_scan), new_deep_scan=_deep_scan_pct(new_scan),
+            ))
+            lines.append("")
 
-        # Then the outcome scorecard (detector-risk seal) before the detail tables.
+        # Then the outcome scorecard (detector-risk seal) — kept after the columns because
+        # it carries the seal verdict + human/AI contribution bars + calibrated-risk chips
+        # that the two-column cards do not duplicate.
         lines.append(_outcome_stamp_html(summary, result_label, new_scan))
         lines.append("")
 
@@ -979,8 +1207,9 @@ def render_rewrite_report(
         # No detect-scan tables in this branch — scorecard leads directly.
         lines.append(_outcome_stamp_html(summary, result_label, new_scan))
     lines.append("")
-    lines.extend(_document_section("Submitted Content", original_text))
-    lines.extend(_document_section("Rewritten Content", final_text))
+    _orig_scan_for_highlight = summary.get("detect_scan_original_saved") or summary.get("detect_scan_original") or {}
+    lines.extend(_highlighted_submitted_content(_orig_scan_for_highlight, original_text))
+    lines.extend(_highlighted_rewritten_content(sentence_comparison, final_text))
     lines.extend(_author_review_card_section(summary))
 
     # ── User-facing action list ─────────────────────────────────────

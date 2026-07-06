@@ -445,6 +445,48 @@ img[src^="https://img.shields.io"] { height: 18px; }
     font-weight: 700;
 }
 
+/* ── Rewrite exec-summary two-column comparison (Original vs Rewritten) ──
+   display:table for reliable equal-width, top-aligned columns in WeasyPrint. */
+.dp-cmp-grid {
+    display: table;
+    width: 100%;
+    border-spacing: 8pt 0;
+    margin: 4pt 0 12pt;
+    table-layout: fixed;
+}
+.dp-cmp-cell {
+    display: table-cell;
+    width: 50%;
+    vertical-align: top;
+}
+.dp-cmp-col {
+    padding: 10pt 11pt;
+    border: 1px solid var(--dp-line);
+    border-radius: 8pt;
+    background: #fff;
+}
+.dp-cmp-kicker {
+    margin: 0 0 3pt;
+    color: var(--dp-muted);
+    font-size: 7.5pt;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+}
+.dp-cmp-pattern {
+    margin: 0 0 6pt;
+    color: var(--dp-ink);
+    font-size: 10.5pt;
+    font-weight: 800;
+}
+.dp-cmp-subhead {
+    margin: 10pt 0 4pt;
+    color: var(--dp-ink);
+    font-size: 8.5pt;
+    font-weight: 800;
+}
+.dp-cmp-col .dp-hero { margin: 8pt 0; }
+.dp-cmp-col .dp-policy-row { margin: 3pt 0; }
+
 /* ── Callout panels (colored left rail + tint) ── */
 .dp-callout {
     margin: 10pt 0 12pt;
