@@ -506,7 +506,9 @@ class PredictabilityScanner:
         sentences = self.split_sentences(text)
         eligible = [s for s in sentences if len(str(s).split()) >= 8]
         total = len(eligible)
-        batch_size = max(1, int(os.environ.get("DRAFTPROOF_PREDICTABILITY_BATCH_SIZE", "16")))
+        # Clamp batch size to [1, 64]: 1 == today's per-sentence behavior (math is
+        # identical through the padded batch path); 64 caps peak memory / compute.
+        batch_size = min(64, max(1, int(os.environ.get("DRAFTPROOF_PREDICTABILITY_BATCH_SIZE", "16"))))
         max_tokens = int(os.environ.get("DRAFTPROOF_PREDICTABILITY_MAX_TOKENS", "384"))
         cache_enabled = self._cache_enabled()
         cache_hits = 0
