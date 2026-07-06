@@ -1,0 +1,53 @@
+{
+  "generated_at": "2026-07-06T12:53:01.627597+00:00",
+  "spec": "v7 §12 category agreement — construction labels, quick-scan path",
+  "caveats": [
+    "construction labels, not human reviewer labels",
+    "quick-scan detector input; production runs deep-scan-fused"
+  ],
+  "skipped_unresolvable": 0,
+  "per_class": {
+    "student_owned": {
+      "n": 40,
+      "primary_accuracy": 0.45,
+      "false_ai_primary_rate": 0.55
+    },
+    "ai_assisted_polished": {
+      "n": 39,
+      "primary_accuracy": 0.0
+    },
+    "ai_paraphrased": {
+      "n": 39,
+      "primary_accuracy": 0.0
+    },
+    "ai_generated_like": {
+      "n": 80,
+      "primary_accuracy": 0.9125
+    }
+  },
+  "confusion": {
+    "student_owned": {
+      "ai_generated_like": 22,
+      "student_owned": 18
+    },
+    "ai_assisted_polished": {
+      "ai_generated_like": 30,
+      "student_owned": 9
+    },
+    "ai_paraphrased": {
+      "ai_generated_like": 34,
+      "student_owned": 5
+    },
+    "ai_generated_like": {
+      "ai_generated_like": 73,
+      "student_owned": 7
+    }
+  },
+  "reliable_assertions": {
+    "student_owned": {},
+    "ai_assisted_polished": {},
+    "ai_paraphrased": {},
+    "ai_generated_like": {}
+  },
+  "macro_primary_accuracy": 0.3406
+}
