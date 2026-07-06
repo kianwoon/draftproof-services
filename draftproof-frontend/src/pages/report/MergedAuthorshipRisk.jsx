@@ -26,7 +26,9 @@ const KNOWN_AUTHORITATIVE_TIERS = ['green', 'amber', 'orange', 'red'];
 // Single source of truth: band label + chip color both derive from the tier the
 // backend assigned. Do NOT recompute a band from the fused score against frontend
 // cutoffs (duplicates backend threshold logic — a no-hardcode violation).
-const TIER_TO_BAND = { green: 'low', amber: 'moderate', orange: 'high', red: 'critical' };
+// Exported: the rewrite-comparison column chips (Report.jsx) rate both columns on
+// this same fused-tier scale so "original vs rewritten" is one vocabulary, not two.
+export const TIER_TO_BAND = { green: 'low', amber: 'moderate', orange: 'high', red: 'critical' };
 
 function CategoryBar({ t, category, raw, band }) {
   const hasRaw = typeof raw === 'number' && Number.isFinite(raw);

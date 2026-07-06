@@ -16,7 +16,7 @@ import SignalHighlights from './report/SignalHighlights';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import CriticalThinkingControl from './report/CriticalThinkingControl';
 import ReportHero from './report/ReportHero';
-import MergedAuthorshipRisk from './report/MergedAuthorshipRisk';
+import MergedAuthorshipRisk, { TIER_TO_BAND } from './report/MergedAuthorshipRisk';
 import PolicyRiskView from './report/PolicyRiskView';
 import useTextareaCaretOverlay from './report/useTextareaCaretOverlay';
 import { buildTrackedDiff, trackedDiffToPlainText, trackedDiffToHtml } from './report/trackedDiff';
@@ -797,7 +797,38 @@ export default function Report() {
   // authorship "GOOD" -- users read "GOOD" as "Turnitin-safe", which no rewrite can honestly promise.
   const rewrittenDetectorVerdict = rewriteDetectorVerdict(aiLikelihoodBands(rewrittenBadge).external?.band, t);
   const manualReviewTone = { color: '#92400e', bg: '#fffbeb' };
-  const originalColumnRatingBadge = {
+  // Column rating chips rate BOTH sides on the V7 fused scale (same band labels and
+  // palette as the scan card's verdict chip) so original vs rewritten is one comparable
+  // vocabulary. Previously the original said an authorship "Good" while the rewritten
+  // said a detector-band "Detector risk low" — different scales, and "Good" read as the
+  // better outcome even when the fused score improved (live feedback 2026-07-07).
+  // Palette mirrors .merged-verdict-chip.is-<tier> in 06-report-overview.css.
+  const FUSED_TIER_TONES = {
+    green: { color: '#15803d', bg: '#dcfce7' },
+    amber: { color: '#b45309', bg: '#fef3c7' },
+    orange: { color: '#c2410c', bg: '#ffedd5' },
+    red: { color: '#b91c1c', bg: '#fee2e2' },
+  };
+  const fusedColumnRatingBadge = (variantBadge, caption) => {
+    const ta = variantBadge?.tier_authority;
+    if (!ta || typeof ta.fused_score !== 'number') return null;
+    const tierKey = String(variantBadge.tier || '').toLowerCase();
+    const band = TIER_TO_BAND[tierKey];
+    if (!band) return null;
+    return {
+      caption,
+      label: `${t(`report.authorshipBreakdown.fusedHeadline.bands.${band}`)} · ${Math.round(ta.fused_score)}%`,
+      fullLabel: t('report.authorshipBreakdown.fusedHeadline.evidence', {
+        composite: Math.round(ta.composite_score ?? 0),
+        deepScan: Math.round((ta.proportion || 0) * 100),
+      }),
+      tone: FUSED_TIER_TONES[tierKey],
+    };
+  };
+  const originalColumnRatingBadge = fusedColumnRatingBadge(
+    originalComparisonBadge,
+    t('report.transformation.originalRating'),
+  ) || {
     caption: t('report.transformation.originalRating'),
     label: authorshipRatingLabel,
     fullLabel: authorshipRatingFullLabel,
@@ -817,7 +848,7 @@ export default function Report() {
       fullLabel: t('rewritePage.externalReviewTitle'),
       tone: manualReviewTone,
     }
-    : {
+    : fusedColumnRatingBadge(rewrittenBadge, t('report.transformation.rewrittenRating')) || {
       caption: t('report.transformation.rewrittenRating'),
       label: rewrittenDetectorVerdict.label,
       fullLabel: rewrittenAuthorshipRatingFullLabel || rewrittenDetectorVerdict.label,
