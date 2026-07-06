@@ -48,6 +48,7 @@ from calibration.v7_deberta_diversity_check import (  # noqa: E402
     _load_env, _score_essay, CASES_V2,
 )
 from detect.run import DetectionRunner  # noqa: E402
+from calibration.retune import deepscan_cache  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 PROGRESS = HERE / "v7_fused_gate_progress.jsonl"
@@ -62,6 +63,7 @@ class ResolvedPaths:
     progress: Path
     corpus: str
     weights: Path
+    cache: Path
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -70,13 +72,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--progress", default=str(PROGRESS), help="incremental progress cache (jsonl)")
     ap.add_argument("--corpus", default=str(DEFAULT_CORPUS), help="SCoCESLE corpus dir")
     ap.add_argument("--weights", default=str(DEFAULT_WEIGHTS), help="fusion weights.json to read")
+    ap.add_argument("--cache", default=str(deepscan_cache.DEFAULT_CACHE),
+                     help="persistent content-hash deep-scan cache (jsonl); "
+                          "essays already scored under the same checkpoint are never re-paid")
     return ap
 
 
 def resolve_paths(args: argparse.Namespace) -> ResolvedPaths:
     return ResolvedPaths(
         out=Path(args.out), progress=Path(args.progress),
-        corpus=args.corpus, weights=Path(args.weights),
+        corpus=args.corpus, weights=Path(args.weights), cache=Path(args.cache),
     )
 
 
@@ -135,6 +140,8 @@ def main() -> None:
     prepaid = _prepaid_proportions()
     done = _load_progress(paths.progress)
     runner = DetectionRunner()
+    chkpt = deepscan_cache.checkpoint_tag()
+    dcache = deepscan_cache.load_cache(paths.cache)
     t0 = time.time()
 
     work: list[tuple[str, str, str]] = []  # (id, kind, text)
@@ -167,8 +174,11 @@ def main() -> None:
             proportion = float(prepaid[case_id])
         else:
             try:
-                scores, _n = _score_essay(url, token, text)
-                proportion = (sum(1 for x in scores if x >= sent_thr) / len(scores)) if scores else None
+                scores = deepscan_cache.get_scores(
+                    text, chkpt, dcache, paths.cache,
+                    lambda t: (_score_essay(url, token, t)[0]),
+                )
+                proportion = deepscan_cache.proportion(scores, sent_thr)
             except Exception as e:  # noqa: BLE001
                 print(f"  [{rid}] modal failed: {e}", flush=True)
                 continue
