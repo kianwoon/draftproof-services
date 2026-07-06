@@ -47,3 +47,6 @@ poc/calibration/retune/cache/
 
 # V7 fused-gate run progress log (resumable-run artifact from v7_fused_gate_run.py; regenerated per run)
 poc/calibration/v7_fused_gate_progress.jsonl
+
+# V7 §12 validation corpus (SCoCESLE-derived variants + manifest — no-redistribution license; never commit)
+poc/calibration/v12_validation/corpus/

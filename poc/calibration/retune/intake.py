@@ -47,11 +47,11 @@ def load_env() -> None:
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k, v.strip().strip('"').strip("'"))
 
-def _chat(model, base_url, api_key, prompt, temperature) -> str | None:
+def _chat(model, base_url, api_key, prompt, temperature, max_tokens: int = 700) -> str | None:
     body = json.dumps({
         "model": model,
         "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
-        "temperature": temperature, "max_tokens": 700,
+        "temperature": temperature, "max_tokens": max_tokens,
     }).encode()
     req = urllib.request.Request(
         f"{base_url}/chat/completions", data=body,
