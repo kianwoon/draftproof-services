@@ -280,7 +280,7 @@ def test_send_email_returns_false_on_cloudflare_failure(monkeypatch):
     assert send_email({"to": "student@example.com"}, settings=_settings()) is False
 
 
-def test_scan_email_asserts_category_only_when_reliable():
+def test_scan_email_asserts_ai_category_when_reliable_and_deep_scan_ran():
     payload = build_scan_completion_email(
         recipient_email="student@example.com",
         scan_id="s-1",
@@ -288,10 +288,41 @@ def test_scan_email_asserts_category_only_when_reliable():
         authorship_breakdown={
             "primary_category": "ai_generated_like",
             "primary_category_reliable": True,
+            "deep_scan": {"proportion": 0.8, "band": "red", "calibrated": True},
         },
         settings=_settings(),
     )
     assert "Authorship read: mostly AI-generated-like" in payload["text"]
+
+
+def test_scan_email_withholds_ai_category_without_deep_scan():
+    # Quick-scan-only (Modal fallback): never assert an AI-flavored category.
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="s-1b",
+        pdf_bytes=b"%PDF-1.7 scan",
+        authorship_breakdown={
+            "primary_category": "ai_generated_like",
+            "primary_category_reliable": True,
+        },
+        settings=_settings(),
+    )
+    assert "mostly AI-generated-like" not in payload["text"]
+    assert "Authorship read: mixed signals" in payload["text"]
+
+
+def test_scan_email_student_owned_needs_no_deep_scan():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="s-1c",
+        pdf_bytes=b"%PDF-1.7 scan",
+        authorship_breakdown={
+            "primary_category": "student_owned",
+            "primary_category_reliable": True,
+        },
+        settings=_settings(),
+    )
+    assert "Authorship read: mostly student-owned" in payload["text"]
 
 
 def test_scan_email_neutral_line_when_category_unreliable():

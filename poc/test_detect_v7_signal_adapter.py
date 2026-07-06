@@ -173,9 +173,19 @@ def test_missing_inputs_yield_none_not_a_fabricated_zero():
     out = adapt_paragraph_signals({})
     for name in _BUILT_OK_SIGNALS:
         assert out[name] is None
-        assert out["signal_status"][name] == "not_implemented"
+        # BUILT signal with absent inputs this run -> "unavailable", NOT
+        # "not_implemented" (which is reserved for the unbuilt Phase-1C/2
+        # rows so degraded accounting can discriminate).
+        assert out["signal_status"][name] == "unavailable"
     assert out["semantic_drift"] is None
     assert out["signal_status"]["semantic_drift"] == "unavailable_no_comparison_text"
+
+
+def test_unbuilt_signals_stay_not_implemented():
+    out = adapt_paragraph_signals({})
+    for name in ("paraphrase_pattern_score", "meaning_preservation_score", "esl_false_positive_risk"):
+        assert out[name] is None
+        assert out["signal_status"][name] == "not_implemented"
 
 
 def test_empty_raw_signals_dict_does_not_raise():

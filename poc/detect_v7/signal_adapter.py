@@ -63,6 +63,15 @@ V7_SIGNAL_NAMES: tuple[str, ...] = (
 _STATUS_OK = "ok"
 _STATUS_NOT_IMPLEMENTED = "not_implemented"
 _STATUS_NO_COMPARISON = "unavailable_no_comparison_text"
+# A BUILT signal whose inputs were absent for THIS document/run. Distinct from
+# "not_implemented" (signal doesn't exist in the codebase yet — a roadmap fact,
+# not a data-quality fact): only "unavailable" should degrade the breakdown's
+# trust accounting (category_scoring counts it toward `degraded`), otherwise
+# the two unbuilt Phase-1C signals force degraded=True on EVERY document and
+# the degraded_display / primary_category_reliable guards can never
+# discriminate (measured 2026-07-06: degraded_display fired on 100% of both
+# human and AI classes).
+_STATUS_UNAVAILABLE = "unavailable"
 
 
 def _get(d: Optional[dict[str, Any]], key: str) -> Optional[float]:
@@ -112,7 +121,9 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
 
     Returns a dict with all 14 V7 signal names as keys (float in [0,1] or
     None), plus a companion ``signal_status`` dict keyed the same way with
-    values "ok" / "not_implemented" / "unavailable_no_comparison_text".
+    values "ok" / "unavailable" (built signal, inputs absent this run) /
+    "not_implemented" (signal not built yet — only the Phase-1C/2 rows) /
+    "unavailable_no_comparison_text".
     """
     raw_signals = raw_signals or {}
     ai = raw_signals.get("ai_components") or {}
@@ -135,7 +146,7 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     if grounding_gap is None:
         grounding_gap = _get_criterion_value(criterion_scores, "citation_grounding_gap")
     out["grounding_gap"] = _clamp01(grounding_gap)
-    status["grounding_gap"] = _STATUS_OK if out["grounding_gap"] is not None else _STATUS_NOT_IMPLEMENTED
+    status["grounding_gap"] = _STATUS_OK if out["grounding_gap"] is not None else _STATUS_UNAVAILABLE
 
     # 2. generic_density ← direct: ai_components.generic_assertion_risk (layer3_scoring's
     #    primary generic-content signal) else the generic_phrase_density criterion value.
@@ -145,7 +156,7 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     if generic_density is None:
         generic_density = _get_criterion_value(criterion_scores, "generic_phrase_density")
     out["generic_density"] = _clamp01(generic_density)
-    status["generic_density"] = _STATUS_OK if out["generic_density"] is not None else _STATUS_NOT_IMPLEMENTED
+    status["generic_density"] = _STATUS_OK if out["generic_density"] is not None else _STATUS_UNAVAILABLE
 
     # 3. predictable_structure ← MEAN of repetitive_structure (criteria/repetitive_structure.py
     #    .value), repeated_sentence_structure_risk, formulaic_conclusion_risk, and
@@ -167,7 +178,7 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     ]
     predictable_structure = _mean(structure_parts)
     out["predictable_structure"] = _clamp01(predictable_structure)
-    status["predictable_structure"] = _STATUS_OK if out["predictable_structure"] is not None else _STATUS_NOT_IMPLEMENTED
+    status["predictable_structure"] = _STATUS_OK if out["predictable_structure"] is not None else _STATUS_UNAVAILABLE
 
     # 4. sentence_smoothness ← derived from low_burstiness + low_surprisal criteria.
     #    VERIFIED POLARITY (read criteria/burstiness.py and criteria/surprisal.py source):
@@ -190,7 +201,7 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     ]
     sentence_smoothness = _mean(smoothness_parts)
     out["sentence_smoothness"] = _clamp01(sentence_smoothness)
-    status["sentence_smoothness"] = _STATUS_OK if out["sentence_smoothness"] is not None else _STATUS_NOT_IMPLEMENTED
+    status["sentence_smoothness"] = _STATUS_OK if out["sentence_smoothness"] is not None else _STATUS_UNAVAILABLE
 
     # 5. author_voice_absence ← blend of lived_detail_risk (writing_components; already an
     #    "absence of lived/concrete author detail" RISK, i.e. direct — high = more absent)
@@ -207,7 +218,7 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     voice_parts = [v for v in (lived_detail_risk, human_anchor_absence) if v is not None]
     author_voice_absence = _mean(voice_parts)
     out["author_voice_absence"] = _clamp01(author_voice_absence)
-    status["author_voice_absence"] = _STATUS_OK if out["author_voice_absence"] is not None else _STATUS_NOT_IMPLEMENTED
+    status["author_voice_absence"] = _STATUS_OK if out["author_voice_absence"] is not None else _STATUS_UNAVAILABLE
 
     # 6. citation_gap ← direct: writing_components.citation_weakness_risk (primary field
     #    on WritingComponentInputs) else the citation_grounding_gap meta-criterion as a
@@ -219,7 +230,7 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     if citation_gap is None:
         citation_gap = _get_criterion_value(criterion_scores, "citation_grounding_gap")
     out["citation_gap"] = _clamp01(citation_gap)
-    status["citation_gap"] = _STATUS_OK if out["citation_gap"] is not None else _STATUS_NOT_IMPLEMENTED
+    status["citation_gap"] = _STATUS_OK if out["citation_gap"] is not None else _STATUS_UNAVAILABLE
 
     # 7. semantic_drift ← needs comparison text (spec: draft_evolution criterion + semantic_shape
     #    output, comparing this draft against a prior/source draft). Note: semantic_shape.py's
@@ -235,7 +246,7 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
         if semantic_drift is None:
             semantic_drift = _get(semantic_shape, "semantic_drift_risk")
         out["semantic_drift"] = _clamp01(semantic_drift)
-        status["semantic_drift"] = _STATUS_OK if out["semantic_drift"] is not None else _STATUS_NOT_IMPLEMENTED
+        status["semantic_drift"] = _STATUS_OK if out["semantic_drift"] is not None else _STATUS_UNAVAILABLE
     else:
         out["semantic_drift"] = None
         status["semantic_drift"] = _STATUS_NO_COMPARISON
@@ -247,17 +258,17 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     #    signal); no inversion, straight pass-through of low_burstiness.value.
     sentence_variance = _get_criterion_value(criterion_scores, "low_burstiness")
     out["sentence_variance"] = _clamp01(sentence_variance)
-    status["sentence_variance"] = _STATUS_OK if out["sentence_variance"] is not None else _STATUS_NOT_IMPLEMENTED
+    status["sentence_variance"] = _STATUS_OK if out["sentence_variance"] is not None else _STATUS_UNAVAILABLE
 
     # 9. specificity_score ← direct pass-through of criteria/specificity.py score().value.
     specificity_score = _get_criterion_value(criterion_scores, "low_specificity")
     out["specificity_score"] = _clamp01(specificity_score)
-    status["specificity_score"] = _STATUS_OK if out["specificity_score"] is not None else _STATUS_NOT_IMPLEMENTED
+    status["specificity_score"] = _STATUS_OK if out["specificity_score"] is not None else _STATUS_UNAVAILABLE
 
     # 10. local_style_shift ← direct pass-through of criteria/style_shift.py score().value.
     local_style_shift = _get_criterion_value(criterion_scores, "style_shift")
     out["local_style_shift"] = _clamp01(local_style_shift)
-    status["local_style_shift"] = _STATUS_OK if out["local_style_shift"] is not None else _STATUS_NOT_IMPLEMENTED
+    status["local_style_shift"] = _STATUS_OK if out["local_style_shift"] is not None else _STATUS_UNAVAILABLE
 
     # 11. detector_disagreement ← direct pass-through of external_grouped_scoring's
     #     detector_agreement_risk GROUP score (0-100 in that module; normalized to 0-1 here).
@@ -273,7 +284,7 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
         if detector_disagreement > 1.0:
             detector_disagreement = detector_disagreement / 100.0
     out["detector_disagreement"] = _clamp01(detector_disagreement)
-    status["detector_disagreement"] = _STATUS_OK if out["detector_disagreement"] is not None else _STATUS_NOT_IMPLEMENTED
+    status["detector_disagreement"] = _STATUS_OK if out["detector_disagreement"] is not None else _STATUS_UNAVAILABLE
 
     # 12. paraphrase_pattern_score — NOT YET BUILT (Phase 1C, MiniLM structural-reuse
     #     pattern signal per weights.json _notes.ai_paraphrased_variants). Do not

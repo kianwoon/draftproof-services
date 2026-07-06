@@ -8,8 +8,19 @@ No weight/threshold literal lives in this file — every number comes from
 ``detect_v7/weights.json`` via ``config.py`` accessors (CLAUDE.md
 no-hardcode rule). Missing signals are never silently treated as 0: a
 missing (``None``) signal contributes 0 to its category's raw weighted sum
-AND is recorded in the returned ``missing_signals`` list with ``degraded``
-set to True, so callers know the raw score is an underestimate.
+AND is recorded in the returned ``missing_signals`` list, so callers know
+the raw score is an underestimate.
+
+``degraded`` is stricter than ``missing_signals``: it is True only when a
+missing signal's adapter status says the signal is BUILT but its inputs were
+absent for this run (``"unavailable"``, or an unknown/absent status —
+conservative). Signals that are absent BY DESIGN (adapter status
+``"not_implemented"`` — the unbuilt Phase-1C/2 rows — or
+``"unavailable_no_comparison_text"``) still land in ``missing_signals`` but
+do NOT set ``degraded``: they are roadmap facts, identical for every
+document, and counting them made ``degraded`` a constant True that the
+degraded_display / primary_category_reliable guards could never use
+(measured 2026-07-06: 100% of both human and AI docs degraded).
 """
 from __future__ import annotations
 
@@ -142,7 +153,16 @@ def score_paragraph(
             missing_signals,
         )
 
-    degraded = bool(missing_signals)
+    # Degraded accounting: only BUILT-but-absent signals count (see module
+    # docstring). Status values come from signal_adapter; an unknown/absent
+    # status is treated as degrading (conservative — never assume health).
+    signal_status = v7_signals.get("signal_status") or {}
+    _BY_DESIGN_ABSENT = ("not_implemented", "unavailable_no_comparison_text")
+    degraded = any(
+        signal_status.get(name) not in _BY_DESIGN_ABSENT
+        for name in missing_signals
+        if name != "calibrated_detector_score"
+    )
 
     # --- ESL guard: damp ai_generated_like's raw share BEFORE normalization ---
     esl_guard_cfg = config.get_esl_guard_config()

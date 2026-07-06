@@ -215,3 +215,40 @@ def test_midrange_helper_plateau_and_taper_shape():
 def test_unknown_category_raises_value_error():
     with pytest.raises(ValueError):
         config.get_category_weights("not_a_real_category")
+
+
+def test_by_design_absent_signals_do_not_set_degraded():
+    # The unbuilt Phase-1C/2 signals (status "not_implemented") and the
+    # no-comparison-text paraphrase path are roadmap facts, identical for
+    # every document — they must land in missing_signals WITHOUT forcing
+    # degraded=True, or degraded is a constant and the downstream
+    # degraded_display / primary_category_reliable guards can't discriminate.
+    signals = _full_signals(
+        paraphrase_pattern_score=None,
+        meaning_preservation_score=None,
+        semantic_drift=None,
+        signal_status={
+            "paraphrase_pattern_score": "not_implemented",
+            "meaning_preservation_score": "not_implemented",
+            "semantic_drift": "unavailable_no_comparison_text",
+        },
+    )
+    result = category_scoring.score_paragraph(signals, calibrated_detector_score=0.5)
+    assert "paraphrase_pattern_score" in result["missing_signals"]
+    assert result["degraded"] is False
+
+
+def test_built_signal_unavailable_sets_degraded():
+    signals = _full_signals(
+        specificity_score=None,
+        signal_status={"specificity_score": "unavailable"},
+    )
+    result = category_scoring.score_paragraph(signals, calibrated_detector_score=0.5)
+    assert "specificity_score" in result["missing_signals"]
+    assert result["degraded"] is True
+
+
+def test_unknown_status_is_conservatively_degrading():
+    signals = _full_signals(grounding_gap=None, signal_status={})
+    result = category_scoring.score_paragraph(signals, calibrated_detector_score=0.5)
+    assert result["degraded"] is True

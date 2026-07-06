@@ -201,7 +201,19 @@ def build_scan_completion_email(
     bd = authorship_breakdown or {}
     primary_category = bd.get("primary_category")
     if primary_category and primary_category in _AUTHORSHIP_CATEGORY_LABELS:
-        if bd.get("primary_category_reliable") is not False:
+        # AI-flavored categories are an accusation-shaped claim: additionally
+        # require the deep scan to have actually run (breakdown carries a
+        # "deep_scan" payload only on success). Measured 2026-07-06 on the
+        # quick-scan-only path, 2/12 higher-proficiency human ESL essays
+        # still passed the reliability gate with an ai_generated_like primary
+        # — with the deep-scan-fused detector input that residual is what the
+        # SCoCESLE-calibrated floor protects against, so never assert an AI
+        # category from a quick-scan-only (Modal-fallback) result.
+        _is_ai_claim = primary_category != "student_owned"
+        _deep_scan_ran = isinstance(bd.get("deep_scan"), dict)
+        if bd.get("primary_category_reliable") is not False and (
+            not _is_ai_claim or _deep_scan_ran
+        ):
             details.append(f"Authorship read: {_AUTHORSHIP_CATEGORY_LABELS[primary_category]}")
         else:
             details.append(
