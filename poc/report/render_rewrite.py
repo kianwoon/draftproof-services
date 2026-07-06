@@ -430,8 +430,11 @@ def _cmp_risk_axes_html(badge: dict) -> str:
         )
     if not rows:
         return ""
-    return ('<p class="dp-cmp-subhead">Where the risk sits · independent</p>'
-            + "".join(rows))
+    # Wrap heading + all rows in one group so pagination breaks BEFORE the section
+    # (moving it whole to the next page) rather than splitting the risk list mid-way.
+    return ('<div class="dp-cmp-risk-group">'
+            '<p class="dp-cmp-subhead">Where the risk sits · independent</p>'
+            + "".join(rows) + "</div>")
 
 
 def _cmp_column(kicker: str, scan: dict, *, review_required: bool = False) -> str:
