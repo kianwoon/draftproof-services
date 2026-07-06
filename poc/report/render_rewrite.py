@@ -1025,12 +1025,9 @@ def render_rewrite_report(
             ))
             lines.append("")
 
-        # Then the outcome scorecard (detector-risk seal) — kept after the columns because
-        # it carries the seal verdict + human/AI contribution bars + calibrated-risk chips
-        # that the two-column cards do not duplicate.
-        lines.append(_outcome_stamp_html(summary, result_label, new_scan))
-        lines.append("")
-
+        # Outcome scorecard (detector-risk seal) intentionally NOT rendered — owner
+        # decision 2026-07-07: with the two-column V7 cards leading, the seal panel is
+        # redundant noise in the PDF. The comparison table follows the columns directly.
         lines.append("### Detect Scan Comparison")
         lines.append("")
         lines.append("| Metric | Original | Final Output | Change |")
@@ -1218,8 +1215,8 @@ def render_rewrite_report(
         )
         lines.append(f"**{result_label}**")
         lines.append("")
-        # No detect-scan tables in this branch — scorecard leads directly.
-        lines.append(_outcome_stamp_html(summary, result_label, new_scan))
+        # Outcome scorecard removed here too (owner decision 2026-07-07) — the result
+        # label above remains the outcome line in this no-comparison branch.
     lines.append("")
     _orig_scan_for_highlight = summary.get("detect_scan_original_saved") or summary.get("detect_scan_original") or {}
     lines.extend(_highlighted_submitted_content(
