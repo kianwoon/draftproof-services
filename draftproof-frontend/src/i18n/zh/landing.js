@@ -473,24 +473,21 @@ export const landing = {
   "findingsSampleMainIssue": "使用了通用过渡短语和可预测措辞，降低了文章的原创性。",
   "findingsRewriteHint": "改写提示",
   "findingsSampleRewriteHint": "示例：\"超越经济领域，美国电影每年覆盖全球190多个国家的观众。\"",
-  "actionPlan": "行动计划",
-  "actionPlanTitle": "先修复影响最大的问题",
-  "actionPlanBody": "报告会把扫描信号转化为实用的审阅顺序，帮助你在修改或下载 PDF 前知道先处理什么。",
   "sampleActionItems": [
     {
       "title": "补充引用支撑",
       "body": "有两个论断在提交前需要更清楚的来源依据。",
-      "tone": "warning"
+      "label": "高优先级"
     },
     {
       "title": "加强来源支撑",
       "body": "有一段需要说明引用来源如何支撑你的观点。",
-      "tone": "quality"
+      "label": "中优先级"
     },
     {
       "title": "修改泛化表达",
       "body": "用更具体的推理和证据替换宽泛的 AI 风格措辞。",
-      "tone": "positive"
+      "label": "快速改进项"
     }
   ],
   "checks": [

@@ -475,24 +475,21 @@ export const landing = {
   "findingsSampleMainIssue": "Use of generic transitional phrase and predictable wording that reduces originality.",
   "findingsRewriteHint": "Rewrite Hint",
   "findingsSampleRewriteHint": "Example: \"Beyond its economy, American cinema reaches audiences in over 190 countries each year.\"",
-  "actionPlan": "Action Plan",
-  "actionPlanTitle": "Fix the highest-impact issues first",
-  "actionPlanBody": "The report turns scan signals into a practical review order before you revise or download the PDF.",
   "sampleActionItems": [
     {
       "title": "Add citation support",
       "body": "Two claims need clearer source backing before submission.",
-      "tone": "warning"
+      "label": "High priority"
     },
     {
       "title": "Strengthen source grounding",
       "body": "One paragraph should explain how the cited source supports the point.",
-      "tone": "quality"
+      "label": "Medium priority"
     },
     {
       "title": "Revise generic phrasing",
       "body": "Replace broad AI-style wording with specific reasoning and evidence.",
-      "tone": "positive"
+      "label": "Quick win"
     }
   ],
   "checks": [

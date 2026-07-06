@@ -919,21 +919,21 @@ function SampleReportPreview() {
         )}
 
         {activeSection === 'actionPlan' && (
-          <div className="sample-section-card">
-            <div className="sample-section-card-head">
-              <span>{t('landing.actionPlan')}</span>
-              <h3>{t('landing.actionPlanTitle')}</h3>
-              <p>{t('landing.actionPlanBody')}</p>
+          <div className="fix-first-card">
+            <div className="fix-first-head">
+              <span>{t('report.whatToFixFirst.kicker')}</span>
+              <h2>{t('report.whatToFixFirst.title')}</h2>
             </div>
-            <div className="sample-action-list">
+            <div className="fix-first-list">
               {sampleActionItems.map((item, index) => (
-                <article className={`sample-action-item is-${item.tone}`} key={item.title}>
-                  <span>{String(index + 1).padStart(2, '0')}</span>
-                  <div>
+                <div className="fix-first-item" key={item.title}>
+                  <span className="fix-first-index">{index + 1}</span>
+                  <span className="fix-first-copy">
                     <strong>{item.title}</strong>
-                    <p>{item.body}</p>
-                  </div>
-                </article>
+                    <em>{item.body}</em>
+                  </span>
+                  {item.label && <span className="fix-first-label">{item.label}</span>}
+                </div>
               ))}
             </div>
           </div>
