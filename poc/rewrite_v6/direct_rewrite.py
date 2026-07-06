@@ -1,16 +1,10 @@
 """Lean direct-rewrite path (A/B alternative to the heavy planner/writer/selector pipeline).
 
-Validated by probe: the over-engineered planner->writer message buries the scanner's simple,
-specific fix and over-constrains the writer into breaking meaning. A minimal prompt -- the
-paragraph + the scanner's own diagnosis + "rewrite it to read human, keep every fact" -- beats the
-whole pipeline (mean ~44 vs 52, tighter, cleaner output).
-
-So this path: one LLM call per flagged paragraph, no flow_plans / coverage_beats / must_keep lists /
-playbook / structural-metric gate. It KEEPS author-proxy (the writer may add a reviewable grounding
-bridge for an anchor/grounding gap) and a lightweight meaning-safety backstop (polarity inversion,
-dropped source beat, over-truncation) so a bad draw can't silently ship a meaning flip.
-
-Enable with DRAFTPROOF_V6_DIRECT_REWRITE=1.
+Validated by probe: a minimal prompt -- the paragraph + the scanner's own diagnosis + "rewrite it to
+read human, keep every fact" -- beats the whole pipeline (mean ~44 vs 52). One LLM call per flagged
+paragraph, no flow_plans / coverage_beats / must_keep / playbook / structural gate. KEEPS author-proxy
+(a reviewable grounding bridge) and a light meaning-safety backstop (polarity inversion, dropped beat,
+over-truncation) so a bad draw can't silently ship a meaning flip. Enable via DRAFTPROOF_V6_DIRECT_REWRITE=1.
 """
 
 from __future__ import annotations
@@ -18,7 +12,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from collections import Counter
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any, Callable
 
 try:
@@ -1084,6 +1080,21 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+# Flagged paragraphs rewritten concurrently in _rewrite_document_once. One blocking writer call
+# (Cerebras gpt-oss) per flagged paragraph dominates rewrite latency; a few in parallel cut wall time.
+# Default 3, clamped to [1, 8]. Value 1 = the exact sequential path (kill switch, byte-identical).
+_WRITER_CONCURRENCY_DEFAULT = 3
+
+
+def _writer_concurrency() -> int:
+    raw = os.environ.get("DRAFTPROOF_V6_WRITER_CONCURRENCY", "").strip()
+    try:
+        value = int(raw) if raw else _WRITER_CONCURRENCY_DEFAULT
+    except ValueError:
+        value = _WRITER_CONCURRENCY_DEFAULT
+    return max(1, min(8, value))
+
+
 # The per-paragraph rewrite phase occupies the 40..78 band of the overall job
 # progress (the worker sets 40 before this phase and 80 after it).
 _PROGRESS_FLOOR = 40
@@ -1152,38 +1163,38 @@ def _rewrite_document_once(
         1 for p in paragraphs
         if findings_for_paragraph(scan, p.id) or paragraph_diagnosis(p.id)
     )
-    done = 0
-    for index, paragraph in enumerate(paragraphs):
-        if cancellation_check:
-            cancellation_check()
-        findings = findings_for_paragraph(scan, paragraph.id)
-        diagnosis = paragraph_diagnosis(paragraph.id)
-        if not findings and not diagnosis:
-            rewritten.append(paragraph.text)
-            continue
-        if progress_callback:
-            progress_callback(
-                _section_progress(done, flagged_total),
-                f"Rewriting section {done + 1} of {flagged_total}",
+    concurrency = _writer_concurrency()
+    if concurrency > 1 and flagged_total > 1:
+        rewritten, pass_trace = _rewrite_paragraphs_parallel(
+            scan, gateway, paragraphs, flagged_total, concurrency, progress_callback, cancellation_check, authorship_evidence, lane)
+    else:
+        # concurrency == 1 (or <=1 flagged): the original strictly-sequential path, byte-identical.
+        done = 0
+        for index, paragraph in enumerate(paragraphs):
+            if cancellation_check:
+                cancellation_check()
+            findings = findings_for_paragraph(scan, paragraph.id)
+            diagnosis = paragraph_diagnosis(paragraph.id)
+            if not findings and not diagnosis:
+                rewritten.append(paragraph.text)
+                continue
+            if progress_callback:
+                progress_callback(
+                    _section_progress(done, flagged_total),
+                    f"Rewriting section {done + 1} of {flagged_total}",
+                )
+            targets = (
+                paragraph_authorship_targets(authorship_evidence, paragraph.text)
+                if (authorship_evidence and authorship_boost_enabled())
+                else {}
             )
-        targets = (
-            paragraph_authorship_targets(authorship_evidence, paragraph.text)
-            if (authorship_evidence and authorship_boost_enabled())
-            else {}
-        )
-        candidate, review_items = _clean_candidate(
-            gateway, paragraph, diagnosis, findings, authorship_targets=targets, lane=lane
-        )
-        if candidate is None:
-            # No usable, grammatically-clean rewrite after retries -> show the clean original rather
-            # than broken grammar. (Rare; the curated grammar set is high-precision.)
-            rewritten.append(paragraph.text)
-            pass_trace.append(_trace(index, paragraph.id, "source_preserved", "no_clean_rewrite", []))
-        else:
-            # Always show the solution; ride meaning concerns along as review flags for the user to check.
-            rewritten.append(candidate)
-            pass_trace.append(_trace(index, paragraph.id, "direct_llm", None, review_items + _review_flags(candidate, paragraph)))
-        done += 1
+            candidate, review_items = _clean_candidate(
+                gateway, paragraph, diagnosis, findings, authorship_targets=targets, lane=lane
+            )
+            text, trace_row = _paragraph_outcome(index, paragraph, candidate, review_items)
+            rewritten.append(text)
+            pass_trace.append(trace_row)
+            done += 1
 
     final_text = "\n\n".join(rewritten)
     return DocumentResult(
@@ -1193,6 +1204,114 @@ def _rewrite_document_once(
         rewritten_text=final_text,
         pass_trace=pass_trace,
     )
+
+
+def _paragraph_outcome(
+    index: int, paragraph: Paragraph, candidate: str | None, review_items: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    """(text, trace_row) for one flagged paragraph -- shared by the sequential and parallel paths.
+
+    candidate is None -> no usable clean rewrite after retries; show the clean original (rare).
+    Otherwise show the solution and ride meaning concerns along as review flags.
+    """
+    if candidate is None:
+        return paragraph.text, _trace(index, paragraph.id, "source_preserved", "no_clean_rewrite", [])
+    return candidate, _trace(index, paragraph.id, "direct_llm", None, review_items + _review_flags(candidate, paragraph))
+
+
+# Cerebras throttles under load; the gateway's own retry can still exhaust and surface a rate-limit
+# error (normally swallowed to source_preserved). Concurrency makes throttling likelier, so the worker
+# task backs off and retries. Markers mirror the gateway's 429 signals; backoff length caps extras at 2.
+_RATE_LIMIT_MARKERS = ("rate_limit", "rate limit", "429", "too many requests")
+_RATE_LIMIT_BACKOFFS = (2.0, 5.0)
+
+
+def _is_rate_limit_error(error: BaseException) -> bool:
+    return any(marker in str(error).lower() for marker in _RATE_LIMIT_MARKERS)
+
+
+def _rewrite_paragraph_task(
+    gateway: LLMGateway,
+    paragraph: Paragraph,
+    diagnosis: dict[str, Any] | None,
+    findings: list[Any],
+    targets: dict[str, Any],
+    lane: str,
+    cancellation_check: Callable[[], None] | None,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Worker-thread task: one paragraph's clean-candidate, with rate-limit backoff retries.
+
+    Runs OFF the main thread -> reads NO request-scoped contextvar; diagnosis/findings/targets are
+    resolved on the main thread and passed in. A rate-limit failure backs off and retries; any other
+    failure keeps (None, []) -> source_preserved.
+    """
+    for backoff in (None, *_RATE_LIMIT_BACKOFFS):
+        if backoff is not None:
+            time.sleep(backoff)
+        if cancellation_check:
+            cancellation_check()
+        try:
+            return _clean_candidate(gateway, paragraph, diagnosis, findings, authorship_targets=targets, lane=lane, raise_rate_limit=True)
+        except Exception as exc:  # noqa: BLE001 - only rate-limit is retried; others fall through
+            if not _is_rate_limit_error(exc):
+                return None, []  # non-rate-limit: existing swallow -> source_preserved
+    return None, []  # rate-limited on every attempt
+
+
+def _rewrite_paragraphs_parallel(
+    scan: Scan,
+    gateway: LLMGateway,
+    paragraphs: list[Paragraph],
+    flagged_total: int,
+    concurrency: int,
+    progress_callback: Callable[[int, str], None] | None,
+    cancellation_check: Callable[[], None] | None,
+    authorship_evidence: Any,
+    lane: str,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Parallel per-paragraph loop; results keyed by index so order matches the sequential path.
+
+    Context resolution (findings, diagnosis, authorship targets) happens HERE on the main thread --
+    paragraph_diagnosis() reads a contextvar that does NOT propagate to worker threads. Progress and
+    cancellation run on the main thread as futures complete (monotonic percent, prompt abort).
+    """
+    boost_on = bool(authorship_evidence and authorship_boost_enabled())
+    jobs: list[tuple[int, Paragraph, dict[str, Any] | None, list[Any], dict[str, Any]]] = []
+    results: dict[int, tuple[str, dict[str, Any]]] = {}  # index -> (text, trace_row); {} row == unflagged
+    for index, paragraph in enumerate(paragraphs):
+        findings = findings_for_paragraph(scan, paragraph.id)
+        diagnosis = paragraph_diagnosis(paragraph.id)
+        if not findings and not diagnosis:
+            results[index] = (paragraph.text, {})
+            continue
+        targets = paragraph_authorship_targets(authorship_evidence, paragraph.text) if boost_on else {}
+        jobs.append((index, paragraph, diagnosis, findings, targets))
+    done = 0
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        future_to_job = {
+            executor.submit(_rewrite_paragraph_task, gateway, p, diag, finds, tgts, lane, cancellation_check): (idx, p)
+            for idx, p, diag, finds, tgts in jobs
+        }
+        pending = set(future_to_job)
+        try:
+            while pending:
+                if cancellation_check:
+                    cancellation_check()
+                completed, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    index, paragraph = future_to_job[future]
+                    candidate, review_items = future.result()
+                    results[index] = _paragraph_outcome(index, paragraph, candidate, review_items)
+                    if progress_callback:
+                        progress_callback(_section_progress(done, flagged_total), f"Rewriting section {done + 1} of {flagged_total}")
+                    done += 1
+        except BaseException:  # cancellation (or any error): drop pending work, re-raise promptly
+            for future in pending:
+                future.cancel()
+            raise
+    rewritten = [results[index][0] for index in range(len(paragraphs))]
+    pass_trace = [results[index][1] for index in range(len(paragraphs)) if results[index][1]]
+    return rewritten, pass_trace
 
 
 # gpt-oss intermittently degrades a whole-paragraph rewrite into a run of quoted clauses
@@ -1269,6 +1388,7 @@ def _clean_candidate(
     attempts: int = 2,
     authorship_targets: dict[str, Any] | None = None,
     lane: str = "control",
+    raise_rate_limit: bool = False,
 ) -> tuple[str | None, list[dict[str, Any]]]:
     """Return the first usable, grammatically-clean rewrite within `attempts`, else (None, []).
 
@@ -1283,6 +1403,7 @@ def _clean_candidate(
             gateway, paragraph, diagnosis, findings,
             authorship_targets=authorship_targets,
             lane=lane,
+            raise_rate_limit=raise_rate_limit,
         )
         candidate = _normalize_punctuation(candidate) if candidate else candidate
         candidate = _collapse_paragraph_breaks(candidate) if candidate else candidate
@@ -1333,6 +1454,7 @@ def _rewrite_paragraph(
     findings: list[Any],
     authorship_targets: dict[str, Any] | None = None,
     lane: str = "control",
+    raise_rate_limit: bool = False,
 ) -> tuple[str | None, list[dict[str, Any]]]:
     tags = sorted({tag for finding in findings for tag in (finding.tags or [])})
     try:
@@ -1350,7 +1472,11 @@ def _rewrite_paragraph(
             app_label="DirectRewrite",
         )
         data = parse_json(getattr(response, "raw_content", "") or response.content)
-    except (Exception, ValueError):
+    except (Exception, ValueError) as exc:
+        # Concurrent-path only: let a rate-limit error escape so the worker task can back off and
+        # retry. Default (raise_rate_limit=False) keeps the historic swallow-everything behaviour.
+        if raise_rate_limit and _is_rate_limit_error(exc):
+            raise
         return None, []
     if not isinstance(data, dict):
         return None, []
