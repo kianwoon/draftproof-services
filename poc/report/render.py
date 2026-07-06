@@ -1705,6 +1705,20 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     # rich lead renders "## 1. Submission and policy view"); the fallback
     # headline lead has no numbered section, so numbering starts at 0 there.
     _section_no = 1 if _lead else 0
+    _page_parity = bool(_lead)
+
+    # ── FIX-FIRST / OPTIONAL POLISH (page parity: this is the page's next
+    # section after the merged card) ──────────────────────────────
+    if _page_parity:
+        from .render_panels import render_fix_first
+        _badge_tier_low = str((report.ai_risk_badge or {}).get("tier", "")).lower() in ("green", "low")
+        _ff = render_fix_first(data, _section_no + 1, low_tone=_badge_tier_low)
+        if _ff:
+            _section_no += 1
+            lines.append("")
+            lines.append(_ff)
+            lines.append("")
+
     if report.rewrite:
         _section_no += 1
         lines.append(f"## {_section_no}. Calibration summary")
@@ -1768,17 +1782,30 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
     # ── QUESTIONS TO SHARPEN YOUR THINKING ────────────────────────
     from .render_panels import render_question_cards
-    _ct_questions = render_question_cards(report.ai_risk_badge, section_no=_section_no + 1)
-    if _ct_questions:
-        _section_no += 1
-        lines.append("")
-        lines.append(_ct_questions)
+    # Page order (parity mode): Signal highlights come BEFORE the questions,
+    # matching the scan page (merged card → fix-first → Signal highlights →
+    # Questions). Legacy keeps the old questions-then-findings order.
+    _ct_questions = None
+    if not _page_parity:
+        _ct_questions = render_question_cards(report.ai_risk_badge, section_no=_section_no + 1)
+        if _ct_questions:
+            _section_no += 1
+            lines.append("")
+            lines.append(_ct_questions)
 
-    # ── FINDINGS (numbering follows whichever sections rendered) ──
+    # ── FINDINGS / SIGNAL HIGHLIGHTS (numbering follows rendered sections) ──
     _section_no += 1
     lines.append("")
-    lines.append(f"## {_section_no}. Findings")
-    lines.append("")
+    if _page_parity:
+        from .render_panels import render_signal_highlights_intro
+        lines.append(f"## {_section_no}. Submitted content — Signal highlights")
+        _sh_intro = render_signal_highlights_intro(data)
+        if _sh_intro:
+            lines.append(_sh_intro)
+        lines.append("")
+    else:
+        lines.append(f"## {_section_no}. Findings")
+        lines.append("")
 
     finding_num = 0
 
@@ -1836,6 +1863,24 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append("*No findings detected. Text appears clean.*")
         lines.append("")
 
+    # ── PAGE PARITY: highlighted full document (the page's 'Read full
+    # document' tab) inside the Signal-highlights section, then the
+    # Questions section AFTER it — matching the scan page's order. ──
+    _highlighted_doc = ""
+    if _page_parity:
+        from .render_panels import render_highlighted_document
+        _highlighted_doc = render_highlighted_document(data, report.original_text or "")
+        if _highlighted_doc:
+            lines.append("")
+            lines.append(_highlighted_doc)
+            lines.append("")
+        _ct_questions = render_question_cards(report.ai_risk_badge, section_no=_section_no + 1)
+        if _ct_questions:
+            _section_no += 1
+            lines.append("")
+            lines.append(_ct_questions)
+            lines.append("")
+
     # ── 3. SCANNER BREAKDOWN (hidden from reports — data in JSON) ───
 
     # ── 4. REWRITE SUMMARY ────────────────────────────────────────
@@ -1892,14 +1937,19 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     if report.original_text:
         lines.append('<div style="page-break-before: always;"></div>')
         lines.append("")
-        lines.append("## Appendix — Submitted Text")
-        lines.append("")
-        for p in report.original_text.strip().split("\n"):
-            p = p.strip()
-            if p:
-                lines.append(f"> {p}")
-                lines.append(">")
-        lines.append("")
+        if _highlighted_doc:
+            # Page parity: the highlighted 'Read full document' block above IS
+            # the submitted text — a second plain copy is not on the page.
+            pass
+        else:
+            lines.append("## Appendix — Submitted Text")
+            lines.append("")
+            for p in report.original_text.strip().split("\n"):
+                p = p.strip()
+                if p:
+                    lines.append(f"> {p}")
+                    lines.append(">")
+            lines.append("")
 
     # ── FOOTER ────────────────────────────────────────────────────
     lines.append("---")

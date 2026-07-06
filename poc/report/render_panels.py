@@ -688,3 +688,175 @@ def render_question_cards(badge, section_no: int = 3) -> str:
             "rewriting the paragraph.</p></div>"
         )
     return "\n".join(out)
+
+
+# ── PAGE-PARITY sections (owner rule 2026-07-06: scan PDF == scan page) ──────
+# Everything below mirrors the scan page's components 1:1, reading the SAME
+# report-JSON fields the frontend reads (scan_intelligence.document.segments /
+# .paragraphs). KEEP IN SYNC with draftproof-frontend/src/pages/report/
+# reportHelpers.js (buildFixFirstItems, buildParagraphSeverityBar,
+# debertaSeverityColor) and SignalHighlights.jsx.
+
+# DeBERTa score -> color, matching the page's per-sentence heatmap scale
+# exactly (reportHelpers.js DEBERTA_SEVERITY_COLORS): red >=99, orange 90-98,
+# amber 80-89, below 80 = clean.
+_DEBERTA_SEVERITY_COLORS = ((99, "#dc2626"), (90, "#f97316"), (80, "#f59e0b"))
+_DENSITY_CLEAN_COLOR = "#16a34a"
+
+
+def _doc_intel(data: dict) -> dict:
+    return ((data or {}).get("scan_intelligence") or {}).get("document") or {}
+
+
+def _deberta_score_of(segment: dict):
+    for s in segment.get("signals") or []:
+        if s.get("key") == "ai_signal_deberta":
+            try:
+                return float(s.get("score") or 0)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _severity_color(score) -> str:
+    if isinstance(score, (int, float)):
+        for floor, color in _DEBERTA_SEVERITY_COLORS:
+            if score >= floor:
+                return color
+    return ""
+
+
+def _segments_by_paragraph(data: dict) -> list[tuple[dict, list[dict]]]:
+    """[(paragraph_row, [segment, ...]), ...] in document order."""
+    intel = _doc_intel(data)
+    segs = intel.get("segments") or []
+    paras = intel.get("paragraphs") or []
+    by_pid: dict[str, list[dict]] = {}
+    for seg in segs:
+        by_pid.setdefault(str(seg.get("paragraph_id") or "p001"), []).append(seg)
+    ordered = sorted(paras, key=lambda p: int(p.get("start_char") or 0))
+    out = []
+    seen = set()
+    for p in ordered:
+        pid = str(p.get("paragraph_id") or "")
+        seen.add(pid)
+        out.append((p, by_pid.get(pid, [])))
+    for pid, group in by_pid.items():  # paragraphs missing a row (defensive)
+        if pid not in seen:
+            out.append(({"paragraph_id": pid}, group))
+    return out
+
+
+# allow-hardcode: student-facing display copy — verbatim from the page's i18n
+# (report.whatToFixFirst.*); KEEP IN SYNC with i18n/en/report.js.
+def render_fix_first(data: dict, section_no: int, low_tone: bool) -> str:
+    """The page's FixFirstChecklist ('Optional polish' / 'What to fix first'):
+    up to 3 flagged paragraphs, each titled by its strongest flagged sentence
+    (mirrors reportHelpers.buildFixFirstItems + the paragraph readerSummary
+    formula). '' when the report has no flagged paragraphs."""
+    rows = []
+    for p, segs in _segments_by_paragraph(data):
+        flagged = sorted(
+            (s for s in segs if (_deberta_score_of(s) or 0) >= _DEBERTA_SEVERITY_COLORS[-1][0]),
+            key=lambda s: -(_deberta_score_of(s) or 0),
+        )
+        if not flagged:
+            continue
+        top = flagged[0]
+        words = str(top.get("text") or "").split()
+        snippet = " ".join(words[:14]) + ("…" if len(words) > 14 else "")
+        count = len(flagged)
+        lead = (f"{count} sentences in this paragraph read this way; the strongest is"
+                if count > 1 else "The strongest is")
+        sids = [str(s.get("sentence_id") or "") for s in segs if s.get("sentence_id")]
+        chip = (f"{sids[0].upper()}–{sids[-1].upper()}" if len(sids) > 1
+                else (sids[0].upper() if sids else ""))
+        rows.append((chip, f'{lead} "{snippet}".'))
+        if len(rows) == 3:
+            break
+    if not rows:
+        return ""
+    if low_tone:
+        kicker, title = "Polish", "Optional polish"
+        intro = ("This already reads as your own work. To make it even harder to question, "
+                 "ground these claims in a specific only you could know — a name, a number, "
+                 "an observation. Sentence-level notes are in the highlights below.")
+    else:
+        kicker, title = "Repair Plan", "What to fix first"
+        intro = ("These paragraphs are driving the report. Ground each claim in a specific "
+                 "only you could know — a name, a number, an observation — then put it in "
+                 "your own voice. Sentence-level fixes are in the highlights below.")
+    items = "".join(
+        f'<div class="dp-policy-row dp-policy-row--info">'
+        f'<span class="dp-policy-name">{i}. {escape(text)}</span>'
+        + (f'<span class="dp-policy-issue">{escape(chip)}</span>' if chip else "")
+        + "</div>"
+        for i, (chip, text) in enumerate(rows, 1)
+    )
+    return (f"## {section_no}. {title}\n"
+            f'<p class="dp-section-intro">{escape(kicker)} — {escape(intro)}</p>\n'
+            + items)
+
+
+def render_signal_highlights_intro(data: dict) -> str:
+    """The page's Signal-highlights header block: flagged-paragraph count, the
+    per-sentence finding-density bar, and the 'Passages to review' chip.
+    '' when the report carries no segments (legacy JSON)."""
+    groups = _segments_by_paragraph(data)
+    if not any(segs for _, segs in groups):
+        return ""
+    all_segs = [s for _, segs in groups for s in segs]
+    total_len = sum(max(1, len(str(s.get("text") or ""))) for s in all_segs) or 1
+    blocks = []
+    for s in all_segs:
+        width = max(0.4, len(str(s.get("text") or "")) / total_len * 100)
+        color = _severity_color(_deberta_score_of(s)) or _DENSITY_CLEAN_COLOR
+        blocks.append(
+            f'<span style="display:inline-block;height:10px;width:{width:.2f}%;'
+            f'background:{color};border-right:1px solid #fff"></span>'
+        )
+    flagged_paras = sum(
+        1 for _, segs in groups
+        if any((_deberta_score_of(s) or 0) >= _DEBERTA_SEVERITY_COLORS[-1][0] for s in segs)
+    )
+    out = [
+        '<p class="dp-hero-sub"><b>Finding density by document</b> — '
+        f"{flagged_paras} flagged paragraph{'s' if flagged_paras != 1 else ''}</p>",
+        f'<div style="line-height:0;white-space:nowrap">{"".join(blocks)}</div>',
+        '<p class="dp-hero-sub">Clean / fewer findings → denser / more severe</p>',
+    ]
+    if flagged_paras:
+        out.append(_statchip(f"Passages to review (beta deep-scan): {flagged_paras}", "warn"))
+    return "\n".join(out)
+
+
+def render_highlighted_document(data: dict, original_text: str) -> str:
+    """The page's 'Read full document' view: the submitted text with each
+    classifier-flagged sentence underlined in its severity color. Falls back
+    to '' when segments are absent (caller keeps the plain-text appendix)."""
+    groups = _segments_by_paragraph(data)
+    if not any(segs for _, segs in groups):
+        return ""
+    paras_html = []
+    for _p, segs in groups:
+        if not segs:
+            continue
+        parts = []
+        for s in sorted(segs, key=lambda x: int(x.get("start_char") or 0)):
+            text = escape(str(s.get("text") or "").strip())
+            if not text:
+                continue
+            color = _severity_color(_deberta_score_of(s))
+            if color:
+                parts.append(f'<span style="color:{color};text-decoration:underline;'
+                             f'font-weight:600">{text}</span>')
+            else:
+                parts.append(text)
+        if parts:
+            paras_html.append(f'<p>{" ".join(parts)}</p>')
+    if not paras_html:
+        return ""
+    return ('<div class="dp-hero" style="border-left-color:#94a3b8">'
+            "<p class=\"dp-hero-sub\"><b>Read full document</b> — flagged sentences "
+            "are underlined in their severity color, matching the report page.</p>"
+            + "".join(paras_html) + "</div>")
