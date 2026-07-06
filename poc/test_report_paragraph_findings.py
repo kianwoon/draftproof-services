@@ -319,3 +319,57 @@ def test_paragraph_explainer_uses_v6_cerebras_direct_settings(monkeypatch):
         "model": "gpt-oss-120b",
     }
     assert explanations["paragraphs"][0]["recommendation"].startswith("Use concrete wording")
+
+
+def _deberta_data(signal_source="v7_fused"):
+    return {
+        "ai_risk_badge": {"signal_source": signal_source},
+        "paragraph_explanations": {"paragraphs": []},
+        "scan_intelligence": {"document": {
+            "segments": [
+                {"sentence_id": "s001", "paragraph_id": "p001", "text": "Flagged one.",
+                 "signals": [{"key": "ai_signal_deberta", "score": 100, "tier": "high"}]},
+                {"sentence_id": "s002", "paragraph_id": "p001", "text": "Clean sentence.",
+                 "signals": []},
+                {"sentence_id": "s003", "paragraph_id": "p002", "text": "Flagged two.",
+                 "signals": [{"key": "ai_signal_deberta", "score": 92, "tier": "medium"}]},
+            ],
+            "paragraphs": [
+                {"paragraph_id": "p001", "sentence_ids": ["s001", "s002"],
+                 "text": "Flagged one. Clean sentence.", "start_char": 0},
+                {"paragraph_id": "p002", "sentence_ids": ["s003"],
+                 "text": "Flagged two.", "start_char": 30},
+            ],
+        }},
+    }
+
+
+def test_deberta_paragraph_groups_mirror_web_cards():
+    """One group per flagged paragraph, one pseudo-finding per flagged sentence
+    — the same shape the web Signal-highlights cards show."""
+    from report.render import _deberta_paragraph_groups
+
+    groups = _deberta_paragraph_groups(_deberta_data())
+    assert [g["paragraph_id"] for g in groups] == ["p001", "p002"]
+    assert len(groups[0]["findings"]) == 1 and len(groups[1]["findings"]) == 1
+    assert groups[0]["findings"][0].scanner == "deberta"
+    assert "Learned classifier AI signal" in groups[0]["findings"][0].detail
+
+
+def test_v7_fused_signal_source_uses_web_matching_cards():
+    """Live-PDF regression (2026-07-06, report fac2ff21): the V7 tier-authority
+    launch changed signal_source to 'v7_fused', which silently disabled the
+    web-matching card path — PDFs regressed to the legacy findings tree
+    ('5 paragraphs, 21 findings' vs the web's 3 classifier paragraph cards).
+    The fused source must select the SAME segment-signal grouping as
+    'deberta_authoritative', with a non-empty-groups fallback.
+    render_markdown derives its data dict internally (no injection seam), so
+    this pins the gate at source level, like the badge-tier casing test."""
+    import inspect
+
+    import report.render as render_mod
+
+    src = inspect.getsource(render_mod)
+    assert '"deberta_authoritative", "v7_fused")' in src
+    assert ("paragraph_groups = (_deberta_paragraph_groups(data)\n"
+            "                                or _paragraph_finding_groups(all_findings_flat, data))") in src

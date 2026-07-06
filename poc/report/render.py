@@ -1773,7 +1773,15 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     # in document order — mirrors the /report page layout. When the DeBERTa authoritative flag
     # is on (signal_source), filter to DeBERTa findings only so the PDF matches the web page
     # (no perplexity 'AI Likelihood' / 'Generic Phrasing' cards leaking through).
-    _is_deberta_auth = (data.get("ai_risk_badge") or {}).get("signal_source") == "deberta_authoritative"
+    # "v7_fused" included: the V7 tier-authority launch changed signal_source
+    # from "deberta_authoritative" to "v7_fused" on fused scans, which silently
+    # disabled this web-matching card path — live PDFs regressed to the legacy
+    # findings tree (perplexity cards + only the >=0.99 findings) while the web
+    # page showed the segment-signal paragraph cards (observed 2026-07-06,
+    # report fac2ff21: PDF '5 paragraphs, 21 findings' vs web '3 paragraphs').
+    # The fused path's sentence flags ARE the learned-classifier signals.
+    _is_deberta_auth = (data.get("ai_risk_badge") or {}).get("signal_source") in (
+        "deberta_authoritative", "v7_fused")
     all_findings_flat = [
         f for tier_level in [Tier.CRITICAL, Tier.HIGH, Tier.MEDIUM, Tier.LOW]
         for f in fb.get(tier_level.value, [])
@@ -1783,11 +1791,15 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
 
     if all_findings_flat:
         if _is_deberta_auth:
-            # DeBERTa authoritative: build finding groups from the SEGMENT SIGNALS (the same
-            # >=0.80 paragraphs the web page shows), not the findings tree (which only has the
-            # >=0.99 high-confidence findings). This gives one card per flagged paragraph,
-            # matching the web page's Signal highlights section.
-            paragraph_groups = _deberta_paragraph_groups(data)
+            # DeBERTa authoritative / V7 fused: build finding groups from the SEGMENT
+            # SIGNALS (the same >=0.80 paragraphs the web page shows), not the findings
+            # tree (which only has the >=0.99 high-confidence findings). This gives one
+            # card per flagged paragraph, matching the web page's Signal highlights
+            # section. Fallback: if this report carries no segment signals (older JSON,
+            # or a heatmap failure), group the (deberta-filtered) findings tree instead
+            # of rendering an empty section.
+            paragraph_groups = (_deberta_paragraph_groups(data)
+                                or _paragraph_finding_groups(all_findings_flat, data))
         else:
             paragraph_groups = _paragraph_finding_groups(all_findings_flat, data)
         paragraph_count = len(paragraph_groups)
