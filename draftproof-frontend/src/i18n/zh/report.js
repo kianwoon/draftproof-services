@@ -724,7 +724,10 @@ export const report = {
         "head": "逐段深度扫描信号",
         "note": "同一次检测按段落分组 —— 段落越短，噪声越大",
         "row": "第 {{index}} 段",
-        "sentences_other": "{{count}} 句"
+        "sentences_other": "{{count}} 句",
+        "flaggedDetail_other": "{{count}} 句中 {{flagged}} 句被标记",
+        "belowFloor": "{{pct}}% —— 低于 {{floor}}% 可靠性下限，样本太少，无法判断本段",
+        "atOrAboveFloor": "达到或超过 {{floor}}% 可靠性下限"
       }
     },
     "subtitle": "展示本文档的写作信号在四种作者风格之间的分布。四项占比之和恒为 100%——这是构成比例，不是 AI 概率。下方的深度扫描估计来自另一个测试版检测模型，可能与上方摘要中的「文本模式风险」不一致——两者都是信号，而非定论。",

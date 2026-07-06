@@ -217,6 +217,8 @@ def _deep_scan_paragraphs_html(breakdown: dict) -> str:
     paragraphs = deep_scan.get("paragraphs")
     if not isinstance(paragraphs, list) or not paragraphs:
         return ""
+    floor = deep_scan.get("reliability_floor")
+    floor_pct = round(floor * 100) if isinstance(floor, (int, float)) else None
     rows = []
     for p in paragraphs:
         if not isinstance(p, dict):
@@ -225,19 +227,33 @@ def _deep_scan_paragraphs_html(breakdown: dict) -> str:
         proportion = p.get("proportion")
         band = p.get("band")
         count = p.get("sentence_count")
+        flagged = p.get("flagged_count")
         if not isinstance(idx, int):
             continue
-        if band == "insufficient" or not isinstance(proportion, (int, float)):
+        insufficient = band == "insufficient" or not isinstance(proportion, (int, float))
+        if insufficient:
             chip = _statchip("insufficient evidence", "info")
             value = ""
         else:
             chip = _statchip(_ACB_DEEP_SCAN_BAND_LABELS.get(band, band or ""), _level_kind(band))
             value = f"<b>{round(proportion * 100)}%</b> "
-        sentences = (f" · {count} sentence{'' if count == 1 else 's'}"
-                     if isinstance(count, int) else "")
+        # Show the arithmetic behind the verdict (mirrors the web panel):
+        # "1 of 4 sentences flagged · 25% — below the 30% reliability floor".
+        if isinstance(flagged, int) and isinstance(count, int) and floor_pct is not None:
+            pct = round((proportion or 0) * 100)
+            plural = "" if count == 1 else "s"
+            if insufficient:
+                detail = (f" · {flagged} of {count} sentence{plural} flagged · {pct}% — "
+                          f"below the {floor_pct}% reliability floor, too few to judge this paragraph")
+            else:
+                detail = (f" · {flagged} of {count} sentence{plural} flagged · "
+                          f"at or above the {floor_pct}% reliability floor")
+        else:
+            detail = (f" · {count} sentence{'' if count == 1 else 's'}"
+                      if isinstance(count, int) else "")
         rows.append(
             '<p class="dp-hero-sub dp-dsp-row">'
-            f"Paragraph {idx + 1}: {value}{chip}{escape(sentences)}</p>"
+            f"Paragraph {idx + 1}: {value}{chip}{escape(detail)}</p>"
         )
     if not rows:
         return ""

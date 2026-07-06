@@ -228,26 +228,42 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
             <span className="merged-lens-note">· {t('report.authorshipBreakdown.deepScan.paragraphs.note')}</span>
           </p>
           <div className="merged-dsp-rows">
-            {breakdown.deep_scan.paragraphs.map((p) => (
-              <div className="merged-dsp-row" key={p.index}>
-                <span className="merged-dsp-label">
-                  {t('report.authorshipBreakdown.deepScan.paragraphs.row', { index: p.index + 1 })}
-                </span>
-                {/* Same pattern as the verdict line: plain bold value + band-label
-                    chip — never a raw number inside a colored chip. */}
-                {p.band !== 'insufficient' && (
-                  <strong className="merged-dsp-value">{Math.round((p.proportion || 0) * 100)}%</strong>
-                )}
-                <span className={`merged-verdict-chip is-${p.band}`}>
-                  {p.band === 'insufficient'
-                    ? t('report.authorshipBreakdown.deepScan.insufficientChip')
-                    : t(`report.authorshipBreakdown.deepScan.bands.${p.band}`)}
-                </span>
-                <span className="merged-lens-note">
-                  {t('report.authorshipBreakdown.deepScan.paragraphs.sentences', { count: p.sentence_count })}
-                </span>
-              </div>
-            ))}
+            {breakdown.deep_scan.paragraphs.map((p) => {
+              const insufficient = p.band === 'insufficient';
+              const pct = Math.round((p.proportion || 0) * 100);
+              const floor = breakdown.deep_scan.reliability_floor;
+              const floorPct = typeof floor === 'number' ? Math.round(floor * 100) : null;
+              const hasDetail = typeof p.flagged_count === 'number' && floorPct !== null;
+              return (
+                <div className="merged-dsp-row" key={p.index}>
+                  <div className="merged-dsp-main">
+                    <span className="merged-dsp-label">
+                      {t('report.authorshipBreakdown.deepScan.paragraphs.row', { index: p.index + 1 })}
+                    </span>
+                    {/* Same pattern as the verdict line: plain bold value +
+                        band-label chip — never a raw number inside a chip. */}
+                    {!insufficient && <strong className="merged-dsp-value">{pct}%</strong>}
+                    <span className={`merged-verdict-chip is-${p.band}`}>
+                      {insufficient
+                        ? t('report.authorshipBreakdown.deepScan.insufficientChip')
+                        : t(`report.authorshipBreakdown.deepScan.bands.${p.band}`)}
+                    </span>
+                  </div>
+                  <span className="merged-lens-note merged-dsp-detail">
+                    {hasDetail
+                      ? `${t('report.authorshipBreakdown.deepScan.paragraphs.flaggedDetail', {
+                          flagged: p.flagged_count,
+                          count: p.sentence_count,
+                        })} · ${
+                          insufficient
+                            ? t('report.authorshipBreakdown.deepScan.paragraphs.belowFloor', { pct, floor: floorPct })
+                            : t('report.authorshipBreakdown.deepScan.paragraphs.atOrAboveFloor', { floor: floorPct })
+                        }`
+                      : t('report.authorshipBreakdown.deepScan.paragraphs.sentences', { count: p.sentence_count })}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

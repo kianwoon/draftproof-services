@@ -600,9 +600,11 @@ class TestDeepScanPerParagraphProportions:
         assert rows[0] == {
             "index": 0,
             "sentence_count": 2,
+            "flagged_count": 2,
             "proportion": 1.0,
             "band": "red",
         }
+        assert deep["reliability_floor"] == pytest.approx(0.3)
         assert rows[1]["index"] == 1
         assert rows[1]["sentence_count"] == 1
         assert rows[1]["proportion"] == 0.0

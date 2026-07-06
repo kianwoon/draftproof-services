@@ -268,6 +268,11 @@ def get_deep_scan_proportion(detection_result: Any) -> Optional[dict[str, Any]]:
     )
     if paragraph_rows:
         payload["paragraphs"] = paragraph_rows
+        # Surfaces explain "insufficient evidence" with the actual arithmetic
+        # ("1 of 4 flagged · 25%, below the 30% reliability floor") — the
+        # floor must reach them as DATA (weights.json doc_floor), never as a
+        # literal in frontend/PDF code (no-hardcode rule).
+        payload["reliability_floor"] = doc_floor
     return {
         "proportion": deberta_score,
         "uncalibrated": modal_response.get("calibrated") is not True,
@@ -361,6 +366,7 @@ def _per_paragraph_proportions(
                 {
                     "index": body_ordinal,
                     "sentence_count": len(scores),
+                    "flagged_count": p_flagged,
                     "proportion": round(p_prop, 4),
                     "band": _deep_scan_band(p_prop),
                 }

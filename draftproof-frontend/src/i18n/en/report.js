@@ -732,7 +732,11 @@ export const report = {
         "note": "same detector pass grouped by paragraph — short paragraphs are noisier",
         "row": "Paragraph {{index}}",
         "sentences_one": "{{count}} sentence",
-        "sentences_other": "{{count}} sentences"
+        "sentences_other": "{{count}} sentences",
+        "flaggedDetail_one": "{{flagged}} of {{count}} sentence flagged",
+        "flaggedDetail_other": "{{flagged}} of {{count}} sentences flagged",
+        "belowFloor": "{{pct}}% — below the {{floor}}% reliability floor, too few to judge this paragraph",
+        "atOrAboveFloor": "at or above the {{floor}}% reliability floor"
       }
     },
     "subtitle": "How this document's writing signals distribute across four authorship styles. The shares always add up to 100% — a composition of the mix, not an AI-probability. The deep-scan estimate below comes from a separate beta detector and may differ from Text-pattern risk in the summary above — different models, and both are signals rather than verdicts.",
