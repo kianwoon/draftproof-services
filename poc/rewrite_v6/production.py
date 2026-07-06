@@ -430,7 +430,18 @@ def run_rewrite_pipeline_v6(
         "render_markdown",
         85,
         "Rendering rewrite report",
-        lambda: render_rewrite_report(summary=summary, sentence_comparison=sentence_comparison, ai_findings=[], verbose=False),
+        # original_text/final_text drive the PDF's Submitted/Rewritten Content sections
+        # (render_rewrite._document_section renders nothing when they're empty). The worker's
+        # delivery re-render passes them (worker/app/tasks.py); this pipeline artifact is the
+        # worker's FALLBACK PDF, so it must carry the content too.
+        lambda: render_rewrite_report(
+            summary=summary,
+            sentence_comparison=sentence_comparison,
+            ai_findings=[],
+            verbose=False,
+            original_text=original_text,
+            final_text=final_text,
+        ),
     )
     md_path.write_text(md_text, encoding="utf-8")
     timed_stage(
