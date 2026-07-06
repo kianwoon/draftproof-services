@@ -41,6 +41,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 
 # Importing model_preload registers its @worker_process_init.connect handler.
 from . import model_preload  # noqa: F401
+from . import scan_enrichment
 from .rewrite_billing import (
     _dedupe_historical_seed_texts,
     _historical_rewrite_seed_texts,
@@ -197,36 +198,62 @@ def scan_document(self, job_id: str, text: str) -> dict:
             with open(result["json_path"]) as f:
                 results_json = json.load(f)
 
+            # Three post-detection LLM enrichment steps (each fail-open, each mutating
+            # results_json / the DraftReport object). Their LLM calls are independent —
+            # none reads another's output — so by default we run them concurrently on a
+            # ThreadPoolExecutor and apply every result on the MAIN thread, in the same
+            # order as the sequential path, so the merged report is byte-identical.
+            # Kill switch DRAFTPROOF_SCAN_ENRICHMENT_PARALLEL=0 restores the exact
+            # sequential code path.
             paragraph_explanations = None
-            try:
-                report_progress(96, "Explaining paragraph findings")
-                from poc.report.paragraph_explainer import generate_paragraph_explanations
+            _enrichment_parallel = (
+                os.environ.get("DRAFTPROOF_SCAN_ENRICHMENT_PARALLEL", "1") != "0"
+            )
+
+            def _apply_paragraph_explanations(explanations) -> None:
+                # Mutation + render for the paragraph-explainer step (main thread only).
+                nonlocal paragraph_explanations, md_text, pdf_bytes
                 from poc.report.render import render_report
                 from poc.report.pdf import render_pdf
 
-                paragraph_explanations = generate_paragraph_explanations(
-                    results_json,
-                    api_key=(settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or None),
-                    base_url=(settings.LLM_BASE_URL or None),
-                    model=(
-                        settings.DRAFTPROOF_V6_PLANNER_MODEL
-                        or settings.DRAFTPROOF_PLANNER_MODEL
-                        or settings.DRAFTPROOF_REWRITE_V5_PLANNER_MODEL
-                        or settings.LLM_MODEL
-                        or None
-                    ),
-                )
-                if paragraph_explanations is not None:
-                    results_json["paragraph_explanations"] = paragraph_explanations
+                paragraph_explanations = explanations
+                if explanations is not None:
+                    results_json["paragraph_explanations"] = explanations
                     draft_report = result.get("report")
                     if draft_report is not None:
-                        draft_report.paragraph_explanations = paragraph_explanations
+                        draft_report.paragraph_explanations = explanations
                         md_text = render_report(draft_report, verbose=True)
                         explained_pdf_path = os.path.join(tmpdir, "draftproof_explained.pdf")
                         render_pdf(md_text, explained_pdf_path)
                         with open(explained_pdf_path, "rb") as f:
                             pdf_bytes = f.read()
-            except Exception as exc:
+
+            def _apply_critical_thinking(enrichment) -> None:
+                # Merge Critical Thinking Control LLM dimensions onto the badge (no render).
+                ctc = (results_json.get("ai_risk_badge") or {}).get("critical_thinking_control")
+                if isinstance(ctc, dict) and enrichment is not None:
+                    ctc["llm_dimensions"] = enrichment.get("llm_dimensions")
+                    ctc["highlights"] = enrichment.get("highlights") or []
+                    ctc["llm_model"] = enrichment.get("model")
+
+            def _apply_reflective_questions(questions) -> bool:
+                # Merge reflective questions onto the badge and mirror onto the DraftReport
+                # object. Render is DEFERRED to a single pass below so the PDF is built once.
+                # Returns True iff questions were mirrored onto the DraftReport object — the
+                # exact condition under which the sequential path re-rendered the PDF.
+                ctc = (results_json.get("ai_risk_badge") or {}).get("critical_thinking_control")
+                if isinstance(ctc, dict) and questions is not None and questions.get("questions"):
+                    ctc["questions"] = questions.get("questions")
+                    ctc["questions_model"] = questions.get("model")
+                    _dr = result.get("report")
+                    _dr_badge = getattr(_dr, "ai_risk_badge", None)
+                    _dr_ctc = _dr_badge.get("critical_thinking_control") if isinstance(_dr_badge, dict) else None
+                    if isinstance(_dr_ctc, dict):
+                        _dr_ctc["questions"] = questions.get("questions")
+                        return True
+                return False
+
+            def _log_paragraph_failure(exc: Exception) -> None:
                 status_code = getattr(getattr(exc, "response", None), "status_code", None)
                 if status_code in {401, 403}:
                     logger.warning(
@@ -238,65 +265,75 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 else:
                     logger.warning("Paragraph explanation generation failed for %s", job_id, exc_info=True)
 
-            # Heartbeat after the (silent, possibly multi-minute) paragraph-explainer LLM
-            # call so stale-recovery sees a live worker before the next enrichment step.
-            # Without this the only beats in the tail are 96 (pre-enrichment) and 97
-            # (pre-upload); a slow enrichment could otherwise be reaped as stale (H1/M1).
-            report_progress(96, "Finalizing report")
+            report_progress(96, "Explaining paragraph findings")
+            # Whether the reflective-questions step actually mirrored questions onto the
+            # DraftReport object — drives the single deferred PDF re-render below. (Matches
+            # the sequential path where the questions step re-rendered the questions PDF.)
+            _questions_mirrored = False
 
-            # Phase-2 LLM enrichment for Critical Thinking Control (kill-switch, DEFAULT OFF
-            # via DRAFTPROOF_CRITICAL_THINKING_LLM). Adds the alternative_comparison +
-            # reflection dimensions and agnostic per-sentence highlights to the additive
-            # critical_thinking_control diagnosis. Fail-open: never blocks or alters the scan.
-            try:
-                from poc.detect.critical_thinking_llm import assess_critical_thinking
-                ctc = (results_json.get("ai_risk_badge") or {}).get("critical_thinking_control")
-                if isinstance(ctc, dict):
-                    enrichment = assess_critical_thinking(
-                        results_json,
-                        api_key=(settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or settings.CEREBRAS_API_KEY or None),
-                        base_url=(settings.LLM_BASE_URL or None),
-                    )
-                    if enrichment is not None:
-                        ctc["llm_dimensions"] = enrichment.get("llm_dimensions")
-                        ctc["highlights"] = enrichment.get("highlights") or []
-                        ctc["llm_model"] = enrichment.get("model")
-            except Exception:
-                logger.warning("Critical Thinking LLM enrichment skipped for %s", job_id, exc_info=True)
+            if _enrichment_parallel:
+                from concurrent.futures import ThreadPoolExecutor
+                # Worker threads do ONLY the pure LLM+parse work (thread-safe gateways);
+                # all mutation / render / progress stays on the main thread below.
+                with ThreadPoolExecutor(max_workers=3) as _pool:
+                    _f_para = _pool.submit(scan_enrichment.run_paragraph_explanations, results_json)
+                    _f_ct = _pool.submit(scan_enrichment.run_critical_thinking, results_json)
+                    _f_q = _pool.submit(scan_enrichment.run_reflective_questions, results_json)
 
-            # Reflective questions (kill-switch DRAFTPROOF_CRITICAL_THINKING_QUESTIONS, DEFAULT
-            # OFF). Anchored, dimension-steered questions that replace the score as the user-facing
-            # surface. Fail-open: never blocks or alters the scan.
-            try:
-                from poc.detect.critical_thinking_llm import generate_reflective_questions
-                ctc = (results_json.get("ai_risk_badge") or {}).get("critical_thinking_control")
-                if isinstance(ctc, dict):
-                    questions = generate_reflective_questions(
-                        results_json,
-                        api_key=(settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or settings.CEREBRAS_API_KEY or None),
-                        base_url=(settings.LLM_BASE_URL or None),
+                # Apply in the SAME order as the sequential path. Each step keeps its own
+                # fail-open semantics: a failed future is caught and logged here, never
+                # affecting the other two.
+                try:
+                    _apply_paragraph_explanations(_f_para.result())
+                except Exception as exc:
+                    _log_paragraph_failure(exc)
+                # Heartbeat after the (silent, possibly multi-minute) enrichment fan-out so
+                # stale-recovery sees a live worker before upload. Without this the only
+                # beats in the tail are 96 (pre-enrichment) and 97 (pre-upload); slow
+                # enrichment could otherwise be reaped as stale (H1/M1).
+                report_progress(96, "Finalizing report")
+                try:
+                    _apply_critical_thinking(_f_ct.result())
+                except Exception:
+                    logger.warning("Critical Thinking LLM enrichment skipped for %s", job_id, exc_info=True)
+                try:
+                    _questions_mirrored = _apply_reflective_questions(_f_q.result())
+                except Exception:
+                    logger.warning("Critical Thinking questions skipped for %s", job_id, exc_info=True)
+            else:
+                # Sequential path (kill switch): exact original ordering + semantics.
+                try:
+                    _apply_paragraph_explanations(scan_enrichment.run_paragraph_explanations(results_json))
+                except Exception as exc:
+                    _log_paragraph_failure(exc)
+                report_progress(96, "Finalizing report")
+                try:
+                    _apply_critical_thinking(scan_enrichment.run_critical_thinking(results_json))
+                except Exception:
+                    logger.warning("Critical Thinking LLM enrichment skipped for %s", job_id, exc_info=True)
+                try:
+                    _questions_mirrored = _apply_reflective_questions(
+                        scan_enrichment.run_reflective_questions(results_json)
                     )
-                    if questions is not None and questions.get("questions"):
-                        ctc["questions"] = questions.get("questions")
-                        ctc["questions_model"] = questions.get("model")
-                        # The emailed/R2 PDF renders from the DraftReport OBJECT (not
-                        # results_json) and was already rendered above. Mirror the questions
-                        # onto the object and re-render so the PDF includes the Critical
-                        # Thinking section. Keeps paragraph_explanations (already on the object).
-                        _dr = result.get("report")
-                        _dr_badge = getattr(_dr, "ai_risk_badge", None)
-                        _dr_ctc = _dr_badge.get("critical_thinking_control") if isinstance(_dr_badge, dict) else None
-                        if isinstance(_dr_ctc, dict):
-                            _dr_ctc["questions"] = questions.get("questions")
-                            from poc.report.render import render_report
-                            from poc.report.pdf import render_pdf
-                            md_text = render_report(_dr, verbose=True)
-                            _q_pdf = os.path.join(tmpdir, "draftproof_questions.pdf")
-                            render_pdf(md_text, _q_pdf)
-                            with open(_q_pdf, "rb") as f:
-                                pdf_bytes = f.read()
-            except Exception:
-                logger.warning("Critical Thinking questions skipped for %s", job_id, exc_info=True)
+                except Exception:
+                    logger.warning("Critical Thinking questions skipped for %s", job_id, exc_info=True)
+
+            # Single deferred PDF re-render: the reflective-questions step re-rendered the
+            # PDF in the sequential path to include the Critical Thinking section (on top of
+            # paragraph_explanations already mirrored onto the object). Reproduce that here
+            # exactly once, only when questions were mirrored onto the DraftReport object.
+            if _questions_mirrored:
+                try:
+                    from poc.report.render import render_report
+                    from poc.report.pdf import render_pdf
+                    _dr = result.get("report")
+                    md_text = render_report(_dr, verbose=True)
+                    _q_pdf = os.path.join(tmpdir, "draftproof_questions.pdf")
+                    render_pdf(md_text, _q_pdf)
+                    with open(_q_pdf, "rb") as f:
+                        pdf_bytes = f.read()
+                except Exception:
+                    logger.warning("Critical Thinking questions PDF render skipped for %s", job_id, exc_info=True)
 
             report_progress(97, "Uploading report files")
             urls = upload_report_files(job_id, md_text, pdf_bytes, results_json, paragraph_explanations)
