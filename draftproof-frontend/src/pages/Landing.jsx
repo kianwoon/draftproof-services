@@ -832,7 +832,6 @@ function SampleReportPreview() {
   const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [isHoverPaused, setIsHoverPaused] = useState(false);
   const sampleReportNotes = t('landing.sampleReportNotes', { returnObjects: true });
-  const sampleScoreSignals = t('landing.sampleScoreSignals', { returnObjects: true });
   const sampleActionItems = t('landing.sampleActionItems', { returnObjects: true });
   const sampleCriticalQuestions = t('landing.sampleCriticalQuestions', { returnObjects: true });
   const previewTabs = t('landing.reportPreviewTabs', { returnObjects: true });
@@ -954,30 +953,6 @@ function SampleReportPreview() {
               <p className="sample-reference-note">{t('landing.turnitinReference')}</p>
             </div>
           </>
-        )}
-
-        {activeSection === 'scoreProfile' && (
-          <div className="sample-section-card">
-            <div className="sample-section-card-head">
-              <span>{t('landing.scoreProfile')}</span>
-              <h3>{t('landing.whyScoreMoved')}</h3>
-              <p>{t('landing.scoreProfileBody')}</p>
-            </div>
-            <div className="sample-score-profile-grid">
-              {sampleScoreSignals.map((signal) => (
-                <div className={`sample-score-signal is-${signal.tone}`} key={signal.label}>
-                  <span>{signal.label}</span>
-                  <strong>{signal.value}</strong>
-                  <em>{signal.detail}</em>
-                </div>
-              ))}
-            </div>
-            <div className="sample-profile-bars">
-              <SampleSignalBar label={t('landing.aiStyleSignal')} value={18} tone="ai" />
-              <SampleSignalBar label={t('landing.sourceGroundingSignal')} value={64} tone="quality" />
-              <SampleSignalBar label={t('landing.humanAnchorSignal')} value={82} tone="human" />
-            </div>
-          </div>
         )}
 
         {activeSection === 'actionPlan' && (

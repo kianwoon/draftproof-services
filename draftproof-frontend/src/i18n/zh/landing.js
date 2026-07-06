@@ -412,11 +412,6 @@ export const landing = {
       "summary": "作者身份模式"
     },
     {
-      "id": "scoreProfile",
-      "label": "分数画像",
-      "summary": "为什么变化"
-    },
-    {
       "id": "actionPlan",
       "label": "行动计划",
       "summary": "应该修复什么"
@@ -484,32 +479,6 @@ export const landing = {
   "contributionBody": "人类锚点占主导，AI 转换信号有限。",
   "humanContribution": "人类贡献",
   "aiTransformation": "AI 转换",
-  "scoreProfile": "分数画像",
-  "whyScoreMoved": "分数变化原因",
-  "scoreProfileBody": "DraftProof 会把扫描信号分组，让你看到分数来自 AI 风格文本、来源支撑薄弱，还是更强的人类锚点。",
-  "aiStyleSignal": "AI 风格信号",
-  "sourceGroundingSignal": "来源支撑",
-  "humanAnchorSignal": "人类锚点",
-  "sampleScoreSignals": [
-    {
-      "label": "AI 风格风险",
-      "value": "低",
-      "detail": "结合人类锚点后校准",
-      "tone": "warning"
-    },
-    {
-      "label": "来源支撑",
-      "value": "需审阅",
-      "detail": "检查论断是否有依据",
-      "tone": "quality"
-    },
-    {
-      "label": "修复优先级",
-      "value": "清晰",
-      "detail": "优先处理高影响问题",
-      "tone": "positive"
-    }
-  ],
   "actionPlan": "行动计划",
   "actionPlanTitle": "先修复影响最大的问题",
   "actionPlanBody": "报告会把扫描信号转化为实用的审阅顺序，帮助你在修改或下载 PDF 前知道先处理什么。",

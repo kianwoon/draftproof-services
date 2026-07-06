@@ -414,11 +414,6 @@ export const landing = {
       "summary": "Authorship pattern"
     },
     {
-      "id": "scoreProfile",
-      "label": "Score Profile",
-      "summary": "Why it moved"
-    },
-    {
       "id": "actionPlan",
       "label": "Action Plan",
       "summary": "What to fix"
@@ -486,32 +481,6 @@ export const landing = {
   "contributionBody": "Human anchoring dominates, with limited AI transformation signal.",
   "humanContribution": "Human Contribution",
   "aiTransformation": "AI Transformation",
-  "scoreProfile": "Score Profile",
-  "whyScoreMoved": "Why the score moved",
-  "scoreProfileBody": "DraftProof groups scanner signals so you can see whether the score came from AI-like texture, weak grounding, or stronger human anchors.",
-  "aiStyleSignal": "AI-style signal",
-  "sourceGroundingSignal": "Source grounding",
-  "humanAnchorSignal": "Human anchor",
-  "sampleScoreSignals": [
-    {
-      "label": "AI-style risk",
-      "value": "Low",
-      "detail": "Calibrated after human anchors",
-      "tone": "warning"
-    },
-    {
-      "label": "Source grounding",
-      "value": "Review",
-      "detail": "Claims checked for support",
-      "tone": "quality"
-    },
-    {
-      "label": "Fix priority",
-      "value": "Clear",
-      "detail": "Highest-impact issues first",
-      "tone": "positive"
-    }
-  ],
   "actionPlan": "Action Plan",
   "actionPlanTitle": "Fix the highest-impact issues first",
   "actionPlanBody": "The report turns scan signals into a practical review order before you revise or download the PDF.",
