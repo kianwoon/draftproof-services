@@ -831,9 +831,9 @@ function SampleReportPreview() {
   const [activeSection, setActiveSection] = useState('authorshipBreakdown');
   const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [isHoverPaused, setIsHoverPaused] = useState(false);
-  const sampleReportNotes = t('landing.sampleReportNotes', { returnObjects: true });
-  const sampleScoreSignals = t('landing.sampleScoreSignals', { returnObjects: true });
+  const sampleGroundingBuckets = t('landing.sampleGroundingBuckets', { returnObjects: true });
   const sampleActionItems = t('landing.sampleActionItems', { returnObjects: true });
+  const sampleFlaggedSentences = t('landing.sampleFlaggedSentences', { returnObjects: true });
   const sampleCriticalQuestions = t('landing.sampleCriticalQuestions', { returnObjects: true });
   const previewTabs = t('landing.reportPreviewTabs', { returnObjects: true });
   const previewTabIds = useMemo(() => previewTabs.map((tab) => tab.id), [previewTabs]);
@@ -896,148 +896,86 @@ function SampleReportPreview() {
         {activeSection === 'aiSignal' && (
           <>
             <PolicyRiskView t={t} pr={SAMPLE_POLICY_RISK} />
-            <div className="sample-report-pattern">
-              <div className="sample-report-pattern-main">
-                <div className="sample-transformation-icon" aria-hidden="true">
-                  <svg width="30" height="30" viewBox="0 0 30 30" fill="none">
-                    <path d="M6 8.5h12.5M6 15h18M6 21.5h10" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"/>
-                    <path d="M21 7l3 3-3 3M18 18l-3 3 3 3" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </div>
-                <div>
-                  <span>{t('landing.transformationPattern')}</span>
-                  <h3>{t('landing.humanUncertain')}</h3>
-                  <div className="sample-report-tags">
-                    <em>{t('landing.lowConfidence')}</em>
-                    <em>{t('landing.notVerdict')}</em>
-                  </div>
-                </div>
+            <div className="sample-section-card">
+              <div className="sample-section-card-head">
+                <span>{t('landing.sampleVerdictCaption')}</span>
+                <h3>{t('landing.sampleVerdictLine')}</h3>
               </div>
-              <div className="sample-authorship-badge">
-                <span>{t('landing.aiSignal')}</span>
-                <strong>{t('landing.lowAiSignal')}</strong>
-                <small>{t('landing.calibratedTopk')}</small>
+              <p>
+                <strong>{t('landing.sampleMainFixLabel')}: {t('landing.sampleMainFixDriver')}</strong>
+                {' — '}
+                {t('landing.sampleMainFixAction')}
+              </p>
+              <div className="sample-risk-contributors-head">
+                <span>{t('landing.sampleRiskContributorsHeading')}</span>
+                <span>{t('landing.sampleLowerIsBetter')}</span>
               </div>
-            </div>
-
-            <div className="sample-report-chart">
-              <div className="sample-original-scan">
-                <div className="sample-original-head">
-                  <div>
-                    <span>{t('landing.originalScan')}</span>
-                    <strong>{t('landing.humanUncertain')}</strong>
-                  </div>
-                  <em>{t('landing.originalScanScore')}</em>
-                </div>
-
-                <div className="sample-contribution">
-                  <span>{t('landing.estimatedContribution')}</span>
-                  <p>{t('landing.contributionBody')}</p>
-                  <div className="sample-report-tags">
-                    <em>{t('landing.calibratedAiRisk')}</em>
-                    <em>{t('landing.humanAnchorDiscount')}</em>
-                    <em>{t('landing.calibrationConfidence')}</em>
-                    <em>{t('landing.reportingSuppression')}</em>
-                  </div>
-                  <div className="sample-contribution-bars">
-                    <SampleSignalBar label={t('landing.humanContribution')} value={100} tone="human" />
-                    <SampleSignalBar label={t('landing.aiTransformation')} value={0} tone="ai" />
-                  </div>
-                </div>
-              </div>
-
-              <div className="sample-report-notes">
-                {sampleReportNotes.map((note) => (
-                  <span key={note}>{note}</span>
+              <div className="sample-profile-bars">
+                {sampleGroundingBuckets.map((bucket) => (
+                  <SampleSignalBar key={bucket.label} label={bucket.label} value={bucket.value} tone="ai" />
                 ))}
               </div>
-              <p className="sample-reference-note">{t('landing.turnitinReference')}</p>
             </div>
           </>
         )}
 
-        {activeSection === 'scoreProfile' && (
-          <div className="sample-section-card">
-            <div className="sample-section-card-head">
-              <span>{t('landing.scoreProfile')}</span>
-              <h3>{t('landing.whyScoreMoved')}</h3>
-              <p>{t('landing.scoreProfileBody')}</p>
+        {activeSection === 'actionPlan' && (
+          <div className="fix-first-card">
+            <div className="fix-first-head">
+              <span>{t('report.whatToFixFirst.kicker')}</span>
+              <h2>{t('report.whatToFixFirst.title')}</h2>
             </div>
-            <div className="sample-score-profile-grid">
-              {sampleScoreSignals.map((signal) => (
-                <div className={`sample-score-signal is-${signal.tone}`} key={signal.label}>
-                  <span>{signal.label}</span>
-                  <strong>{signal.value}</strong>
-                  <em>{signal.detail}</em>
+            <div className="fix-first-list">
+              {sampleActionItems.map((item, index) => (
+                <div className="fix-first-item" key={item.title}>
+                  <span className="fix-first-index">{index + 1}</span>
+                  <span className="fix-first-copy">
+                    <strong>{item.title}</strong>
+                    <em>{item.body}</em>
+                  </span>
+                  {item.label && <span className="fix-first-label">{item.label}</span>}
                 </div>
               ))}
             </div>
-            <div className="sample-profile-bars">
-              <SampleSignalBar label={t('landing.aiStyleSignal')} value={18} tone="ai" />
-              <SampleSignalBar label={t('landing.sourceGroundingSignal')} value={64} tone="quality" />
-              <SampleSignalBar label={t('landing.humanAnchorSignal')} value={82} tone="human" />
-            </div>
           </div>
         )}
 
-        {activeSection === 'actionPlan' && (
-          <div className="sample-section-card">
-            <div className="sample-section-card-head">
-              <span>{t('landing.actionPlan')}</span>
-              <h3>{t('landing.actionPlanTitle')}</h3>
-              <p>{t('landing.actionPlanBody')}</p>
-            </div>
-            <div className="sample-action-list">
-              {sampleActionItems.map((item, index) => (
-                <article className={`sample-action-item is-${item.tone}`} key={item.title}>
-                  <span>{String(index + 1).padStart(2, '0')}</span>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <p>{item.body}</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        )}
-
+        {/* allow-hardcode: className values below are existing CSS hooks (.issue-*, .deberta-evidence-*
+            defined in styles/site-master/07-report-submitted.css) reused verbatim from the real
+            SignalHighlights issue-card markup — structural styling classes, not a content/scoring list. */}
         {activeSection === 'findings' && (
-          <div className="sample-finding-card">
-            <div className="sample-finding-header">
-              <div>
-                <span className="sample-finding-id">{t('landing.findingsSampleId')}</span>
-                <h3 className="sample-finding-type">{t('landing.findingsSampleType')}</h3>
-              </div>
-              <span className="sample-finding-num">#4</span>
+          <div className="issue-card is-open">
+            <div className="issue-card-head">
+              <span className="issue-card-main">
+                <span className="issue-card-chips">
+                  <em className="issue-card-num">{t('landing.findingsSamplePosition')}</em>
+                  <em className="issue-chip issue-chip-tier is-high">{t('report.severities.high')}</em>
+                  <em className="issue-chip">{t('landing.findingsSampleType')}</em>
+                  <em className="issue-chip">{t('landing.findingsSampleCount')}</em>
+                </span>
+              </span>
             </div>
-            <div className="sample-finding-body">
-              <blockquote className="sample-finding-paragraph">
-                {t('landing.findingsSampleParagraph')}
-              </blockquote>
-              <p className="sample-finding-description">{t('landing.findingsSampleDescription')}</p>
-              <div className="sample-finding-strength-row">
-                <span>{t('landing.findingsSignalStrength')}</span>
-                <strong>59%</strong>
+            <div className="issue-card-body">
+              <p className="issue-card-summary">{t('landing.findingsSampleDescription')}</p>
+              <div className="issue-action issue-action-thinking">
+                <span className="issue-action-label">{t('report.submitted.criticalThinking')}</span>
+                <p>
+                  <strong>{t('report.criticalThinking.dimensions.evidence_grounding.label')}</strong>
+                  {' — '}
+                  {t('report.criticalThinking.dimensions.evidence_grounding.action')}
+                </p>
               </div>
-              <div className="sample-signal-track">
-                <i className="is-ai" style={{ width: '59%' }} />
-              </div>
-              <div className="sample-finding-chips">
-                <em>{t('landing.findingsSampleChip1')}</em>
-                <em>{t('landing.findingsSampleChip2')}</em>
-                <em>{t('landing.findingsSampleChip3')}</em>
-              </div>
-              <div className="sample-finding-also">
-                <span>{t('landing.findingsAlsoDetected')}</span>
-                <em>{t('landing.findingsSampleAlso')}</em>
-              </div>
-              <div className="sample-finding-subsection">
-                <span>{t('landing.findingsMainIssue')}</span>
-                <p>{t('landing.findingsSampleMainIssue')}</p>
-              </div>
-              <div className="sample-finding-subsection">
-                <span>{t('landing.findingsRewriteHint')}</span>
-                <p>{t('landing.findingsSampleRewriteHint')}</p>
+              <div className="issue-action issue-action-evidence">
+                <span className="issue-action-label">{t('report.submitted.flaggedSentences')}</span>
+                <ul className="deberta-evidence-list">
+                  {sampleFlaggedSentences.map((sentence) => (
+                    <li key={sentence.text}>
+                      <span className="deberta-evidence-score">{sentence.score}%</span>
+                      <span className="deberta-evidence-text">{sentence.text}</span>
+                      <span className="deberta-evidence-suggestion">{sentence.suggestion}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
           </div>

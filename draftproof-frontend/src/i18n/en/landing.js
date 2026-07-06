@@ -414,11 +414,6 @@ export const landing = {
       "summary": "Authorship pattern"
     },
     {
-      "id": "scoreProfile",
-      "label": "Score Profile",
-      "summary": "Why it moved"
-    },
-    {
       "id": "actionPlan",
       "label": "Action Plan",
       "summary": "What to fix"
@@ -433,6 +428,21 @@ export const landing = {
       "label": "Critical Thinking",
       "summary": "Sharpen your thinking"
     }
+  ],
+  "sampleVerdictCaption": "AI-writing signal",
+  "sampleVerdictLine": "Low AI-writing signal — low on our scale — but detectors over-flag fluent writing, so they may still flag it (a warning, not a verdict).",
+  "sampleMainFixLabel": "Main thing to fix",
+  "sampleMainFixDriver": "Grounding gap",
+  "sampleMainFixAction": "Add concrete anchors, named evidence, and specifics.",
+  "sampleRiskContributorsHeading": "Risk contributors",
+  "sampleLowerIsBetter": "Lower is better",
+  // allow-hardcode: illustrative sample-report bar values shown on the landing page —
+  // fixed marketing example, never compared against document content, not a scoring oracle.
+  "sampleGroundingBuckets": [
+    { "label": "Grounding gap", "value": 58 },
+    { "label": "Authorship uncertainty", "value": 34 },
+    { "label": "AI-like patterning", "value": 22 },
+    { "label": "Generic language texture", "value": 15 }
   ],
   // allow-hardcode: static sample-report UI copy (illustrative reflective questions
   // shown on the landing page), anchored to the fixed sample essay above — never
@@ -451,91 +461,41 @@ export const landing = {
       "question": "What reasoning led you to call this influence \"strong\", and did you weigh any counter-examples?"
     }
   ],
-  "findingsSampleId": "S004–S006",
   "findingsSampleType": "AI Likelihood",
-  "findingsSampleParagraph": "In addition to economics, the United States has a strong cultural influence. American movies, music, fashion, and social media trends are consumed globally. The entertainment industry in Hollywood has become one of the most powerful cultural exports in history.",
   "findingsSampleDescription": "The paragraph uses a standard transition \"In addition\" and several other familiar phrases that make the writing sound formulaic.",
-  "findingsSignalStrength": "Signal Strength",
-  "findingsSampleChip1": "8 Findings In Paragraph",
-  "findingsSampleChip2": "MEDIUM Priority",
-  "findingsSampleChip3": "Auto-Fixable",
-  "findingsAlsoDetected": "Also Detected",
-  "findingsSampleAlso": "Generic Phrasing",
-  "findingsMainIssue": "Main Issue to Fix",
-  "findingsSampleMainIssue": "Use of generic transitional phrase and predictable wording that reduces originality.",
-  "findingsRewriteHint": "Rewrite Hint",
-  "findingsSampleRewriteHint": "Example: \"Beyond its economy, American cinema reaches audiences in over 190 countries each year.\"",
-  "transformationPattern": "Transformation Pattern",
-  "humanUncertain": "Human / uncertain pattern",
-  "lowConfidence": "Low Confidence",
-  "notVerdict": "Not a Verdict",
-  "aiSignal": "AI Signal",
-  "lowAiSignal": "Low AI-writing signal",
-  "calibratedTopk": "41% calibrated top-k · below 20% reference",
-  "originalScan": "Original Scan",
-  "originalScanScore": "18%",
-  "calibratedAiRisk": "Calibrated AI risk 15%",
-  "humanAnchorDiscount": "Human anchor discount 38%",
-  "calibrationConfidence": "Calibration confidence 61%",
-  "reportingSuppression": "Reporting suppression 39%",
-  "turnitinReference": "Turnitin reference: AI scores below 20% may appear as *% instead of an exact percentage because low-range results are less reliable. DraftProof scores are review signals, not verdicts.",
-  "authorshipRating": "Authorship Rating",
-  "good": "GOOD",
-  "calibratedRisk": "11% calibrated risk",
-  "estimatedContribution": "Estimated Contribution",
-  "contributionBody": "Human anchoring dominates, with limited AI transformation signal.",
-  "humanContribution": "Human Contribution",
-  "aiTransformation": "AI Transformation",
-  "scoreProfile": "Score Profile",
-  "whyScoreMoved": "Why the score moved",
-  "scoreProfileBody": "DraftProof groups scanner signals so you can see whether the score came from AI-like texture, weak grounding, or stronger human anchors.",
-  "aiStyleSignal": "AI-style signal",
-  "sourceGroundingSignal": "Source grounding",
-  "humanAnchorSignal": "Human anchor",
-  "sampleScoreSignals": [
+  "findingsSamplePosition": "2/5",
+  "findingsSampleCount": "3 flagged sentences in paragraph",
+  // allow-hardcode: illustrative sample flagged-sentence evidence shown on the landing
+  // page — fixed marketing example built from the same sample paragraph used elsewhere
+  // on this page, never compared against document content, not a scoring/matching oracle.
+  "sampleFlaggedSentences": [
     {
-      "label": "AI-style risk",
-      "value": "Low",
-      "detail": "Calibrated after human anchors",
-      "tone": "warning"
+      "text": "In addition to economics, the United States has a strong cultural influence.",
+      "score": 61,
+      "suggestion": "Anchor to a specific example or source instead of a general claim."
     },
     {
-      "label": "Source grounding",
-      "value": "Review",
-      "detail": "Claims checked for support",
-      "tone": "quality"
-    },
-    {
-      "label": "Fix priority",
-      "value": "Clear",
-      "detail": "Highest-impact issues first",
-      "tone": "positive"
+      "text": "The entertainment industry in Hollywood has become one of the most powerful cultural exports in history.",
+      "score": 74,
+      "suggestion": "Beyond its economy, American cinema reaches audiences in over 190 countries each year."
     }
   ],
-  "actionPlan": "Action Plan",
-  "actionPlanTitle": "Fix the highest-impact issues first",
-  "actionPlanBody": "The report turns scan signals into a practical review order before you revise or download the PDF.",
   "sampleActionItems": [
     {
       "title": "Add citation support",
       "body": "Two claims need clearer source backing before submission.",
-      "tone": "warning"
+      "label": "High priority"
     },
     {
       "title": "Strengthen source grounding",
       "body": "One paragraph should explain how the cited source supports the point.",
-      "tone": "quality"
+      "label": "Medium priority"
     },
     {
       "title": "Revise generic phrasing",
       "body": "Replace broad AI-style wording with specific reasoning and evidence.",
-      "tone": "positive"
+      "label": "Quick win"
     }
-  ],
-  "sampleReportNotes": [
-    "No single transformation pattern dominates",
-    "Human anchor reduced AI certainty",
-    "PDF report included"
   ],
   "checks": [
     {
