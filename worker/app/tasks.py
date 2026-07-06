@@ -507,6 +507,9 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                     verbose=False,
                     original_text=checkpoint_json.get("original_text") or "",
                     final_text=rewritten_text,
+                    # This closure only runs after run_rewrite fetched report.json; the
+                    # surrounding try/except fails open if it is somehow unbound.
+                    original_scan_report=report_json if isinstance(report_json, dict) else None,
                 )
                 render_pdf(checkpoint_md, checkpoint_pdf_path)
                 with open(checkpoint_pdf_path, "rb") as f:
@@ -865,6 +868,9 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                     verbose=False,
                     original_text=rewrite_json.get("original_text") or "",
                     final_text=rewrite_json.get("final_text") or "",
+                    # Full original scan report (fetched at the start of run_rewrite) —
+                    # drives the Submitted Content flagged-sentence highlights.
+                    original_scan_report=report_json if isinstance(report_json, dict) else None,
                 )
                 pdf_path = os.path.join(tmpdir, "rewrite.pdf")
                 render_pdf(md_text, pdf_path)
@@ -1001,6 +1007,9 @@ def regenerate_rewrite_report_assets(self, rewrite_id: str, scan_id: str) -> dic
             verbose=False,
             original_text=rewrite_json.get("original_text") or "",
             final_text=rewrite_json.get("final_text") or "",
+            # Full original scan report (already fetched above) — drives the Submitted
+            # Content flagged-sentence highlights in the rewrite PDF.
+            original_scan_report=report_json if isinstance(report_json, dict) else None,
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             pdf_path = os.path.join(tmpdir, "rewrite.pdf")

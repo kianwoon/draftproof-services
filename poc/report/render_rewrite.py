@@ -501,19 +501,28 @@ def _executive_comparison_html(summary: dict, *, review_required: bool) -> str:
             "</div>")
 
 
-def _highlighted_submitted_content(scan: dict, original_text: str) -> List[str]:
+def _highlighted_submitted_content(scan: dict, original_text: str,
+                                   original_scan_report: Optional[dict] = None) -> List[str]:
     """'Submitted Content' with scan-flagged sentences highlighted, reusing the scan PDF's
-    render_highlighted_document. Falls open to the plain-text block when the compacted scan
-    carries no segment highlight data (the common case — highlight spans live in the scan
-    report, not the compacted rewrite scan)."""
+    render_highlighted_document. Highlight spans live in the ORIGINAL SCAN's full report.json
+    (scan_intelligence.document.segments) — callers pass it as ``original_scan_report`` when
+    available; the compacted rewrite-scan copy is tried second (it usually carries no segments).
+    Falls open to the plain-text block when neither source has spans."""
     from .render_panels import render_highlighted_document
-    try:
-        highlighted = render_highlighted_document(scan or {}, original_text or "")
-    except Exception:
-        highlighted = ""
+    highlighted = ""
+    for source in (original_scan_report, scan):
+        if not isinstance(source, dict) or not source:
+            continue
+        try:
+            highlighted = render_highlighted_document(source, original_text or "")
+        except Exception:
+            highlighted = ""
+        if highlighted:
+            break
     if not highlighted:
         return _document_section("Submitted Content", original_text)
-    return ["## Submitted Content", "", highlighted, ""]
+    # dp-doc-flow: full-document block — allow page breaks inside (avoid orphan headings).
+    return ["## Submitted Content", "", f'<div class="dp-doc-flow">{highlighted}</div>', ""]
 
 
 _REWRITE_LEGEND = (
@@ -573,9 +582,10 @@ def _highlighted_rewritten_content(sentence_comparison: List[Dict[str, Any]],
         paras_html.append(f'<p style="{style};margin:0 0 6pt">{safe}</p>')
     if not paras_html:
         return _document_section("Rewritten Content", final_text)
-    block = ('<div class="dp-hero" style="border-left-color:#94a3b8">'
+    # dp-doc-flow: full-document block — allow page breaks inside (avoid orphan headings).
+    block = ('<div class="dp-doc-flow"><div class="dp-hero" style="border-left-color:#94a3b8">'
              f'<p class="dp-hero-sub">{html.escape(_REWRITE_LEGEND)}</p>'
-             + "".join(paras_html) + "</div>")
+             + "".join(paras_html) + "</div></div>")
     return ["## Rewritten Content", "", block, ""]
 
 
@@ -804,6 +814,7 @@ def render_rewrite_report(
     verbose: bool = False,
     original_text: str = "",
     final_text: str = "",
+    original_scan_report: Optional[dict] = None,
 ) -> str:
     """Render a standalone rewrite report as markdown.
 
@@ -812,6 +823,9 @@ def render_rewrite_report(
         sentence_comparison: Per-sentence before/after from ReportBuilder.
         ai_findings: The AI-flagged findings that triggered the rewrite.
         verbose: Include detailed per-sentence breakdown.
+        original_scan_report: The ORIGINAL scan's full report JSON (report.json), whose
+            scan_intelligence.document.segments drive the Submitted Content highlights.
+            Optional — when absent the section falls back to a plain text block.
 
     Returns:
         Markdown string ready for PDF rendering.
@@ -1208,7 +1222,8 @@ def render_rewrite_report(
         lines.append(_outcome_stamp_html(summary, result_label, new_scan))
     lines.append("")
     _orig_scan_for_highlight = summary.get("detect_scan_original_saved") or summary.get("detect_scan_original") or {}
-    lines.extend(_highlighted_submitted_content(_orig_scan_for_highlight, original_text))
+    lines.extend(_highlighted_submitted_content(
+        _orig_scan_for_highlight, original_text, original_scan_report=original_scan_report))
     lines.extend(_highlighted_rewritten_content(sentence_comparison, final_text))
     lines.extend(_author_review_card_section(summary))
 

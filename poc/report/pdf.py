@@ -39,8 +39,12 @@ body {
 }
 
 h1 { font-size: 18pt; color: #1a1a2e; border-bottom: 2px solid #e0e0e0; padding-bottom: 4pt; }
-h2 { font-size: 14pt; color: #333; border-bottom: 1px solid #eee; padding-bottom: 3pt; }
-h3 { font-size: 12pt; color: #444; }
+/* break-after: avoid-page keeps a section heading with its first block — prevents an
+   orphaned "## Rewritten Content" alone at the bottom of an otherwise-empty page when
+   the following block starts on the next page. */
+h2 { font-size: 14pt; color: #333; border-bottom: 1px solid #eee; padding-bottom: 3pt;
+     break-after: avoid-page; page-break-after: avoid; }
+h3 { font-size: 12pt; color: #444; break-after: avoid-page; page-break-after: avoid; }
 
 table {
     width: 100%;
@@ -444,6 +448,11 @@ img[src^="https://img.shields.io"] { height: 18px; }
     font-size: 7pt;
     font-weight: 700;
 }
+
+/* Full-document highlighted blocks (Submitted/Rewritten Content) are usually taller
+   than a page — let them break naturally so they start right after their heading
+   instead of forcing a mostly-empty page. */
+.dp-doc-flow .dp-hero { page-break-inside: auto; break-inside: auto; }
 
 /* ── Rewrite exec-summary two-column comparison (Original vs Rewritten) ──
    display:table for reliable equal-width, top-aligned columns in WeasyPrint. */

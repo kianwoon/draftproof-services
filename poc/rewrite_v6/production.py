@@ -441,6 +441,9 @@ def run_rewrite_pipeline_v6(
             verbose=False,
             original_text=original_text,
             final_text=final_text,
+            # Full original scan report — its scan_intelligence.document.segments drive the
+            # Submitted Content red-highlighted flagged sentences in the PDF.
+            original_scan_report=effective_detect_json if isinstance(effective_detect_json, dict) else None,
         ),
     )
     md_path.write_text(md_text, encoding="utf-8")
