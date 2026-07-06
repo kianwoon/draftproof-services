@@ -1485,7 +1485,13 @@ class ReportBuilder:
             # come from the learned classifier's >=0.99 proportion (fair operating point); else
             # the perplexity Layer3 math. The signal_source field records which path produced
             # the authoritative numbers so the UI / audit can tell.
-            "tier": authoritative_tier or layer3.tier.value,
+            # Canonical LOWERCASE. The authoritative/fused paths already produce
+            # lowercase, but the layer3 fallback's Tier enum value is UPPERCASE
+            # ("AMBER") — leaking that broke every lowercase-keyed consumer
+            # (frontend TIER_TO_BAND chip, render_panels _ACB_TIER_TO_BAND)
+            # whenever both authoritative paths failed (observed 2026-07-06 on a
+            # 3000-word verification run with Modal + local DeBERTa unavailable).
+            "tier": str(authoritative_tier or layer3.tier.value or "").lower(),
             "ai_likelihood_score": (authoritative_ai_likelihood
                                     if authoritative_ai_likelihood is not None
                                     else round(layer3.ai_likelihood_score * 100, 2)),

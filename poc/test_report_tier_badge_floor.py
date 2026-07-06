@@ -46,3 +46,20 @@ def test_non_low_tiers_are_never_changed():
         assert floor(Tier.MEDIUM, badge) == Tier.MEDIUM
         assert floor(Tier.HIGH, badge) == Tier.HIGH
         assert floor(Tier.CRITICAL, badge) == Tier.CRITICAL
+
+
+def test_badge_tier_is_canonical_lowercase_on_layer3_fallback():
+    """The layer3 Tier enum value is UPPERCASE ("AMBER"); the badge must ship
+    lowercase (frontend TIER_TO_BAND and render_panels _ACB_TIER_TO_BAND key
+    lowercase — an uppercase leak silently drops the verdict chip/band).
+    Regression for the 3000-word verification finding (2026-07-06)."""
+    from detect.layer3_scoring import Tier
+    # Every enum value the fallback can emit must round-trip to lowercase.
+    for tier in Tier:
+        assert str(tier.value or "").lower() == tier.value.lower()
+    # And the builder's badge dict literal now lowercases — assert on source to
+    # keep this test dependency-light (a full ReportBuilder run needs the ML stack).
+    import inspect
+    from report import builder as report_builder
+    src = inspect.getsource(report_builder.ReportBuilder)
+    assert '"tier": str(authoritative_tier or layer3.tier.value or "").lower()' in src

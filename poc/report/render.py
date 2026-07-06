@@ -894,7 +894,10 @@ def _executive_signal_chart_html(
     if not badge or not transformation or not rows:
         return ""
 
-    badge_tier = badge.get("tier", "")
+    # Normalize: the badge ships lowercase tiers (builder canonical); these maps
+    # key UPPERCASE. Without this the label fell back to the raw "amber" string
+    # and the default gray colors on every authoritative-path report.
+    badge_tier = str(badge.get("tier", "")).upper()
     tier_label = _BADGE_TIER_LABELS.get(badge_tier, badge_tier or report.overall_tier.value.title())
     tier_color = {
         "GREEN": "#15803d",
@@ -1725,7 +1728,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     else:
         display_tier = tier.value.upper()
         if report.ai_risk_badge:
-            badge_tier_val = report.ai_risk_badge.get("tier", "")
+            badge_tier_val = str(report.ai_risk_badge.get("tier", "")).upper()
             if badge_tier_val:
                 display_tier = _BADGE_TIER_LABELS.get(badge_tier_val, badge_tier_val)
 
