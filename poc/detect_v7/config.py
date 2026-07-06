@@ -80,8 +80,13 @@ def get_fusion_weights(detectors_available: list[str]) -> dict[str, float]:
     """Pick the fusion weight set matching the given available detectors.
 
     Recognized combinations:
-    - {"fakespot"}                    -> quick_scan
-    - {"fakespot", "deberta_large"}   -> deep_scan_2detector
+    - {"composite"}                    -> quick_scan
+    - {"composite", "deberta_large"}   -> deep_scan_2detector
+
+    "composite" is the badge's composite calibrated ai_likelihood_score
+    (renamed from the historically mislabeled "fakespot" — see
+    ``weights.json``'s ``_notes.fusion_weights`` and
+    ``pipeline_bridge.py``'s module docstring for the full trace).
 
     Any other combination (including empty, or containing unrecognized
     detector names, or the 3-detector inert set) raises ValueError — this
@@ -90,15 +95,15 @@ def get_fusion_weights(detectors_available: list[str]) -> dict[str, float]:
     available = set(detectors_available)
     fusion = _weights()["fusion_weights"]
 
-    if available == {"fakespot"}:
+    if available == {"composite"}:
         return dict(fusion["quick_scan"])
-    if available == {"fakespot", "deberta_large"}:
+    if available == {"composite", "deberta_large"}:
         return dict(fusion["deep_scan_2detector"])
 
     raise ValueError(
         f"Unsupported/unrecognized detector combination for fusion: "
         f"{sorted(available)!r}. Supported combinations: "
-        f"['fakespot'] (quick_scan) or ['deberta_large', 'fakespot'] "
+        f"['composite'] (quick_scan) or ['composite', 'deberta_large'] "
         f"(deep_scan_2detector). The 3-detector set is inert/unused "
         f"(spec §4, OU-Advacheck on hold) and cannot be selected here."
     )

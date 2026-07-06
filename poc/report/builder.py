@@ -1309,18 +1309,35 @@ class ReportBuilder:
         # already flow into submission_risk, the badge dict, and the tier floor
         # logic below, so no downstream consumer needs to change.
         tier_authority_provenance = None
+        # Additive, present ONLY when DRAFTPROOF_V7_TIER_AUTHORITY is enabled
+        # (never set when the flag is off, preserving byte-identical flag-off
+        # output). Surfaces WHY the fused override did or did not apply, since
+        # today the only signal was the silent absence of `tier_authority` —
+        # a fail-open branch (e.g. deep scan unavailable) looked identical to
+        # "flag was never on" from the badge's shape alone.
+        tier_authority_status = None
         # Hoisted: also handed to run_v7_breakdown below as _precomputed_deep_scan
         # so the SAME Modal result serves both the tier override and the breakdown
         # panel — one paid call per scan, never two.
         _deep_scan_for_authority = None
+        # Resolved outside the try/except below so the exception branch still
+        # knows the true flag state (an exception inside the try must not be
+        # allowed to fabricate "enabled": True when the flag was actually off).
+        _tier_authority_flag_on = False
+        try:
+            from detect_v7.pipeline_bridge import (  # noqa: E402
+                is_tier_authority_enabled as _is_tier_authority_enabled,
+            )
+            _tier_authority_flag_on = _is_tier_authority_enabled()
+        except Exception:
+            _tier_authority_flag_on = False
         try:
             from detect_v7.config import get_tier_authority_config as _get_tier_authority_config  # noqa: E402
             from detect_v7.pipeline_bridge import (  # noqa: E402
                 compute_fused_authority as _compute_fused_authority,
                 get_deep_scan_proportion as _get_deep_scan_proportion,
-                is_tier_authority_enabled as _is_tier_authority_enabled,
             )
-            if _is_tier_authority_enabled():
+            if _tier_authority_flag_on:
                 _pre_fusion_composite = (
                     authoritative_ai_likelihood
                     if authoritative_ai_likelihood is not None
@@ -1342,14 +1359,34 @@ class ReportBuilder:
                     }
                     authoritative_ai_likelihood = _fused["fused_score"]
                     authoritative_tier = _fused["tier"]
-                # else: fail-open — no deep scan proportion available, badge stays
-                # composite-driven (authoritative_ai_likelihood/tier untouched).
+                    tier_authority_status = {"enabled": True, "applied": True}
+                else:
+                    # Fail-open: no deep scan proportion available, badge stays
+                    # composite-driven (authoritative_ai_likelihood/tier untouched).
+                    logger.warning(
+                        "report.builder: V7 tier-authority enabled but no deep-scan "
+                        "proportion available; badge stays composite-driven "
+                        "(fail-open, non-fatal)."
+                    )
+                    tier_authority_status = {
+                        "enabled": True,
+                        "applied": False,
+                        "reason": "deep_scan_unavailable",
+                    }
         except Exception:
             logger.exception(
                 "report.builder: V7 tier-authority override failed; falling back to "
                 "composite-driven badge (additive, non-fatal)."
             )
             tier_authority_provenance = None
+            if _tier_authority_flag_on:
+                logger.warning(
+                    "report.builder: V7 tier-authority enabled but override raised "
+                    "an exception; badge stays composite-driven (fail-open, non-fatal)."
+                )
+                tier_authority_status = {"enabled": True, "applied": False, "reason": "error"}
+            else:
+                tier_authority_status = None
 
         transformation = classify_transformation_from_scan(
             layer3_input,
@@ -1504,6 +1541,14 @@ class ReportBuilder:
         # (flag off, or flag on but no deep scan) — see the override block above.
         if tier_authority_provenance is not None:
             ai_risk_badge["tier_authority"] = tier_authority_provenance
+        # V7 tier-authority STATUS: present ONLY when DRAFTPROOF_V7_TIER_AUTHORITY
+        # is enabled (never when the flag is off — preserves the exact flag-off
+        # byte-identical invariant). Unlike `tier_authority` above, this key is
+        # set even on a fail-open branch (no deep scan available, or an
+        # exception), so a caller can distinguish "flag off" from "flag on but
+        # the fused override didn't fire" without guessing from key absence alone.
+        if tier_authority_status is not None:
+            ai_risk_badge["tier_authority_status"] = tier_authority_status
 
         from detect.authenticity_dashboard import maybe_attach as _attach_dashboard
         _dash = _attach_dashboard(ai_risk_badge, predictability=None)  # predictability added read-time (Task 7)

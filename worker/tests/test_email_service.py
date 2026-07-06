@@ -278,3 +278,46 @@ def test_send_email_returns_false_on_cloudflare_failure(monkeypatch):
     monkeypatch.setattr("app.email_service.requests.post", lambda *args, **kwargs: Response())
 
     assert send_email({"to": "student@example.com"}, settings=_settings()) is False
+
+
+def test_scan_email_asserts_category_only_when_reliable():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="s-1",
+        pdf_bytes=b"%PDF-1.7 scan",
+        authorship_breakdown={
+            "primary_category": "ai_generated_like",
+            "primary_category_reliable": True,
+        },
+        settings=_settings(),
+    )
+    assert "Authorship read: mostly AI-generated-like" in payload["text"]
+
+
+def test_scan_email_neutral_line_when_category_unreliable():
+    # Measured 2026-07-06: 58% of human ESL essays get ai_generated_like as
+    # primary on the quick-scan path — the email must not assert it when the
+    # breakdown's own guards (primary_category_reliable=False) say not to.
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="s-2",
+        pdf_bytes=b"%PDF-1.7 scan",
+        authorship_breakdown={
+            "primary_category": "ai_generated_like",
+            "primary_category_reliable": False,
+        },
+        settings=_settings(),
+    )
+    assert "mostly AI-generated-like" not in payload["text"]
+    assert "Authorship read: mixed signals" in payload["text"]
+
+
+def test_scan_email_legacy_breakdown_without_reliability_field_keeps_old_behavior():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="s-3",
+        pdf_bytes=b"%PDF-1.7 scan",
+        authorship_breakdown={"primary_category": "student_owned"},
+        settings=_settings(),
+    )
+    assert "Authorship read: mostly student-owned" in payload["text"]

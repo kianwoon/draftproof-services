@@ -192,9 +192,22 @@ def build_scan_completion_email(
     # Additive one-line authorship-clarity summary (fail-open: absent on older
     # reports / flag off). Mirrors the /report page's Authorship Clarity
     # Breakdown centerpiece without dumping all 4 category shares into the email.
-    primary_category = (authorship_breakdown or {}).get("primary_category")
+    # Only ASSERT the category when the breakdown itself marks it reliable
+    # (primary_category_reliable, derived from its confidence + degraded-display
+    # guards): measured 2026-07-06, 58% of human ESL essays got
+    # "ai_generated_like" as primary on the quick-scan path — stating that in
+    # an email is a false accusation the report page's banded display avoids.
+    # Older reports without the field keep the previous behavior (is not False).
+    bd = authorship_breakdown or {}
+    primary_category = bd.get("primary_category")
     if primary_category and primary_category in _AUTHORSHIP_CATEGORY_LABELS:
-        details.append(f"Authorship read: {_AUTHORSHIP_CATEGORY_LABELS[primary_category]}")
+        if bd.get("primary_category_reliable") is not False:
+            details.append(f"Authorship read: {_AUTHORSHIP_CATEGORY_LABELS[primary_category]}")
+        else:
+            details.append(
+                "Authorship read: mixed signals — no single category is reliable; "
+                "see the attached report for the banded breakdown."
+            )
     details_text = "\n".join(details)
 
     subject = "Your DraftProof scan report is ready"
