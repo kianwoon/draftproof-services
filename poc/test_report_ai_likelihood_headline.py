@@ -64,9 +64,11 @@ def _report_with_badge(ext=True):
 
 def test_markdown_leads_with_draftproof_and_orders_before_calibration():
     md = render_markdown(_report_with_badge(ext=True))
-    assert "AI Likelihood" in md
+    # The lead block is now the "AI-writing signal" section with DraftProof's own
+    # estimate first; it must still appear before the calibration section.
+    assert "DraftProof AI-style estimate" in md
     assert "42%" in md
-    assert md.index("AI Likelihood") < md.index("How DraftProof calibrates this")
+    assert md.index("DraftProof AI-style estimate") < md.index("Calibration summary")
     if EXTERNAL_ESTIMATE_DISPLAY_ENABLED:
         assert "~60%" in md and "likely to be flagged" in md
     else:
