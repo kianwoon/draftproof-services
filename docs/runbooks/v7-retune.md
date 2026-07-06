@@ -20,17 +20,25 @@
    - **FAIL** — a tolerance broke. Do NOT promote. Inspect the gate stdout for which one.
    - **NO-CORPUS** — SCoCESLE dir not found; set `--scocesle PATH`.
 
-## Re-calibrate (Phase 2 detail)
-4. If discrimination dropped (new model evades), re-sweep with the existing scripts writing to a staging dir, then re-run the gate.
-   From within `poc/`, run:
+## Re-calibrate (Phase 2 detail) — costs real money (Modal)
+4. If discrimination dropped (new model evades), run the SAME command with `--paid`. This
+   re-tunes on the FULL chain (FREE FPR gate, then the two Modal-cost scripts) and hands
+   back CANDIDATE artifacts gated on ESL fairness — nothing is written to committed paths:
    ```bash
-   cd poc
-   python calibration/v7_deberta_academic_calibrate.py
-   python calibration/deberta_fit_calibrator.py
-   python calibration/v7_fused_gate_run.py
-   python calibration/fpr_subgroup_gate.py --compare
+   ~/.pyenv/versions/3.11.0/bin/python3 -m poc.calibration.retune.run_cycle --generate --paid
    ```
-   The final `fpr_subgroup_gate.py --compare` is the oracle — it must pass before proceeding.
+   - `--paid` is required to spend anything — without it, run_cycle stays free (intake + FPR
+     gate only, current default behavior).
+   - `--staging DIR` (default `poc/calibration/retune/staging/`, gitignored) is where
+     `academic.json`, `fused.json`, and `fused_progress.jsonl` land. **Use a fresh `--staging`
+     each cycle** — never reuse a `progress.jsonl` across a changed `sent_threshold` or fusion
+     weights; the fused-gate script skips rows already in the cache, so a stale cache silently
+     mixes old-weight and new-weight scores.
+   - `--weights PATH` scores a candidate `weights.json` instead of production's.
+   - `--limit N` passes through as `--limit-per-group N` for a cheap smoke run.
+   - Read the `calibration` column appended to `RETUNE_LOG.md` for the fused-gate verdict.
+   - `deberta_fit_calibrator.py` is EXCLUDED from this chain — it is dead/superseded (its own
+     docstring: "SUPERSEDED IN PRODUCTION 2026-07 … source of the 0%-bug"). Do not call it.
 
 ## Promote (only on PASS)
 5. Re-baseline intentionally. From within `poc/`, run:

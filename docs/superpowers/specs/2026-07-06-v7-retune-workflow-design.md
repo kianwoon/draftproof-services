@@ -59,8 +59,10 @@ tuning paths.
 | Generators (to be unified) | `build_ai_corpus.py`, `build_ai_gptoss.py`, `v7_deberta_diversity_check.py` | AI-set generation |
 | The gate (oracle) | `fpr_subgroup_gate.py` — `--compare` exits 1 on FPR rise >3pts / AUC drop ≥0.05 / parity widen >4pts | Acceptance oracle |
 | Fused gate | `v7_fused_gate_run.py` → `v7_fused_gate_result.json` | Fusion validation |
-| Isotonic calibrator fit | `deberta_fit_calibrator.py` → `deberta_isotonic.pkl` | Deep-scan calibration |
 | Live checkpoint (Modal) | app `draftproof-v7-deberta-deep-scan`, `desklib/ai-text-detector-academic-v1.01` | Deep-scan serving |
+
+`deberta_fit_calibrator.py` is **excluded** — superseded/dead (its own docstring: "SUPERSEDED
+IN PRODUCTION 2026-07 … source of the 0%-bug"). Not called anywhere in the retune chain.
 
 ## 4. Architecture — "One gate, two paths"
 
@@ -128,10 +130,13 @@ One row per essay: `{id, source_path, label: human|ai, family, model_id, license
 
 The default re-tune path. Reuses existing tuning scripts, orchestrated in order:
 
-1. **Deep-scan sweep** — re-sweep `sent_threshold` / `doc_floor` against the new AI families (`v7_deberta_academic_calibrate.py` path) → candidate `v7_deberta_academic_baseline.json`.
-2. **Isotonic re-fit** — `deberta_fit_calibrator.py` on the refreshed cal split → candidate `deberta_isotonic.pkl`.
-3. **Fused gate** — `v7_fused_gate_run.py` → candidate `v7_fused_gate_result.json` (TPR/AUC/parity of `0.4×composite + 0.6×proportion`).
-4. **Tier-cutoff check** — confirm the `32/48/65` fused cutoffs in `weights.json tier_authority` still hold on the new distribution; propose a re-sweep only if TPR/FPR at the operating point moved materially.
+1. **Deep-scan sweep** — re-sweep `sent_threshold` / `doc_floor` against the new AI families (`v7_deberta_academic_calibrate.py` path) → candidate `academic.json`.
+2. **Fused gate** — `v7_fused_gate_run.py` → candidate `fused.json` (TPR/AUC/parity of `0.4×composite + 0.6×proportion`).
+3. **Tier-cutoff check** — confirm the `32/48/65` fused cutoffs in `weights.json tier_authority` still hold on the new distribution; propose a re-sweep only if TPR/FPR at the operating point moved materially.
+
+The isotonic re-fit step (`deberta_fit_calibrator.py`) is **excluded** — dead/superseded, see
+§3. `poc.calibration.retune.run_cycle --generate --paid` runs steps 1–2 for you, writing both
+candidates to `--staging` (never a committed path).
 
 **Acceptance:** run `fpr_subgroup_gate.py --compare` against the committed
 `fpr_subgroup_baseline.json`. Candidate artifacts are written to a staging dir and are
