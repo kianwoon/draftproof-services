@@ -352,7 +352,29 @@ def _per_paragraph_proportions(
             cursor = start + len(sentence)
             while para_idx < len(ranges) - 1 and start >= ranges[para_idx][1]:
                 para_idx += 1
-            per_paragraph[para_idx].append(float(score))
+            target = para_idx
+            if is_heading[target]:
+                # An unpunctuated title merges with the first body sentence in
+                # the normalized sentence stream (split_sentences collapses the
+                # paragraph break, and there is no terminal punctuation to
+                # split on). Such a sentence STARTS in the heading block but
+                # extends past it — it is body content and must count toward
+                # the next body paragraph, or the paragraph's flagged count
+                # contradicts the sentence underlines (observed live
+                # 2026-07-06: paragraph 1 showed '0 of 4 flagged' while its
+                # first sentence was visibly flagged). A sentence fully inside
+                # the heading range is title-only text: dropped from rows
+                # (still counted in the document-level proportion above).
+                if start + len(sentence) > ranges[target][1]:
+                    while target < len(ranges) - 1:
+                        target += 1
+                        if not is_heading[target]:
+                            break
+                    if is_heading[target]:
+                        continue  # headings all the way down — drop from rows
+                else:
+                    continue  # title-only sentence — not a body row member
+            per_paragraph[target].append(float(score))
         rows = []
         body_ordinal = 0
         for i, scores in enumerate(per_paragraph):

@@ -665,3 +665,37 @@ class TestDeepScanPerParagraphProportions:
         assert rows is not None
         assert len(rows) == 3  # the title is NOT a paragraph row
         assert [r["index"] for r in rows] == [0, 1, 2]  # body ordinals, no gap
+
+    def test_title_merged_flagged_sentence_counts_toward_first_body_paragraph(self, monkeypatch):
+        """Live regression (2026-07-06, report fac2ff21): an unpunctuated title
+        merges with the first body sentence in the normalized sentence stream;
+        attributing that merged sentence to the (excluded) heading block made
+        paragraph 1 show '0 of 4 flagged' while its first sentence was visibly
+        underlined. The merged sentence extends past the heading range, so it
+        belongs to the first body paragraph."""
+        monkeypatch.setenv(_ENV_VAR, "1")
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+        text = (
+            "Critical Analysis of Over-Accommodation Standards\n\n"
+            "First body sentence which reads AI-like. Second body sentence here.\n\n"
+            "Other paragraph sentence one. Other paragraph sentence two."
+        )
+
+        def fake_call(chunks, timeout_s=60.0):
+            # Flag ONLY the first chunk — the merged title+first-body sentence.
+            return {
+                "available": True,
+                "calibrated": True,
+                "chunk_scores": [1.0] + [0.0] * (len(chunks) - 1),
+                "document_score": 0.3,
+            }
+
+        monkeypatch.setattr(modal_client, "call_deep_scan", fake_call)
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result(text=text))
+        assert result is not None
+        rows = (result.get("deep_scan") or {}).get("paragraphs")
+        assert rows is not None and len(rows) == 2
+        # Paragraph 1 owns the merged flagged sentence: 1 of 2 flagged, not 0.
+        assert rows[0]["flagged_count"] == 1
+        assert rows[0]["sentence_count"] == 2
+        assert rows[1]["flagged_count"] == 0
