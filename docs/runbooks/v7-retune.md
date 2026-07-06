@@ -44,6 +44,17 @@
    - Read the `calibration` column appended to `RETUNE_LOG.md` for the fused-gate verdict.
    - `deberta_fit_calibrator.py` is EXCLUDED from this chain — it is dead/superseded (its own
      docstring: "SUPERSEDED IN PRODUCTION 2026-07 … source of the 0%-bug"). Do not call it.
+   - **Deep-scan cache** — essays scored once by the paid Modal endpoint are cached by
+     content-hash (sha256 of checkpoint + text) in the PERSISTENT, cross-run
+     `poc/calibration/retune/cache/deepscan_scores.jsonl` (gitignored; no essay text stored,
+     only the hash key and raw per-sentence scores) and are never re-paid in a later run. The
+     cache stores RAW scores and derives the proportion locally at whatever `sent_threshold` is
+     configured, so it is threshold-INDEPENDENT — changing `sent_threshold` or fusion weights
+     does NOT invalidate it, unlike the per-run `fused_progress.jsonl`. Only a checkpoint change
+     (`DRAFTPROOF_MODAL_CHECKPOINT`, e.g. the Phase 3 fine-tune) invalidates a row, since the
+     checkpoint is part of the cache key. Override the default with `--cache PATH` on
+     `run_cycle.py` or `v7_fused_gate_run.py` directly if you need an isolated cache for
+     experimentation.
 
 ## Promote (only on PASS)
 5. Re-baseline intentionally. From within `poc/`, run:

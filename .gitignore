@@ -41,3 +41,6 @@ poc/calibration/retune/corpus/
 
 # V7 re-tune paid-recalibration staging (candidate artifacts only; never committed baselines)
 poc/calibration/retune/staging/
+
+# V7 re-tune persistent deep-scan cache (local scored-numbers artifact; no essay text stored)
+poc/calibration/retune/cache/
