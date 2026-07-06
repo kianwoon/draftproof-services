@@ -206,6 +206,45 @@ def _authorship_headline_html(badge: dict, breakdown: dict) -> str:
     return ""
 
 
+# allow-hardcode: presentation copy/markup for the per-paragraph deep-scan rows below —
+# bands/proportions are read from the breakdown's own deep_scan.paragraphs fields
+# (computed in poc/detect_v7/pipeline_bridge.py), never invented here.
+def _deep_scan_paragraphs_html(breakdown: dict) -> str:
+    """Compact per-paragraph deep-scan rows. '' when absent (quick scan /
+    single paragraph / mapping fail-open) — mirrors the web panel's
+    deepScanParagraphs section in MergedAuthorshipRisk.jsx."""
+    deep_scan = breakdown.get("deep_scan") or {}
+    paragraphs = deep_scan.get("paragraphs")
+    if not isinstance(paragraphs, list) or not paragraphs:
+        return ""
+    rows = []
+    for p in paragraphs:
+        if not isinstance(p, dict):
+            continue
+        idx = p.get("index")
+        proportion = p.get("proportion")
+        band = p.get("band")
+        count = p.get("sentence_count")
+        if not isinstance(idx, int):
+            continue
+        if band == "insufficient" or not isinstance(proportion, (int, float)):
+            chip = _statchip("insufficient evidence", "info")
+            value = ""
+        else:
+            chip = _statchip(_ACB_DEEP_SCAN_BAND_LABELS.get(band, band or ""), _level_kind(band))
+            value = f"<b>{round(proportion * 100)}%</b> "
+        sentences = f" · {count} sentences" if isinstance(count, int) else ""
+        rows.append(
+            '<p class="dp-hero-sub dp-dsp-row">'
+            f"Paragraph {idx + 1}: {value}{chip}{escape(sentences)}</p>"
+        )
+    if not rows:
+        return ""
+    return ('<div class="dp-dsp"><p class="dp-hero-sub"><b>Per-paragraph deep-scan signal</b> '
+            "— same detector pass grouped by paragraph; short paragraphs are noisier</p>"
+            + "".join(rows) + "</div>")
+
+
 def _authorship_bars_html(breakdown: dict) -> str:
     """The 4 color-coded category bars + disclaimer. '' when no breakdown."""
     raw_shares = breakdown.get("document_breakdown_raw") or {}
@@ -489,6 +528,7 @@ def render_merged_authorship_risk(report, data) -> str:
               '<span class="dp-statchip dp-statchip--info">Beta</span></p>'
               + _authorship_headline_html(badge, breakdown)
               + _authorship_bars_html(breakdown)
+              + _deep_scan_paragraphs_html(breakdown)
               + "</div>")
     if not lead:
         return header

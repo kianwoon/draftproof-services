@@ -718,6 +718,14 @@ export const report = {
         "amber": "黄色预警",
         "orange": "橙色预警",
         "red": "红色预警"
+      },
+      // allow-hardcode: user-facing i18n display copy, not detection/scoring logic
+      "paragraphs": {
+        "head": "逐段深度扫描信号",
+        "note": "同一次检测按段落分组 —— 段落越短，噪声越大",
+        "row": "第 {{index}} 段",
+        "sentences": "{{count}} 句",
+        "insufficient": "证据不足"
       }
     },
     "subtitle": "展示本文档的写作信号在四种作者风格之间的分布。四项占比之和恒为 100%——这是构成比例，不是 AI 概率。下方的深度扫描估计来自另一个测试版检测模型，可能与上方摘要中的「文本模式风险」不一致——两者都是信号，而非定论。",

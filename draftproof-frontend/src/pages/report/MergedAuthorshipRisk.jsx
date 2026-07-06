@@ -141,7 +141,7 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority }) {
 // page's marketing preview splits the composition lens and the verdict+risk lens
 // across two tabs) instead of re-implementing the markup as a separate mockup.
 // Omitting `sections` (every Report.jsx call site) renders every section, unchanged.
-const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'scale', 'disclaimer'];
+const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'deepScanParagraphs', 'scale', 'disclaimer'];
 
 export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, sections }) {
   const hasBreakdown = !!breakdown;
@@ -214,6 +214,36 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {show('deepScanParagraphs')
+        && hasBreakdown
+        && breakdown.deep_scan
+        && Array.isArray(breakdown.deep_scan.paragraphs)
+        && breakdown.deep_scan.paragraphs.length > 0 && (
+        <div className="merged-lens merged-dsp">
+          <p className="merged-lens-head">
+            {t('report.authorshipBreakdown.deepScan.paragraphs.head')}{' '}
+            <span className="merged-lens-note">· {t('report.authorshipBreakdown.deepScan.paragraphs.note')}</span>
+          </p>
+          <div className="merged-dsp-rows">
+            {breakdown.deep_scan.paragraphs.map((p) => (
+              <div className="merged-dsp-row" key={p.index}>
+                <span className="merged-dsp-label">
+                  {t('report.authorshipBreakdown.deepScan.paragraphs.row', { index: p.index + 1 })}
+                </span>
+                <span className={`merged-verdict-chip is-${p.band}`}>
+                  {p.band === 'insufficient'
+                    ? t('report.authorshipBreakdown.deepScan.paragraphs.insufficient')
+                    : `${Math.round((p.proportion || 0) * 100)}%`}
+                </span>
+                <span className="merged-lens-note">
+                  {t('report.authorshipBreakdown.deepScan.paragraphs.sentences', { count: p.sentence_count })}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
