@@ -55,7 +55,50 @@ def test_run_cycle_paid_calls_calibrate_and_logs_verdict(tmp_path):
                               limit=5, calibrate_fn=fake_calibrate)
     assert res.passed
     assert "candidate-pass" in log.read_text()
-    assert captured["args"] == (tmp_path / "staging", None, tmp_path / "w.json", 5)
+    received_staging, corpus, weights_path, limit = captured["args"]
+    assert Path(received_staging) == tmp_path / "staging" / "run-2026-07-06T00-00-00Z"
+    assert corpus is None and weights_path == tmp_path / "w.json" and limit == 5
+
+def test_run_cycle_paid_uses_per_run_staging_subdir(tmp_path):
+    ai = _seed_ai(tmp_path)
+    manifest = tmp_path / "manifest.json"
+    log = tmp_path / "RETUNE_LOG.md"
+    fake_gate = lambda **kw: GateResult(passed=True, exit_code=0, corpus_available=True, stdout="AUC 0.75")
+    received = []
+    def fake_calibrate(staging_dir, corpus, weights_path, limit):
+        received.append(staging_dir)
+        return CalibrationResult(ran=True, fused_verdict="candidate-pass",
+                                  staging_dir=str(staging_dir), steps=["academic", "fused"])
+
+    run_cycle.run_cycle(ai, None, manifest, log, now_iso="2026-07-06T00:00:00Z",
+                        generate=False, gate_fn=fake_gate, paid=True,
+                        staging_dir=tmp_path / "staging", calibrate_fn=fake_calibrate)
+
+    assert len(received) == 1
+    received_dir = Path(received[0])
+    assert received_dir.name.startswith("run-")
+    assert received_dir.exists()
+    assert received_dir.parent == tmp_path / "staging"
+
+def test_run_cycle_paid_different_timestamps_get_different_staging_dirs(tmp_path):
+    ai = _seed_ai(tmp_path)
+    fake_gate = lambda **kw: GateResult(passed=True, exit_code=0, corpus_available=True, stdout="AUC 0.75")
+    received = []
+    def fake_calibrate(staging_dir, corpus, weights_path, limit):
+        received.append(Path(staging_dir))
+        return CalibrationResult(ran=True, fused_verdict="candidate-pass",
+                                  staging_dir=str(staging_dir), steps=["academic", "fused"])
+
+    run_cycle.run_cycle(ai, None, tmp_path / "m1.json", tmp_path / "L1.md",
+                        now_iso="2026-07-06T00:00:00Z", generate=False, gate_fn=fake_gate,
+                        paid=True, staging_dir=tmp_path / "staging", calibrate_fn=fake_calibrate)
+    run_cycle.run_cycle(ai, None, tmp_path / "m2.json", tmp_path / "L2.md",
+                        now_iso="2026-07-06T01:30:00Z", generate=False, gate_fn=fake_gate,
+                        paid=True, staging_dir=tmp_path / "staging", calibrate_fn=fake_calibrate)
+
+    assert len(received) == 2
+    assert received[0] != received[1]
+    assert received[0].exists() and received[1].exists()
 
 def test_run_cycle_free_path_never_calls_calibrate(tmp_path):
     ai = _seed_ai(tmp_path)

@@ -42,7 +42,11 @@ def run_cycle(ai_dir: Path, scocesle_dir: Path | None, manifest_path: Path, log_
 
     calibration = "skipped"
     if paid:
-        cal_result = calibrate_fn(staging_dir or DEFAULT_STAGING, scocesle_dir, weights_path, limit)
+        base_staging = staging_dir or DEFAULT_STAGING
+        safe_now_iso = now_iso.replace(":", "-").replace("+", "-").replace(".", "-")
+        run_staging = Path(base_staging) / f"run-{safe_now_iso}"
+        run_staging.mkdir(parents=True, exist_ok=True)
+        cal_result = calibrate_fn(run_staging, scocesle_dir, weights_path, limit)
         calibration = cal_result.fused_verdict
 
     append_log(log_path, {"version": now_iso, "n_rows": n_rows, "families": _families(rows),

@@ -29,11 +29,16 @@
    ```
    - `--paid` is required to spend anything — without it, run_cycle stays free (intake + FPR
      gate only, current default behavior).
-   - `--staging DIR` (default `poc/calibration/retune/staging/`, gitignored) is where
-     `academic.json`, `fused.json`, and `fused_progress.jsonl` land. **Use a fresh `--staging`
-     each cycle** — never reuse a `progress.jsonl` across a changed `sent_threshold` or fusion
-     weights; the fused-gate script skips rows already in the cache, so a stale cache silently
-     mixes old-weight and new-weight scores.
+   - `--staging DIR` (default `poc/calibration/retune/staging/`, gitignored) is the BASE dir.
+     The orchestrator now isolates each `--paid` run automatically: it creates a per-run
+     subdirectory `run-<sanitized-timestamp>` (derived from the cycle's UTC `now_iso`, with
+     `:`, `+`, `.` replaced by `-`) under `--staging`, and that subdirectory — not the base
+     dir — is where `academic.json`, `fused.json`, and `fused_progress.jsonl` actually land.
+     This means two back-to-back `--paid` runs never share a `fused_progress.jsonl`, so a
+     changed `sent_threshold` or fusion weights can no longer silently mix old- and new-weight
+     scores. To resume a crashed run, point the fused-gate script's `--progress`/`--out` at
+     that specific `poc/calibration/retune/staging/run-<timestamp>/` subdirectory rather than
+     the base `--staging` dir.
    - `--weights PATH` scores a candidate `weights.json` instead of production's.
    - `--limit N` passes through as `--limit-per-group N` for a cheap smoke run.
    - Read the `calibration` column appended to `RETUNE_LOG.md` for the fused-gate verdict.
