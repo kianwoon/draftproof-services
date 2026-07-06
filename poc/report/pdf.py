@@ -489,6 +489,9 @@ img[src^="https://img.shields.io"] { height: 18px; }
 .dp-cmp-col .dp-abd-row { break-inside: avoid; page-break-inside: avoid; }
 /* A subhead ("Where the risk sits") must not be the last thing on a page. */
 .dp-cmp-subhead { break-after: avoid; page-break-after: avoid; }
+/* Keep the whole "Where the risk sits" section (heading + all rows) together so
+   pagination breaks BEFORE it instead of splitting the risk list mid-way. */
+.dp-cmp-col .dp-cmp-risk-group { break-inside: avoid; page-break-inside: avoid; }
 .dp-cmp-kicker {
     margin: 0 0 3pt;
     color: var(--dp-muted);
