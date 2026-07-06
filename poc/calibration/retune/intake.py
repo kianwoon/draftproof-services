@@ -90,3 +90,38 @@ def generate_ai_essays(out_dir: Path, generators: list[Generator], topics: list[
             print(f"   + {cid} ({len(text.split())} words)")
     print(f"\nwrote {made} AI cases to {out_dir}")
     return made
+
+import argparse
+from datetime import datetime, timezone
+from .generators import load_generators
+from .manifest import build_manifest, assert_no_leakage
+
+DEFAULT_MANIFEST = HERE / "corpus" / "manifest.json"
+DEFAULT_SCOCESLE = Path.home() / "Downloads" / "Small Corpus of Colombian English as a Second Language Essays (SCoCESLE)"
+
+def write_manifest_only(ai_dir: Path, scocesle_dir: Path | None, manifest_path: Path, now_iso: str) -> int:
+    m = build_manifest(ai_dir, scocesle_dir, now_iso)
+    assert_no_leakage(m["rows"])
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(m, indent=2, ensure_ascii=False))
+    print(f"wrote manifest: {len(m['rows'])} rows -> {manifest_path}")
+    return len(m["rows"])
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="V7 re-tune Phase 1: intake + manifest")
+    ap.add_argument("--generate", action="store_true", help="generate AI essays from models.json")
+    ap.add_argument("--rebuild-manifest", action="store_true", help="(re)build the corpus manifest")
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    ap.add_argument("--scocesle", type=Path, default=DEFAULT_SCOCESLE)
+    ap.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    args = ap.parse_args()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if args.generate:
+        load_env()
+        generate_ai_essays(args.out, load_generators(), TOPICS)
+    scocesle = args.scocesle if args.scocesle.exists() else None
+    write_manifest_only(args.out, scocesle, args.manifest, now_iso)
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
