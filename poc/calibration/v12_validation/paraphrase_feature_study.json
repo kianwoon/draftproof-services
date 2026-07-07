@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-07T21:20:34.973778+00:00",
+  "generated_at": "2026-07-07T21:25:46.690103+00:00",
   "spec": "Task 6 — paraphrase-signal feature study (MiniLM standalone features vs frame_reuse)",
   "model": "sentence-transformers/paraphrase-MiniLM-L6-v2",
   "min_sentences_threshold": 3,
@@ -123,8 +123,11 @@
     "auc_gate_threshold": 0.7,
     "esl_gate_threshold": 0.6,
     "best_feature": "pairwise_cosine_std",
-    "best_feature_auc_vs_ai_generated_like": 0.6693,
+    "direction": "high_is_paraphrase",
+    "best_feature_raw_auc_vs_ai_generated_like": 0.6693,
+    "best_feature_effective_auc_vs_ai_generated_like": 0.6693,
     "best_feature_esl_lower_vs_higher_auc": 0.3579,
+    "best_feature_esl_directional_flagging_auc": 0.3579,
     "best_feature_auc_vs_ai_assisted_polished": 0.3485,
     "gate_passed": false
   }

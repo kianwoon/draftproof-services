@@ -319,36 +319,61 @@ def _round(v):
 
 
 def evaluate_gate(result: dict, auc_gate: float, esl_gate: float) -> dict:
-    """Hard gate: best feature AUC(ai_paraphrased vs ai_generated_like) >= auc_gate
-    AND that feature's ESL lower-vs-higher AUC < esl_gate (not a covert ESL detector)."""
+    """Hard gate: best feature effective-AUC(ai_paraphrased vs ai_generated_like)
+    >= auc_gate AND that feature must not be a covert ESL detector (< esl_gate
+    in its flagging direction).
+
+    Direction-aware: raw AUC is computed with pos=ai_paraphrased, so a feature
+    that discriminates strongly in REVERSE (raw AUC << 0.5) is still a valid
+    discriminator when used inverted. The winner is therefore selected by
+    effect size |raw_auc - 0.5|; its direction is recorded
+    ("high_is_paraphrase" if raw >= 0.5 else "low_is_paraphrase") and the gate
+    is evaluated on the effective AUC = max(raw, 1 - raw).
+
+    The ESL covert-detector check uses the SAME direction: the flagging
+    direction is "which way does the feature push a doc toward paraphrase?" —
+    if low_is_paraphrase, the concern is lower-proficiency essays scoring
+    systematically LOWER than higher-proficiency ones, i.e. directional ESL
+    AUC = 1 - lower_vs_higher_auc."""
     best_feature = None
-    best_auc = -1.0
+    best_raw_auc = None
+    best_effect = -1.0
     for feature, table in result["auc_one_vs_one"].items():
         v = table.get("ai_paraphrased_vs_ai_generated_like")
-        if v is not None and v > best_auc:
-            best_auc = v
+        if v is not None and abs(v - 0.5) > best_effect:
+            best_effect = abs(v - 0.5)
+            best_raw_auc = v
             best_feature = feature
 
-    passed = False
-    esl_auc = None
-    if best_feature is not None:
-        # always report the ESL check for the best feature (informational even on AUC-gate failure)
-        esl_auc = result["esl_subgroup_check"][best_feature]["lower_vs_higher_auc"]
-        if best_auc >= auc_gate:
-            # "flagging" ESL more than higher-proficiency means lower_vs_higher_auc high
-            esl_ok = esl_auc is None or esl_auc < esl_gate
-            passed = esl_ok
-
+    direction = None
+    effective_auc = None
+    esl_raw = None
+    esl_directional = None
     polished_auc = None
+    passed = False
     if best_feature is not None:
+        direction = "high_is_paraphrase" if best_raw_auc >= 0.5 else "low_is_paraphrase"
+        effective_auc = _round(max(best_raw_auc, 1.0 - best_raw_auc))
+        # always report the ESL check for the best feature (informational even on AUC-gate failure)
+        esl_raw = result["esl_subgroup_check"][best_feature]["lower_vs_higher_auc"]
+        if esl_raw is not None:
+            esl_directional = _round(esl_raw if direction == "high_is_paraphrase" else 1.0 - esl_raw)
         polished_auc = result["auc_one_vs_one"][best_feature].get("ai_paraphrased_vs_ai_assisted_polished")
+        if effective_auc >= auc_gate:
+            # covert ESL detector = lower-proficiency essays pushed toward
+            # "paraphrase" in the winner's flagging direction
+            esl_ok = esl_directional is None or esl_directional < esl_gate
+            passed = esl_ok
 
     return {
         "auc_gate_threshold": auc_gate,
         "esl_gate_threshold": esl_gate,
         "best_feature": best_feature,
-        "best_feature_auc_vs_ai_generated_like": _round(best_auc) if best_feature else None,
-        "best_feature_esl_lower_vs_higher_auc": esl_auc,
+        "direction": direction,
+        "best_feature_raw_auc_vs_ai_generated_like": _round(best_raw_auc) if best_feature else None,
+        "best_feature_effective_auc_vs_ai_generated_like": effective_auc,
+        "best_feature_esl_lower_vs_higher_auc": esl_raw,
+        "best_feature_esl_directional_flagging_auc": esl_directional,
         "best_feature_auc_vs_ai_assisted_polished": polished_auc,
         "gate_passed": passed,
     }

@@ -113,6 +113,50 @@ def test_evaluate_gate_fails_when_best_feature_is_covert_esl_detector():
     assert gate["gate_passed"] is False
 
 
+def test_evaluate_gate_selects_reversed_direction_winner():
+    # A feature separating PERFECTLY in reverse (raw AUC 0.0) must win with
+    # direction low_is_paraphrase and effective AUC 1.0.
+    result = {
+        "auc_one_vs_one": {
+            "adjacent_cosine_mean": {"ai_paraphrased_vs_ai_generated_like": 0.0,
+                                      "ai_paraphrased_vs_ai_assisted_polished": 0.45},
+            "pairwise_cosine_std": {"ai_paraphrased_vs_ai_generated_like": 0.72,
+                                     "ai_paraphrased_vs_ai_assisted_polished": 0.50},
+        },
+        "esl_subgroup_check": {
+            "adjacent_cosine_mean": {"lower_vs_higher_auc": 0.55},
+            "pairwise_cosine_std": {"lower_vs_higher_auc": 0.50},
+        },
+    }
+    gate = evaluate_gate(result, auc_gate=0.70, esl_gate=0.60)
+    assert gate["best_feature"] == "adjacent_cosine_mean"
+    assert gate["direction"] == "low_is_paraphrase"
+    assert gate["best_feature_effective_auc_vs_ai_generated_like"] == 1.0
+    # ESL check flips with the direction: raw 0.55 -> directional 0.45 (< 0.60) -> pass
+    assert gate["best_feature_esl_directional_flagging_auc"] == 0.45
+    assert gate["gate_passed"] is True
+
+
+def test_evaluate_gate_reversed_winner_fails_esl_in_its_direction():
+    # low_is_paraphrase winner whose LOWER-proficiency essays score
+    # systematically LOWER (raw lower_vs_higher 0.2 -> directional 0.8) is a
+    # covert ESL detector in its flagging direction -> FAIL.
+    result = {
+        "auc_one_vs_one": {
+            "adjacent_cosine_mean": {"ai_paraphrased_vs_ai_generated_like": 0.10,
+                                      "ai_paraphrased_vs_ai_assisted_polished": 0.45},
+        },
+        "esl_subgroup_check": {
+            "adjacent_cosine_mean": {"lower_vs_higher_auc": 0.20},
+        },
+    }
+    gate = evaluate_gate(result, auc_gate=0.70, esl_gate=0.60)
+    assert gate["direction"] == "low_is_paraphrase"
+    assert gate["best_feature_effective_auc_vs_ai_generated_like"] == 0.9
+    assert gate["best_feature_esl_directional_flagging_auc"] == 0.8
+    assert gate["gate_passed"] is False
+
+
 def test_evaluate_gate_fails_when_auc_too_low():
     result = {
         "auc_one_vs_one": {
