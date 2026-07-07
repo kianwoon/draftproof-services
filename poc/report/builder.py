@@ -1589,6 +1589,14 @@ class ReportBuilder:
             # didn't run) — get_deep_scan_proportion short-circuits on this key so
             # a scan never pays for two identical deep-scan calls.
             "_precomputed_deep_scan": _deep_scan_for_authority,
+            # signal_adapter's criterion-derived signals (specificity_score,
+            # sentence_variance, sentence_smoothness, local_style_shift,
+            # detector_disagreement) read this key — it is NOT part of the badge,
+            # it lives in self._summaries (set at L370-371 from
+            # detection_report.criterion_scores). Without it those 5 signals are
+            # unconditionally "unavailable". Fail-open preserved: .get() -> None
+            # when absent, identical to today's behavior.
+            "criterion_scores": self._summaries.get("criterion_scores"),
         })
         if _v7_breakdown is not None:
             ai_risk_badge["authorship_breakdown"] = _v7_breakdown

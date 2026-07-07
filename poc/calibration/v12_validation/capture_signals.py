@@ -30,16 +30,38 @@ def capture_one(runner, text: str, label: str) -> tuple[dict, dict]:
     category_scoring.score_paragraph to the SAME primary_category the
     end-to-end pipeline produced for this text.
     """
-    from calibration.measure_end_to_end import scan_text
+    from detect.document_structure import normalize_submitted_text
     from detect_v7 import detector_fusion, pipeline_bridge, signal_adapter
+    from report.report import ReportBuilder, report_to_dict
 
-    rep = scan_text(runner, text)
+    # Inlined from calibration.measure_end_to_end.scan_text (rather than
+    # calling it) so we can keep a handle on the raw DetectionResult:
+    # detection_result.criterion_scores never round-trips through
+    # report_to_dict (report.py has no such key) and the fused badge doesn't
+    # carry it either, so it has to be pulled from the same source
+    # ReportBuilder reads it from, before the report dict is built. Exactly
+    # one scan runs (runner.run_all) — no duplicate detection.
+    norm_text = normalize_submitted_text(str(text or ""))
+    detection_result = runner.run_all(norm_text)
+    b = ReportBuilder()
+    b.add_detection_report(detection_result)
+    if getattr(detection_result, "postprocess_results", None):
+        b.add_postprocess_results(detection_result.postprocess_results)
+    b.set_meta(scan_time=0.0, original_text=norm_text)
+    rep = report_to_dict(b.build())
+
     badge = dict(rep.get("ai_risk_badge") or {})
     # ai_risk_badge carries document-level scores only, not raw text (see
     # pipeline_bridge._extract_document_text docstring) — attach it under one
     # of the recognized candidate keys so get_deep_scan_proportion can reach
     # Modal on the --fused (non-quick) path.
     det = {**badge, "document_text": text}
+    # Mirror builder.py L370-371's exact guard for surfacing
+    # criterion_scores into the dict handed downstream (there:
+    # run_v7_breakdown's input; here: pipeline_bridge._build_raw_signals'
+    # input) — same source, same condition, so capture parity holds.
+    if hasattr(detection_result, "criterion_scores") and detection_result.criterion_scores:
+        det["criterion_scores"] = detection_result.criterion_scores
 
     composite = pipeline_bridge._extract_calibrated_score(det)
     detector_scores = {"composite": composite}

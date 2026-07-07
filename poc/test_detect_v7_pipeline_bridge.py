@@ -699,3 +699,68 @@ class TestDeepScanPerParagraphProportions:
         assert rows[0]["flagged_count"] == 1
         assert rows[0]["sentence_count"] == 2
         assert rows[1]["flagged_count"] == 0
+
+
+class TestBuilderThreadsCriterionScores:
+    """Regression test for the wiring bug documented in
+    poc/calibration/v12_validation/false_ai_diagnosis.json: builder.py used
+    to spread ``{**ai_risk_badge, "document_text": ..., "_precomputed_deep_scan": ...}``
+    into ``run_v7_breakdown`` WITHOUT ``criterion_scores`` — that key lives in
+    ``self._summaries`` (builder.py L370-371), never in the badge — so every
+    criterion-derived signal (specificity_score, sentence_variance,
+    sentence_smoothness, local_style_shift, detector_disagreement) was
+    unconditionally "unavailable" in production. This drives a REAL
+    ReportBuilder end-to-end (quick-scan, no Modal/network) and asserts the
+    dict actually handed to run_v7_breakdown carries "criterion_scores" and
+    it matches self._summaries's value byte-for-byte — the exact call site
+    that was broken.
+    """
+
+    def test_criterion_scores_present_in_run_v7_breakdown_input(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        monkeypatch.delenv(_DEEP_SCAN_ENV_VAR, raising=False)  # quick-scan: no Modal spend
+
+        from detect.document_structure import normalize_submitted_text
+        from detect.run import DetectionRunner
+        from report import builder as builder_module
+        from report.builder import ReportBuilder
+
+        captured: dict = {}
+        real_run_v7_breakdown = pipeline_bridge.run_v7_breakdown
+
+        def _capturing_run_v7_breakdown(detection_result):
+            captured["input"] = detection_result
+            return real_run_v7_breakdown(detection_result)
+
+        monkeypatch.setattr(
+            builder_module, "run_v7_breakdown", _capturing_run_v7_breakdown, raising=False
+        )
+        # builder.py imports run_v7_breakdown via a LOCAL import inside the
+        # method body (`from detect_v7.pipeline_bridge import run_v7_breakdown
+        # as _run_v7_breakdown`) — patching the module-level name above is a
+        # no-op for that call site, so patch the source pipeline_bridge
+        # function itself, which the local import re-resolves at call time.
+        monkeypatch.setattr(pipeline_bridge, "run_v7_breakdown", _capturing_run_v7_breakdown)
+
+        text = (
+            "The industrial revolution transformed European society in profound ways. "
+            "Factories replaced workshops, and cities grew rapidly as workers migrated."
+        ) * 3
+        norm_text = normalize_submitted_text(text)
+        runner = DetectionRunner()
+        detection_result = runner.run_all(norm_text)
+
+        b = ReportBuilder()
+        b.add_detection_report(detection_result)
+        if getattr(detection_result, "postprocess_results", None):
+            b.add_postprocess_results(detection_result.postprocess_results)
+        b.set_meta(scan_time=0.0, original_text=norm_text)
+
+        assert "input" not in captured  # sanity: not yet called
+        b.build()
+
+        assert "input" in captured, "run_v7_breakdown was never invoked — check the kill switch"
+        passed_in = captured["input"]
+        assert "criterion_scores" in passed_in
+        assert passed_in["criterion_scores"] == b._summaries.get("criterion_scores")
+        assert passed_in["criterion_scores"], "criterion_scores must be non-empty on this fixture"

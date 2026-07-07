@@ -32,3 +32,31 @@ def test_capture_matches_end_to_end(monkeypatch):
     )
     e2e = (rep.get("ai_risk_badge") or {}).get("authorship_breakdown") or {}
     assert offline["primary_category"] == e2e.get("primary_category")
+
+
+def test_criterion_derived_signals_now_available(monkeypatch):
+    """Regression test for the criterion_scores wiring bug (see
+    poc/calibration/v12_validation/false_ai_diagnosis.json): before the fix,
+    builder.py never threaded criterion_scores into run_v7_breakdown's input
+    dict, so every criterion-derived signal was unconditionally
+    "unavailable" in production. On this fixture, 4 of the 5 dark signals
+    compute directly from criterion_scores and must now report "ok".
+    detector_disagreement is NOT criterion-derived (it needs multiple
+    detector scores / deep-scan data absent on the quick-scan path) and is
+    asserted merely not-unavailable-for-the-wrong-reason is out of scope here.
+    """
+    monkeypatch.setenv("DRAFTPROOF_V7_AUTHORSHIP_BREAKDOWN", "1")
+    monkeypatch.delenv("DRAFTPROOF_V7_DEEP_SCAN", raising=False)  # quick-scan: no spend
+    from detect.run import DetectionRunner
+
+    runner = DetectionRunner()
+    row, _rep = capture_one(runner, _TEXT, label="student_owned")
+    status = row["v7_signals"]["signal_status"]
+
+    for signal in (
+        "specificity_score",
+        "sentence_variance",
+        "sentence_smoothness",
+        "local_style_shift",
+    ):
+        assert status[signal] == "ok", f"{signal} still dark: {status[signal]!r}"
