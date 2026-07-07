@@ -1,10 +1,41 @@
 from __future__ import annotations
 
+import os
 import re
 import time
+from contextlib import contextmanager
 
 from .scan import Scan
 from .write import Variant
+
+
+@contextmanager
+def deep_scan_suppressed():
+    """Skip the paid per-sentence Modal deep-scan for an INTERNAL/INTERMEDIATE rewrite re-scan.
+
+    A single rewrite runs ``ReportBuilder.build()`` many times: production.py's two intermediate
+    summary scans, plus the direct path's best-of-N / reviewer / selector guard scans (each one, when
+    the V7 flags are on, makes a full per-sentence Modal deep-scan call with a 60s timeout). Only the
+    FINAL "after" report shown to the user needs the fused deep-scan score; every internal better/
+    worse guard only compares the composite ``ai_score``. ``ReportBuilder`` reads the deep-scan kill
+    switches from the environment at build time (``is_deep_scan_enabled`` / ``is_tier_authority_enabled``),
+    so we temporarily force them off around an internal build and restore them after (see bc354646).
+
+    Safe under the single-task worker (``celery -c 1`` -- one task per process at a time, so no
+    concurrent scan observes the toggled env). The ``finally`` restores the exact prior values.
+    """
+    keys = ("DRAFTPROOF_V7_TIER_AUTHORITY", "DRAFTPROOF_V7_DEEP_SCAN")
+    saved = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ[k] = "0"
+    try:
+        yield
+    finally:
+        for k, prior in saved.items():
+            if prior is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = prior
 
 
 def can_start_llm_request(started_at: float, runtime_budget_seconds: float | None, min_llm_request_seconds: float) -> bool:

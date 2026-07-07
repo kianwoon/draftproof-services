@@ -194,15 +194,11 @@ def _is_style_correction(original: str, style_targets: list[str]) -> bool:
     return bool(n) and any(n in t or t in n for t in style_targets)
 
 
-def _correction_is_safe(original: str, revised: str, *, doc_after: str, baseline: float,
-                        score_gated: bool = True) -> bool:
-    """Keep a correction only if it doesn't break grammar or invert polarity.
-
-    STYLE corrections (those resolving a deterministic residual-pattern detector -- opener/rhythm/
-    repeated-start monoculture) pass score_gated=False: varying an opening is a readability fix that
-    does NOT lower the perplexity-dominated AI-risk score (it nudges it up by noise), so gating it on
-    `_score` systematically drops the genuine variations and keeps only cosmetic near-synonym edits,
-    leaving the monoculture intact. Grounding/other corrections stay score-gated."""
+def _correction_is_meaning_safe(original: str, revised: str) -> bool:
+    """Per-correction grammar + polarity guard (NO score scan). A correction is meaning-safe when the
+    revision is non-stub, grammatical, and does not invert the original sentence's polarity. Split out
+    from the score gate so the (expensive) `_score` compare can be batched across corrections while
+    these cheap per-correction checks still run on every one."""
     from .direct_rewrite import _has_broken_grammar
     revised = (revised or "").strip()
     if not revised or len(revised.split()) < 3:
@@ -213,9 +209,78 @@ def _correction_is_safe(original: str, revised: str, *, doc_after: str, baseline
     # a REQUIRED `sentences` field; _severe_polarity_inversion only reads `.text`, so [] is safe.
     if _severe_polarity_inversion(revised, Paragraph(id="qc", index=0, text=original, sentences=[])):
         return False
+    return True
+
+
+def _correction_is_safe(original: str, revised: str, *, doc_after: str, baseline: float,
+                        score_gated: bool = True) -> bool:
+    """Keep a correction only if it doesn't break grammar or invert polarity.
+
+    STYLE corrections (those resolving a deterministic residual-pattern detector -- opener/rhythm/
+    repeated-start monoculture) pass score_gated=False: varying an opening is a readability fix that
+    does NOT lower the perplexity-dominated AI-risk score (it nudges it up by noise), so gating it on
+    `_score` systematically drops the genuine variations and keeps only cosmetic near-synonym edits,
+    leaving the monoculture intact. Grounding/other corrections stay score-gated.
+
+    Retained for the per-correction (unbatched) path and for callers/tests: the batched path reuses
+    the exact same comparison via `_correction_is_meaning_safe` + the `_score(...) > baseline` reject."""
+    if not _correction_is_meaning_safe(original, revised):
+        return False
     if score_gated and _score(doc_after) > baseline:
         return False
     return True
+
+
+def _batch_gate_enabled() -> bool:
+    """Opt-in batched score gate (DRAFTPROOF_V6_REVIEWER_BATCH_GATE=1). Default OFF.
+
+    Measured 2026-07-07 (deterministic harness, N=4 per arm, same fixture): per-correction gating
+    mean final_risk 13.58 (spread 0.75) vs batched 27.27 (spread 6.74) — the per-correction loop is
+    a greedy optimizer (each accept/reject hill-climbs the score), not just a guard, and batching
+    removes that selection pressure. Keep the batch path only as an explicit latency experiment."""
+    return os.environ.get("DRAFTPROOF_V6_REVIEWER_BATCH_GATE", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Below this size a failing batch is rejected wholesale instead of bisected further. Keeps the
+# worst-case scan count small: bisecting to singletons would re-introduce the O(n) fan-out this
+# batching removes, so we stop and reject the small sub-batch (traced as batch_score_regression).
+_BATCH_BISECT_MIN = 3
+
+
+def _batch_accept(
+    corrections: list[Correction], *, base: str, baseline: float
+) -> tuple[list[Correction], list[Correction]]:
+    """Score-gate a list of already-meaning-safe corrections with O(log n) full scans instead of O(n).
+
+    Apply ALL of `corrections` (whose `original` is still present in `base`) into one candidate and
+    score it once. Reuses `_correction_is_safe`'s comparison exactly: the batch is safe iff
+    `_score(candidate) <= baseline` (a strict rise is a regression). If it passes -> accept all. If it
+    fails -> bisect: split in half and gate each half once (recursively), stopping below
+    `_BATCH_BISECT_MIN` where a failing sub-batch is rejected wholesale. Returns (accepted, rejected),
+    each preserving input order. Callers apply `accepted` to the evolving document in order."""
+    applicable = [c for c in corrections if c.original in base]
+    if not applicable:
+        return [], [c for c in corrections if c not in applicable]
+    candidate = base
+    for c in applicable:
+        candidate = candidate.replace(c.original, c.revised, 1)
+    if _score(candidate) <= baseline:
+        return applicable, [c for c in corrections if c not in applicable]
+    if len(applicable) < _BATCH_BISECT_MIN:
+        # Too small to bisect without re-introducing per-correction scans; reject as a regressing batch.
+        return [], corrections
+    mid = len(applicable) // 2
+    left_ok, _ = _batch_accept(applicable[:mid], base=base, baseline=baseline)
+    # The right half is gated against a base that already has the accepted left edits spliced in, so
+    # the single batch score reflects the same evolving document the per-correction loop would build.
+    right_base = base
+    for c in left_ok:
+        if c.original in right_base:
+            right_base = right_base.replace(c.original, c.revised, 1)
+    right_ok, _ = _batch_accept(applicable[mid:], base=right_base, baseline=baseline)
+    accepted = [c for c in applicable if c in left_ok or c in right_ok]
+    rejected = [c for c in corrections if c not in accepted]
+    return accepted, rejected
 
 
 # gpt-oss intermittently (~1 in 5 calls, measured) runs away past max_tokens (finish_reason=length)
@@ -338,22 +403,48 @@ def review_document(
     # start monoculture, balance phrase) are NOT gated on the AI-risk score -- they're readability
     # fixes that the perplexity-dominated score doesn't reward (see _correction_is_safe).
     style_targets = [_norm(t) for issue in must_fix for t in (issue.target_sentences or [])]
-    # Each accepted-or-rejected correction re-scores the whole document (_correction_is_safe ->
-    # _score), so cost is O(corrections) full scans. Cap the number we evaluate to bound worst-case
-    # latency if a model returns an unexpectedly long list; the surgical design expects only a
-    # handful. Extra corrections beyond the cap are surfaced in the trace, not silently dropped.
+    # Cost control. The per-correction path (DEFAULT — it measurably out-scores batching, see
+    # _batch_gate_enabled) re-scores the whole document once per score-gated correction
+    # (O(corrections) full scans). The opt-in batched path (DRAFTPROOF_V6_REVIEWER_BATCH_GATE=1)
+    # keeps the SAME accept rule -- `_score(doc) <= baseline` -- but scores all score-gated corrections
+    # in one pass (bisecting only on failure), for O(log n) scans. Cap the number we evaluate either
+    # way to bound worst-case latency on an over-long model list; extras are surfaced in the trace.
     over_cap = max(0, len(corrections_in) - _MAX_CORRECTIONS)
+    batch = _batch_gate_enabled()
+    # First pass: apply style corrections in order (not score-gated), and collect the meaning-safe
+    # score-gated corrections as a pending batch. Style edits mutate `current` immediately so the
+    # batch is later gated against the post-style document, matching the evolving-text semantics.
+    pending: list[Correction] = []
     for item in corrections_in[:_MAX_CORRECTIONS]:
         original = str(item.get("original") or "")
         revised = str(item.get("revised") or "")
         if not original or original not in current:
             continue
+        if not _is_style_correction(original, style_targets):  # score-gated
+            if batch:
+                if _correction_is_meaning_safe(original, revised):
+                    pending.append(Correction(original=original, revised=revised))
+                continue
+            # Kill switch OFF: exact legacy per-correction score gate (one _score scan each).
+            candidate_doc = current.replace(original, revised, 1)
+            if _correction_is_safe(original, revised, doc_after=candidate_doc, baseline=baseline,
+                                   score_gated=True):
+                current = candidate_doc
+                applied.append(Correction(original=original, revised=revised))
+            continue
+        # Style correction: readability fix, meaning-guarded only (never score-gated).
         candidate_doc = current.replace(original, revised, 1)
-        score_gated = not _is_style_correction(original, style_targets)
         if _correction_is_safe(original, revised, doc_after=candidate_doc, baseline=baseline,
-                               score_gated=score_gated):
+                               score_gated=False):
             current = candidate_doc
             applied.append(Correction(original=original, revised=revised))
+    # Second pass: one batched score gate over the pending score-gated corrections (bisect on failure).
+    if pending:
+        accepted, _rejected = _batch_accept(pending, base=current, baseline=baseline)
+        for c in accepted:
+            if c.original in current:
+                current = current.replace(c.original, c.revised, 1)
+                applied.append(c)
 
     # Honest unaddressed: re-detect on the corrected text and report which structural patterns STILL
     # fire. (The old 'was a target sentence touched' test reported success when a cosmetic edit

@@ -997,34 +997,35 @@ def _best_of_n() -> int:
     return max(1, min(3, value))
 
 
-def _document_ai_risk(text: str) -> float:
-    """Real-detector AI likelihood (0-100) for a whole document; +inf if unscorable. Used to pick the
-    best of N direct rewrites -- this is the same number reported as final_risk."""
+def _internal_scan_report(text: str) -> dict[str, Any]:
+    """Real-detector report for an INTERNAL rewrite guard scan, paid per-sentence Modal deep-scan
+    suppressed (gates need only composite ai_score; fused deep-scan -> production.py final; bc354646)."""
     try:
         try:
             from poc.rewrite_v3.pipeline import _scan_report
         except ImportError:
             from rewrite_v3.pipeline import _scan_report
-        report = _scan_report(text)
-        badge = report.get("ai_risk_badge", {}) if isinstance(report.get("ai_risk_badge"), dict) else {}
-        ai = report.get("ai_score")
-        if ai is None:
-            ai = badge.get("ai_likelihood_score")
-        return float(ai) if ai is not None else float("inf")
-    except Exception:
-        return float("inf")
-
-
-def _document_scan_report(text: str) -> dict[str, Any]:
-    try:
-        try:
-            from poc.rewrite_v3.pipeline import _scan_report
-        except ImportError:
-            from rewrite_v3.pipeline import _scan_report
-        report = _scan_report(text)
+        from .runtime import deep_scan_suppressed
+        with deep_scan_suppressed():
+            report = _scan_report(text)
         return report if isinstance(report, dict) else {}
     except Exception:
         return {}
+
+
+def _document_ai_risk(text: str) -> float:
+    """Real-detector AI likelihood (0-100) for a whole document; +inf if unscorable. The best-of-N
+    selector number, same as reported final_risk."""
+    report = _internal_scan_report(text)
+    badge = report.get("ai_risk_badge", {}) if isinstance(report.get("ai_risk_badge"), dict) else {}
+    ai = report.get("ai_score")
+    if ai is None:
+        ai = badge.get("ai_likelihood_score")
+    return float(ai) if ai is not None else float("inf")
+
+
+def _document_scan_report(text: str) -> dict[str, Any]:
+    return _internal_scan_report(text)
 
 
 def _component(report: dict[str, Any], name: str, default: float = 0.0) -> float:
