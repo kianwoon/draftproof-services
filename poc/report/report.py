@@ -77,7 +77,7 @@ from report.grounding import (
 )
 
 
-from report.builder import ReportBuilder
+from report.builder import ReportBuilder, _lean_gate_scan_active
 
 
 # ── Report to dict ──────────────────────────────────────────────────
@@ -1341,6 +1341,15 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         SignalHighlights/FixFirstChecklist and the DebertaSignal second-opinion tile's
         consumer (badge.ai_signal_deberta, a SEPARATE field never touched here) both
         working unchanged."""
+        # DISPLAY-ONLY: this heatmap colors the Signal-highlights map + fix-first list and never
+        # reaches an internal rewrite gate decision (gates read ai_score, not the heatmap). Under
+        # lean_gate_scan() skip the DeBERTa/deep-scan forward pass entirely and return an empty map
+        # — _document_segments already treats an empty heatmap as "no highlights" (fail-open, and the
+        # gate number is byte-identical). Runs twice per build via _scan_intelligence, so this saves
+        # two full inference passes per internal scan.
+        if _lean_gate_scan_active():
+            return []
+
         sens = []
         for item in _source_segments(complete=True):
             sens.append({

@@ -1005,8 +1005,8 @@ def _internal_scan_report(text: str) -> dict[str, Any]:
             from poc.rewrite_v3.pipeline import _scan_report
         except ImportError:
             from rewrite_v3.pipeline import _scan_report
-        from .runtime import deep_scan_suppressed
-        with deep_scan_suppressed():
+        from .runtime import deep_scan_suppressed, lean_gate_scan
+        with deep_scan_suppressed(), lean_gate_scan():
             report = _scan_report(text)
         return report if isinstance(report, dict) else {}
     except Exception:

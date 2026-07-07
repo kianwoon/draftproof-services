@@ -14,12 +14,41 @@ gate before it touches real student text.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
+from collections import OrderedDict
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Process-level bounded LRU over per-window scores, keyed on sha256(window text) + model tag.
+# A single rewrite fires many gate scans over near-identical documents, so the SAME window text is
+# re-scored repeatedly; caching the final per-window score makes hits return identical values by
+# construction (scores are unchanged). Mirrors poc/predictability/scanner.py's _SENTENCE_CACHE.
+# Env cap DRAFTPROOF_DEBERTA_WINDOW_CACHE_MAX (default 4096; 0 disables). score_windows can be
+# called concurrently, so get/put are guarded by _WINDOW_CACHE_LOCK.
+_WINDOW_CACHE_LOCK = threading.RLock()
+_WINDOW_CACHE: "OrderedDict[str, float]" = OrderedDict()
+
+
+def _window_cache_max() -> int:
+    try:
+        value = int(os.environ.get("DRAFTPROOF_DEBERTA_WINDOW_CACHE_MAX", "4096"))
+    except (TypeError, ValueError):
+        return 4096
+    return max(0, value)
+
+
+def _window_cache_key(window: str, model_tag: str) -> str:
+    return hashlib.sha256(f"{model_tag}\0{window}".encode("utf-8")).hexdigest()
+
+
+def clear_window_cache() -> None:
+    """Clear the process-local DeBERTa window-score cache (used by parity/timing tests)."""
+    with _WINDOW_CACHE_LOCK:
+        _WINDOW_CACHE.clear()
 
 # Research leading candidate (poc/calibration/deberta_candidates.md). Confirmed or replaced by
 # the Phase-0 SCoCESLE ESL-FPR gate (Task 0.3/0.4) before production use.
@@ -81,21 +110,58 @@ def score_windows(windows: List[str]) -> Optional[List[float]]:
     if not windows:
         return []
     try:
-        with _LOCK:
-            _load()
-        import torch
+        max_entries = _window_cache_max()
+        model_tag = _model_name()
+        results: List[Optional[float]] = [None] * len(windows)
+        keys: List[Optional[str]] = [None] * len(windows)
+        missing_indexes: List[int] = []
+        hits = 0
 
-        enc = _TOKENIZER(
-            windows,
-            return_tensors="pt",
-            truncation=True,
-            padding=True,
-            max_length=512,
+        if max_entries > 0:
+            keys = [_window_cache_key(w, model_tag) for w in windows]
+            with _WINDOW_CACHE_LOCK:
+                for index, key in enumerate(keys):
+                    cached = _WINDOW_CACHE.get(key)
+                    if cached is None:
+                        missing_indexes.append(index)
+                        continue
+                    _WINDOW_CACHE.move_to_end(key)
+                    results[index] = cached
+                    hits += 1
+        else:
+            missing_indexes = list(range(len(windows)))
+
+        if missing_indexes:
+            with _LOCK:
+                _load()
+            import torch
+
+            missing_windows = [windows[i] for i in missing_indexes]
+            enc = _TOKENIZER(
+                missing_windows,
+                return_tensors="pt",
+                truncation=True,
+                padding=True,
+                max_length=512,
+            )
+            with torch.no_grad():
+                logits = _MODEL(**enc).logits
+            probs = torch.softmax(logits, dim=-1)[:, _AI_INDEX]
+            scored = [float(p) for p in probs]
+            with _WINDOW_CACHE_LOCK:
+                for index, score in zip(missing_indexes, scored):
+                    results[index] = score
+                    if max_entries > 0 and keys[index] is not None:
+                        _WINDOW_CACHE[keys[index]] = score
+                        _WINDOW_CACHE.move_to_end(keys[index])
+                while max_entries > 0 and len(_WINDOW_CACHE) > max_entries:
+                    _WINDOW_CACHE.popitem(last=False)
+
+        logger.info(
+            "[deberta] window cache: %d hit(s), %d miss(es) over %d window(s)",
+            hits, len(missing_indexes), len(windows),
         )
-        with torch.no_grad():
-            logits = _MODEL(**enc).logits
-        probs = torch.softmax(logits, dim=-1)[:, _AI_INDEX]
-        return [float(p) for p in probs]
+        return [r for r in results if r is not None]
     except Exception as e:  # noqa: BLE001 — fail-open: never block the primary scan
         logger.warning("[deberta] inference failed (fail-open): %s", e)
         return None

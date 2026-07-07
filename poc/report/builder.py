@@ -4,6 +4,7 @@ Extracted from report.py. Imports the data models, actionability, DeBERTa
 metadata, and grounding helpers from their sibling modules.
 """
 import logging
+import os
 import re
 from typing import List, Dict, Any, Optional
 
@@ -36,6 +37,15 @@ from report.grounding import (
     _topk_calibration_fields_for_summary,
     estimate_in_text_source_grounding_strength as _estimate_in_text_source_grounding_strength,
 )
+
+
+def _lean_gate_scan_active() -> bool:
+    """True when an internal rewrite gate scan asked to skip DISPLAY-ONLY DeBERTa passes.
+
+    Set by ``poc.rewrite_v6.runtime.lean_gate_scan()``. Only the display-only DeBERTa sites honor
+    this (findings synthesis here, heatmaps in report.py); the AUTHORITATIVE score override must
+    always run so the gate number is byte-identical. Fail-open: unset/0 → never skip anything."""
+    return str(os.environ.get("DRAFTPROOF_LEAN_GATE_SCAN", "") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _evidence_weight(strength: str) -> float:
@@ -847,7 +857,10 @@ class ReportBuilder:
                 _authoritative_enabled,
                 compose_from_sentences as _compose_heatmap_syn,
             )
-            if _authoritative_enabled():
+            # DISPLAY-ONLY: synthesized findings drive the actionability/repair UI, never a rewrite
+            # gate decision. Skip the whole DeBERTa forward pass under lean_gate_scan() — the
+            # authoritative SCORE override below still runs, so ai_score is byte-identical.
+            if _authoritative_enabled() and not _lean_gate_scan_active():
                 _canon_syn = [
                     {"sentence_id": it.get("sentence_id"),
                      "paragraph_id": it.get("paragraph_id") or "p001",

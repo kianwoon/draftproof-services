@@ -38,6 +38,40 @@ def deep_scan_suppressed():
                 os.environ[k] = prior
 
 
+@contextmanager
+def lean_gate_scan():
+    """Skip the DISPLAY-ONLY DeBERTa forward passes for an INTERNAL rewrite gate scan.
+
+    A single ``ReportBuilder.build()`` fires up to four DeBERTa inference sites: the authoritative
+    override (feeds ``ai_score`` — the gate number), plus three display-only ones (findings
+    synthesis in builder.py, and the two heatmap computations report.py runs via ``_document_segments``).
+    Internal better/worse guards only read the composite ``ai_score`` / ``ai_risk_badge.ai_likelihood_score``
+    number; the highlight heatmap + synthesized findings never reach a gate decision. So when
+    ``DRAFTPROOF_LEAN_GATE_SCAN`` is truthy, the report/builder code short-circuits those three
+    display-only passes while leaving the authoritative override untouched — the gate number is
+    byte-identical, we just stop paying for heatmaps nobody reads.
+
+    Fail-open: unset/0 → behavior byte-identical to today. Safe under the single-task worker
+    (``celery -c 1``); the ``finally`` restores the exact prior value.
+
+    Kill switch: ``DRAFTPROOF_V6_LEAN_GATE=0`` makes this a no-op, so internal gate scans build
+    the full report again (ops rollback without a deploy).
+    """
+    if os.environ.get("DRAFTPROOF_V6_LEAN_GATE", "1").strip().lower() in {"0", "false", "no", "off"}:
+        yield
+        return
+    key = "DRAFTPROOF_LEAN_GATE_SCAN"
+    saved = os.environ.get(key)
+    os.environ[key] = "1"
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = saved
+
+
 def can_start_llm_request(started_at: float, runtime_budget_seconds: float | None, min_llm_request_seconds: float) -> bool:
     if runtime_budget_seconds is None or runtime_budget_seconds <= 0:
         return True
