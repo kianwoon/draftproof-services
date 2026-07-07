@@ -1,5 +1,7 @@
 """Cache-wrapper behavior: hit serves from cache without calling Modal;
-miss calls through and appends ONLY calibrated responses."""
+miss calls through and appends ONLY responses whose checkpoint matches ours
+(the endpoint's "calibrated" flag is hardcoded stale — checkpoint identity is
+the validity criterion)."""
 import json
 from pathlib import Path
 
@@ -28,15 +30,22 @@ def test_cache_hit_skips_modal(tmp_path, monkeypatch):
         resp = mc.call_deep_scan(sentences)
     finally:
         m.uninstall_cached_deep_scan()
-    assert resp == {"available": True, "calibrated": True, "chunk_scores": [0.1, 0.9995]}
+    # calibrated False mirrors the endpoint's CURRENT (hardcoded) behavior so
+    # cache hits stay faithful to what a live call would return.
+    assert resp == {"available": True, "calibrated": False,
+                    "checkpoint": deepscan_cache.checkpoint_tag(),
+                    "chunk_scores": [0.1, 0.9995]}
     assert calls == []  # Modal never hit
 
 
-def test_cache_miss_calls_through_and_appends_calibrated(tmp_path, monkeypatch):
+def test_cache_miss_calls_through_and_appends_on_checkpoint_match(tmp_path, monkeypatch):
     cache_path = tmp_path / "cache.jsonl"
     sentences = ["Only sentence here."]
     calls: list = []
-    real = {"available": True, "calibrated": True, "chunk_scores": [0.5]}
+    # Realistic live response: endpoint hardcodes calibrated False but reports
+    # its checkpoint — a matching checkpoint must still be cached.
+    real = {"available": True, "calibrated": False,
+            "checkpoint": deepscan_cache.checkpoint_tag(), "chunk_scores": [0.5]}
     import detect_v7.modal_client as mc
     monkeypatch.setattr(mc, "call_deep_scan", _fake_modal(calls, real))
     m.install_cached_deep_scan(cache_path)
@@ -49,10 +58,11 @@ def test_cache_miss_calls_through_and_appends_calibrated(tmp_path, monkeypatch):
     assert deepscan_cache.load_cache(cache_path)[key] == [0.5]
 
 
-def test_uncalibrated_response_not_cached(tmp_path, monkeypatch):
+def test_checkpoint_mismatch_not_cached(tmp_path, monkeypatch):
     cache_path = tmp_path / "cache.jsonl"
     calls: list = []
-    real = {"available": True, "calibrated": False, "chunk_scores": [0.5]}
+    real = {"available": True, "calibrated": True,
+            "checkpoint": "some/other-model", "chunk_scores": [0.5]}
     import detect_v7.modal_client as mc
     monkeypatch.setattr(mc, "call_deep_scan", _fake_modal(calls, real))
     m.install_cached_deep_scan(cache_path)

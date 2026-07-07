@@ -41,9 +41,13 @@ _wrapper_state: dict = {}
 def install_cached_deep_scan(cache_path) -> None:
     """Wrap detect_v7.modal_client.call_deep_scan with a JSONL cache.
 
-    Cache key = content_key(joined sentences, checkpoint). Only calibrated
-    responses are cached (an uncalibrated response means checkpoint drift —
-    caching it would silently pin stale scores)."""
+    Cache key = content_key(joined sentences, checkpoint). A response is
+    cached only when its reported "checkpoint" matches our checkpoint_tag() —
+    checkpoint identity is the validity criterion (content_key already embeds
+    the tag, so a checkpoint change naturally invalidates every row). The
+    endpoint's "calibrated" flag is NOT used: the deployed endpoint hardcodes
+    it to False (stale relic predating the 2026-07-04 calibration), so a
+    calibrated-only rule would cache nothing, ever."""
     import detect_v7.modal_client as mc
     from calibration.retune import deepscan_cache as dc
 
@@ -53,10 +57,16 @@ def install_cached_deep_scan(cache_path) -> None:
     def cached(sentences):
         key = dc.content_key("\n".join(sentences), dc.checkpoint_tag())
         if key in cache:
-            return {"available": True, "calibrated": True, "chunk_scores": cache[key]}
+            # "calibrated": False mirrors the endpoint's CURRENT behavior (it
+            # hardcodes False today); fabricating True on a hit would diverge
+            # from live responses. Revisit this literal if/when the endpoint
+            # fix ships (separate task) — the flag only drives an uncertainty
+            # annotation, never scoring.
+            return {"available": True, "calibrated": False,
+                    "checkpoint": dc.checkpoint_tag(), "chunk_scores": cache[key]}
         resp = real(sentences)
         if (isinstance(resp, dict) and resp.get("available") is True
-                and resp.get("calibrated") is True
+                and resp.get("checkpoint") == dc.checkpoint_tag()
                 and isinstance(resp.get("chunk_scores"), list)):
             dc.append(cache_path, key, resp["chunk_scores"])
             cache[key] = resp["chunk_scores"]
