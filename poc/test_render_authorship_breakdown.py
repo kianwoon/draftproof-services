@@ -72,6 +72,25 @@ def test_merged_render_shows_ai_likelihood_once():
     assert html.count("DraftProof AI-likelihood") == 1
 
 
+def test_mixed_signals_caveat_renders_when_presentation_set():
+    # Tier-consistency guard (poc/detect_v7/pipeline_bridge.py::_apply_tier_consistency_guard)
+    # sets breakdown["presentation"] = "mixed_signals" — PDF must show the same caveat as
+    # MergedAuthorshipRisk.jsx's composition section.
+    badge = {**_BADGE, "authorship_breakdown": {**_BADGE["authorship_breakdown"], "presentation": "mixed_signals"}}
+    html = render_authorship_breakdown({"ai_risk_badge": badge})
+    assert "dp-abd-caveat" in html
+    assert "Mixed signals" in html
+    assert "conflict with this document" in html
+
+
+def test_mixed_signals_caveat_absent_when_presentation_missing():
+    # Legacy/non-triggered reports carry no "presentation" field -> no caveat, byte-identical
+    # to pre-change behavior.
+    html = render_authorship_breakdown({"ai_risk_badge": _BADGE})
+    assert "dp-abd-caveat" not in html
+    assert "Mixed signals" not in html
+
+
 def _make_report_with_breakdown_and_sr():
     from types import SimpleNamespace
     badge = {

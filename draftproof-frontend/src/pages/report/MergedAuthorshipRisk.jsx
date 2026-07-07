@@ -189,6 +189,9 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
                 {t('report.merged.compositionLens')}{' '}
                 <span className="merged-lens-note">· {t('report.merged.compositionLensNote')}</span>
               </p>
+              {breakdown.presentation === 'mixed_signals' && (
+                <p className="merged-comp-caveat">{t('report.merged.compositionMixedSignalsCaveat')}</p>
+              )}
               <div className="merged-comp-bars">
                 {CATEGORY_ORDER.map((category) => (
                   <CategoryBar key={category} t={t} category={category} raw={rawShares[category]} band={bandShares[category]} />

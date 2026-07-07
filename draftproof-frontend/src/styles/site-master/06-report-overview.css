@@ -2059,6 +2059,11 @@ button.fix-first-item:focus-visible {
 .merged-lens-head { font-size: 12px; font-weight: 600; color: #374151; margin: 0 0 10px; }
 .merged-lens-note { color: #9ca3af; font-weight: 400; }
 
+/* Tier-consistency guard caveat (poc/detect_v7/pipeline_bridge.py::_apply_tier_consistency_guard) —
+   shown when breakdown.presentation === "mixed_signals". Reuses the is-amber chip palette so it
+   reads as a warning without introducing a new color. KEEP-IN-SYNC: poc/report/render.py mixed-signals block. */
+.merged-comp-caveat { font-size: 12px; color: #b45309; background: #fef3c7; border-radius: 6px; padding: 6px 9px; margin: 0 0 10px; line-height: 1.4; }
+
 .merged-comp-bars { display: flex; flex-direction: column; gap: 9px; }
 .merged-comp-row-head { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
 .merged-comp-band { color: #9ca3af; }

@@ -747,6 +747,7 @@ export const report = {
     "subtitle": "对本文档评分的综合解读——核心数值、写作构成分布，以及风险所在。",
     "compositionLens": "写作构成解读",
     "compositionLensNote": "合计为 100%",
+    "compositionMixedSignalsCaveat": "信号存在矛盾——以下各类别占比与本文档的风险等级不一致。请将该构成解读视为不确定，并复核被标记的段落。",
     "riskLens": "风险所在",
     "riskLensNote": "各自独立"
   },

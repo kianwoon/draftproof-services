@@ -262,8 +262,25 @@ def _deep_scan_paragraphs_html(breakdown: dict) -> str:
             + "".join(rows) + "</div>")
 
 
+# Tier-consistency guard caveat (poc/detect_v7/pipeline_bridge.py::_apply_tier_consistency_guard
+# sets breakdown["presentation"] = "mixed_signals"). Verbatim copy KEPT IN SYNC with
+# draftproof-frontend/src/i18n/en/report.js report.merged.compositionMixedSignalsCaveat.
+_MIXED_SIGNALS_CAVEAT_TEXT = (
+    "Mixed signals — the category shares below conflict with this document's risk tier. "
+    "Treat the composition as inconclusive and review the flagged passages."
+)
+
+
 def _authorship_bars_html(breakdown: dict) -> str:
-    """The 4 color-coded category bars + disclaimer. '' when no breakdown."""
+    """The 4 color-coded category bars + disclaimer. '' when no breakdown.
+
+    KEEP-IN-SYNC: draftproof-frontend/src/pages/report/MergedAuthorshipRisk.jsx's
+    composition section — when breakdown.presentation == "mixed_signals" both surfaces
+    show the same tier-consistency-guard caveat immediately above the bars."""
+    caveat_html = (
+        f'<p class="dp-abd-caveat">{escape(_MIXED_SIGNALS_CAVEAT_TEXT)}</p>'
+        if breakdown.get("presentation") == "mixed_signals" else ""
+    )
     raw_shares = breakdown.get("document_breakdown_raw") or {}
     band_shares = breakdown.get("document_breakdown_bands") or {}
     rows = []
@@ -286,7 +303,7 @@ def _authorship_bars_html(breakdown: dict) -> str:
             f'<span class="dp-abd-bar-fill dp-abd-fill--{category}" style="width:{width_pct}%"></span></span>'
             '</div>'
         )
-    out = '<div class="dp-abd-bars">' + "".join(rows) + "</div>"
+    out = caveat_html + '<div class="dp-abd-bars">' + "".join(rows) + "</div>"
     disclaimer = breakdown.get("disclaimer")
     if disclaimer:
         out += f'<p class="dp-hero-sub">{escape(str(disclaimer))}</p>'

@@ -756,6 +756,7 @@ export const report = {
     "subtitle": "One read on how this document scores — the headline number, how the writing distributes, and where the risk sits.",
     "compositionLens": "How the writing reads",
     "compositionLensNote": "sums to 100%",
+    "compositionMixedSignalsCaveat": "Mixed signals — the category shares below conflict with this document's risk tier. Treat the composition as inconclusive and review the flagged passages.",
     "riskLens": "Where the risk sits",
     "riskLensNote": "independent"
   },

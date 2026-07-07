@@ -421,6 +421,19 @@ img[src^="https://img.shields.io"] { height: 18px; }
 .dp-abd-fill--ai_paraphrased { background: #D85A30; }
 .dp-abd-fill--ai_generated_like { background: #D85A30; }
 
+/* Tier-consistency guard caveat (poc/detect_v7/pipeline_bridge.py::_apply_tier_consistency_guard) —
+   shown when breakdown.presentation === "mixed_signals". Same amber palette as .dp-statchip--warn.
+   KEEP-IN-SYNC: draftproof-frontend/src/styles/site-master/06-report-overview.css .merged-comp-caveat. */
+.dp-abd-caveat {
+    margin: 0 0 6pt;
+    padding: 4pt 7pt;
+    border-radius: 4pt;
+    background: #fffbeb;
+    color: #b45309;
+    font-size: 8pt;
+    line-height: 1.4;
+}
+
 /* ── KPI stat row ── */
 .dp-kpi-row {
     display: flex;
