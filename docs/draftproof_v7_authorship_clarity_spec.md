@@ -325,6 +325,11 @@ MLflow: adopt for V7 calibration runs only (checkpoint choice, weight tuning, ga
 | Surface drift (policy_risk lesson) | §8 surface table is part of "done" for each phase |
 | Weights ossify as pseudo-hardcode | weights.json + MLflow-tracked tuning; no literals in code (D4) |
 
+### Known limitations (measured, 2026-07-08 category-accuracy program)
+
+- **`ai_paraphrased` remains 0% primary accuracy.** The MiniLM cosine feature family (semantic-monotony: adjacent/pairwise cosine, embedding-norm CV) was measured and **rejected by the hard gate** (best effective AUC 0.669 < 0.70 vs `ai_generated_like`; committed evidence `poc/calibration/v12_validation/paraphrase_feature_study.json`) — do not retry it or variants. Recovery needs a genuinely new feature family, likely paired-draft / rewrite-comparison based (source-vs-final rewrite-distance features; the `ai_paraphrased_with_comparison` weight variant and `meaning_preservation_score` slot already anticipate a comparison text — the missing piece is the earlier-draft workflow plus detect-side features). Tracked as the V8 recovery effort.
+- Post-split reference state (198-doc fused §12 corpus, seed-45 weights): macro 65.5%, `student_owned` 97.5% / false-AI 2.5%, `ai_assisted_polished` 87.2%, `ai_generated_like` 77.5%.
+
 ---
 
 ## 12. Summary
