@@ -187,6 +187,118 @@ class TestRunV7BreakdownFailsSafe:
         assert result is None
 
 
+class TestTierConsistencyGuard:
+    """Tier-consistency display guard: a red/orange-tier document must never
+    display an unchallenged ``student_owned`` primary category. Fires
+    post-composition in the bridge (has both the badge ``tier`` and the
+    composed breakdown), annotates via the existing mixed_signals mechanism,
+    never mutates shares/primary_category itself (guards annotate, never
+    suppress).
+    """
+
+    @staticmethod
+    def _patch_fixed_breakdown(monkeypatch, primary_category: str):
+        fixed = {
+            "schema_version": "v7_phase1a",
+            "document_breakdown_raw": {
+                "student_owned": 0.7,
+                "ai_assisted_polished": 0.1,
+                "ai_paraphrased": 0.1,
+                "ai_generated_like": 0.1,
+            },
+            "document_breakdown_bands": {},
+            "primary_category": primary_category,
+            "primary_category_reliable": True,
+            "confidence": "high",
+            "paragraph_count": 1,
+            "degraded_paragraph_count": 0,
+            "display_mode": "bands",
+            "degraded_display": False,
+            "uncertainty_flags": [],
+            "disclaimer": "x",
+        }
+        monkeypatch.setattr(
+            pipeline_bridge.breakdown_composer,
+            "compose_authorship_breakdown",
+            lambda *a, **k: dict(fixed),
+        )
+        return fixed
+
+    def test_guard_fires_strong_tier_student_owned(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "student_owned")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "strong"
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result is not None
+        assert result["presentation"] == "mixed_signals"
+        assert result["primary_category_reliable"] is False
+        assert "tier_category_contradiction" in result["uncertainty_flags"]
+        # shares/primary_category themselves are UNCHANGED (annotate, never suppress)
+        assert result["primary_category"] == "student_owned"
+        assert result["document_breakdown_raw"]["student_owned"] == 0.7
+
+    def test_guard_fires_concerning_tier_student_owned(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "student_owned")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "concerning"
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result["presentation"] == "mixed_signals"
+        assert result["primary_category_reliable"] is False
+        assert "tier_category_contradiction" in result["uncertainty_flags"]
+
+    def test_guard_does_not_fire_clean_tier(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "student_owned")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "clean"
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result.get("presentation") != "mixed_signals"
+        assert result["primary_category_reliable"] is True
+        assert "tier_category_contradiction" not in result["uncertainty_flags"]
+
+    def test_guard_does_not_fire_acceptable_tier(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "student_owned")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "acceptable"
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result["primary_category_reliable"] is True
+        assert "tier_category_contradiction" not in result["uncertainty_flags"]
+
+    def test_guard_does_not_fire_non_student_owned_primary(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "ai_generated_like")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "strong"
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result["primary_category_reliable"] is True
+        assert "tier_category_contradiction" not in result["uncertainty_flags"]
+
+    def test_guard_silently_skips_when_tier_missing(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "student_owned")
+        detection_result = _realistic_detection_result()
+        # no "tier" key at all — fail-open: guard must not raise or fire.
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result is not None
+        assert result["primary_category_reliable"] is True
+        assert "tier_category_contradiction" not in result["uncertainty_flags"]
+
+
 class TestIsDeepScanEnabled:
     @pytest.mark.parametrize(
         "raw_value,expected",

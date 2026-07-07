@@ -95,6 +95,60 @@ def test_esl_guard_config_accessor():
     assert esl["confidence_cap_value"] == "low"
 
 
+def test_display_consistency_guard_config_accessor():
+    guard = v7config.get_display_consistency_guard_config()
+    assert guard["student_owned_contradiction_tiers"] == ["concerning", "strong"]
+
+
+def test_display_consistency_guard_config_missing_raises(monkeypatch, tmp_path):
+    alt_weights = {
+        "_notes": {"marker": "no-guard-block-fixture"},
+        "fusion_weights": {
+            "quick_scan": {"composite": 1.0},
+            "deep_scan_2detector": {"deberta_large": 0.5, "composite": 0.5},
+            "deep_scan_3detector_inert": {
+                "deberta_large": 0.45,
+                "composite": 0.35,
+                "ou_advacheck": 0.20,
+            },
+        },
+        "category_weights": {
+            "student_owned": [{"signal": "specificity_score", "weight": 1.0}],
+            "ai_assisted_polished": [
+                {"signal": "calibrated_detector_score", "weight": 1.0}
+            ],
+            "ai_paraphrased_with_comparison": [
+                {"signal": "semantic_drift", "weight": 1.0}
+            ],
+            "ai_paraphrased_without_comparison": [
+                {"signal": "semantic_drift", "weight": 1.0}
+            ],
+            "ai_generated_like": [
+                {"signal": "calibrated_detector_score", "weight": 1.0}
+            ],
+        },
+        "ai_assisted_polished_band": {"low": 0.35, "high": 0.70},
+        "flatness_thresholds": {
+            "confidence_low_gap": 0.10,
+            "mixed_signals_max_category": 0.35,
+        },
+        "esl_guard": {
+            "esl_high_threshold": 0.70,
+            "ai_generated_damping": 0.85,
+            "detector_disagreement_confidence_cap_threshold": 0.25,
+            "esl_disagreement_cotrigger_threshold": 0.60,
+            "confidence_cap_value": "low",
+        },
+        "display_bands": {"strong_min": 0.5, "some_min": 0.25, "little_min": 0.10},
+    }
+    fixture_path = tmp_path / "no_guard_weights.json"
+    fixture_path.write_text(json.dumps(alt_weights), encoding="utf-8")
+    monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(fixture_path))
+    v7config.reload_weights(force=True)
+    with pytest.raises(KeyError):
+        v7config.get_display_consistency_guard_config()
+
+
 def test_display_bands_accessor():
     bands = v7config.get_display_bands()
     assert bands["strong_min"] > bands["some_min"] > bands["little_min"]

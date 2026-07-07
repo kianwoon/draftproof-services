@@ -71,6 +71,9 @@ _TRUTHY = {"1", "true"}
 _UNCERTAINTY_FLAG_DEEP_SCAN_UNCALIBRATED = "deep_scan_uncalibrated"
 _UNCERTAINTY_FLAG_DEEP_SCAN_BELOW_FLOOR = "deep_scan_below_reliability_floor"
 _UNCERTAINTY_FLAG_ESL_GUARD_UNAVAILABLE = "esl_guard_unavailable"
+_UNCERTAINTY_FLAG_TIER_CATEGORY_CONTRADICTION = "tier_category_contradiction"
+_MIXED_SIGNALS_PRESENTATION = "mixed_signals"
+_STUDENT_OWNED_CATEGORY = "student_owned"
 
 
 def _deep_scan_band(proportion: float) -> str:
@@ -455,6 +458,23 @@ def _extract_transformation_features(detection_result: Any) -> Optional[dict[str
     return getattr(tc, "features", None) if tc is not None else None
 
 
+def _extract_tier(detection_result: Any) -> Optional[str]:
+    """Best-effort extraction of the badge's ``tier`` string (e.g.
+    ``"clean"``/``"acceptable"``/``"concerning"``/``"strong"`` — see
+    ``poc/report/builder.py``'s ``ai_risk_badge["tier"]``). Same dict/attr
+    fallback pattern as the other ``_extract_*`` helpers in this module.
+    Returns ``None`` when absent/malformed — callers that gate on tier must
+    fail-open (no guard action) rather than raise.
+    """
+    if isinstance(detection_result, dict):
+        value = detection_result.get("tier")
+    else:
+        value = getattr(detection_result, "tier", None)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip().lower()
+
+
 def _extract_calibrated_score(detection_result: Any) -> Optional[float]:
     """Pull the composite ``ai_likelihood_score`` (0-100 scale in builder.py's
     ``ai_risk_badge``) and normalize to 0-1 for ``detector_fusion.py``.
@@ -521,6 +541,41 @@ def _build_raw_signals(detection_result: Any) -> dict[str, Any]:
         "semantic_shape": None,  # not threaded through builder.py at this call site
         "has_comparison_text": False,  # Phase 1A quick-scan path has no comparison text
     }
+
+
+def _apply_tier_consistency_guard(breakdown: dict[str, Any], tier: Optional[str]) -> None:
+    """Owner-approved tier-consistency display guard (companion to the
+    2026-07-08 category_weights re-tune, see ``weights.json``'s
+    ``display_consistency_guard._notes``): a badge tier in the configured
+    trigger set (``concerning``/``strong`` by default) paired with a
+    ``student_owned`` primary category is a contradictory display — red
+    tier + "the writing looks student-owned". Per the project's "guards
+    ANNOTATE, never SUPPRESS" alignment principle, this NEVER touches
+    ``document_breakdown_raw``/``document_breakdown_bands``/
+    ``primary_category`` — it only reuses the existing mixed_signals
+    presentation + ``primary_category_reliable=False`` mechanism
+    (``breakdown_composer``'s flatness guard already uses this same
+    ``"mixed_signals"`` value) and appends an uncertainty flag.
+
+    Fail-open by construction: mutates ``breakdown`` in place only when
+    ``tier`` is a non-``None`` string in the configured trigger set AND
+    ``primary_category`` is ``"student_owned"``; a missing/unresolved tier
+    (e.g. the caller's ``detection_result`` never carried one) silently
+    does nothing, matching this bridge's overall fail-open contract.
+    """
+    if tier is None:
+        return
+    if breakdown.get("primary_category") != _STUDENT_OWNED_CATEGORY:
+        return
+    guard_config = config.get_display_consistency_guard_config()
+    trigger_tiers = guard_config["student_owned_contradiction_tiers"]
+    if tier not in trigger_tiers:
+        return
+    breakdown["presentation"] = _MIXED_SIGNALS_PRESENTATION
+    breakdown["primary_category_reliable"] = False
+    flags = breakdown.setdefault("uncertainty_flags", [])
+    if _UNCERTAINTY_FLAG_TIER_CATEGORY_CONTRADICTION not in flags:
+        flags.append(_UNCERTAINTY_FLAG_TIER_CATEGORY_CONTRADICTION)
 
 
 def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
@@ -645,6 +700,7 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
         flags = breakdown.setdefault("uncertainty_flags", [])
         if _UNCERTAINTY_FLAG_ESL_GUARD_UNAVAILABLE not in flags:
             flags.append(_UNCERTAINTY_FLAG_ESL_GUARD_UNAVAILABLE)
+        _apply_tier_consistency_guard(breakdown, _extract_tier(detection_result))
         return breakdown
     except Exception:
         logger.exception("detect_v7.pipeline_bridge: run_v7_breakdown failed; returning None (additive, non-fatal).")

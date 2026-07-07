@@ -231,5 +231,9 @@
       "red": 65
     },
     "_notes": "GATE PASS 2026-07-03, poc/calibration/v7_fused_gate_result.json: fused_score = 0.40 * composite_score_0_100 + 0.60 * deep_scan_proportion_0_1 * 100. Fused beats composite on every gate axis (overall FPR 2.9%->0.4%, AUC 0.755->0.9955). A cutoff sweep ON THE FUSED SCALE confirmed the EXISTING tier cutoffs 32/48/65 carry over unchanged: at 32, FPR 5.9%/TPR 99.2%; at 48, FPR 0.4%/TPR 89.5%; at 65, FPR 0%/TPR 46%. cutoffs are ascending (amber < orange < red); config.py validates this. Bands: green below amber, amber [amber,orange), orange [orange,red), red >=red."
+  },
+  "display_consistency_guard": {
+    "student_owned_contradiction_tiers": ["concerning", "strong"],
+    "_notes": "Owner-approved companion to the 2026-07-08 category_weights re-tune (seed 42, see category_weights_tuning note above): post-rewire, 17/80 AI-generated docs in the §12 validation set (poc/calibration/v12_validation/false_ai_diagnosis.json) display 'student_owned' as their top V7 category share while the badge tier (fused-score-driven, untouched by this guard) correctly reads concerning/strong — a contradictory display (red tier + 'the writing looks student-owned'). Per project alignment principle 'guards ANNOTATE, never SUPPRESS' (CLAUDE.md), this does not change shares or primary_category; it reuses the existing mixed_signals presentation + primary_category_reliable=False mechanism (poc/detect_v7/breakdown_composer.py's flatness guard) plus an uncertainty_flags entry, applied in poc/detect_v7/pipeline_bridge.py::run_v7_breakdown where the badge tier is available. Trigger tier set is 'concerning'/'strong' only (green/amber/clean/acceptable tiers are not contradicted by a student_owned read, so the guard fail-opens and does not fire there)."
   }
 }
