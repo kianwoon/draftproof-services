@@ -79,6 +79,11 @@ def main() -> int:
         from calibration.retune.deepscan_cache import DEFAULT_CACHE
         m.install_cached_deep_scan(DEFAULT_CACHE)
     try:
+        # measure_end_to_end installs the sys.path shim that makes the
+        # detect stack's absolute `poc.*` imports resolvable when running
+        # as `python -m calibration...` from poc/ — it must load BEFORE
+        # detect.run (capture_one gets it for free; this path does not).
+        import calibration.measure_end_to_end  # noqa: F401
         from calibration.retune.intake import DEFAULT_SCOCESLE
         from detect.run import DetectionRunner
         manifest = json.loads((m.CORPUS_DIR / "manifest.json").read_text())
