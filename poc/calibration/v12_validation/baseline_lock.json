@@ -1,0 +1,15 @@
+{
+  "purpose": "clean BEFORE reference for the V7 category-accuracy program \u2014 all candidate comparisons anchor here",
+  "created": "2026-07-08",
+  "weights_sha256": "0576c9b8a824fe56f69f03eb662ad7a163f78425bbdd81ba0053176600c6d1b6",
+  "corpus_manifest_version": "2026-07-07T19:55:56.932819+00:00",
+  "quick_scan": {
+    "macro_primary_accuracy": 0.3406,
+    "student_owned_false_ai_primary_rate": 0.55,
+    "ai_generated_like_primary_accuracy": 0.9125,
+    "middle_class_accuracy": {
+      "ai_assisted_polished": 0.0,
+      "ai_paraphrased": 0.0
+    }
+  }
+}
