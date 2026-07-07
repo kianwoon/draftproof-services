@@ -1,17 +1,20 @@
 """DraftProof V7 — Deep Scan DeBERTa-v3-large detector, Modal serverless GPU endpoint.
 
-STATUS: PROVISIONAL LIVE INFERENCE (2026-07-04). Checkpoint =
+STATUS: LIVE INFERENCE, CALIBRATED CHECKPOINT (2026-07-04). Checkpoint =
 desklib/ai-text-detector-academic-v1.01 (public, MIT-licensed, DeBERTa-v3-large
 fine-tuned on academic text, #1 on the RAID benchmark at time of writing).
-This unblocks "get a real Modal inference endpoint running" quickly, per an
-explicit owner decision to narrow Phase 1B scope for now. It does NOT satisfy
-the full Task 1B.0 bar below — SCoCESLE ESL calibration has NOT been run
-against this checkpoint yet. Consequences, enforced elsewhere, not here:
-  - DRAFTPROOF_V7_DEEP_SCAN stays OFF by default (worker-side kill switch).
-  - detector_fusion.py's deep_scan_2detector weight (0.60 deberta_large) must
-    NOT be treated as validated until calibration lands — this endpoint
-    returns a RAW, UNCALIBRATED probability (see score() response) and the
-    caller is responsible for not silently treating it as calibrated.
+SCoCESLE ESL calibration for this checkpoint landed 2026-07-04 via sentence
+threshold-proportion — parameters live client-side in
+poc/detect_v7/weights.json's ``deep_scan_calibration`` (see its
+``_provenance`` for the gate numbers: sentence AUC 0.929, parity gap -1.2pp).
+The endpoint itself still returns RAW per-chunk sigmoid probabilities; the
+worker applies the threshold-proportion calibration. ``"calibrated"`` in the
+response reports whether the SERVING checkpoint is one with a landed
+SCoCESLE calibration (see CALIBRATED_CHECKPOINT_IDS below) — the client
+(poc/detect_v7/pipeline_bridge.py) treats that flag as authoritative for the
+``deep_scan_uncalibrated`` uncertainty flag.
+  - DRAFTPROOF_V7_DEEP_SCAN remains an operational kill switch (Modal call
+    cost/latency), no longer a calibration gate.
 
 Spec: docs/draftproof_v7_authorship_clarity_spec.md
   - §3.2 "Modal endpoint responsibilities (Deep Scan only)" — this file implements
@@ -21,15 +24,14 @@ Spec: docs/draftproof_v7_authorship_clarity_spec.md
     the calibration step below still matters; do not skip it before flipping
     DRAFTPROOF_V7_DEEP_SCAN or wiring this into real fusion weights.
 
-Remaining Task 1B.0 work (NOT done by this file):
-  1. Run the SCoCESLE ESL false-positive gate + AI-set evaluation against
-     desklib/ai-text-detector-academic-v1.01 (see poc/calibration/fpr_subgroup_gate.py
-     for the pattern used by the existing detector stack). If it fails the
-     gate, swap the checkpoint — this pick is provisional, not final.
-  2. Calibrate the raw sigmoid output (isotonic or equivalent — see
-     poc/calibration/deberta_isotonic.pkl for the fakespot precedent) and
-     record the run in MLflow.
-  3. Once calibrated, flip DRAFTPROOF_V7_DEEP_SCAN=1 on the worker.
+Task 1B.0 calibration status (was "remaining work" before 2026-07-04):
+  DONE — SCoCESLE gate + sentence threshold-proportion calibration ran
+  against desklib/ai-text-detector-academic-v1.01 and landed in
+  poc/detect_v7/weights.json (``deep_scan_calibration``) and
+  poc/calibration/v7_deberta_academic_baseline.json. If the checkpoint is
+  ever swapped, the new one starts UNCALIBRATED: leave it out of
+  CALIBRATED_CHECKPOINT_IDS (so responses report calibrated=false) until its
+  own calibration pass lands.
 
 Deploy command: modal deploy modal_endpoints/deberta_large_detector.py
 Dev/local serve (hot-reload, does NOT deploy):  modal serve modal_endpoints/deberta_large_detector.py
@@ -67,6 +69,14 @@ class ScoreRequest(BaseModel):
 # buried inline) specifically so swapping it after SCoCESLE calibration is a
 # one-line change, not a search-and-replace.
 CHECKPOINT_ID = "desklib/ai-text-detector-academic-v1.01"
+# Checkpoints with a LANDED SCoCESLE calibration (parameters in
+# poc/detect_v7/weights.json deep_scan_calibration). The response's
+# "calibrated" flag derives from membership here — never a hardcoded bool —
+# so swapping CHECKPOINT_ID to an uncalibrated model automatically reports
+# calibrated=false to the client until its own calibration pass lands.
+CALIBRATED_CHECKPOINT_IDS = {
+    "desklib/ai-text-detector-academic-v1.01",  # SCoCESLE-calibrated 2026-07-04
+}
 MAX_LEN = 512  # spec §3.2 512-token chunks
 
 # App name is V7/Deep-Scan-scoped on purpose — distinct from the spec's example
@@ -149,10 +159,11 @@ class DebertaDetector:
         self.model.to(self.device)
         self.model.eval()
         logger.info(
-            "DebertaDetector.load(): loaded %s on %s (PROVISIONAL — not yet "
-            "SCoCESLE-calibrated, see module docstring)",
+            "DebertaDetector.load(): loaded %s on %s (calibrated=%s — see "
+            "CALIBRATED_CHECKPOINT_IDS / module docstring)",
             CHECKPOINT_ID,
             self.device,
+            CHECKPOINT_ID in CALIBRATED_CHECKPOINT_IDS,
         )
 
     @modal.fastapi_endpoint(method="POST")
@@ -161,11 +172,12 @@ class DebertaDetector:
         Auth: Authorization: Bearer <DRAFTPROOF_MODAL_ENDPOINT_TOKEN> header,
         checked against the auth_secret's env var (spec §3.2 "Auth").
 
-        Returns per-chunk RAW (uncalibrated) probabilities. The caller
-        (worker-side detector_fusion.py) must not treat these as calibrated
-        until Task 1B.0's SCoCESLE calibration pass lands — see module
-        docstring. `"calibrated": false` is included explicitly in every
-        response so this can never be silently mistaken for a validated score.
+        Returns per-chunk RAW sigmoid probabilities; the client applies the
+        sentence threshold-proportion calibration (weights.json
+        deep_scan_calibration). `"calibrated"` reports whether the serving
+        checkpoint has a landed SCoCESLE calibration (membership in
+        CALIBRATED_CHECKPOINT_IDS) — pipeline_bridge.py treats it as
+        authoritative for the deep_scan_uncalibrated uncertainty flag.
 
         NOTE on signature: raw `fastapi.Request` injection on this @app.cls
         bound method reproducibly 422'd ("query.request: Field required") on
@@ -218,7 +230,7 @@ class DebertaDetector:
             status_code=200,
             content={
                 "available": True,
-                "calibrated": False,
+                "calibrated": CHECKPOINT_ID in CALIBRATED_CHECKPOINT_IDS,
                 "checkpoint": CHECKPOINT_ID,
                 "chunk_scores": probs,
                 "document_score": sum(probs) / len(probs) if probs else None,
