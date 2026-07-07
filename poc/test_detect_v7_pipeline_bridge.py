@@ -133,6 +133,35 @@ class TestRunV7BreakdownEnabled:
         result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result())
         assert result is not None
 
+    def test_raw_signals_carry_fused_detector_score(self, monkeypatch):
+        """run_v7_breakdown must thread the fused calibrated detector score
+        into the raw_signals dict handed to the adapter, under
+        'calibrated_detector_score', equal to the fusion output — this is what
+        enables the detector-gated specificity split (2026-07-08)."""
+        monkeypatch.setenv(_ENV_VAR, "1")
+        from detect_v7 import detector_fusion, signal_adapter
+
+        seen: dict = {}
+        real_adapt = signal_adapter.adapt_paragraph_signals
+
+        def _spy(raw_signals):
+            seen["raw"] = raw_signals
+            return real_adapt(raw_signals)
+
+        monkeypatch.setattr(pipeline_bridge.signal_adapter, "adapt_paragraph_signals", _spy)
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result())
+        assert result is not None
+        assert "calibrated_detector_score" in seen["raw"]
+        # Quick-scan path: composite alone -> fusion == the composite input.
+        expected, _ = detector_fusion.compute_calibrated_detector_score(
+            {"composite": pipeline_bridge._extract_calibrated_score(_realistic_detection_result())}
+        )
+        assert seen["raw"]["calibrated_detector_score"] == pytest.approx(expected)
+        # And the split actually materialized "ok" on this fixture.
+        adapted = real_adapt(seen["raw"])
+        assert adapted["signal_status"]["specificity_student_evidence"] == "ok"
+        assert adapted["signal_status"]["specificity_ai_evidence"] == "ok"
+
     def test_object_with_attributes_instead_of_dict(self, monkeypatch):
         monkeypatch.setenv(_ENV_VAR, "1")
 

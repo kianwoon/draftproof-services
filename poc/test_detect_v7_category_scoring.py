@@ -13,6 +13,11 @@ def _full_signals(**overrides) -> dict:
     """
     base = {
         "specificity_score": 0.5,
+        # Detector-gated specificity split (2026-07-08): student_owned now
+        # weights specificity_student_evidence and ai_generated_like weights
+        # specificity_ai_evidence (see weights.json _notes.category_weights_tuning).
+        "specificity_student_evidence": 0.5,
+        "specificity_ai_evidence": 0.5,
         "grounding_gap": 0.5,
         "sentence_variance": 0.5,
         "generic_density": 0.5,

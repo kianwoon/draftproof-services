@@ -648,6 +648,12 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
         fused_score, _fusion_detail = detector_fusion.compute_calibrated_detector_score(detector_scores)
 
         raw_signals = _build_raw_signals(detection_result)
+        # Thread the fused calibrated detector score into raw_signals so the
+        # adapter can derive the detector-gated specificity split
+        # (specificity_student_evidence / specificity_ai_evidence). fused_score
+        # is computed just above, before this point — the order is intentional
+        # and the capture_signals replica mirrors it exactly (offline == e2e).
+        raw_signals["calibrated_detector_score"] = fused_score
         if not raw_signals.get("ai_components") and not raw_signals.get("writing_components"):
             logger.info(
                 "detect_v7.pipeline_bridge: no ai_components/writing_components on "

@@ -74,6 +74,12 @@ def capture_one(runner, text: str, label: str) -> tuple[dict, dict]:
     calibrated, _detail = detector_fusion.compute_calibrated_detector_score(detector_scores)
 
     raw = pipeline_bridge._build_raw_signals(det)
+    # Mirror run_v7_breakdown exactly: thread the fused calibrated detector
+    # score into raw_signals BEFORE adapting, so the detector-gated specificity
+    # split (specificity_student_evidence / specificity_ai_evidence) is derived
+    # identically offline and end-to-end (the offline==e2e parity test is the
+    # contract).
+    raw["calibrated_detector_score"] = calibrated
     v7_signals = signal_adapter.adapt_paragraph_signals(raw)
     row = {
         "label": label,

@@ -51,7 +51,14 @@ def test_candidate_weights_normalized():
     for cat, entries in cand["category_weights"].items():
         total = sum(e["weight"] for e in entries)
         assert abs(total - 1.0) < 1e-6, cat
-        assert all(e["weight"] >= 0.02 for e in entries), cat
+        # Floor is enforced up to float precision: _floor_and_renormalize's
+        # final `x/sum` step can leave a pinned entry a few ULPs below 0.02
+        # (e.g. 0.02 - 3.5e-18), and the water-filling itself uses a 1e-12
+        # tolerance internally. Assert against that same tolerance rather than
+        # exact >= 0.02. This surfaced when the detector-gated specificity split
+        # (2026-07-08) gave ai_generated_like a 7th signal with 5 entries pinned
+        # at the floor — see weights.json _notes.category_weights_tuning.
+        assert all(e["weight"] >= 0.02 - 1e-9 for e in entries), cat
     band = cand["ai_assisted_polished_band"]
     lo, hi = tw.band_bounds(band)
     assert lo < hi
