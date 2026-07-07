@@ -280,6 +280,16 @@ _VERDICT_FRAMING_TEXT = (
     "and does not override it."
 )
 
+# Owner-mandated framing (2026-07-08): companion subhead for the "How the writing
+# reads" composition bars — labels them an interpretive breakdown, not the verdict.
+# KEEP-IN-SYNC: draftproof-frontend/src/pages/report/MergedAuthorshipRisk.jsx's
+# report.merged.compositionLensNote AND poc/report/render_rewrite.py::_cmp_column
+# (rewrite-comparison PDF reuses this constant — do not fork the copy there).
+_COMPOSITION_SUBHEAD_TEXT = (
+    "How the writing reads · sums to 100% — an interpretive breakdown of "
+    "writing character, not the AI-risk verdict above"
+)
+
 
 def _authorship_bars_html(breakdown: dict) -> str:
     """The 4 color-coded category bars + disclaimer. '' when no breakdown.
@@ -630,10 +640,7 @@ def render_merged_authorship_risk(report, data) -> str:
     # draftproof-frontend/src/pages/report/MergedAuthorshipRisk.jsx's
     # .merged-verdict-framing paragraph + report.merged.compositionLensNote.
     verdict_framing = f'<p class="dp-hero-sub dp-verdict-framing">{escape(_VERDICT_FRAMING_TEXT)}</p>'
-    composition_subhead = (
-        '<p class="dp-cmp-subhead">How the writing reads &middot; sums to 100% '
-        "&mdash; an interpretive breakdown of writing character, not the AI-risk verdict above</p>"
-    )
+    composition_subhead = f'<p class="dp-cmp-subhead">{escape(_COMPOSITION_SUBHEAD_TEXT)}</p>'
     header = ('<div class="authorship-breakdown">'
               '<p class="dp-callout-title">Authorship &amp; submission risk '
               '<span class="dp-statchip dp-statchip--info">Beta</span></p>'

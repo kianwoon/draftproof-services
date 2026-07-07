@@ -442,7 +442,14 @@ def _cmp_column(kicker: str, scan: dict, *, review_required: bool = False) -> st
     """One comparison column: kicker, pattern label, rating chip (or 'Review required'),
     the fused verdict card, the 4 writing-reads bars, and the risk axes. Each sub-block
     fails open independently — an absent block is simply omitted (legacy rewrites)."""
-    from .render_panels import _authorship_headline_html, _authorship_bars_html
+    # Owner-mandated framing (2026-07-08): KEEP-IN-SYNC with render_panels.py's
+    # _VERDICT_FRAMING_TEXT / _COMPOSITION_SUBHEAD_TEXT (imported, not copied) —
+    # the verdict headline below is the AI-risk AUTHORITY for THIS column's scan;
+    # the composition bars are a display INTERPRETATION of that same scan.
+    from .render_panels import (
+        _authorship_headline_html, _authorship_bars_html,
+        _VERDICT_FRAMING_TEXT, _COMPOSITION_SUBHEAD_TEXT,
+    )
 
     badge = _badge(scan)
     breakdown = badge.get("authorship_breakdown") if isinstance(badge, dict) else None
@@ -466,6 +473,9 @@ def _cmp_column(kicker: str, scan: dict, *, review_required: bool = False) -> st
         headline = _authorship_headline_html(badge, breakdown)
         if headline:
             parts.append(headline)
+            parts.append(
+                f'<p class="dp-hero-sub dp-verdict-framing">{html.escape(_VERDICT_FRAMING_TEXT)}</p>'
+            )
         # Defend-lead line + not-a-Turnitin note.
         ta = badge.get("tier_authority") if isinstance(badge, dict) else None
         if isinstance(ta, dict) and isinstance(ta.get("fused_score"), (int, float)):
@@ -478,7 +488,7 @@ def _cmp_column(kicker: str, scan: dict, *, review_required: bool = False) -> st
         # 'How the writing reads · sums to 100%' — the 4 category bars.
         bars = _authorship_bars_html(breakdown)
         if bars:
-            parts.append('<p class="dp-cmp-subhead">How the writing reads · sums to 100%</p>')
+            parts.append(f'<p class="dp-cmp-subhead">{html.escape(_COMPOSITION_SUBHEAD_TEXT)}</p>')
             parts.append(bars)
 
     axes = _cmp_risk_axes_html(badge)
