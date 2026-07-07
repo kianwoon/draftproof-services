@@ -1,5 +1,5 @@
 """V7 signal adapter — maps existing ``poc/detect/`` per-paragraph signals onto
-the 14 V7 signal names declared in ``weights.json``.
+the 16 V7 signal names declared in ``weights.json``.
 
 This module performs RENAMING/DERIVATION ONLY. It never introduces new scoring
 weights, thresholds, or blend ratios of its own — every number that flows
@@ -49,7 +49,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 
-# The 14 V7 signal names, verbatim from detect_v7/weights.json category_weights
+# The 16 V7 signal names, verbatim from detect_v7/weights.json category_weights
 # (deduplicated across all category formulas) minus calibrated_detector_score
 # (owned by the not-yet-built detector_fusion.py), plus esl_false_positive_risk
 # (spec §5, not part of any category formula — consumed separately by the ESL
@@ -132,7 +132,7 @@ def _mean(values: list[float]) -> Optional[float]:
 def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     """Map one paragraph's existing poc/detect/ signals onto the 14 V7 names.
 
-    Returns a dict with all 14 V7 signal names as keys (float in [0,1] or
+    Returns a dict with all 16 V7 signal names as keys (float in [0,1] or
     None), plus a companion ``signal_status`` dict keyed the same way with
     values "ok" / "unavailable" (built signal, inputs absent this run) /
     "not_implemented" (signal not built yet — only the Phase-1C/2 rows) /
