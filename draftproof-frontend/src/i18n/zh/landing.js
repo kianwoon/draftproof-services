@@ -1,4 +1,13 @@
 export const landing = {
+  "rewriteTeaserEyebrow": "改写",
+  "rewriteTeaserTitle": "有论断被标记了？看看该怎么修。",
+  "rewriteTeaserBody": "当扫描标记出单薄的段落时，改写会给出一份可对照的「改写前／改写后」——一份你用自己的话写完的学习草稿。",
+  "rewriteTeaserBeforeLabel": "改写前",
+  "rewriteTeaserAfterLabel": "改写后",
+  "rewriteTeaserBefore": "好莱坞已成为史上最具影响力的文化输出之一。",
+  "rewriteTeaserAfter": "好莱坞是全球输出规模最大的文化产业之一〔补一个你能核实的引用〕。",
+  "rewriteTeaserMarker": "待复核的补充内容——请用你自己的来源替换括号中的提示。",
+  "rewriteTeaserLink": "了解改写的工作方式 →",
   "heroPill": "面向学生的依据支撑与批判性思维审阅",
   "heroTitle": "确保草稿里的思考，依然属于你。",
   "heroTitleHighlight": "依然属于你",

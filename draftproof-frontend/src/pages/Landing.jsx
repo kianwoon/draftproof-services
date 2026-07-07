@@ -5,6 +5,7 @@ import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
 import PolicyRiskView from './report/PolicyRiskView';
 import MergedAuthorshipRisk from './report/MergedAuthorshipRisk';
+import { RewriteBeforeAfter } from '../components/RewriteBeforeAfter';
 import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 // Representative Submission-risk shape for the marketing sample report. Mirrors the
@@ -207,6 +208,26 @@ export default function Landing() {
         publicPath={publicPath}
         reportValueCards={reportValueCards}
       />
+
+      <section id="rewrite-teaser" className="landing-section">
+        <div className="section-inner">
+          <p className="eyebrow">{t('landing.rewriteTeaserEyebrow')}</p>
+          <h2>{t('landing.rewriteTeaserTitle')}</h2>
+          <p className="section-lead" style={{ color: 'var(--muted)', marginBottom: '1.25rem' }}>{t('landing.rewriteTeaserBody')}</p>
+          <div style={{ maxWidth: '640px' }}>
+            <RewriteBeforeAfter
+              before={t('landing.rewriteTeaserBefore')}
+              after={t('landing.rewriteTeaserAfter')}
+              marker={t('landing.rewriteTeaserMarker')}
+              beforeLabel={t('landing.rewriteTeaserBeforeLabel')}
+              afterLabel={t('landing.rewriteTeaserAfterLabel')}
+            />
+          </div>
+          <p style={{ marginTop: '1.25rem', fontSize: '0.875rem' }}>
+            <Link to={publicPath('/rewrite')}>{t('landing.rewriteTeaserLink')}</Link>
+          </p>
+        </div>
+      </section>
 
       <section id="help" className="landing-section help-section">
         <div className="section-inner">
