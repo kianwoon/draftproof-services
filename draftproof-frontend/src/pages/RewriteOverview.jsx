@@ -1,15 +1,11 @@
-import { Link, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
 import PageFreshness from '../components/PageFreshness';
 import { RewriteBeforeAfter } from '../components/RewriteBeforeAfter';
-import { getLocaleFromPathname, localizePath } from '../localeRouting';
 
 export default function RewriteOverview() {
   const { t } = useTranslation();
-  const location = useLocation();
-  const locale = getLocaleFromPathname(location.pathname);
-  const publicPath = (path) => localizePath(path, locale);
   const examples = t('rewriteOverview.examples', { returnObjects: true });
   const beforeLabel = t('rewriteOverview.beforeLabel');
   const afterLabel = t('rewriteOverview.afterLabel');
