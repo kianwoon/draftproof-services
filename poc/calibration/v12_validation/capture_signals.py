@@ -55,7 +55,7 @@ def capture_one(runner, text: str, label: str) -> tuple[dict, dict]:
     # pipeline_bridge._extract_document_text docstring) — attach it under one
     # of the recognized candidate keys so get_deep_scan_proportion can reach
     # Modal on the --fused (non-quick) path.
-    det = {**badge, "document_text": text}
+    det = {**badge, "document_text": norm_text}
     # Mirror builder.py L370-371's exact guard for surfacing
     # criterion_scores into the dict handed downstream (there:
     # run_v7_breakdown's input; here: pipeline_bridge._build_raw_signals'
