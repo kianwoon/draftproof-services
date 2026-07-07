@@ -19,7 +19,7 @@ export default function Footer() {
         </div>
         <nav aria-label={t('footer.product')}>
           <a href={publicPath('/#product')}>{t('footer.product')}</a>
-          <a href={publicPath('/#engine')}>{t('footer.howItWorks')}</a>
+          <Link to={publicPath('/technology')}>{t('footer.howItWorks')}</Link>
           <a href={publicPath('/#report')}>{t('footer.sampleReport')}</a>
           <Link to={publicPath('/content-checker')}>{t('footer.essayChecker')}</Link>
           <Link to={publicPath('/academic-integrity-ai')}>{t('footer.academicIntegrity')}</Link>
