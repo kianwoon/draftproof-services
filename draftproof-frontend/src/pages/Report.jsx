@@ -737,6 +737,11 @@ export default function Report() {
   // Additive Submission-risk view for the hero (null when the diagnosis abstained,
   // or when an older report predates the field — the hero then leads as before).
   const heroSubmissionRisk = submissionRisk(rewrittenHeroView ? rewrittenBadge : originalComparisonBadge);
+  // The merged hero card must draw EVERY section from the same scan's badge. Only `sr`
+  // used to swap on rewrittenHeroView, so the card mixed the ORIGINAL headline/breakdown
+  // with the REWRITTEN "where the risk sits" rows (and the original deep-scan proportion
+  // in the explainer) — three scans' numbers on one card.
+  const heroBadge = rewrittenHeroView ? rewrittenBadge : badge;
   const calibratedAuthorshipRisk = clampPercent(authorshipFeatures.calibrated_ai_risk);
   const topkPatternScore = clampPercent(originalComparisonBadge.ai_components?.topk_pattern_raw ?? originalComparisonBadge.ai_components?.topk_pattern);
   const topkCalibratedRisk = clampPercent(originalComparisonBadge.ai_components?.topk_calibrated_risk);
@@ -1965,10 +1970,10 @@ export default function Report() {
           mergedCard={
             <MergedAuthorshipRisk
               t={t}
-              breakdown={(badge && badge.authorship_breakdown) || null}
+              breakdown={(heroBadge && heroBadge.authorship_breakdown) || null}
               sr={heroSubmissionRisk}
-              authoritativeTier={badge.tier || report.tier}
-              tierAuthority={(badge && badge.tier_authority) || null}
+              authoritativeTier={heroBadge.tier || heroReport.tier}
+              tierAuthority={(heroBadge && heroBadge.tier_authority) || null}
             />
           }
         />
