@@ -16,6 +16,7 @@ import { history } from './en/history.js';
 import { signin } from './en/signin.js';
 import { whyPage } from './en/whyPage.js';
 import { technologyPage } from './en/technologyPage.js';
+import { rewriteOverview } from './en/rewriteOverview.js';
 import { legal } from './en/legal.js';
 import { authorshipEvidence } from './en/authorshipEvidence.js';
 import { rewriteFraming } from './en/rewriteFraming.js';
@@ -48,6 +49,7 @@ export const enTranslation = {
   "signin": signin,
   "whyPage": whyPage,
   "technologyPage": technologyPage,
+  "rewriteOverview": rewriteOverview,
   "legal": legal,
   "authorshipEvidence": authorshipEvidence,
   "rewriteFraming": rewriteFraming,
