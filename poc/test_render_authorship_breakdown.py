@@ -72,6 +72,24 @@ def test_merged_render_shows_ai_likelihood_once():
     assert html.count("DraftProof AI-likelihood") == 1
 
 
+def test_merged_render_shows_owner_mandated_framing_labels():
+    # Owner-mandated framing (2026-07-08): the verdict headline is labeled the
+    # AI-risk AUTHORITY, and the composition bars are labeled a display
+    # INTERPRETATION. KEEP-IN-SYNC with MergedAuthorshipRisk.jsx's
+    # .merged-verdict-framing paragraph + report.merged.compositionLensNote.
+    from report.render_panels import render_merged_authorship_risk
+    report = _make_report_with_breakdown_and_sr()
+    data = {"document_context": {"word_count": 400}, "overall_tier_reason": ""}
+    html = render_merged_authorship_risk(report, data)
+    assert "dp-verdict-framing" in html
+    assert "AI-risk assessment" in html
+    assert "does not override it" in html
+    assert "How the writing reads" in html
+    assert "interpretive breakdown of writing character" in html
+    # The framing line must appear before the composition bars in document order.
+    assert html.index("dp-verdict-framing") < html.index("dp-abd-bars")
+
+
 def test_mixed_signals_caveat_renders_when_presentation_set():
     # Tier-consistency guard (poc/detect_v7/pipeline_bridge.py::_apply_tier_consistency_guard)
     # sets breakdown["presentation"] = "mixed_signals" — PDF must show the same caveat as

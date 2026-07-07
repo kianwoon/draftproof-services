@@ -357,6 +357,13 @@ img[src^="https://img.shields.io"] { height: 18px; }
 .dp-chip-strip {
     margin-top: 10pt;
 }
+/* Owner-mandated framing: detection tier = AI-risk authority (vs the composition
+   breakdown below it = a display interpretation). KEEP-IN-SYNC:
+   draftproof-frontend/src/styles/site-master/06-report-overview.css .merged-verdict-framing. */
+.dp-verdict-framing {
+    color: #4338ca;
+    font-weight: 700;
+}
 .dp-statchip {
     display: inline-block;
     margin: 0 4pt 4pt 0;

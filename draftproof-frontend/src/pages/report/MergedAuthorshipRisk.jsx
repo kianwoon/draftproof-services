@@ -132,6 +132,10 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority }) {
         {valueEl}
         {chipEl}
       </div>
+      {/* Owner-mandated framing: this tier is the AI-risk AUTHORITY, distinct from the
+          composition breakdown below (which is a display interpretation). Verbatim
+          copy KEPT IN SYNC with poc/report/render_panels.py render_merged_authorship_risk. */}
+      <p className="merged-verdict-framing">{t('report.merged.verdictFramingNote')}</p>
       {ownershipLead && <p className="merged-verdict-lead">{ownershipLead}</p>}
       {evidenceEl}
       {flagNote && <p className="merged-verdict-note">{flagNote}</p>}
@@ -187,6 +191,8 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
             <div className="merged-lens">
               <p className="merged-lens-head">
                 {t('report.merged.compositionLens')}{' '}
+                {/* PR #17's "sums to 100%" caveat, EXTENDED (not stacked) to also carry the
+                    owner-mandated interpretation framing vs the verdict's AI-risk authority. */}
                 <span className="merged-lens-note">· {t('report.merged.compositionLensNote')}</span>
               </p>
               {breakdown.presentation === 'mixed_signals' && (

@@ -270,6 +270,16 @@ _MIXED_SIGNALS_CAVEAT_TEXT = (
     "Treat the composition as inconclusive and review the flagged passages."
 )
 
+# Owner-mandated framing (2026-07-08): the detection tier is the AI-risk AUTHORITY;
+# the composition breakdown is a display/category INTERPRETATION. Verbatim copy KEPT
+# IN SYNC with draftproof-frontend/src/i18n/en/report.js report.merged.verdictFramingNote
+# and MergedAuthorshipRisk.jsx's .merged-verdict-framing paragraph.
+_VERDICT_FRAMING_TEXT = (
+    "Detection verdict — this tier is DraftProof's AI-risk assessment, driven by the "
+    "calibrated detector. The composition breakdown below is a display interpretation "
+    "and does not override it."
+)
+
 
 def _authorship_bars_html(breakdown: dict) -> str:
     """The 4 color-coded category bars + disclaimer. '' when no breakdown.
@@ -615,10 +625,21 @@ def render_merged_authorship_risk(report, data) -> str:
     lead = render_scan_lead(report, data, suppress_ai_likelihood=bool(breakdown))
     if not breakdown:
         return lead
+    # Owner-mandated framing: the verdict headline above is the AI-risk AUTHORITY;
+    # the composition bars below are a display INTERPRETATION. KEEP-IN-SYNC:
+    # draftproof-frontend/src/pages/report/MergedAuthorshipRisk.jsx's
+    # .merged-verdict-framing paragraph + report.merged.compositionLensNote.
+    verdict_framing = f'<p class="dp-hero-sub dp-verdict-framing">{escape(_VERDICT_FRAMING_TEXT)}</p>'
+    composition_subhead = (
+        '<p class="dp-cmp-subhead">How the writing reads &middot; sums to 100% '
+        "&mdash; an interpretive breakdown of writing character, not the AI-risk verdict above</p>"
+    )
     header = ('<div class="authorship-breakdown">'
               '<p class="dp-callout-title">Authorship &amp; submission risk '
               '<span class="dp-statchip dp-statchip--info">Beta</span></p>'
               + _authorship_headline_html(badge, breakdown)
+              + verdict_framing
+              + composition_subhead
               + _authorship_bars_html(breakdown)
               + _deep_scan_paragraphs_html(breakdown)
               + "</div>")

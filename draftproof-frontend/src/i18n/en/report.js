@@ -755,10 +755,11 @@ export const report = {
     "title": "Authorship & submission risk",
     "subtitle": "One read on how this document scores — the headline number, how the writing distributes, and where the risk sits.",
     "compositionLens": "How the writing reads",
-    "compositionLensNote": "sums to 100%",
+    "compositionLensNote": "sums to 100% — an interpretive breakdown of writing character, not the AI-risk verdict above",
     "compositionMixedSignalsCaveat": "Mixed signals — the category shares below conflict with this document's risk tier. Treat the composition as inconclusive and review the flagged passages.",
     "riskLens": "Where the risk sits",
-    "riskLensNote": "independent"
+    "riskLensNote": "independent",
+    "verdictFramingNote": "Detection verdict — this tier is DraftProof's AI-risk assessment, driven by the calibrated detector. The composition breakdown below is a display interpretation and does not override it."
   },
   "advancedSignals": {
     "summary": "Advanced signals"
