@@ -1,5 +1,5 @@
 """V7 signal adapter — maps existing ``poc/detect/`` per-paragraph signals onto
-the 14 V7 signal names declared in ``weights.json``.
+the 16 V7 signal names declared in ``weights.json``.
 
 This module performs RENAMING/DERIVATION ONLY. It never introduces new scoring
 weights, thresholds, or blend ratios of its own — every number that flows
@@ -28,6 +28,17 @@ production shapes already used across ``poc/detect/``:
       the ``semantic_drift`` mapping below).
     - ``has_comparison_text``: bool, explicit flag for whether a draft-evolution/
       comparison text was supplied for this paragraph.
+    - ``calibrated_detector_score``: optional float in [0,1], the fused
+      ``detector_fusion.compute_calibrated_detector_score`` output threaded in by
+      the caller (``pipeline_bridge.run_v7_breakdown`` / the ``capture_signals``
+      replica). Used ONLY to gate the specificity split (``specificity_student_evidence``
+      / ``specificity_ai_evidence``); absent → those two signals are "unavailable".
+
+    Derived signals of note: ``specificity_student_evidence`` and
+    ``specificity_ai_evidence`` disambiguate the raw ``specificity_score`` by
+    multiplying it against ``(1 - detector_score)`` and ``detector_score``
+    respectively (see rows 9a/9b in the body). The plain ``specificity_score``
+    row is retained unchanged for consumers that read it directly.
 
 All values are read defensively (``raw_signals`` sub-dicts may be missing or
 None); a signal whose required inputs are absent maps to ``None`` with
@@ -38,13 +49,15 @@ from __future__ import annotations
 from typing import Any, Optional
 
 
-# The 14 V7 signal names, verbatim from detect_v7/weights.json category_weights
+# The 16 V7 signal names, verbatim from detect_v7/weights.json category_weights
 # (deduplicated across all category formulas) minus calibrated_detector_score
 # (owned by the not-yet-built detector_fusion.py), plus esl_false_positive_risk
 # (spec §5, not part of any category formula — consumed separately by the ESL
 # guard in category_scoring.py).
 V7_SIGNAL_NAMES: tuple[str, ...] = (
     "specificity_score",
+    "specificity_student_evidence",
+    "specificity_ai_evidence",
     "grounding_gap",
     "sentence_variance",
     "generic_density",
@@ -119,7 +132,7 @@ def _mean(values: list[float]) -> Optional[float]:
 def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     """Map one paragraph's existing poc/detect/ signals onto the 14 V7 names.
 
-    Returns a dict with all 14 V7 signal names as keys (float in [0,1] or
+    Returns a dict with all 16 V7 signal names as keys (float in [0,1] or
     None), plus a companion ``signal_status`` dict keyed the same way with
     values "ok" / "unavailable" (built signal, inputs absent this run) /
     "not_implemented" (signal not built yet — only the Phase-1C/2 rows) /
@@ -261,9 +274,45 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     status["sentence_variance"] = _STATUS_OK if out["sentence_variance"] is not None else _STATUS_UNAVAILABLE
 
     # 9. specificity_score ← direct pass-through of criteria/specificity.py score().value.
+    #    Kept as-is for consumers that read the raw criterion (e.g. the
+    #    ai_assisted_polished formula still weights specificity_score directly);
+    #    the student/AI split below DISAMBIGUATES it, it does not replace it.
     specificity_score = _get_criterion_value(criterion_scores, "low_specificity")
     out["specificity_score"] = _clamp01(specificity_score)
     status["specificity_score"] = _STATUS_OK if out["specificity_score"] is not None else _STATUS_UNAVAILABLE
+
+    # 9a/9b. Detector-gated specificity split — DISAMBIGUATES the raw
+    #    low_specificity signal, which is ambiguous: low specificity can mean
+    #    weak-student writing OR generic AI generation. The calibrated detector
+    #    score (threaded in by the caller under raw_signals["calibrated_detector_score"],
+    #    the fused detector_fusion.compute_calibrated_detector_score output — a
+    #    document-level probability in [0,1], NOT a per-paragraph criterion) gates
+    #    the split:
+    #      specificity_student_evidence = low_specificity * (1 - detector_score)
+    #      specificity_ai_evidence      = low_specificity * detector_score
+    #    This is a STRUCTURAL derivation (product of two existing [0,1] signals),
+    #    not a tuned weight/threshold — no hardcoded scoring number. Both are
+    #    None/"unavailable" when EITHER input is missing (no specificity_score
+    #    this run, or no detector score threaded in), else clamped to [0,1] with
+    #    status "ok". clamp01 is a defensive no-op here (both factors are already
+    #    in [0,1], so the product is too) — kept for shape-parity with the other rows.
+    detector_score_raw = raw_signals.get("calibrated_detector_score")
+    detector_score = (
+        float(detector_score_raw)
+        if isinstance(detector_score_raw, (int, float)) and not isinstance(detector_score_raw, bool)
+        else None
+    )
+    spec_value = out["specificity_score"]
+    if spec_value is not None and detector_score is not None:
+        out["specificity_student_evidence"] = _clamp01(spec_value * (1.0 - detector_score))
+        out["specificity_ai_evidence"] = _clamp01(spec_value * detector_score)
+        status["specificity_student_evidence"] = _STATUS_OK
+        status["specificity_ai_evidence"] = _STATUS_OK
+    else:
+        out["specificity_student_evidence"] = None
+        out["specificity_ai_evidence"] = None
+        status["specificity_student_evidence"] = _STATUS_UNAVAILABLE
+        status["specificity_ai_evidence"] = _STATUS_UNAVAILABLE
 
     # 10. local_style_shift ← direct pass-through of criteria/style_shift.py score().value.
     local_style_shift = _get_criterion_value(criterion_scores, "style_shift")

@@ -225,3 +225,16 @@ def get_tier_authority_config() -> dict[str, Any]:
         "weights": dict(section["weights"]),
         "cutoffs": dict(cutoffs),
     }
+
+
+def get_display_consistency_guard_config() -> dict[str, Any]:
+    """Return the tier-consistency display guard config (badge tiers that
+    trigger the ``student_owned``-primary contradiction annotation — see
+    ``weights.json``'s ``display_consistency_guard._notes`` for the
+    measured motivation). A missing block raises ``KeyError`` (fail loud),
+    matching ``get_esl_guard_config``/``get_deep_scan_calibration``'s
+    unvalidated direct-lookup pattern — this section has no derived-value
+    contract to additionally check, unlike ``get_tier_authority_config``'s
+    ascending-cutoffs invariant.
+    """
+    return dict(_weights()["display_consistency_guard"])

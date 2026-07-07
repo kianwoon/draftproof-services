@@ -2053,11 +2053,19 @@ button.fix-first-item:focus-visible {
 .merged-verdict-chip.is-insufficient { background: #f3f4f6; color: #6b7280; }
 .merged-verdict-lead { font-size: 14px; color: #111827; margin: 8px 0 0; }
 .merged-verdict-evidence, .merged-verdict-note { font-size: 12px; color: #6b7280; margin: 6px 0 0; line-height: 1.5; }
+/* Owner-mandated framing: verdict = AI-risk authority (vs composition = interpretation
+   below). KEEP-IN-SYNC: poc/report/render_panels.py render_merged_authorship_risk CSS. */
+.merged-verdict-framing { font-size: 11px; font-weight: 600; letter-spacing: .01em; color: #4338ca; margin: 6px 0 0; line-height: 1.4; }
 
 .merged-lenses { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 18px; }
 @media (max-width: 640px) { .merged-lenses { grid-template-columns: 1fr; } }
 .merged-lens-head { font-size: 12px; font-weight: 600; color: #374151; margin: 0 0 10px; }
 .merged-lens-note { color: #9ca3af; font-weight: 400; }
+
+/* Tier-consistency guard caveat (poc/detect_v7/pipeline_bridge.py::_apply_tier_consistency_guard) —
+   shown when breakdown.presentation === "mixed_signals". Reuses the is-amber chip palette so it
+   reads as a warning without introducing a new color. KEEP-IN-SYNC: poc/report/render.py mixed-signals block. */
+.merged-comp-caveat { font-size: 12px; color: #b45309; background: #fef3c7; border-radius: 6px; padding: 6px 9px; margin: 0 0 10px; line-height: 1.4; }
 
 .merged-comp-bars { display: flex; flex-direction: column; gap: 9px; }
 .merged-comp-row-head { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }

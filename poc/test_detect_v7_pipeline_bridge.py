@@ -133,6 +133,35 @@ class TestRunV7BreakdownEnabled:
         result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result())
         assert result is not None
 
+    def test_raw_signals_carry_fused_detector_score(self, monkeypatch):
+        """run_v7_breakdown must thread the fused calibrated detector score
+        into the raw_signals dict handed to the adapter, under
+        'calibrated_detector_score', equal to the fusion output — this is what
+        enables the detector-gated specificity split (2026-07-08)."""
+        monkeypatch.setenv(_ENV_VAR, "1")
+        from detect_v7 import detector_fusion, signal_adapter
+
+        seen: dict = {}
+        real_adapt = signal_adapter.adapt_paragraph_signals
+
+        def _spy(raw_signals):
+            seen["raw"] = raw_signals
+            return real_adapt(raw_signals)
+
+        monkeypatch.setattr(pipeline_bridge.signal_adapter, "adapt_paragraph_signals", _spy)
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result())
+        assert result is not None
+        assert "calibrated_detector_score" in seen["raw"]
+        # Quick-scan path: composite alone -> fusion == the composite input.
+        expected, _ = detector_fusion.compute_calibrated_detector_score(
+            {"composite": pipeline_bridge._extract_calibrated_score(_realistic_detection_result())}
+        )
+        assert seen["raw"]["calibrated_detector_score"] == pytest.approx(expected)
+        # And the split actually materialized "ok" on this fixture.
+        adapted = real_adapt(seen["raw"])
+        assert adapted["signal_status"]["specificity_student_evidence"] == "ok"
+        assert adapted["signal_status"]["specificity_ai_evidence"] == "ok"
+
     def test_object_with_attributes_instead_of_dict(self, monkeypatch):
         monkeypatch.setenv(_ENV_VAR, "1")
 
@@ -185,6 +214,118 @@ class TestRunV7BreakdownFailsSafe:
         monkeypatch.setenv(_ENV_VAR, "1")
         result = pipeline_bridge.run_v7_breakdown({})
         assert result is None
+
+
+class TestTierConsistencyGuard:
+    """Tier-consistency display guard: a red/orange-tier document must never
+    display an unchallenged ``student_owned`` primary category. Fires
+    post-composition in the bridge (has both the badge ``tier`` and the
+    composed breakdown), annotates via the existing mixed_signals mechanism,
+    never mutates shares/primary_category itself (guards annotate, never
+    suppress).
+    """
+
+    @staticmethod
+    def _patch_fixed_breakdown(monkeypatch, primary_category: str):
+        fixed = {
+            "schema_version": "v7_phase1a",
+            "document_breakdown_raw": {
+                "student_owned": 0.7,
+                "ai_assisted_polished": 0.1,
+                "ai_paraphrased": 0.1,
+                "ai_generated_like": 0.1,
+            },
+            "document_breakdown_bands": {},
+            "primary_category": primary_category,
+            "primary_category_reliable": True,
+            "confidence": "high",
+            "paragraph_count": 1,
+            "degraded_paragraph_count": 0,
+            "display_mode": "bands",
+            "degraded_display": False,
+            "uncertainty_flags": [],
+            "disclaimer": "x",
+        }
+        monkeypatch.setattr(
+            pipeline_bridge.breakdown_composer,
+            "compose_authorship_breakdown",
+            lambda *a, **k: dict(fixed),
+        )
+        return fixed
+
+    def test_guard_fires_strong_tier_student_owned(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "student_owned")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "strong"
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result is not None
+        assert result["presentation"] == "mixed_signals"
+        assert result["primary_category_reliable"] is False
+        assert "tier_category_contradiction" in result["uncertainty_flags"]
+        # shares/primary_category themselves are UNCHANGED (annotate, never suppress)
+        assert result["primary_category"] == "student_owned"
+        assert result["document_breakdown_raw"]["student_owned"] == 0.7
+
+    def test_guard_fires_concerning_tier_student_owned(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "student_owned")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "concerning"
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result["presentation"] == "mixed_signals"
+        assert result["primary_category_reliable"] is False
+        assert "tier_category_contradiction" in result["uncertainty_flags"]
+
+    def test_guard_does_not_fire_clean_tier(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "student_owned")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "clean"
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result.get("presentation") != "mixed_signals"
+        assert result["primary_category_reliable"] is True
+        assert "tier_category_contradiction" not in result["uncertainty_flags"]
+
+    def test_guard_does_not_fire_acceptable_tier(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "student_owned")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "acceptable"
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result["primary_category_reliable"] is True
+        assert "tier_category_contradiction" not in result["uncertainty_flags"]
+
+    def test_guard_does_not_fire_non_student_owned_primary(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "ai_generated_like")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "strong"
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result["primary_category_reliable"] is True
+        assert "tier_category_contradiction" not in result["uncertainty_flags"]
+
+    def test_guard_silently_skips_when_tier_missing(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        self._patch_fixed_breakdown(monkeypatch, "student_owned")
+        detection_result = _realistic_detection_result()
+        # no "tier" key at all — fail-open: guard must not raise or fire.
+
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result is not None
+        assert result["primary_category_reliable"] is True
+        assert "tier_category_contradiction" not in result["uncertainty_flags"]
 
 
 class TestIsDeepScanEnabled:
@@ -699,3 +840,68 @@ class TestDeepScanPerParagraphProportions:
         assert rows[0]["flagged_count"] == 1
         assert rows[0]["sentence_count"] == 2
         assert rows[1]["flagged_count"] == 0
+
+
+class TestBuilderThreadsCriterionScores:
+    """Regression test for the wiring bug documented in
+    poc/calibration/v12_validation/false_ai_diagnosis.json: builder.py used
+    to spread ``{**ai_risk_badge, "document_text": ..., "_precomputed_deep_scan": ...}``
+    into ``run_v7_breakdown`` WITHOUT ``criterion_scores`` — that key lives in
+    ``self._summaries`` (builder.py L370-371), never in the badge — so every
+    criterion-derived signal (specificity_score, sentence_variance,
+    sentence_smoothness, local_style_shift, detector_disagreement) was
+    unconditionally "unavailable" in production. This drives a REAL
+    ReportBuilder end-to-end (quick-scan, no Modal/network) and asserts the
+    dict actually handed to run_v7_breakdown carries "criterion_scores" and
+    it matches self._summaries's value byte-for-byte — the exact call site
+    that was broken.
+    """
+
+    def test_criterion_scores_present_in_run_v7_breakdown_input(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        monkeypatch.delenv(_DEEP_SCAN_ENV_VAR, raising=False)  # quick-scan: no Modal spend
+
+        from detect.document_structure import normalize_submitted_text
+        from detect.run import DetectionRunner
+        from report import builder as builder_module
+        from report.builder import ReportBuilder
+
+        captured: dict = {}
+        real_run_v7_breakdown = pipeline_bridge.run_v7_breakdown
+
+        def _capturing_run_v7_breakdown(detection_result):
+            captured["input"] = detection_result
+            return real_run_v7_breakdown(detection_result)
+
+        monkeypatch.setattr(
+            builder_module, "run_v7_breakdown", _capturing_run_v7_breakdown, raising=False
+        )
+        # builder.py imports run_v7_breakdown via a LOCAL import inside the
+        # method body (`from detect_v7.pipeline_bridge import run_v7_breakdown
+        # as _run_v7_breakdown`) — patching the module-level name above is a
+        # no-op for that call site, so patch the source pipeline_bridge
+        # function itself, which the local import re-resolves at call time.
+        monkeypatch.setattr(pipeline_bridge, "run_v7_breakdown", _capturing_run_v7_breakdown)
+
+        text = (
+            "The industrial revolution transformed European society in profound ways. "
+            "Factories replaced workshops, and cities grew rapidly as workers migrated."
+        ) * 3
+        norm_text = normalize_submitted_text(text)
+        runner = DetectionRunner()
+        detection_result = runner.run_all(norm_text)
+
+        b = ReportBuilder()
+        b.add_detection_report(detection_result)
+        if getattr(detection_result, "postprocess_results", None):
+            b.add_postprocess_results(detection_result.postprocess_results)
+        b.set_meta(scan_time=0.0, original_text=norm_text)
+
+        assert "input" not in captured  # sanity: not yet called
+        b.build()
+
+        assert "input" in captured, "run_v7_breakdown was never invoked — check the kill switch"
+        passed_in = captured["input"]
+        assert "criterion_scores" in passed_in
+        assert passed_in["criterion_scores"] == b._summaries.get("criterion_scores")
+        assert passed_in["criterion_scores"], "criterion_scores must be non-empty on this fixture"

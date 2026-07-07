@@ -35,6 +35,52 @@ DEFAULT_OUT = HERE / "category_agreement_baseline.json"
 
 _CLASSES = ("student_owned", "ai_assisted_polished", "ai_paraphrased", "ai_generated_like")
 
+_wrapper_state: dict = {}
+
+
+def install_cached_deep_scan(cache_path) -> None:
+    """Wrap detect_v7.modal_client.call_deep_scan with a JSONL cache.
+
+    Cache key = content_key(joined sentences, checkpoint). A response is
+    cached only when its reported "checkpoint" matches our checkpoint_tag() —
+    checkpoint identity is the validity criterion (content_key already embeds
+    the tag, so a checkpoint change naturally invalidates every row). The
+    endpoint's "calibrated" flag is NOT used: the deployed endpoint hardcodes
+    it to False (stale relic predating the 2026-07-04 calibration), so a
+    calibrated-only rule would cache nothing, ever."""
+    import detect_v7.modal_client as mc
+    from calibration.retune import deepscan_cache as dc
+
+    cache = dc.load_cache(cache_path)
+    real = mc.call_deep_scan
+
+    def cached(sentences):
+        key = dc.content_key("\n".join(sentences), dc.checkpoint_tag())
+        if key in cache:
+            # "calibrated": False mirrors the endpoint's CURRENT behavior (it
+            # hardcodes False today); fabricating True on a hit would diverge
+            # from live responses. Revisit this literal if/when the endpoint
+            # fix ships (separate task) — the flag only drives an uncertainty
+            # annotation, never scoring.
+            return {"available": True, "calibrated": False,
+                    "checkpoint": dc.checkpoint_tag(), "chunk_scores": cache[key]}
+        resp = real(sentences)
+        if (isinstance(resp, dict) and resp.get("available") is True
+                and resp.get("checkpoint") == dc.checkpoint_tag()
+                and isinstance(resp.get("chunk_scores"), list)):
+            dc.append(cache_path, key, resp["chunk_scores"])
+            cache[key] = resp["chunk_scores"]
+        return resp
+
+    _wrapper_state["real"] = real
+    mc.call_deep_scan = cached
+
+
+def uninstall_cached_deep_scan() -> None:
+    import detect_v7.modal_client as mc
+    if "real" in _wrapper_state:
+        mc.call_deep_scan = _wrapper_state.pop("real")
+
 
 def _resolve_text(row: dict, scocesle: Path) -> str | None:
     label, fname = row["label"], row["file"]
@@ -51,9 +97,14 @@ def _resolve_text(row: dict, scocesle: Path) -> str | None:
     return json.loads(p.read_text()).get("text")
 
 
-def measure(limit_per_class: int | None) -> dict:
+def measure(limit_per_class: int | None, fused: bool = False) -> dict:
     os.environ["DRAFTPROOF_V7_AUTHORSHIP_BREAKDOWN"] = "1"
-    os.environ.pop("DRAFTPROOF_V7_DEEP_SCAN", None)  # quick-scan only, no spend
+    if fused:
+        os.environ["DRAFTPROOF_V7_DEEP_SCAN"] = "1"
+        from calibration.retune.deepscan_cache import DEFAULT_CACHE
+        install_cached_deep_scan(DEFAULT_CACHE)
+    else:
+        os.environ.pop("DRAFTPROOF_V7_DEEP_SCAN", None)  # quick-scan only, no spend
     from calibration.measure_end_to_end import scan_text  # heavy import after env
     from calibration.retune.intake import DEFAULT_SCOCESLE
     from detect.run import DetectionRunner
@@ -86,10 +137,13 @@ def measure(limit_per_class: int | None) -> dict:
 
     result: dict = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "spec": "v7 §12 category agreement — construction labels, quick-scan path",
+        "spec": ("v7 §12 category agreement — construction labels, deep-scan-fused path (cached Modal)"
+                 if fused else
+                 "v7 §12 category agreement — construction labels, quick-scan path"),
         "caveats": [
             "construction labels, not human reviewer labels",
-            "quick-scan detector input; production runs deep-scan-fused",
+            ("deep-scan-fused path (cached Modal)" if fused else
+             "quick-scan detector input; production runs deep-scan-fused"),
         ],
         "skipped_unresolvable": skipped,
         "per_class": {},
@@ -116,12 +170,18 @@ def measure(limit_per_class: int | None) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="V7 §12 category-agreement measurement")
     ap.add_argument("--limit", type=int, default=None, help="docs per class (smoke run)")
-    ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    ap.add_argument("--fused", action="store_true",
+                     help="run the deep-scan-fused path (cached Modal, paid on cache miss)")
+    ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
-    result = measure(args.limit)
-    args.out.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+    out = args.out or (HERE / "category_agreement_fused_baseline.json" if args.fused else DEFAULT_OUT)
+    try:
+        result = measure(args.limit, fused=args.fused)
+    finally:
+        uninstall_cached_deep_scan()
+    out.write_text(json.dumps(result, indent=2, ensure_ascii=False))
     print(json.dumps({k: result[k] for k in ("per_class", "macro_primary_accuracy")}, indent=2))
-    print(f"baseline -> {args.out}")
+    print(f"baseline -> {out}")
     return 0
 
 

@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-06T12:53:01.627597+00:00",
-  "spec": "v7 §12 category agreement — construction labels, quick-scan path",
+  "generated_at": "2026-07-07T20:06:14.526875+00:00",
+  "spec": "v7 \u00a712 category agreement \u2014 construction labels, quick-scan path",
   "caveats": [
     "construction labels, not human reviewer labels",
     "quick-scan detector input; production runs deep-scan-fused"
@@ -31,8 +31,8 @@
       "student_owned": 18
     },
     "ai_assisted_polished": {
-      "ai_generated_like": 30,
-      "student_owned": 9
+      "student_owned": 7,
+      "ai_generated_like": 32
     },
     "ai_paraphrased": {
       "ai_generated_like": 34,
@@ -49,5 +49,6 @@
     "ai_paraphrased": {},
     "ai_generated_like": {}
   },
-  "macro_primary_accuracy": 0.3406
+  "macro_primary_accuracy": 0.3406,
+  "provenance": "rebuilt corpus 2026-07-08 (build.py, same sampling/generator rotation); supersedes 2026-07-06 baseline \u2014 corpus texts regenerated, not comparable doc-for-doc, but metrics replicated (macro 34.06% both runs)"
 }

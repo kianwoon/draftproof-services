@@ -1,0 +1,53 @@
+{
+  "generated_at": "2026-07-07T20:38:36.185034+00:00",
+  "spec": "v7 §12 category agreement — construction labels, deep-scan-fused path (cached Modal)",
+  "caveats": [
+    "construction labels, not human reviewer labels",
+    "deep-scan-fused path (cached Modal)"
+  ],
+  "skipped_unresolvable": 0,
+  "per_class": {
+    "student_owned": {
+      "n": 40,
+      "primary_accuracy": 0.625,
+      "false_ai_primary_rate": 0.375
+    },
+    "ai_assisted_polished": {
+      "n": 39,
+      "primary_accuracy": 0.0
+    },
+    "ai_paraphrased": {
+      "n": 39,
+      "primary_accuracy": 0.0
+    },
+    "ai_generated_like": {
+      "n": 80,
+      "primary_accuracy": 0.875
+    }
+  },
+  "confusion": {
+    "student_owned": {
+      "student_owned": 25,
+      "ai_generated_like": 15
+    },
+    "ai_assisted_polished": {
+      "ai_generated_like": 37,
+      "student_owned": 2
+    },
+    "ai_paraphrased": {
+      "ai_generated_like": 36,
+      "student_owned": 3
+    },
+    "ai_generated_like": {
+      "ai_generated_like": 70,
+      "student_owned": 10
+    }
+  },
+  "reliable_assertions": {
+    "student_owned": {},
+    "ai_assisted_polished": {},
+    "ai_paraphrased": {},
+    "ai_generated_like": {}
+  },
+  "macro_primary_accuracy": 0.375
+}

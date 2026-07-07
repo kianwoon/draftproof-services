@@ -9,8 +9,7 @@
     "display_bands": "Strong/Some/Little/None banding for the normalized per-category share (spec \u00a76.1). strong_min=0.5 (majority share), some_min=0.25 (meaningfully present), little_min=0.10 (weak but non-trivial); anything below little_min displays as 'None'. These are Phase-1A display-only edges \u2014 exact percentages remain internal/API-only until the \u00a712 validation set clears calibration error targets (spec D5).",
     "deep_scan_calibration": "Per poc/calibration/v7_deberta_academic_baseline.json (checkpoint desklib/ai-text-detector-academic-v1.01 via Modal, calibrated 2026-07-04): the naive whole-document score from this checkpoint is USELESS at any reasonable threshold \u2014 its distribution is compressed near 1.0, so the production-convention SENT_THRESHOLD=0.99 gave a 68% FPR on human ESL essays when applied doc-level. Calibration was instead done at SENTENCE granularity, mirroring poc/detect/deberta_signal.py's SENT_THRESHOLD/DOC_FLOOR_PCT threshold-proportion design (see that file's module docstring for why averaging/isotonic calibration was rejected there too): each essay is split into sentences (poc.detect.deberta_windowing.split_sentences \u2014 the same splitter deberta_signal.py uses), each sentence is scored independently via Modal, and the document signal is proportion = fraction of sentences scoring >= sent_threshold. The swept threshold_sweep entry 'sent>=0.999_docfloor>=0.3' was selected: sent_threshold=0.999, doc_floor=0.3, giving fpr_higher_pct=6.5, fpr_lower_pct=5.3, parity_gap_pct=-1.2, tpr_ai_pct=100.0, sentence_auc_ai_vs_human=0.929 (n=139 higher-proficiency essays, 133 lower-proficiency essays, 65 AI texts). doc_floor=0.3 is a RELIABILITY floor, not a score floor: a proportion below it means too few sentences crossed sent_threshold to trust the reading, so pipeline_bridge.py must flag it as low-reliability (uncertainty_flags) rather than silently treating it as a small-but-meaningful signal or zeroing it out.",
     "deep_scan_display_bands": "User-facing 'Deep-scan AI estimate' tier bands for the sentence-proportion signal, mirroring poc/detect/deberta_signal.py's _band_for philosophy: NO 'green' band exists \u2014 a proportion below the reliability floor is 'insufficient evidence', never 'clean'. insufficient_below=0.3 is BY CONTRACT equal to deep_scan_calibration.doc_floor (the reliability floor; config.py enforces the equality). orange_min=0.5 and red_min=0.7 are presentational severity cutoffs, not independently calibrated verdict thresholds; they are anchored to poc/calibration/v7_deberta_academic_baseline.json's threshold_sweep at sent_threshold=0.999: 'sent>=0.999_docfloor>=0.5' measured fpr_higher_pct=0.7, fpr_lower_pct=0.8, parity_gap_pct=0.1, tpr_ai_pct=95.4 (a document at/above 0.5 is almost never a human ESL essay \u2014 sub-1% FPR \u2014 hence 'orange'); 'sent>=0.999_docfloor>=0.7' measured fpr_higher_pct=0.0, fpr_lower_pct=0.0, parity_gap_pct=0.0, tpr_ai_pct=76.9 (zero measured human FPR at/above 0.7 \u2014 hence 'red'). Between doc_floor (0.3, where measured FPR was 6.5%/5.3%) and 0.5 the signal is real but has non-trivial false-positive mass, so it displays as 'amber'.",
-    "tier_authority": "Per the V7 fused-score authority re-base (2026-07-03, poc/calibration/v7_fused_gate_result.json \u2014 GATE PASS): fused_score = 0.40 * composite_score_0_100 + 0.60 * deep_scan_proportion_0_1 * 100. The fused scale beats the composite alone on every gate axis (overall FPR 2.9%->0.4% at the 50-point composite/48-point-equivalent operating point, AUC 0.755->0.9955). A cutoff sweep ON THE FUSED SCALE validated that the EXISTING tier cutoffs (32/48/65, previously tuned for the composite-only scale) carry over unchanged: at 32, FPR 5.9%/TPR 99.2%; at 48, FPR 0.4%/TPR 89.5%; at 65, FPR 0%/TPR 46%. These are the same cutoff numbers as poc/detect/'s existing amber/orange/red tier boundaries \u2014 carried over, not re-derived \u2014 because the sweep showed the fused scale preserves them. Tier bands: green below amber, amber [32,48), orange [48,65), red >=65. This section only takes effect when DRAFTPROOF_V7_TIER_AUTHORITY is truthy AND a real deep-scan proportion is available (fail-open otherwise per poc/detect_v7/pipeline_bridge.py's is_v7_enabled/is_deep_scan_enabled pattern).",
-    "category_weights_tuning": "Tuned 2026-07-08 (detector-gated specificity split experiment; driver in scratchpad, transient/not committed). seed 45, 2000 Dirichlet trials + top-5 coordinate refinement, 70/30 stratified holdout, replayed offline over calibration/v12_validation/captures/signals_fused_v2.jsonl (captures derived from the fused path AFTER the split signals were added to the adapter). The split disambiguates the raw low_specificity criterion via the calibrated detector score: specificity_student_evidence = low_specificity*(1-detector), specificity_ai_evidence = low_specificity*detector (structural derivation in signal_adapter.py rows 9a/9b, not a tuned weight). student_owned now weights specificity_student_evidence and ai_generated_like weights specificity_ai_evidence; ai_assisted_polished keeps the raw specificity_score. Winner metrics (tune/holdout): false-AI 3.6%/0.0%, generated-like 80.4%/70.8%, ai_assisted_polished 85.2%/91.7%, macro 65.5%/65.6% \u2014 all four owner accuracy targets met. Class-level means (198-doc fused corpus) confirm monotone separation across student->polished->paraphrased->generated: student_ev 0.502/0.335/0.289/0.247, ai_ev 0.108/0.239/0.271/0.281. Supersedes the seed-42 promotion (2026-07-08). Do NOT touch tier_authority/fusion_weights/deep_scan_calibration/esl_guard/display_consistency_guard/flatness/display_bands."
+    "tier_authority": "Per the V7 fused-score authority re-base (2026-07-03, poc/calibration/v7_fused_gate_result.json \u2014 GATE PASS): fused_score = 0.40 * composite_score_0_100 + 0.60 * deep_scan_proportion_0_1 * 100. The fused scale beats the composite alone on every gate axis (overall FPR 2.9%->0.4% at the 50-point composite/48-point-equivalent operating point, AUC 0.755->0.9955). A cutoff sweep ON THE FUSED SCALE validated that the EXISTING tier cutoffs (32/48/65, previously tuned for the composite-only scale) carry over unchanged: at 32, FPR 5.9%/TPR 99.2%; at 48, FPR 0.4%/TPR 89.5%; at 65, FPR 0%/TPR 46%. These are the same cutoff numbers as poc/detect/'s existing amber/orange/red tier boundaries \u2014 carried over, not re-derived \u2014 because the sweep showed the fused scale preserves them. Tier bands: green below amber, amber [32,48), orange [48,65), red >=65. This section only takes effect when DRAFTPROOF_V7_TIER_AUTHORITY is truthy AND a real deep-scan proportion is available (fail-open otherwise per poc/detect_v7/pipeline_bridge.py's is_v7_enabled/is_deep_scan_enabled pattern)."
   },
   "fusion_weights": {
     "quick_scan": {
@@ -31,87 +30,87 @@
     "student_owned": [
       {
         "signal": "calibrated_detector_score",
-        "weight": 0.40323225082633035,
+        "weight": 0.24537831381746492,
         "direction": "inverse"
       },
       {
-        "signal": "specificity_student_evidence",
-        "weight": 0.32888494870986895,
+        "signal": "specificity_score",
+        "weight": 0.35929905483974445,
         "direction": "direct"
       },
       {
         "signal": "grounding_gap",
-        "weight": 0.02,
+        "weight": 0.026577851729110636,
         "direction": "inverse"
       },
       {
         "signal": "sentence_variance",
-        "weight": 0.07425165387881598,
+        "weight": 0.09582541800468207,
         "direction": "direct"
       },
       {
         "signal": "generic_density",
-        "weight": 0.02,
+        "weight": 0.06295657203697715,
         "direction": "inverse"
       },
       {
         "signal": "author_voice_absence",
-        "weight": 0.15363114658498472,
+        "weight": 0.20996278957202086,
         "direction": "inverse"
       }
     ],
     "ai_assisted_polished": [
       {
         "signal": "calibrated_detector_score",
-        "weight": 0.44610599830558684,
+        "weight": 0.47813516576570003,
         "direction": "midrange",
         "midrange_ref": "ai_assisted_polished_band"
       },
       {
         "signal": "sentence_smoothness",
-        "weight": 0.3207022062529421,
+        "weight": 0.07282285355161815,
         "direction": "direct"
       },
       {
         "signal": "specificity_score",
-        "weight": 0.020000000000000004,
+        "weight": 0.05489764469344222,
         "direction": "direct"
       },
       {
         "signal": "grounding_gap",
-        "weight": 0.020000000000000004,
+        "weight": 0.07966016530170167,
         "direction": "inverse"
       },
       {
         "signal": "local_style_shift",
-        "weight": 0.17319179544147106,
+        "weight": 0.25975276055219504,
         "direction": "direct"
       },
       {
         "signal": "semantic_drift",
-        "weight": 0.020000000000000004,
+        "weight": 0.05473141013534306,
         "direction": "inverse"
       }
     ],
     "ai_paraphrased_with_comparison": [
       {
         "signal": "calibrated_detector_score",
-        "weight": 0.23688123663745647,
+        "weight": 0.3521966536982748,
         "direction": "direct"
       },
       {
         "signal": "sentence_smoothness",
-        "weight": 0.12628123188749588,
+        "weight": 0.08867259831447166,
         "direction": "direct"
       },
       {
         "signal": "paraphrase_pattern_score",
-        "weight": 0.20470643273031533,
+        "weight": 0.3068468822633648,
         "direction": "direct"
       },
       {
         "signal": "author_voice_absence",
-        "weight": 0.02,
+        "weight": 0.0535419514276922,
         "direction": "direct"
       },
       {
@@ -121,51 +120,51 @@
       },
       {
         "signal": "meaning_preservation_score",
-        "weight": 0.39213109874473223,
+        "weight": 0.1787419142961965,
         "direction": "direct"
       }
     ],
     "ai_paraphrased_without_comparison": [
       {
         "signal": "calibrated_detector_score",
-        "weight": 0.4345851318428811,
+        "weight": 0.4852793154114942,
         "direction": "direct"
       },
       {
         "signal": "sentence_smoothness",
-        "weight": 0.23535254755410256,
+        "weight": 0.21053964553722904,
         "direction": "direct"
       },
       {
         "signal": "paraphrase_pattern_score",
-        "weight": 0.12904785568929394,
+        "weight": 0.09470544396304115,
         "direction": "direct"
       },
       {
         "signal": "author_voice_absence",
-        "weight": 0.02,
+        "weight": 0.09160285879604074,
         "direction": "direct"
       },
       {
         "signal": "generic_density",
-        "weight": 0.18101446491372244,
+        "weight": 0.11787273629219483,
         "direction": "direct"
       }
     ],
     "ai_generated_like": [
       {
         "signal": "calibrated_detector_score",
-        "weight": 0.5047321730356059,
+        "weight": 0.4067098958684304,
         "direction": "direct"
       },
       {
         "signal": "generic_density",
-        "weight": 0.3585307829999855,
+        "weight": 0.2826315818876476,
         "direction": "direct"
       },
       {
         "signal": "grounding_gap",
-        "weight": 0.02,
+        "weight": 0.025192786976566676,
         "direction": "direct"
       },
       {
@@ -175,24 +174,24 @@
       },
       {
         "signal": "author_voice_absence",
-        "weight": 0.056737043964408575,
+        "weight": 0.19743056376952853,
         "direction": "direct"
       },
       {
         "signal": "sentence_smoothness",
-        "weight": 0.02,
+        "weight": 0.048035171497826795,
         "direction": "direct"
       },
       {
-        "signal": "specificity_ai_evidence",
+        "signal": "specificity_score",
         "weight": 0.02,
-        "direction": "direct"
+        "direction": "inverse"
       }
     ]
   },
   "ai_assisted_polished_band": {
-    "low": 0.385408797975002,
-    "high": 0.9346951388551599
+    "low": 0.34453308583505443,
+    "high": 0.8356250400098975
   },
   "flatness_thresholds": {
     "confidence_low_gap": 0.1,
@@ -217,8 +216,7 @@
       "insufficient_below": 0.3,
       "orange_min": 0.5,
       "red_min": 0.7
-    },
-    "_provenance": "poc/calibration/v7_deberta_academic_baseline.json, checkpoint desklib/ai-text-detector-academic-v1.01, sentence_auc_ai_vs_human=0.929, fpr_higher_pct=6.5, fpr_lower_pct=5.3, parity_gap_pct=-1.2, tpr_ai_pct=100.0, calibrated 2026-07-04. Methodology: sentence-level threshold-proportion, mirrors poc/detect/deberta_signal.py's SENT_THRESHOLD/DOC_FLOOR_PCT design (see that file for why naive whole-document isotonic calibration was rejected)."
+    }
   },
   "tier_authority": {
     "weights": {
@@ -232,11 +230,264 @@
     },
     "_notes": "GATE PASS 2026-07-03, poc/calibration/v7_fused_gate_result.json: fused_score = 0.40 * composite_score_0_100 + 0.60 * deep_scan_proportion_0_1 * 100. Fused beats composite on every gate axis (overall FPR 2.9%->0.4%, AUC 0.755->0.9955). A cutoff sweep ON THE FUSED SCALE confirmed the EXISTING tier cutoffs 32/48/65 carry over unchanged: at 32, FPR 5.9%/TPR 99.2%; at 48, FPR 0.4%/TPR 89.5%; at 65, FPR 0%/TPR 46%. cutoffs are ascending (amber < orange < red); config.py validates this. Bands: green below amber, amber [amber,orange), orange [orange,red), red >=red."
   },
-  "display_consistency_guard": {
-    "student_owned_contradiction_tiers": [
-      "concerning",
-      "strong"
+  "_tuning_provenance": {
+    "seed": 42,
+    "trials": 2000,
+    "alpha_mult": 8.0,
+    "weight_floor": 0.02,
+    "band_delta": 0.15,
+    "holdout_tol": 0.1,
+    "generated_floor": 0.08,
+    "refine_step": 0.05,
+    "top_k": 5,
+    "n_tune": 138,
+    "n_holdout": 60,
+    "baseline_constants": {
+      "student_owned_false_ai_rate": 0.375,
+      "ai_generated_like_accuracy": 0.875,
+      "baseline_macro": 0.375
+    },
+    "tune_metrics": {
+      "macro_primary_accuracy": 0.5927579365079365,
+      "student_owned_false_ai_rate": 0.32142857142857145,
+      "per_class": {
+        "student_owned": {
+          "n": 28,
+          "primary_accuracy": 0.6785714285714286
+        },
+        "ai_assisted_polished": {
+          "n": 27,
+          "primary_accuracy": 0.8888888888888888
+        },
+        "ai_paraphrased": {
+          "n": 27,
+          "primary_accuracy": 0.0
+        },
+        "ai_generated_like": {
+          "n": 56,
+          "primary_accuracy": 0.8035714285714286
+        }
+      },
+      "confusion": {
+        "student_owned": {
+          "student_owned": 19,
+          "ai_assisted_polished": 3,
+          "ai_generated_like": 6
+        },
+        "ai_assisted_polished": {
+          "ai_assisted_polished": 24,
+          "ai_generated_like": 3
+        },
+        "ai_paraphrased": {
+          "ai_generated_like": 13,
+          "ai_assisted_polished": 14
+        },
+        "ai_generated_like": {
+          "ai_generated_like": 45,
+          "student_owned": 9,
+          "ai_assisted_polished": 2
+        }
+      }
+    },
+    "holdout_metrics": {
+      "macro_primary_accuracy": 0.5520833333333334,
+      "student_owned_false_ai_rate": 0.3333333333333333,
+      "per_class": {
+        "student_owned": {
+          "n": 12,
+          "primary_accuracy": 0.6666666666666666
+        },
+        "ai_assisted_polished": {
+          "n": 12,
+          "primary_accuracy": 0.5833333333333334
+        },
+        "ai_paraphrased": {
+          "n": 12,
+          "primary_accuracy": 0.0
+        },
+        "ai_generated_like": {
+          "n": 24,
+          "primary_accuracy": 0.9583333333333334
+        }
+      },
+      "confusion": {
+        "student_owned": {
+          "student_owned": 8,
+          "ai_generated_like": 3,
+          "ai_assisted_polished": 1
+        },
+        "ai_assisted_polished": {
+          "ai_assisted_polished": 7,
+          "ai_generated_like": 5
+        },
+        "ai_paraphrased": {
+          "ai_generated_like": 7,
+          "ai_assisted_polished": 5
+        },
+        "ai_generated_like": {
+          "ai_generated_like": 23,
+          "ai_assisted_polished": 1
+        }
+      }
+    },
+    "baseline_tune_metrics": {
+      "macro_primary_accuracy": 0.3660714285714286,
+      "student_owned_false_ai_rate": 0.35714285714285715,
+      "per_class": {
+        "student_owned": {
+          "n": 28,
+          "primary_accuracy": 0.6428571428571429
+        },
+        "ai_assisted_polished": {
+          "n": 27,
+          "primary_accuracy": 0.0
+        },
+        "ai_paraphrased": {
+          "n": 27,
+          "primary_accuracy": 0.0
+        },
+        "ai_generated_like": {
+          "n": 56,
+          "primary_accuracy": 0.8214285714285714
+        }
+      },
+      "confusion": {
+        "student_owned": {
+          "student_owned": 18,
+          "ai_generated_like": 10
+        },
+        "ai_assisted_polished": {
+          "ai_generated_like": 25,
+          "student_owned": 2
+        },
+        "ai_paraphrased": {
+          "ai_generated_like": 24,
+          "student_owned": 3
+        },
+        "ai_generated_like": {
+          "ai_generated_like": 46,
+          "student_owned": 10
+        }
+      }
+    },
+    "baseline_holdout_metrics": {
+      "macro_primary_accuracy": 0.39583333333333337,
+      "student_owned_false_ai_rate": 0.4166666666666667,
+      "per_class": {
+        "student_owned": {
+          "n": 12,
+          "primary_accuracy": 0.5833333333333334
+        },
+        "ai_assisted_polished": {
+          "n": 12,
+          "primary_accuracy": 0.0
+        },
+        "ai_paraphrased": {
+          "n": 12,
+          "primary_accuracy": 0.0
+        },
+        "ai_generated_like": {
+          "n": 24,
+          "primary_accuracy": 1.0
+        }
+      },
+      "confusion": {
+        "student_owned": {
+          "student_owned": 7,
+          "ai_generated_like": 5
+        },
+        "ai_assisted_polished": {
+          "ai_generated_like": 12
+        },
+        "ai_paraphrased": {
+          "ai_generated_like": 12
+        },
+        "ai_generated_like": {
+          "ai_generated_like": 24
+        }
+      }
+    },
+    "winner_collapse_routes_tune": [
+      {
+        "from": "ai_paraphrased",
+        "to": "ai_assisted_polished",
+        "count": 14,
+        "of": 27
+      },
+      {
+        "from": "ai_paraphrased",
+        "to": "ai_generated_like",
+        "count": 13,
+        "of": 27
+      },
+      {
+        "from": "ai_generated_like",
+        "to": "student_owned",
+        "count": 9,
+        "of": 56
+      },
+      {
+        "from": "student_owned",
+        "to": "ai_generated_like",
+        "count": 6,
+        "of": 28
+      },
+      {
+        "from": "student_owned",
+        "to": "ai_assisted_polished",
+        "count": 3,
+        "of": 28
+      },
+      {
+        "from": "ai_assisted_polished",
+        "to": "ai_generated_like",
+        "count": 3,
+        "of": 27
+      },
+      {
+        "from": "ai_generated_like",
+        "to": "ai_assisted_polished",
+        "count": 2,
+        "of": 56
+      }
     ],
-    "_notes": "Owner-approved companion to the 2026-07-08 category_weights re-tune (seed 42, see category_weights_tuning note above): post-rewire, 17/80 AI-generated docs in the \u00a712 validation set (poc/calibration/v12_validation/false_ai_diagnosis.json) display 'student_owned' as their top V7 category share while the badge tier (fused-score-driven, untouched by this guard) correctly reads concerning/strong \u2014 a contradictory display (red tier + 'the writing looks student-owned'). Per project alignment principle 'guards ANNOTATE, never SUPPRESS' (CLAUDE.md), this does not change shares or primary_category; it reuses the existing mixed_signals presentation + primary_category_reliable=False mechanism (poc/detect_v7/breakdown_composer.py's flatness guard) plus an uncertainty_flags entry, applied in poc/detect_v7/pipeline_bridge.py::run_v7_breakdown where the badge tier is available. Trigger tier set is 'concerning'/'strong' only (green/amber/clean/acceptable tiers are not contradicted by a student_owned read, so the guard fail-opens and does not fire there)."
+    "winner_collapse_routes_holdout": [
+      {
+        "from": "ai_paraphrased",
+        "to": "ai_generated_like",
+        "count": 7,
+        "of": 12
+      },
+      {
+        "from": "ai_assisted_polished",
+        "to": "ai_generated_like",
+        "count": 5,
+        "of": 12
+      },
+      {
+        "from": "ai_paraphrased",
+        "to": "ai_assisted_polished",
+        "count": 5,
+        "of": 12
+      },
+      {
+        "from": "student_owned",
+        "to": "ai_generated_like",
+        "count": 3,
+        "of": 12
+      },
+      {
+        "from": "student_owned",
+        "to": "ai_assisted_polished",
+        "count": 1,
+        "of": 12
+      },
+      {
+        "from": "ai_generated_like",
+        "to": "ai_assisted_polished",
+        "count": 1,
+        "of": 24
+      }
+    ]
   }
 }

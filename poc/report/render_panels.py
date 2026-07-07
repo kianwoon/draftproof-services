@@ -262,8 +262,35 @@ def _deep_scan_paragraphs_html(breakdown: dict) -> str:
             + "".join(rows) + "</div>")
 
 
+# Tier-consistency guard caveat (poc/detect_v7/pipeline_bridge.py::_apply_tier_consistency_guard
+# sets breakdown["presentation"] = "mixed_signals"). Verbatim copy KEPT IN SYNC with
+# draftproof-frontend/src/i18n/en/report.js report.merged.compositionMixedSignalsCaveat.
+_MIXED_SIGNALS_CAVEAT_TEXT = (
+    "Mixed signals — the category shares below conflict with this document's risk tier. "
+    "Treat the composition as inconclusive and review the flagged passages."
+)
+
+# Owner-mandated framing (2026-07-08): the detection tier is the AI-risk AUTHORITY;
+# the composition breakdown is a display/category INTERPRETATION. Verbatim copy KEPT
+# IN SYNC with draftproof-frontend/src/i18n/en/report.js report.merged.verdictFramingNote
+# and MergedAuthorshipRisk.jsx's .merged-verdict-framing paragraph.
+_VERDICT_FRAMING_TEXT = (
+    "Detection verdict — this tier is DraftProof's AI-risk assessment, driven by the "
+    "calibrated detector. The composition breakdown below is a display interpretation "
+    "and does not override it."
+)
+
+
 def _authorship_bars_html(breakdown: dict) -> str:
-    """The 4 color-coded category bars + disclaimer. '' when no breakdown."""
+    """The 4 color-coded category bars + disclaimer. '' when no breakdown.
+
+    KEEP-IN-SYNC: draftproof-frontend/src/pages/report/MergedAuthorshipRisk.jsx's
+    composition section — when breakdown.presentation == "mixed_signals" both surfaces
+    show the same tier-consistency-guard caveat immediately above the bars."""
+    caveat_html = (
+        f'<p class="dp-abd-caveat">{escape(_MIXED_SIGNALS_CAVEAT_TEXT)}</p>'
+        if breakdown.get("presentation") == "mixed_signals" else ""
+    )
     raw_shares = breakdown.get("document_breakdown_raw") or {}
     band_shares = breakdown.get("document_breakdown_bands") or {}
     rows = []
@@ -286,7 +313,7 @@ def _authorship_bars_html(breakdown: dict) -> str:
             f'<span class="dp-abd-bar-fill dp-abd-fill--{category}" style="width:{width_pct}%"></span></span>'
             '</div>'
         )
-    out = '<div class="dp-abd-bars">' + "".join(rows) + "</div>"
+    out = caveat_html + '<div class="dp-abd-bars">' + "".join(rows) + "</div>"
     disclaimer = breakdown.get("disclaimer")
     if disclaimer:
         out += f'<p class="dp-hero-sub">{escape(str(disclaimer))}</p>'
@@ -598,10 +625,21 @@ def render_merged_authorship_risk(report, data) -> str:
     lead = render_scan_lead(report, data, suppress_ai_likelihood=bool(breakdown))
     if not breakdown:
         return lead
+    # Owner-mandated framing: the verdict headline above is the AI-risk AUTHORITY;
+    # the composition bars below are a display INTERPRETATION. KEEP-IN-SYNC:
+    # draftproof-frontend/src/pages/report/MergedAuthorshipRisk.jsx's
+    # .merged-verdict-framing paragraph + report.merged.compositionLensNote.
+    verdict_framing = f'<p class="dp-hero-sub dp-verdict-framing">{escape(_VERDICT_FRAMING_TEXT)}</p>'
+    composition_subhead = (
+        '<p class="dp-cmp-subhead">How the writing reads &middot; sums to 100% '
+        "&mdash; an interpretive breakdown of writing character, not the AI-risk verdict above</p>"
+    )
     header = ('<div class="authorship-breakdown">'
               '<p class="dp-callout-title">Authorship &amp; submission risk '
               '<span class="dp-statchip dp-statchip--info">Beta</span></p>'
               + _authorship_headline_html(badge, breakdown)
+              + verdict_framing
+              + composition_subhead
               + _authorship_bars_html(breakdown)
               + _deep_scan_paragraphs_html(breakdown)
               + "</div>")

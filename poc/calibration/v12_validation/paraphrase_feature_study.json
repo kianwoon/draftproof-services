@@ -1,0 +1,134 @@
+{
+  "generated_at": "2026-07-07T21:25:46.690103+00:00",
+  "spec": "Task 6 — paraphrase-signal feature study (MiniLM standalone features vs frame_reuse)",
+  "model": "sentence-transformers/paraphrase-MiniLM-L6-v2",
+  "min_sentences_threshold": 3,
+  "skipped_unresolvable": 0,
+  "skipped_short": 2,
+  "n_docs_used": 196,
+  "class_counts": {
+    "student_owned": 39,
+    "ai_assisted_polished": 39,
+    "ai_paraphrased": 39,
+    "ai_generated_like": 79
+  },
+  "frame_reuse_note": "computed standalone via detect.criteria.structural_reuse.score()",
+  "auc_one_vs_one": {
+    "adjacent_cosine_mean": {
+      "ai_paraphrased_vs_student_owned": 0.5049,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.4931,
+      "ai_paraphrased_vs_ai_generated_like": 0.3398
+    },
+    "pairwise_cosine_std": {
+      "ai_paraphrased_vs_student_owned": 0.3511,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.3485,
+      "ai_paraphrased_vs_ai_generated_like": 0.6693
+    },
+    "embedding_norm_cv": {
+      "ai_paraphrased_vs_student_owned": 0.2788,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.4116,
+      "ai_paraphrased_vs_ai_generated_like": 0.6125
+    },
+    "frame_reuse": {
+      "ai_paraphrased_vs_student_owned": 0.8527,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.4158,
+      "ai_paraphrased_vs_ai_generated_like": 0.5811
+    }
+  },
+  "auc_one_vs_rest": {
+    "adjacent_cosine_mean": 0.4189,
+    "pairwise_cosine_std": 0.5105,
+    "embedding_norm_cv": 0.4797,
+    "frame_reuse": 0.6075
+  },
+  "esl_subgroup_check": {
+    "adjacent_cosine_mean": {
+      "lower_vs_higher_auc": 0.5395,
+      "n_higher": 19,
+      "n_lower": 20,
+      "student_owned_vs_ai_flagging_auc": 0.5698
+    },
+    "pairwise_cosine_std": {
+      "lower_vs_higher_auc": 0.3579,
+      "n_higher": 19,
+      "n_lower": 20,
+      "student_owned_vs_ai_flagging_auc": 0.3227
+    },
+    "embedding_norm_cv": {
+      "lower_vs_higher_auc": 0.45,
+      "n_higher": 19,
+      "n_lower": 20,
+      "student_owned_vs_ai_flagging_auc": 0.2917
+    },
+    "frame_reuse": {
+      "lower_vs_higher_auc": 0.4711,
+      "n_higher": 19,
+      "n_lower": 20,
+      "student_owned_vs_ai_flagging_auc": 0.7992
+    }
+  },
+  "feature_correlation_matrix": {
+    "adjacent_cosine_mean": {
+      "adjacent_cosine_mean": 1.0,
+      "pairwise_cosine_std": -0.1678,
+      "embedding_norm_cv": -0.4188,
+      "frame_reuse": 0.3328
+    },
+    "pairwise_cosine_std": {
+      "adjacent_cosine_mean": -0.1678,
+      "pairwise_cosine_std": 1.0,
+      "embedding_norm_cv": 0.1952,
+      "frame_reuse": 0.0491
+    },
+    "embedding_norm_cv": {
+      "adjacent_cosine_mean": -0.4188,
+      "pairwise_cosine_std": 0.1952,
+      "embedding_norm_cv": 1.0,
+      "frame_reuse": -0.3178
+    },
+    "frame_reuse": {
+      "adjacent_cosine_mean": 0.3328,
+      "pairwise_cosine_std": 0.0491,
+      "embedding_norm_cv": -0.3178,
+      "frame_reuse": 1.0
+    }
+  },
+  "quantiles": {
+    "adjacent_cosine_mean": {
+      "p10_all": 0.3192,
+      "p90_all": 0.5141,
+      "p10_ai_paraphrased": 0.3255,
+      "p90_ai_paraphrased": 0.4618
+    },
+    "pairwise_cosine_std": {
+      "p10_all": 0.1088,
+      "p90_all": 0.1729,
+      "p10_ai_paraphrased": 0.1214,
+      "p90_ai_paraphrased": 0.1663
+    },
+    "embedding_norm_cv": {
+      "p10_all": 0.0682,
+      "p90_all": 0.132,
+      "p10_ai_paraphrased": 0.0783,
+      "p90_ai_paraphrased": 0.1131
+    },
+    "frame_reuse": {
+      "p10_all": 0.0,
+      "p90_all": 0.1007,
+      "p10_ai_paraphrased": 0.0577,
+      "p90_ai_paraphrased": 0.0967
+    }
+  },
+  "gate_verdict": {
+    "auc_gate_threshold": 0.7,
+    "esl_gate_threshold": 0.6,
+    "best_feature": "pairwise_cosine_std",
+    "direction": "high_is_paraphrase",
+    "best_feature_raw_auc_vs_ai_generated_like": 0.6693,
+    "best_feature_effective_auc_vs_ai_generated_like": 0.6693,
+    "best_feature_esl_lower_vs_higher_auc": 0.3579,
+    "best_feature_esl_directional_flagging_auc": 0.3579,
+    "best_feature_auc_vs_ai_assisted_polished": 0.3485,
+    "gate_passed": false
+  }
+}

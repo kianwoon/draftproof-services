@@ -73,13 +73,21 @@ def _full_raw_signals(has_comparison_text: bool = False) -> dict:
         "criterion_scores": _real_criterion_scores(),
         "semantic_shape": {"semantic_drift_risk": 0.31},
         "has_comparison_text": has_comparison_text,
+        # Fused calibrated detector score threaded in by the caller
+        # (pipeline_bridge.run_v7_breakdown); gates the specificity split.
+        "calibrated_detector_score": 0.60,
     }
 
 
-def test_all_14_signal_keys_present():
+def test_all_signal_keys_present():
     out = adapt_paragraph_signals(_full_raw_signals())
     assert set(V7_SIGNAL_NAMES) == set(out.keys()) - {"signal_status"}
-    assert len(V7_SIGNAL_NAMES) == 14
+    # 14 original V7 signals + 2 detector-gated specificity-split derivations
+    # (specificity_student_evidence / specificity_ai_evidence, 2026-07-08 —
+    # see weights.json _notes.category_weights_tuning).
+    assert len(V7_SIGNAL_NAMES) == 16
+    assert "specificity_student_evidence" in V7_SIGNAL_NAMES
+    assert "specificity_ai_evidence" in V7_SIGNAL_NAMES
     for name in V7_SIGNAL_NAMES:
         assert name in out
         assert name in out["signal_status"]
@@ -132,6 +140,57 @@ def test_detector_disagreement_normalizes_0_100_scale():
     out = adapt_paragraph_signals(_full_raw_signals())
     # input was 44.0 (0-100 scale) -> expect ~0.44
     assert abs(out["detector_disagreement"] - 0.44) < 1e-6
+
+
+# --- Detector-gated specificity split (2026-07-08) ---------------------------
+
+def test_specificity_split_present_and_partitions_specificity():
+    """With both specificity_score and a detector score present, the two
+    derived signals are the low_specificity value gated by (1-detector) and
+    detector, and therefore sum back to the raw specificity_score."""
+    out = adapt_paragraph_signals(_full_raw_signals())  # detector=0.60
+    spec = out["specificity_score"]
+    student = out["specificity_student_evidence"]
+    ai = out["specificity_ai_evidence"]
+    assert isinstance(student, float) and isinstance(ai, float)
+    assert out["signal_status"]["specificity_student_evidence"] == "ok"
+    assert out["signal_status"]["specificity_ai_evidence"] == "ok"
+    assert abs(student - spec * (1.0 - 0.60)) < 1e-9
+    assert abs(ai - spec * 0.60) < 1e-9
+    # Partition identity: the split conserves the raw specificity mass.
+    assert abs((student + ai) - spec) < 1e-9
+    assert 0.0 <= student <= 1.0 and 0.0 <= ai <= 1.0
+
+
+def test_specificity_split_unavailable_when_no_detector_score():
+    raw = _full_raw_signals()
+    raw.pop("calibrated_detector_score")
+    out = adapt_paragraph_signals(raw)
+    assert out["specificity_student_evidence"] is None
+    assert out["specificity_ai_evidence"] is None
+    assert out["signal_status"]["specificity_student_evidence"] == "unavailable"
+    assert out["signal_status"]["specificity_ai_evidence"] == "unavailable"
+
+
+def test_specificity_split_unavailable_when_no_specificity():
+    """No criterion_scores -> specificity_score is None -> split unavailable
+    even though a detector score is present."""
+    raw = _full_raw_signals()
+    raw["criterion_scores"] = {}
+    out = adapt_paragraph_signals(raw)
+    assert out["specificity_score"] is None
+    assert out["specificity_student_evidence"] is None
+    assert out["specificity_ai_evidence"] is None
+    assert out["signal_status"]["specificity_student_evidence"] == "unavailable"
+    assert out["signal_status"]["specificity_ai_evidence"] == "unavailable"
+
+
+def test_specificity_split_ignores_non_numeric_detector_score():
+    raw = _full_raw_signals()
+    raw["calibrated_detector_score"] = True  # bool must NOT count as numeric
+    out = adapt_paragraph_signals(raw)
+    assert out["specificity_student_evidence"] is None
+    assert out["specificity_ai_evidence"] is None
 
 
 def test_predictable_structure_is_mean_not_max_of_four_inputs():
