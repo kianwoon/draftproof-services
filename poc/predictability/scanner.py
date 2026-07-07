@@ -132,43 +132,48 @@ class PredictabilityScanner:
         model_name = resolve_predictability_model_name(model_name)
         self.model_name = model_name
 
-        # Use preloaded model from worker entrypoint if available
-        preloaded_matches = (
-            _PRELOADED_MODEL is not None
-            and _PRELOADED_TOKENIZER is not None
-            and _PRELOADED_MODEL_NAME == model_name
-        )
-        if preloaded_matches:
-            logger.info("Using preloaded %s model from entrypoint cache", model_name)
-            self.tokenizer = _PRELOADED_TOKENIZER
-            self.model = _PRELOADED_MODEL
-        else:
-            if _PRELOADED_MODEL is not None and _PRELOADED_MODEL_NAME != model_name:
-                logger.warning(
-                    "Ignoring preloaded predictability model %s; requested %s",
-                    _PRELOADED_MODEL_NAME,
-                    model_name,
-                )
-            logger.info("Loading %s model (no preload cache found) ...", model_name)
-            try:
-                self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
-                self.model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=True)
-            except OSError:
-                logger.warning("Model not in cache, downloading from HuggingFace...")
-                self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-                self.model = AutoModelForCausalLM.from_pretrained(model_name)
-            self.model.to(self.device)
-            self.model.eval()
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-            # Backfill the process-level cache so the first lazy load warms it for
-            # every later scanner in this worker child. Without this, each re-scan
-            # (the rewrite pipeline re-scans many times per job) reloads the model
-            # from disk -- the repeated "no preload cache found" loads. The explicit
-            # entrypoint preload then becomes a pure latency optimization, not a
-            # correctness requirement. First load for a given name wins; a different
-            # model_name later still loads fresh (single-model is the norm).
-            _cache_predictability_model(model_name, self.tokenizer, self.model)
+        # Use preloaded model from worker entrypoint if available. The check-then-load
+        # must hold the cache lock end-to-end: the parallel writer threads construct
+        # scanners concurrently, and without the lock every cold thread sees an empty
+        # cache and loads its own GPT-2 (duplicate ~0.5GB allocations per worker,
+        # observed as back-to-back "no preload cache found" loads in the worker log).
+        with _PRELOAD_CACHE_LOCK:
+            preloaded_matches = (
+                _PRELOADED_MODEL is not None
+                and _PRELOADED_TOKENIZER is not None
+                and _PRELOADED_MODEL_NAME == model_name
+            )
+            if preloaded_matches:
+                logger.info("Using preloaded %s model from entrypoint cache", model_name)
+                self.tokenizer = _PRELOADED_TOKENIZER
+                self.model = _PRELOADED_MODEL
+            else:
+                if _PRELOADED_MODEL is not None and _PRELOADED_MODEL_NAME != model_name:
+                    logger.warning(
+                        "Ignoring preloaded predictability model %s; requested %s",
+                        _PRELOADED_MODEL_NAME,
+                        model_name,
+                    )
+                logger.info("Loading %s model (no preload cache found) ...", model_name)
+                try:
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+                    self.model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=True)
+                except OSError:
+                    logger.warning("Model not in cache, downloading from HuggingFace...")
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+                    self.model = AutoModelForCausalLM.from_pretrained(model_name)
+                self.model.to(self.device)
+                self.model.eval()
+                if self.tokenizer.pad_token is None:
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
+                # Backfill the process-level cache so the first lazy load warms it for
+                # every later scanner in this worker child. Without this, each re-scan
+                # (the rewrite pipeline re-scans many times per job) reloads the model
+                # from disk -- the repeated "no preload cache found" loads. The explicit
+                # entrypoint preload then becomes a pure latency optimization, not a
+                # correctness requirement. First load for a given name wins; a different
+                # model_name later still loads fresh (single-model is the norm).
+                _cache_predictability_model(model_name, self.tokenizer, self.model)
 
         logger.info(
             "Scanner ready: version=%s model=%s device=%s params=%s",
