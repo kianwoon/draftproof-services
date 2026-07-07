@@ -22,6 +22,7 @@ export default function Footer() {
           <a href={publicPath('/#engine')}>{t('footer.howItWorks')}</a>
           <a href={publicPath('/#report')}>{t('footer.sampleReport')}</a>
           <Link to={publicPath('/content-checker')}>{t('footer.essayChecker')}</Link>
+          <Link to={publicPath('/rewrite')}>{t('footer.rewrite')}</Link>
           <Link to={publicPath('/academic-integrity-ai')}>{t('footer.academicIntegrity')}</Link>
           <Link to={publicPath('/turnitin-ai-score')}>{t('footer.turnitinScore')}</Link>
           <Link to={publicPath('/ai-declaration')}>{t('footer.aiDeclaration')}</Link>

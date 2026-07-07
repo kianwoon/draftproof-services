@@ -45,6 +45,7 @@ export const featuresPage = {
       body: "在你写作的地方直接扫描选中的文字 —— DraftProof 提供 Microsoft Word 与 Google 文档加载项，无需复制粘贴。",
     },
   ],
+  rewriteLearnMore: "了解改写的工作方式 →",
   rewriteCards: [
     {
       icon: "ti-writing",

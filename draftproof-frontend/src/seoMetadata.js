@@ -59,6 +59,14 @@ export const PAGE_META = {
     schemaType: 'AboutPage',
     freshness: { type: 'reviewed', date: '2026-07-05' },
   },
+  '/rewrite': {
+    titleKey: 'seo.rewriteTitle',
+    descriptionKey: 'seo.rewriteDescription',
+    socialDescriptionKey: 'seo.rewriteSocialDescription',
+    canonical: '/rewrite',
+    schemaType: 'WebPage',
+    freshness: { type: 'reviewed', date: '2026-07-06' },
+  },
   '/content-checker': {
     titleKey: 'seo.essayCheckerTitle',
     descriptionKey: 'seo.essayCheckerDescription',

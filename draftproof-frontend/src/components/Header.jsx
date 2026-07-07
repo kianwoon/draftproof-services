@@ -17,6 +17,7 @@ export default function Header() {
     { to: publicPath('/#product'), label: t('nav.why') },
     { to: publicPath('/features'), label: t('nav.features') },
     { to: publicPath('/technology'), label: t('nav.technology') },
+    { to: publicPath('/rewrite'), label: t('nav.rewrite') },
     { to: publicPath('/content-checker'), label: t('nav.essayChecker') },
     { to: publicPath('/pricing'), label: t('nav.pricing') },
     { to: publicPath('/faq'), label: t('nav.faq') },

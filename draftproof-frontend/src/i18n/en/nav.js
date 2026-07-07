@@ -14,6 +14,7 @@ export const nav = {
   "why": "Why",
   "features": "Features",
   "technology": "Technology",
+  "rewrite": "Rewrite",
   "essayChecker": "Content checker",
   "pricing": "Pricing",
   "faq": "FAQ",

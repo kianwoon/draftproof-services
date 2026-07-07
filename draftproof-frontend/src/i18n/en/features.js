@@ -45,6 +45,7 @@ export const featuresPage = {
       body: "Scan highlighted text right where you write — DraftProof add-ins for Microsoft Word and Google Docs, no copy-paste.",
     },
   ],
+  rewriteLearnMore: "See how the rewrite works →",
   rewriteCards: [
     {
       icon: "ti-writing",
