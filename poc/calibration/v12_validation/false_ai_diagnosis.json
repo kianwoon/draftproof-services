@@ -1,0 +1,142 @@
+{
+  "created": "2026-07-08",
+  "scope": "13/40 student_owned docs with AI-flavored primary_category (fused path, tuned weights fca22a0a)",
+  "root_cause_1_dead_signal_wiring": {
+    "dark_signals": [
+      "specificity_score",
+      "sentence_variance",
+      "sentence_smoothness",
+      "local_style_shift",
+      "detector_disagreement"
+    ],
+    "impact_weights": {
+      "student_owned.specificity_score": 0.3593,
+      "student_owned.sentence_variance": 0.0958,
+      "ai_paraphrased_without_comparison.sentence_smoothness": 0.2105
+    }
+  },
+  "root_cause_2_mechanism": {
+    "mean_signal_gaps_falseAI_vs_correct": {
+      "generic_density": 0.284,
+      "author_voice_absence": 0.228,
+      "calibrated_detector_score": 0.072
+    }
+  },
+  "margins": {
+    "lose_by_lt_0.05_share": 7,
+    "lose_by_lt_0.13": 11,
+    "max_loss": 0.171,
+    "note": "mostly near-ties; a restored specificity signal plausibly flips most"
+  },
+  "proficiency_split": {
+    "higher": "7/20 (35%)",
+    "lower": "6/20 (30%)",
+    "note": "NOT a covert lower-proficiency bias; hits generic-styled essays of both groups"
+  },
+  "guard_status": {
+    "degraded_true": "13/13",
+    "confidence_low": "9/13",
+    "primary_category_reliable_false": "13/13"
+  },
+  "cases": [
+    {
+      "doc_key": "35abd81d686090ad",
+      "pred": "ai_generated_like",
+      "margin": -0.157,
+      "det": 0.153,
+      "confidence": null
+    },
+    {
+      "doc_key": "dc3a3d772faf2d00",
+      "pred": "ai_generated_like",
+      "margin": -0.007,
+      "det": 0.21,
+      "confidence": "low"
+    },
+    {
+      "doc_key": "e9e7967667835420",
+      "pred": "ai_generated_like",
+      "margin": -0.023,
+      "det": 0.205,
+      "confidence": "low"
+    },
+    {
+      "doc_key": "1f4c3909c25fc324",
+      "pred": "ai_assisted_polished",
+      "margin": -0.125,
+      "det": 0.339,
+      "confidence": "low"
+    },
+    {
+      "doc_key": "9afb9653132febd4",
+      "pred": "ai_generated_like",
+      "margin": -0.049,
+      "det": 0.266,
+      "confidence": "low"
+    },
+    {
+      "doc_key": "7ea7906a4ce194cb",
+      "pred": "ai_generated_like",
+      "margin": -0.1,
+      "det": 0.304,
+      "confidence": "low"
+    },
+    {
+      "doc_key": "7307f17e6942c765",
+      "pred": "ai_assisted_polished",
+      "margin": -0.009,
+      "det": 0.249,
+      "confidence": "low"
+    },
+    {
+      "doc_key": "25a0170a7ae8dabe",
+      "pred": "ai_generated_like",
+      "margin": -0.171,
+      "det": 0.21,
+      "confidence": null
+    },
+    {
+      "doc_key": "ecde0790e342c0e9",
+      "pred": "ai_generated_like",
+      "margin": -0.113,
+      "det": 0.12,
+      "confidence": null
+    },
+    {
+      "doc_key": "d3b494615d8f1490",
+      "pred": "ai_assisted_polished",
+      "margin": -0.044,
+      "det": 0.28,
+      "confidence": "low"
+    },
+    {
+      "doc_key": "1aaff85d4a5c7b8a",
+      "pred": "ai_generated_like",
+      "margin": -0.122,
+      "det": 0.119,
+      "confidence": null
+    },
+    {
+      "doc_key": "fd21bfd62f6493df",
+      "pred": "ai_assisted_polished",
+      "margin": -0.006,
+      "det": 0.247,
+      "confidence": "low"
+    },
+    {
+      "doc_key": "5f9983744657bb1a",
+      "pred": "ai_generated_like",
+      "margin": -0.031,
+      "det": 0.223,
+      "confidence": "low"
+    }
+  ],
+  "_notes": {
+    "root_cause_1": "signal_adapter's criterion-derived signals are unavailable on 198/198 docs AND in production: builder.py hands run_v7_breakdown {**ai_risk_badge, document_text, _precomputed_deep_scan} but criterion_scores lives in builder._summaries and is NOT a badge key, so _extract_criterion_scores always returns None at this call site",
+    "root_cause_1_note": "specificity is the shipped ESL false-positive protection (2026-06-28) \u2014 it never reaches the V7 category layer; also keeps degraded=True on 100% of docs",
+    "root_cause_2": "all 13 false-AI docs have LOW fused detector scores (0.12-0.34, detector says human); category layer overrides via generic_density and author_voice_absence with no specificity counterweight",
+    "guard_note": "false for all 13 \u2014 never asserted in email; but share percentages ARE displayed (owner decision #15), so the wrong top category is visible on the report page",
+    "recommendation": "wire criterion_scores into the run_v7_breakdown dict (builder + capture parity), re-capture (free, cache-warm), re-tune, re-promote through the same gates; THEN re-judge Phase 4 ESL estimator on the true post-fix false-AI rate",
+    "provenance": "diagnosed from captures/signals_fused.jsonl offline replay (proven exact vs e2e); proficiency mapped via corpus manifest + SCoCESLE dirs"
+  }
+}
