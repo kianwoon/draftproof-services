@@ -173,10 +173,41 @@ git add poc/calibration/v12_validation/measure.py poc/calibration/v12_validation
 git commit -m "feat(v12): --fused measurement mode with cache-backed Modal deep-scan wrapper"
 ```
 
-### Task 2: Run the paid fused measurement (MAIN SESSION ONLY)
+### Task 2: Rebuild corpus, lock baselines, run the paid fused measurement (MAIN SESSION ONLY)
+
+**AMENDMENT (2026-07-08):** the generated §12 corpus (78 LLM variants + manifest.json) was lost with a deleted worktree (gitignored, existed nowhere else). Steps 0a–0d added: rebuild it, re-baseline quick-scan on the REBUILT corpus (the committed 2026-07-06 baseline measured different generated texts — not comparable), and lock the "before" artifacts. Owner-requested hardening (same date): baseline artifact lock + no-text leakage test.
 
 **Files:**
 - Create: `poc/calibration/v12_validation/category_agreement_fused_baseline.json` (committed, numbers-only)
+- Create: `poc/calibration/v12_validation/baseline_lock.json` (committed — weights sha256 + rebuilt-corpus quick-scan reference metrics)
+- Create: `poc/calibration/v12_validation/test_no_text_leakage.py` (committed guard test)
+- Update: `poc/calibration/v12_validation/category_agreement_baseline.json` (re-measured on rebuilt corpus, provenance-noted)
+
+- [ ] **Step 0a: Rebuild the corpus (OpenRouter, small LLM spend)**
+
+```bash
+cd poc && set -a && source ../.env && set +a
+python -m calibration.v12_validation.build
+```
+Expected: `sampled 40 human essays`, variants generated, `manifest: ~198 rows`. Corpus stays gitignored.
+
+- [ ] **Step 0b: Re-baseline quick-scan on the rebuilt corpus ($0)**
+
+```bash
+cd poc && python -m calibration.v12_validation.measure
+```
+Overwrites `category_agreement_baseline.json`. Add a `"provenance"` string field noting "rebuilt corpus 2026-07-08; supersedes 2026-07-06 baseline (corpus texts regenerated, not comparable doc-for-doc)".
+
+- [ ] **Step 0c: Baseline artifact lock**
+
+```bash
+cd poc && shasum -a 256 detect_v7/weights.json
+```
+Write `baseline_lock.json` (committed) with: `weights_sha256`, and from Step 0b's output: `quick_macro_primary_accuracy`, `student_owned_false_ai_primary_rate`, `ai_generated_like_primary_accuracy`, `middle_class_accuracy` (per middle class), `corpus_manifest_version`. This is the clean "before" reference every later comparison anchors to — after multiple candidate runs, memory of the starting point must be a committed artifact, not conversation history.
+
+- [ ] **Step 0d: No-text leakage guard test**
+
+Write `test_no_text_leakage.py`: for every committed JSON under `poc/calibration/v12_validation/` (baselines, lock, `candidates/*.json`), recursively assert (1) no string value over 300 chars EXCEPT under keys named `_notes`, `_tuning_provenance`, or `provenance`; (2) no key named `text`, `document_text`, `essay`, `content`, or `source_text` at any depth. Run it; it must pass on the Step 0b/0c artifacts. This mechanically enforces the numbers-only rule against accidental corpus leakage (license).
 
 - [ ] **Step 1: Smoke run (≤8 paid docs, ~$0.03)**
 
@@ -404,9 +435,10 @@ git commit -m "feat(v12): per-doc signal capture for offline category-weight tun
 - Stratified 70/30 tune/holdout split by label, `--seed 42`.
 - `--trials 2000` random candidates: for each category, sample weight vector from Dirichlet(α = 8 × current_weights) — concentrated near current, occasional exploration; renormalize to sum 1.0; floor each weight at 0.02. `ai_assisted_polished_band` lo/hi sampled uniform within ±0.15 of current, keeping lo < hi.
 - Candidate evaluation: point `DRAFTPROOF_V7_WEIGHTS_PATH` at a temp candidate file, `config.reload_weights(force=True)`, replay every tune-split row through `score_paragraph`, compute macro primary accuracy + `student_owned` false-AI rate. (Real scorer, real config path — zero reimplementation of scoring math.)
-- Objective: maximize tune-split macro accuracy **subject to** tune-split `student_owned` false-AI rate ≤ the fused baseline value from Task 2. Tie-break: higher `student_owned` accuracy.
+- Objective: maximize tune-split macro accuracy **subject to** BOTH hard constraints: (1) tune-split `student_owned` false-AI rate ≤ the fused baseline value from Task 2; (2) tune-split `ai_generated_like` primary accuracy ≥ (fused baseline `ai_generated_like` accuracy − 0.08) — without this floor the tuner can "fix" the middle classes by gutting the generated-like class, trading the detector's core competence for macro points. Tie-break: higher `student_owned` accuracy.
 - Top-5 candidates → coordinate refinement (±0.05 per weight, renormalize, keep improvements).
-- Winner must ALSO satisfy on holdout: macro ≥ (tune macro − 10 pts) AND false-AI constraint. Otherwise report "no candidate generalizes" honestly and stop — do not ship an overfit vector.
+- Winner must ALSO satisfy on holdout: macro ≥ (tune macro − 10 pts) AND both hard constraints above. Otherwise report "no candidate generalizes" honestly and stop — do not ship an overfit vector.
+- Tuner output includes **disagreement diagnostics**: the full confusion matrix plus a ranked "top collapse routes" list (e.g. `ai_paraphrased → ai_generated_like: 34/39`), for the winner AND the baseline weights, tune + holdout splits. Different collapse routes demand different fixes — `ai_paraphrased → ai_generated_like` says build the paraphrase signal (Phase 3); `ai_assisted_polished → student_owned` says the polish band is misplaced (re-tune the band, not a new signal). The Phase 3 gate reads these routes, not just the accuracy number.
 - Restore original `DRAFTPROOF_V7_WEIGHTS_PATH` state in `finally:`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -559,7 +591,13 @@ EOF
 ```
 Expected: `tier-invariant: OK`. Any drift means candidate touched keys beyond category display — reject.
 
-- [ ] **Step 3: Promote into weights.json**
+- [ ] **Step 3: Promotion gate, then promote into weights.json**
+
+**PROMOTION GATE (owner-mandated, 2026-07-08):** promote ONLY if, on the fused e2e re-measure vs `baseline_lock.json` + the fused baseline:
+- at least one middle class (`ai_assisted_polished` or `ai_paraphrased`) improves by ≥ 10 percentage points, **OR**
+- macro improves by ≥ 8 points — **AND in either case** `student_owned` false-AI rate does not worsen and `ai_generated_like` accuracy stays within 8 points of baseline.
+
+A candidate that only nudges macro without moving a middle class is promoting noise — the product problem IS the middle-class collapse. If no candidate passes, report honestly, record the collapse-route diagnostics, and let the Phase 3 gate decide the next move.
 
 Copy the candidate's `category_weights` + `ai_assisted_polished_band` into `poc/detect_v7/weights.json`. Add to `_notes`: seed, trial count, tune/holdout/e2e metrics, baseline it beat, date, and the candidate file path (the `_notes` block is the provenance ledger — same convention as the existing `deep_scan_calibration` note).
 
@@ -576,7 +614,7 @@ git commit -m "feat(v7): promote tuned category weights (seed 42) — macro <X>%
 ```
 (Fill X/Y/A/B from the measured numbers — the commit message carries the evidence.)
 
-**PHASE 3 GATE (owner-visible):** if promoted `ai_paraphrased` primary accuracy ≥ 0.30 on the fused e2e re-measure → Phase 3 is SKIPPED, program ends here with a summary. Below 0.30 → proceed.
+**PHASE 3 GATE (owner-visible, route-aware):** read the collapse-route diagnostics, not just the number. If tuned `ai_paraphrased` primary accuracy ≥ 0.30 → Phase 3 SKIPPED. Below 0.30 AND the dominant route is `ai_paraphrased → ai_generated_like` → proceed to Phase 3 (paraphrase signal is the fix). Below 0.30 but the dominant route is elsewhere (e.g. `ai_assisted_polished → student_owned`) → the fix is band/weight work, not a new signal — report the routes to the owner instead of auto-proceeding.
 
 ---
 
@@ -634,7 +672,7 @@ git commit -m "data(v12): paraphrase-signal feature study — AUC + normalizatio
 - [ ] **Step 3: Implement `paraphrase_signal.py`** — lazy-load the MiniLM model (module-level cache, same pattern as `poc/detect/semantic_shape.py:249`), compute the winning feature, normalize via weights.json quantiles: `score = clamp01((raw - p10) / (p90 - p10))`.
 - [ ] **Step 4: Wire signal_adapter + pipeline_bridge; verify tests pass**
 - [ ] **Step 5: Re-tune with the signal live** — rerun Task 3 capture (cache-warm, $0) → Task 4 tuner (`--seed 43`) → Task 5 validation/promotion. The paraphrase categories' 0.20 starter weight on this signal now has a real input; the tuner decides its true weight.
-- [ ] **Step 6: ESL safety re-check** — the fused re-measure's `student_owned.false_ai_primary_rate` must not exceed the Phase-2-promoted value. If it does, the signal is ESL-biased in composition even if its solo AUC looked clean — revert the weight to 0 in weights.json (keep the signal computed + surfaced as data) and report.
+- [ ] **Step 6: Post-wiring safety re-check (BOTH directions, owner-mandated)** — on the fused re-measure: (1) `student_owned.false_ai_primary_rate` must not exceed the Phase-2-promoted value, AND specifically the `student_owned → ai_generated_like` route count must not increase — MiniLM cosine features can detect semantic monotony rather than paraphrase, which overlaps with structured ESL and template academic writing, so the solo feature study's ESL check is necessary but NOT sufficient; (2) `ai_paraphrased` recall must actually improve vs the Phase-2-promoted value (the signal must earn its weight in composition, not just in isolation). Either check failing → revert the weight to 0 in weights.json (keep the signal computed + surfaced as data) and report.
 - [ ] **Step 7: Commit + full V7 suite**
 
 ```bash
