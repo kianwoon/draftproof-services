@@ -452,7 +452,12 @@ def search(
 
     base = load_base_weights()
     tune_rows, holdout_rows = split_rows(rows, seed=seed)
-    scratch = scratch_dir / "_candidate_scratch.json"
+    # tempfile, NOT scratch_dir: the candidates/ dir is scanned by the
+    # no-text-leakage guard and committed — an unscrubbbed eval scratch left
+    # behind there fails the guard (and would get committed).
+    import tempfile
+    _scratch_tmp = tempfile.TemporaryDirectory(prefix="v12_tuner_")
+    scratch = Path(_scratch_tmp.name) / "_candidate_scratch.json"
 
     # Baseline (bundled weights) metrics for reference + diagnostics.
     _write_temp_candidate(base, scratch)
