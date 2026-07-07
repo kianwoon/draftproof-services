@@ -3,6 +3,7 @@ export const footer = {
   "howItWorks": "工作方式",
   "sampleReport": "示例报告",
   "essayChecker": "内容检查器",
+  "rewrite": "改写",
   "academicIntegrity": "学术诚信",
   "turnitinScore": "Turnitin AI 分数",
   "aiDeclaration": "AI 使用声明",

@@ -104,6 +104,11 @@ export default function Features() {
               </div>
             ))}
           </div>
+          {activeTab === 'rewrite' && (
+            <p style={{ textAlign: 'center', marginTop: '1.25rem', fontSize: '0.875rem' }}>
+              <Link to={publicPath('/rewrite')}>{t('featuresPage.rewriteLearnMore')}</Link>
+            </p>
+          )}
         </section>
 
         <section className="why-cta">

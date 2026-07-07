@@ -20,6 +20,7 @@ import FAQ from './pages/FAQ';
 import Why from './pages/Why';
 import Features from './pages/Features';
 import Technology from './pages/Technology';
+import RewriteOverview from './pages/RewriteOverview';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Support from './pages/Support';
@@ -125,6 +126,8 @@ export default function App() {
             <Route path="/zh/features" element={<Features />} />
             <Route path="/technology" element={<Technology />} />
             <Route path="/zh/technology" element={<Technology />} />
+            <Route path="/rewrite" element={<RewriteOverview />} />
+            <Route path="/zh/rewrite" element={<RewriteOverview />} />
             <Route path="/content-checker" element={<EssayChecker />} />
             <Route path="/zh/content-checker" element={<EssayChecker />} />
             <Route path="/essay-checker" element={<Navigate to="/content-checker" replace />} />

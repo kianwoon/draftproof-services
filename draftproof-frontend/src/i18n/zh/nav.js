@@ -14,6 +14,7 @@ export const nav = {
   "why": "为什么选择我们",
   "features": "功能对比",
   "technology": "技术",
+  "rewrite": "改写",
   "essayChecker": "内容检查器",
   "pricing": "价格",
   "faq": "常见问题",

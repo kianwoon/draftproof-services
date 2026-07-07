@@ -1,4 +1,13 @@
 export const landing = {
+  "rewriteTeaserEyebrow": "The Rewrite",
+  "rewriteTeaserTitle": "Flagged a weak claim? See the fix.",
+  "rewriteTeaserBody": "When a scan flags a thin passage, the rewrite shows a worked before/after — a teaching draft you finish in your own words.",
+  "rewriteTeaserBeforeLabel": "Before",
+  "rewriteTeaserAfterLabel": "After",
+  "rewriteTeaserBefore": "Hollywood has become one of the most powerful cultural exports in history.",
+  "rewriteTeaserAfter": "Hollywood is among the most widely exported cultural industries [add a citation you can verify].",
+  "rewriteTeaserMarker": "Suggested Addition For Review — you replace the bracketed note with your own source.",
+  "rewriteTeaserLink": "See how the rewrite works →",
   "heroPill": "Grounding and critical-thinking review for students",
   "heroTitle": "Make sure the thinking in your draft is still yours.",
   "heroTitleHighlight": "still yours",
