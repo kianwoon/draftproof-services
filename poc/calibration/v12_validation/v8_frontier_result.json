@@ -1,0 +1,40 @@
+{
+  "created": "2026-07-08",
+  "spec": "V8 tuning frontier \u2014 paraphrase_mismatch signal (Phase A winner), seed 46, 2000 trials each",
+  "para_floor_0.40": {
+    "verdict": "NO_CANDIDATE_SATISFIES_CONSTRAINTS"
+  },
+  "para_floor_0.30": {
+    "verdict": "OK_but_violates_acceptance",
+    "winner_tune": {
+      "macro": 0.5489,
+      "ai_paraphrased": 0.3704,
+      "ai_generated_like": 0.7143,
+      "false_ai": 0.0
+    }
+  },
+  "para_floor_0.20": {
+    "verdict": "OK_but_violates_acceptance",
+    "winner_tune": {
+      "macro": 0.6233,
+      "ai_paraphrased": 0.3704,
+      "ai_generated_like": 0.7143,
+      "false_ai": 0.0357
+    },
+    "winner_holdout": {
+      "macro": 0.5938,
+      "ai_paraphrased": 0.3333,
+      "ai_assisted_polished": 0.25,
+      "ai_generated_like": 0.7917,
+      "false_ai": 0.0
+    }
+  },
+  "binding_wall": {
+    "para_vs_polished": "feature means polished 0.694 > paraphrased 0.644 (wrong side); tuner buys para wins by relabeling polished as paraphrased (holdout 6/12)"
+  },
+  "starter_weight_neutrality": {
+    "macro": 0.6554,
+    "identical_confusion_to_promoted": true
+  },
+  "_notes": "Acceptance required para>=0.40 AND polished>=0.65 AND macro>=~0.65 \u2014 no operating point satisfies all. Owner decision 2026-07-08: ship three-way display fallback (ai_transformed = paraphrased+generated indicators merged where indistinguishable), queue paired-draft optional upload as V8b. Phase B skipped by owner choice (both middle classes inherit identical human structure \u2014 raggedness cannot separate them)."
+}
