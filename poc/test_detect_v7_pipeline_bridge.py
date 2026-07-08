@@ -1004,6 +1004,50 @@ class TestDeepScanPerParagraphProportions:
         assert rows[0]["sentence_count"] == 2
         assert rows[1]["flagged_count"] == 0
 
+    def test_display_sentence_count_uses_canonical_card_segmentation(self, monkeypatch):
+        """Live regression (2026-07-09, report 07cb40b2): the Modal deep-scan
+        splitter over-segments some paragraphs versus the canonical splitter the
+        on-page card / sentence_map use (e.g. a lowercase name after a period —
+        'johnny. johnny'). That made the deep-scan table show a 2-sentence
+        paragraph as '1 of 3' while the card showed 2 sentences. The DISPLAY
+        sentence_count must be re-based to the canonical per-paragraph count
+        (structured_sentence_segments); flagged is clamped to that denominator.
+        The document-level proportion is NOT re-based."""
+        monkeypatch.setenv(_ENV_VAR, "1")
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+        # Body para 2 over-splits: deep splitter -> 3 sentences, canonical -> 2.
+        text = (
+            "First body sentence one here. First body sentence two here.\n\n"
+            "The system helped johnny. johnny improved over the years. "
+            "Everyone noticed the change."
+        )
+
+        def fake_call(chunks, timeout_s=60.0):
+            # deep splitter yields 5 chunks (2 + 3); flag only the last.
+            return {
+                "available": True,
+                "calibrated": True,
+                "chunk_scores": [0.0] * (len(chunks) - 1) + [1.0],
+                "document_score": 0.2,
+            }
+
+        monkeypatch.setattr(modal_client, "call_deep_scan", fake_call)
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result(text=text))
+        assert result is not None
+        deep = result.get("deep_scan")
+        rows = (deep or {}).get("paragraphs")
+        assert rows is not None and len(rows) == 2
+        # Denominators are the CANONICAL card counts (2 / 2), NOT the deep
+        # splitter's over-segmented counts (2 / 3).
+        assert [r["sentence_count"] for r in rows] == [2, 2]
+        # Re-based flagged proportion for the over-split paragraph: 1 of 2 = 0.5,
+        # not the pre-fix 1 of 3 = 0.333.
+        assert rows[1]["flagged_count"] == 1
+        assert rows[1]["proportion"] == pytest.approx(0.5)
+        # Document-level proportion is the detector's own 1/5 — untouched by the
+        # display re-basing (the ESL-gated fused-score input must not move).
+        assert deep["proportion"] == pytest.approx(1 / 5, abs=1e-6)
+
 
 class TestBuilderThreadsCriterionScores:
     """Regression test for the wiring bug documented in

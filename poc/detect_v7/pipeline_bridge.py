@@ -304,9 +304,14 @@ def _per_paragraph_proportions(
 
     Bands reuse the document display-band cutoffs (weights.json — no new
     constants); short paragraphs are naturally noisy, so ``sentence_count``
-    rides along for consumers to judge reliability. Returns None (key
-    omitted) when there are fewer than 2 paragraphs or any mapping
-    inconsistency — fail-open, never raises.
+    rides along for consumers to judge reliability. ``sentence_count`` is the
+    CANONICAL per-paragraph count (structured_sentence_segments — the same
+    source the report's sentence_map and on-page paragraph card use), so the
+    deep-scan table matches the card; ``flagged_count`` (and thus each row's
+    ``proportion``) are the deep-scan detector's own reading, re-based onto
+    that canonical denominator and clamped to it. Returns None (key omitted)
+    when there are fewer than 2 paragraphs or any mapping inconsistency —
+    fail-open, never raises.
 
     Heading blocks are EXCLUDED from the emitted rows (their sentences still
     count in the document-level proportion, unchanged): a standalone title
@@ -323,12 +328,40 @@ def _per_paragraph_proportions(
     try:
         import re as _re
 
-        from poc.detect.document_structure import _looks_like_heading
+        from poc.detect.document_structure import (
+            _looks_like_heading,
+            structured_sentence_segments,
+        )
         from poc.detect.layer3_scoring import split_paragraphs
 
         paragraphs = split_paragraphs(document_text)
         if len(paragraphs) < 2 or len(sentences) != len(chunk_scores):
             return None
+        # Canonical per-paragraph sentence counts — the SAME segmentation the
+        # report's sentence_map and the on-page paragraph card use
+        # (structured_sentence_segments). The Modal deep-scan detector runs its
+        # OWN sentence splitter (deberta_windowing.split_sentences), which
+        # over-segments some paragraphs (a lowercase name after a period, an
+        # abbreviation, etc.), so the DISPLAY denominators drifted away from the
+        # card — a 3-sentence paragraph surfaced as "1 of 4". These counts,
+        # aligned block-for-block to split_paragraphs (both segment the same
+        # blank-line blocks in document order), re-base ONLY the displayed
+        # sentence_count so the deep-scan table matches the card. The
+        # document-level proportion computed by the caller is NOT touched.
+        # Fail-open: any shape mismatch keeps the detector's own counts.
+        canonical_counts = None
+        try:
+            from collections import OrderedDict as _OrderedDict
+
+            _groups = _OrderedDict()
+            for _seg in structured_sentence_segments(document_text):
+                _pid = _seg.get("paragraph_id") or ""
+                _groups[_pid] = _groups.get(_pid, 0) + 1
+            _counts = list(_groups.values())
+            if len(_counts) == len(paragraphs):
+                canonical_counts = _counts
+        except Exception:
+            canonical_counts = None
         # Raw blocks via the SAME split regex as split_paragraphs, same
         # filtering — indices stay aligned with the normalized list. A block
         # is a heading only if it is a single raw line that passes the
@@ -386,11 +419,21 @@ def _per_paragraph_proportions(
             if is_heading[i]:
                 continue  # titles/headings are not paragraphs — see docstring
             p_flagged = sum(1 for s in scores if s >= sent_threshold)
-            p_prop = p_flagged / len(scores)
+            # Prefer the canonical (card) sentence count as the denominator so
+            # the deep-scan table lines up with the on-page paragraph card;
+            # fall back to the detector's own count when the two segmentations
+            # don't line up (fail-open). Clamp flagged to the denominator so the
+            # "X of Y" display can never exceed Y after re-basing. Only the
+            # display is re-based — the document-level proportion is unchanged.
+            denom = len(scores)
+            if canonical_counts is not None and canonical_counts[i] > 0:
+                denom = canonical_counts[i]
+            p_flagged = min(p_flagged, denom)
+            p_prop = p_flagged / denom
             rows.append(
                 {
                     "index": body_ordinal,
-                    "sentence_count": len(scores),
+                    "sentence_count": denom,
                     "flagged_count": p_flagged,
                     "proportion": round(p_prop, 4),
                     "band": _deep_scan_band(p_prop),
