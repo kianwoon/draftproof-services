@@ -1,0 +1,211 @@
+{
+  "generated_at": "2026-07-08T06:52:48.461067+00:00",
+  "auc_gate_threshold": 0.7,
+  "esl_gate_threshold": 0.6,
+  "n_rows": 198,
+  "class_counts": {
+    "student_owned": 40,
+    "ai_assisted_polished": 39,
+    "ai_paraphrased": 39,
+    "ai_generated_like": 80
+  },
+  "skip_counts": {
+    "grounded_x_det": 0,
+    "grounded_x_smooth": 0,
+    "spec_student_ev_x_det": 0,
+    "spec_student_ev_x_smooth": 0,
+    "specificity_x_det": 0,
+    "specificity_x_smooth": 0,
+    "voice_presence_x_det": 0,
+    "voice_presence_x_smooth": 0
+  },
+  "auc_one_vs_one": {
+    "grounded_x_det": {
+      "ai_paraphrased_vs_ai_generated_like": 0.3769,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.7097
+    },
+    "grounded_x_smooth": {
+      "ai_paraphrased_vs_ai_generated_like": 0.5817,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.3481
+    },
+    "spec_student_ev_x_det": {
+      "ai_paraphrased_vs_ai_generated_like": 0.7202,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.4458
+    },
+    "spec_student_ev_x_smooth": {
+      "ai_paraphrased_vs_ai_generated_like": 0.7022,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.2781
+    },
+    "specificity_x_det": {
+      "ai_paraphrased_vs_ai_generated_like": 0.4144,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.6193
+    },
+    "specificity_x_smooth": {
+      "ai_paraphrased_vs_ai_generated_like": 0.6083,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.3465
+    },
+    "voice_presence_x_det": {
+      "ai_paraphrased_vs_ai_generated_like": 0.6317,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.5983
+    },
+    "voice_presence_x_smooth": {
+      "ai_paraphrased_vs_ai_generated_like": 0.716,
+      "ai_paraphrased_vs_ai_assisted_polished": 0.3379
+    }
+  },
+  "esl_subgroup_check": {
+    "grounded_x_det": {
+      "lower_vs_higher_auc": 0.39,
+      "n_higher": 20,
+      "n_lower": 20
+    },
+    "grounded_x_smooth": {
+      "lower_vs_higher_auc": 0.305,
+      "n_higher": 20,
+      "n_lower": 20
+    },
+    "spec_student_ev_x_det": {
+      "lower_vs_higher_auc": 0.365,
+      "n_higher": 20,
+      "n_lower": 20
+    },
+    "spec_student_ev_x_smooth": {
+      "lower_vs_higher_auc": 0.33,
+      "n_higher": 20,
+      "n_lower": 20
+    },
+    "specificity_x_det": {
+      "lower_vs_higher_auc": 0.3725,
+      "n_higher": 20,
+      "n_lower": 20
+    },
+    "specificity_x_smooth": {
+      "lower_vs_higher_auc": 0.31,
+      "n_higher": 20,
+      "n_lower": 20
+    },
+    "voice_presence_x_det": {
+      "lower_vs_higher_auc": 0.4175,
+      "n_higher": 20,
+      "n_lower": 20
+    },
+    "voice_presence_x_smooth": {
+      "lower_vs_higher_auc": 0.3775,
+      "n_higher": 20,
+      "n_lower": 20
+    }
+  },
+  "feature_correlation_matrix": {
+    "grounded_x_det": {
+      "grounded_x_det": 1.0,
+      "grounded_x_smooth": 0.3562,
+      "spec_student_ev_x_det": 0.3213,
+      "spec_student_ev_x_smooth": -0.5293,
+      "specificity_x_det": 0.8194,
+      "specificity_x_smooth": 0.0128,
+      "voice_presence_x_det": 0.6127,
+      "voice_presence_x_smooth": -0.1769
+    },
+    "grounded_x_smooth": {
+      "grounded_x_det": 0.3562,
+      "grounded_x_smooth": 1.0,
+      "spec_student_ev_x_det": 0.1129,
+      "spec_student_ev_x_smooth": 0.4278,
+      "specificity_x_det": 0.195,
+      "specificity_x_smooth": 0.676,
+      "voice_presence_x_det": 0.134,
+      "voice_presence_x_smooth": 0.5703
+    },
+    "spec_student_ev_x_det": {
+      "grounded_x_det": 0.3213,
+      "grounded_x_smooth": 0.1129,
+      "spec_student_ev_x_det": 1.0,
+      "spec_student_ev_x_smooth": 0.095,
+      "specificity_x_det": 0.6522,
+      "specificity_x_smooth": 0.4023,
+      "voice_presence_x_det": 0.4383,
+      "voice_presence_x_smooth": 0.0819
+    },
+    "spec_student_ev_x_smooth": {
+      "grounded_x_det": -0.5293,
+      "grounded_x_smooth": 0.4278,
+      "spec_student_ev_x_det": 0.095,
+      "spec_student_ev_x_smooth": 1.0,
+      "specificity_x_det": -0.3565,
+      "specificity_x_smooth": 0.7659,
+      "voice_presence_x_det": -0.3701,
+      "voice_presence_x_smooth": 0.6143
+    },
+    "specificity_x_det": {
+      "grounded_x_det": 0.8194,
+      "grounded_x_smooth": 0.195,
+      "spec_student_ev_x_det": 0.6522,
+      "spec_student_ev_x_smooth": -0.3565,
+      "specificity_x_det": 1.0,
+      "specificity_x_smooth": 0.259,
+      "voice_presence_x_det": 0.644,
+      "voice_presence_x_smooth": -0.0976
+    },
+    "specificity_x_smooth": {
+      "grounded_x_det": 0.0128,
+      "grounded_x_smooth": 0.676,
+      "spec_student_ev_x_det": 0.4023,
+      "spec_student_ev_x_smooth": 0.7659,
+      "specificity_x_det": 0.259,
+      "specificity_x_smooth": 1.0,
+      "voice_presence_x_det": 0.0651,
+      "voice_presence_x_smooth": 0.6635
+    },
+    "voice_presence_x_det": {
+      "grounded_x_det": 0.6127,
+      "grounded_x_smooth": 0.134,
+      "spec_student_ev_x_det": 0.4383,
+      "spec_student_ev_x_smooth": -0.3701,
+      "specificity_x_det": 0.644,
+      "specificity_x_smooth": 0.0651,
+      "voice_presence_x_det": 1.0,
+      "voice_presence_x_smooth": 0.3023
+    },
+    "voice_presence_x_smooth": {
+      "grounded_x_det": -0.1769,
+      "grounded_x_smooth": 0.5703,
+      "spec_student_ev_x_det": 0.0819,
+      "spec_student_ev_x_smooth": 0.6143,
+      "specificity_x_det": -0.0976,
+      "specificity_x_smooth": 0.6635,
+      "voice_presence_x_det": 0.3023,
+      "voice_presence_x_smooth": 1.0
+    }
+  },
+  "gate_detail": {
+    "auc_gate_threshold": 0.7,
+    "esl_gate_threshold": 0.6,
+    "best_feature": "spec_student_ev_x_det",
+    "direction": "high_is_paraphrase",
+    "best_feature_raw_auc_vs_ai_generated_like": 0.7202,
+    "best_feature_effective_auc_vs_ai_generated_like": 0.7202,
+    "best_feature_esl_lower_vs_higher_auc": 0.365,
+    "best_feature_esl_directional_flagging_auc": 0.365,
+    "best_feature_auc_vs_ai_assisted_polished": 0.4458,
+    "gate_passed": true
+  },
+  "winner": {
+    "name": "spec_student_ev_x_det",
+    "direction": "high_is_paraphrase",
+    "effective_auc_vs_generated": 0.7202,
+    "auc_vs_polished": 0.4458,
+    "esl_directional_auc": 0.365,
+    "p10": 0.0589,
+    "p90": 0.1623
+  },
+  "esl_coverage": {
+    "n_higher": 20,
+    "n_lower": 20
+  },
+  "gate_verdict": "PASS",
+  "gate_fail_reason": null,
+  "_notes": {
+    "winning_composition": "Interaction product of a content-humanness proxy and a surface-AIness proxy: spec_student_ev_x_det (high_is_paraphrase). High content-humanness combined with high surface-AIness is the ai_paraphrased signature (human-inherited content wearing an AI surface).",
+    "methodology": "8 interaction features = 4 content proxies (specificity, spec_student_ev, voice_presence, grounded) x 2 surface proxies (smooth, det); rank_auc + evaluate_gate imported from paraphrase_feature_study (shared gate methodology, not duplicated)."
+  }
+}
