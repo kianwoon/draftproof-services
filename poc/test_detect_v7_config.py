@@ -216,6 +216,40 @@ def test_paraphrase_mismatch_normalization_missing_raises(monkeypatch, tmp_path)
         v7config.get_paraphrase_mismatch_normalization()
 
 
+def _install_norm_fixture(tmp_path, monkeypatch, p10, p90):
+    """Point config at a minimal temp weights file with the given
+    paraphrase_mismatch_normalization bounds (the accessor reads only that
+    block, so a minimal file suffices)."""
+    fixture_path = tmp_path / "norm_bounds_weights.json"
+    fixture_path.write_text(
+        json.dumps({"paraphrase_mismatch_normalization": {"p10": p10, "p90": p90}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(fixture_path))
+    v7config.reload_weights(force=True)
+
+
+def test_paraphrase_mismatch_normalization_equal_bounds_raises(monkeypatch, tmp_path):
+    """p10 == p90 would make signal_adapter row 9c's (p90 - p10) divisor zero —
+    the accessor must fail loud (ValueError), never let a ZeroDivisionError
+    reach the live scan breakdown path."""
+    _install_norm_fixture(tmp_path, monkeypatch, 0.1, 0.1)
+    with pytest.raises(ValueError):
+        v7config.get_paraphrase_mismatch_normalization()
+
+
+def test_paraphrase_mismatch_normalization_inverted_bounds_raises(monkeypatch, tmp_path):
+    _install_norm_fixture(tmp_path, monkeypatch, 0.2, 0.1)
+    with pytest.raises(ValueError):
+        v7config.get_paraphrase_mismatch_normalization()
+
+
+def test_paraphrase_mismatch_normalization_non_numeric_raises(monkeypatch, tmp_path):
+    _install_norm_fixture(tmp_path, monkeypatch, "0.0589", 0.1623)
+    with pytest.raises(ValueError):
+        v7config.get_paraphrase_mismatch_normalization()
+
+
 def test_env_var_override_loads_alternate_file(tmp_path, monkeypatch):
     alt_weights = {
         "_notes": {"marker": "alt-fixture-weights"},

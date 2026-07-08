@@ -213,10 +213,32 @@ def get_paraphrase_mismatch_normalization() -> dict[str, float]:
     are the study percentiles from
     ``poc/calibration/v12_validation/phase_a_interaction_study.json``; keeping
     them in ``weights.json`` (not as Python literals) upholds the no-hardcode
-    rule. A missing block raises ``KeyError`` (fail loud), matching
-    ``get_display_consistency_guard_config``'s direct-lookup pattern.
+    rule. A missing block raises ``KeyError`` (fail loud).
+
+    Validates that both bounds are numbers and strictly ascending (p10 < p90)
+    — the adapter divides by (p90 - p10), so p10 == p90 would be a
+    ZeroDivisionError in the live scan breakdown path, and p90 < p10 would
+    silently invert the signal. A malformed block raises ``ValueError``
+    instead, matching ``get_tier_authority_config``'s ascending-cutoffs
+    fail-loud pattern. This validation is the contract that makes the
+    adapter's division safe without a guard of its own.
     """
-    return dict(_weights()["paraphrase_mismatch_normalization"])
+    norm = _weights()["paraphrase_mismatch_normalization"]
+    p10, p90 = norm["p10"], norm["p90"]
+    if (
+        isinstance(p10, bool)
+        or isinstance(p90, bool)
+        or not isinstance(p10, (int, float))
+        or not isinstance(p90, (int, float))
+        or not p10 < p90
+    ):
+        # allow-hardcode: human-readable error message text, not a scoring/matching list
+        raise ValueError(
+            f"weights.json contract violation: paraphrase_mismatch_normalization "
+            f"requires numeric, strictly ascending bounds (p10 < p90) — the "
+            f"signal_adapter divides by (p90 - p10). Got p10={p10!r}, p90={p90!r}."
+        )
+    return dict(norm)
 
 
 def get_tier_authority_config() -> dict[str, Any]:

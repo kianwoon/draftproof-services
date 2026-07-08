@@ -352,6 +352,8 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
         p10 = norm["p10"]
         p90 = norm["p90"]
         raw_product = student_evidence * detector_score
+        # Division safe by contract: the accessor validates p10 < p90
+        # (ValueError otherwise), so (p90 - p10) is strictly positive here.
         out["paraphrase_mismatch"] = _clamp01((raw_product - p10) / (p90 - p10))
         status["paraphrase_mismatch"] = _STATUS_OK
     else:
