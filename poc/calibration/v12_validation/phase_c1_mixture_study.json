@@ -1,0 +1,53 @@
+{
+  "created": "2026-07-08",
+  "spec": "Phase C1 \u2014 per-sentence deep-scan score mixture-shape study (cache replay, 196/198 docs joined)",
+  "gate": {
+    "required": "effective AUC >= 0.70 vs ai_assisted_polished AND >= 0.70 vs ai_generated_like",
+    "verdict": "FAIL"
+  },
+  "feature_table_effective_auc": {
+    "frac_ge_0.5": {
+      "vs_polished": 0.5,
+      "vs_generated": 0.582
+    },
+    "frac_ge_0.9": {
+      "vs_polished": 0.572,
+      "vs_generated": 0.546
+    },
+    "frac_ge_0.99": {
+      "vs_polished": 0.631,
+      "vs_generated": 0.581
+    },
+    "frac_ge_0.999": {
+      "vs_polished": 0.71,
+      "vs_generated": 0.663
+    },
+    "std": {
+      "vs_polished": 0.609,
+      "vs_generated": 0.615
+    },
+    "midband_mass": {
+      "vs_polished": 0.513,
+      "vs_generated": 0.572
+    },
+    "low_mass": {
+      "vs_polished": 0.5,
+      "vs_generated": 0.563
+    },
+    "mm_x_frac999_interaction": {
+      "vs_polished": 0.608,
+      "vs_generated": 0.513
+    },
+    "paraphrase_mismatch_reference": {
+      "vs_polished": 0.557,
+      "vs_generated": 0.716
+    }
+  },
+  "class_means_low_mass": {
+    "student_owned": 0.055,
+    "ai_assisted_polished": 0.0,
+    "ai_paraphrased": 0.0,
+    "ai_generated_like": 0.025
+  },
+  "_notes": "KEY NEGATIVE FINDING: the desklib checkpoint SATURATES on LLM-touched text \u2014 lightly-polished docs have ZERO sentences below 0.2 and mean sentence score 0.99, identical profile shape to fully-paraphrased docs. The 'polished = mixture of human+AI sentences' hypothesis is false AT THIS DETECTOR'S RESOLUTION: there is no human-sentence remnant signal to detect. frac_ge_0.999 (the production deep-scan proportion) is the best single para-vs-polished axis (0.710) but fails vs generated (0.663); paraphrase_mismatch is the reverse (0.716/0.557); their per-doc product fails both (0.608/0.513) \u2014 per-doc noise kills the class-mean pattern. No committed feature clears both walls. Phase C2 (function/content-word perplexity asymmetry, GPT-2 token level \u2014 a DIFFERENT model that may not saturate) is the remaining Phase C avenue."
+}
