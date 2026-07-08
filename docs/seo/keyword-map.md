@@ -59,6 +59,7 @@ content competitors literally can't write. Lower priority because it's hard to r
 | Keyword | Maps to | Note |
 |---|---|---|
 | AI detector checker | `/` + `/content-checker` | Head term; brutal competition (Turnitin, GPTZero, Originality, ZeroGPT). Won't rank near-term — keep as brand anchor, chase long-tail instead. |
+| ai detector turnitin · best ai detector | **`/turnitin-vs-ai-detectors`** (built 2026-07-08) | Comparison table + mechanics + FAQ. Framed as "different category, objective comparison" per the locked positioning pillar — never "DraftProof beats Turnitin." Cross-linked from `/turnitin-ai-score` and `/academic-integrity-ai`. Still a competitive, months-not-weeks term. |
 
 ## Long-tail spokes — your real near-term traffic (lower competition)
 

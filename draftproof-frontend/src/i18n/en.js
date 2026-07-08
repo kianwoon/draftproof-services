@@ -29,6 +29,7 @@ import { turnitinScore } from './en/turnitinScore.js';
 import { academicIntegrity } from './en/academicIntegrity.js';
 import { aiDeclaration } from './en/aiDeclaration.js';
 import { reduceDetection } from './en/reduceDetection.js';
+import { turnitinVsDetectors } from './en/turnitinVsDetectors.js';
 
 export const enTranslation = {
   "common": common,
@@ -62,4 +63,5 @@ export const enTranslation = {
   "academicIntegrity": academicIntegrity,
   "aiDeclaration": aiDeclaration,
   "reduceDetection": reduceDetection,
+  "turnitinVsDetectors": turnitinVsDetectors,
 };

@@ -53,4 +53,7 @@ export const seo = {
   "reduceDetectionTitle": "How to Reduce AI Detection (and Why That's the Wrong Goal) | DraftProof",
   "reduceDetectionDescription": "You can't reliably beat AI detectors — and trying is risky. The honest truth about reducing AI detection, why humanizers backfire, and what actually lowers your real submission risk.",
   "reduceDetectionSocialDescription": "The honest truth about reducing AI detection — why gaming the detector backfires, and what to do instead.",
+  "turnitinVsDetectorsTitle": "Turnitin vs AI Detectors: How They Compare | DraftProof",
+  "turnitinVsDetectorsDescription": "Turnitin, GPTZero, and Originality.ai measure AI writing differently and often disagree. See how each one scores, its published accuracy claims, and known weak spots — and why one number shouldn't decide anything.",
+  "turnitinVsDetectorsSocialDescription": "Turnitin, GPTZero, and Originality.ai compared — how each scores, and where each one gets it wrong.",
 };

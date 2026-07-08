@@ -93,6 +93,11 @@ export const academicIntegrity = {
       "body": "Read the percentage honestly."
     },
     {
+      "label": "Turnitin vs AI detectors",
+      "to": "/turnitin-vs-ai-detectors",
+      "body": "How Turnitin, GPTZero, and Originality.ai actually compare."
+    },
+    {
       "label": "How to reduce AI detection (honestly)",
       "to": "/reduce-ai-detection",
       "body": "Why grounding beats gaming."

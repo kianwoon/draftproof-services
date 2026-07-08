@@ -88,6 +88,11 @@ export const turnitinScore = {
       "body": "误报背后的机制。"
     },
     {
+      "label": "Turnitin 与其他 AI 检测工具对比",
+      "to": "/turnitin-vs-ai-detectors",
+      "body": "Turnitin、GPTZero 与 Originality.ai 究竟有何不同。"
+    },
+    {
       "label": "如何降低 AI 检测（诚实版）",
       "to": "/reduce-ai-detection",
       "body": "为什么“骗过检测器”是错误的目标。"

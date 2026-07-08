@@ -53,4 +53,7 @@ export const seo = {
   "reduceDetectionTitle": "如何降低 AI 检测（以及为何这是错误的目标）| DraftProof",
   "reduceDetectionDescription": "你无法可靠地骗过 AI 检测器——尝试本身就有风险。关于降低 AI 检测的诚实真相、人性化工具为何适得其反，以及什么才能真正降低你的提交风险。",
   "reduceDetectionSocialDescription": "关于降低 AI 检测的诚实真相——为什么操纵检测器会适得其反，以及该怎么做。",
+  "turnitinVsDetectorsTitle": "Turnitin 与 AI 检测工具对比 | DraftProof",
+  "turnitinVsDetectorsDescription": "Turnitin、GPTZero 和 Originality.ai 对 AI 写作的判断方式各不相同，结果也常常不一致。了解每个工具的计分方式、官方公布的准确率，以及各自的已知弱点——以及为什么不该由一个数字来下定论。",
+  "turnitinVsDetectorsSocialDescription": "Turnitin、GPTZero 与 Originality.ai 对比——各自如何计分，又分别在哪里出错。",
 };

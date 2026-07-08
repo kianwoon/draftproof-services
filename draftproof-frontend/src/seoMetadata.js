@@ -107,6 +107,14 @@ export const PAGE_META = {
     schemaType: 'WebPage',
     freshness: { type: 'reviewed', date: SEO_LANDING_REVIEW_DATE },
   },
+  '/turnitin-vs-ai-detectors': {
+    titleKey: 'seo.turnitinVsDetectorsTitle',
+    descriptionKey: 'seo.turnitinVsDetectorsDescription',
+    socialDescriptionKey: 'seo.turnitinVsDetectorsSocialDescription',
+    canonical: '/turnitin-vs-ai-detectors',
+    schemaType: 'WebPage',
+    freshness: { type: 'reviewed', date: '2026-07-08' },
+  },
   '/pricing': {
     titleKey: 'seo.pricingTitle',
     descriptionKey: 'seo.pricingDescription',

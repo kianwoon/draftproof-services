@@ -140,6 +140,8 @@ export default function App() {
             <Route path="/zh/ai-declaration" element={<SeoLandingPage ns="aiDeclaration" path="/ai-declaration" generator />} />
             <Route path="/reduce-ai-detection" element={<SeoLandingPage ns="reduceDetection" path="/reduce-ai-detection" />} />
             <Route path="/zh/reduce-ai-detection" element={<SeoLandingPage ns="reduceDetection" path="/reduce-ai-detection" />} />
+            <Route path="/turnitin-vs-ai-detectors" element={<SeoLandingPage ns="turnitinVsDetectors" path="/turnitin-vs-ai-detectors" />} />
+            <Route path="/zh/turnitin-vs-ai-detectors" element={<SeoLandingPage ns="turnitinVsDetectors" path="/turnitin-vs-ai-detectors" />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/zh/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />

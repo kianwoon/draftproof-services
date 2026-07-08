@@ -66,26 +66,55 @@ export default function SeoLandingPage({ ns, path, generator = false }) {
             {section.eyebrow && <p className="eyebrow">{section.eyebrow}</p>}
             <h2>{section.title}</h2>
             {section.lead && <p className="seo-section-lead">{section.lead}</p>}
-            <div className={section.type === 'templates' ? 'seo-template-grid' : 'content-checker-grid'}>
-              {asArray(section.items).map((item, ii) => {
-                if (section.type === 'templates') {
+            {section.type === 'comparison' ? (
+              <div className="feat-table-wrap">
+                <table className="feat-table">
+                  <thead>
+                    <tr>
+                      <th />
+                      {asArray(section.columns).map((name, ci) => (
+                        <th key={name} className={ci === section.columns.length - 1 ? 'feat-th-dp' : undefined}>
+                          {name}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {asArray(section.rows).map((row) => (
+                      <tr key={row.label}>
+                        <td>{row.label}</td>
+                        {asArray(row.values).map((val, vi) => (
+                          <td key={vi} className={vi === row.values.length - 1 ? 'feat-td-dp' : undefined}>
+                            {val}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className={section.type === 'templates' ? 'seo-template-grid' : 'content-checker-grid'}>
+                {asArray(section.items).map((item, ii) => {
+                  if (section.type === 'templates') {
+                    return (
+                      <article key={item.title || ii} className="seo-template-card">
+                        <h3>{item.title}</h3>
+                        <pre className="seo-template-text">{item.body}</pre>
+                        {item.note && <p className="seo-template-note">{item.note}</p>}
+                      </article>
+                    );
+                  }
                   return (
-                    <article key={item.title || ii} className="seo-template-card">
+                    <article key={item.title || ii}>
+                      {section.type === 'steps' && <span>{String(ii + 1).padStart(2, '0')}</span>}
                       <h3>{item.title}</h3>
-                      <pre className="seo-template-text">{item.body}</pre>
-                      {item.note && <p className="seo-template-note">{item.note}</p>}
+                      <p>{item.body}</p>
                     </article>
                   );
-                }
-                return (
-                  <article key={item.title || ii}>
-                    {section.type === 'steps' && <span>{String(ii + 1).padStart(2, '0')}</span>}
-                    <h3>{item.title}</h3>
-                    <p>{item.body}</p>
-                  </article>
-                );
-              })}
-            </div>
+                })}
+              </div>
+            )}
           </section>
         ))}
 

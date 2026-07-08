@@ -29,6 +29,7 @@ import { turnitinScore } from './zh/turnitinScore.js';
 import { academicIntegrity } from './zh/academicIntegrity.js';
 import { aiDeclaration } from './zh/aiDeclaration.js';
 import { reduceDetection } from './zh/reduceDetection.js';
+import { turnitinVsDetectors } from './zh/turnitinVsDetectors.js';
 
 export const zhTranslation = {
   "common": common,
@@ -62,4 +63,5 @@ export const zhTranslation = {
   "academicIntegrity": academicIntegrity,
   "aiDeclaration": aiDeclaration,
   "reduceDetection": reduceDetection,
+  "turnitinVsDetectors": turnitinVsDetectors,
 };
