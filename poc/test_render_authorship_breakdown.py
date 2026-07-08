@@ -126,16 +126,21 @@ def test_three_way_bars_render_when_display_fields_present():
     assert "reports them as one AI-transformed share" in html
     assert "AI-paraphrased" not in html
     assert "AI-generated-like" not in html
+    # Taxonomy-aware intro copy: three bars must never sit under a "four styles" intro.
+    assert "four authorship styles" not in html
+    assert "three authorship styles" in html
 
 
 def test_four_way_bars_unchanged_when_display_fields_absent():
     # Legacy payloads (mode "four_way" / older reports) carry no display_* fields ->
-    # byte-identical four-way rendering, no three-way explainer.
+    # byte-identical four-way rendering, no three-way explainer, original intro copy.
     html = render_authorship_breakdown({"ai_risk_badge": _BADGE})
     assert "AI-paraphrased" in html
     assert "AI-generated-like" in html
     assert "AI-transformed" not in html
     assert "reports them as one AI-transformed share" not in html
+    assert "four authorship styles" in html
+    assert "three authorship styles" not in html
 
 
 def _make_report_with_breakdown_and_sr():

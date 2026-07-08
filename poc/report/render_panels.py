@@ -308,6 +308,15 @@ _COMPOSITION_SUBHEAD_TEXT = (
 )
 
 
+def _is_three_way_display(breakdown: dict) -> bool:
+    """True when the V8 three-way display fallback fields are present (see
+    _authorship_bars_html) — the single predicate every renderer keys the
+    three-vs-four-way switch on, so intro copy and bars can never disagree."""
+    return breakdown.get("display_taxonomy") == "three_way" and isinstance(
+        breakdown.get("display_shares"), dict
+    )
+
+
 def _authorship_bars_html(breakdown: dict) -> str:
     """The category bars + disclaimer. '' when no breakdown.
 
@@ -324,9 +333,7 @@ def _authorship_bars_html(breakdown: dict) -> str:
         f'<p class="dp-abd-caveat">{escape(_MIXED_SIGNALS_CAVEAT_TEXT)}</p>'
         if breakdown.get("presentation") == "mixed_signals" else ""
     )
-    is_three_way = breakdown.get("display_taxonomy") == "three_way" and isinstance(
-        breakdown.get("display_shares"), dict
-    )
+    is_three_way = _is_three_way_display(breakdown)
     if is_three_way:
         caveat_html += f'<p class="dp-abd-caveat dp-abd-caveat--info">{escape(_THREE_WAY_EXPLAINER_TEXT)}</p>'
         category_order = _ACB_THREE_WAY_CATEGORY_ORDER
@@ -368,8 +375,10 @@ def _authorship_bars_html(breakdown: dict) -> str:
 
 def render_authorship_breakdown(report_data: dict) -> str:
     """HTML panel mirroring draftproof-frontend's AuthorshipClarityBreakdown.jsx:
-    fused AI-likelihood headline (or deep-scan-only fallback), the 4 category bars,
-    and the verbatim disclaimer. '' when badge.authorship_breakdown is absent
+    fused AI-likelihood headline (or deep-scan-only fallback), the category bars
+    (four-way, or three-way under the V8 display fallback — the intro's style count
+    follows _is_three_way_display so copy and bars can never disagree), and the
+    verbatim disclaimer. '' when badge.authorship_breakdown is absent
     (flag off / older report) — additive, fail-open, no hardcoded thresholds
     (band labels/cutoffs are read from the badge's own fields, never invented)."""
     badge = (report_data or {}).get("ai_risk_badge") or {}
@@ -377,11 +386,16 @@ def render_authorship_breakdown(report_data: dict) -> str:
     if not breakdown:
         return ""
 
+    # Taxonomy-aware count: the V8 three-way display fallback renders three merged
+    # bars, so an intro saying "four authorship styles" above them would be exactly
+    # the page/PDF copy drift this project guards against. Legacy four-way payloads
+    # keep the pre-existing wording byte-identical.
+    style_count = "three" if _is_three_way_display(breakdown) else "four"
     # allow-hardcode: presentation copy/markup for the PDF panel, not a scoring/matching list.
     out = [
         '<div class="authorship-breakdown">',
         '<p class="dp-callout-title">Authorship clarity breakdown <span class="dp-statchip dp-statchip--info">Beta</span></p>',
-        '<p class="dp-hero-sub">How this document\'s writing signals distribute across four '
+        f'<p class="dp-hero-sub">How this document\'s writing signals distribute across {style_count} '
         "authorship styles. The shares always add up to 100% — a composition of the mix, not an "
         "AI-probability. The deep-scan estimate below comes from a separate beta detector and may "
         "differ from Text-pattern risk in the summary above — different models, and both are "
