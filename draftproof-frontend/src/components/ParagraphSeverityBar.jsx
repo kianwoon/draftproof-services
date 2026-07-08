@@ -24,10 +24,16 @@ export default function ParagraphSeverityBar({ bar, selectedId = null, onSelect 
       >
         {bar.map((segment) => {
           const clean = segment.findingCount === 0;
+          // A verdict-gated 'review' candidate renders the SAME muted amber as the full-document
+          // underline (.is-severity-review), so the bar agrees with "Read full document". It must
+          // win BEFORE the tier fallback, which would otherwise paint it 'low'-tier green.
+          const REVIEW_COLOR = '#c99a3b';
           // Prefer DeBERTa severity color (matches the full-document heatmap scale) when a
           // DeBERTa score is present; fall back to the tier color for non-DeBERTa reports.
           const debertaColor = debertaSeverityColor(segment.maxDebertaScore || 0);
-          const tierColor = debertaColor || SEVERITY_CONFIG[segment.topTier]?.color || '#94a3b8';
+          const tierColor = segment.reviewBand
+            ? REVIEW_COLOR
+            : (debertaColor || SEVERITY_CONFIG[segment.topTier]?.color || '#94a3b8');
           // Density -> opacity: faint at low concentration, solid at the doc's densest paragraph.
           const opacity = clean ? 1 : 0.35 + 0.65 * Math.min(1, Math.max(0, segment.intensity));
           const tierLabel = segment.topTier
@@ -35,6 +41,11 @@ export default function ParagraphSeverityBar({ bar, selectedId = null, onSelect 
             : '';
           const title = clean
             ? t('report.severityBar.tooltipClean', { index: segment.index })
+            : segment.reviewBand
+            ? t('report.severityBar.tooltipReview', {
+                index: segment.index,
+                defaultValue: 'Sentence {{index}} — flagged for review (reads as human overall)',
+              })
             : t('report.severityBar.tooltip', {
                 index: segment.index,
                 count: segment.findingCount,
