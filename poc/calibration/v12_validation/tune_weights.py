@@ -66,6 +66,7 @@ DEFAULT_WEIGHT_FLOOR = 0.02       # min per-signal weight after renormalize
 DEFAULT_BAND_DELTA = 0.15         # +/- uniform band exploration radius
 DEFAULT_HOLDOUT_TOL = 0.10        # macro may drop this much tune -> holdout
 DEFAULT_GENERATED_FLOOR = 0.08    # gen-like accuracy may drop this below base
+DEFAULT_PARA_FLOOR = 0.0          # ai_paraphrased primary_accuracy hard floor (0.0 = off)
 DEFAULT_REFINE_STEP = 0.05        # coordinate-refinement per-weight step
 DEFAULT_TOP_K = 5                 # candidates carried into refinement
 
@@ -364,9 +365,14 @@ def load_baseline_constants(baseline_json: Path) -> dict:
     }
 
 
-def satisfies_constraints(metrics: dict, baseline: dict, generated_floor: float) -> bool:
-    """Both hard constraints: (1) student_owned false-AI rate <= baseline;
-    (2) ai_generated_like accuracy >= baseline - generated_floor."""
+def satisfies_constraints(
+    metrics: dict, baseline: dict, generated_floor: float, para_floor: float = 0.0
+) -> bool:
+    """Hard constraints: (1) student_owned false-AI rate <= baseline;
+    (2) ai_generated_like accuracy >= baseline - generated_floor;
+    (3) ai_paraphrased primary_accuracy >= para_floor (default 0.0 = disabled).
+    A missing per_class entry or None accuracy fails closed as 0.0 so a
+    positive para_floor rejects the candidate rather than raising."""
     false_ai = metrics["student_owned_false_ai_rate"]
     gen_acc = metrics["per_class"].get("ai_generated_like", {}).get(
         "primary_accuracy"
@@ -376,6 +382,11 @@ def satisfies_constraints(metrics: dict, baseline: dict, generated_floor: float)
     if false_ai > baseline["student_owned_false_ai_rate"] + 1e-9:
         return False
     if gen_acc < baseline["ai_generated_like_accuracy"] - generated_floor - 1e-9:
+        return False
+    para_acc = metrics["per_class"].get("ai_paraphrased", {}).get(
+        "primary_accuracy"
+    ) or 0.0
+    if para_acc < para_floor - 1e-9:
         return False
     return True
 
@@ -404,6 +415,7 @@ def _refine_candidate(
     weight_floor: float,
     scratch: Path,
     best_metrics: dict,
+    para_floor: float = 0.0,
 ) -> tuple[dict, dict]:
     """Greedy coordinate refinement: nudge each signal's weight +/-step (within
     its category, renormalizing), keep any constraint-satisfying improvement.
@@ -424,7 +436,7 @@ def _refine_candidate(
                     e["weight"] = w
                 _write_temp_candidate(trial, scratch)
                 m = evaluate_candidate(scratch, tune_rows)
-                if not satisfies_constraints(m, baseline, generated_floor):
+                if not satisfies_constraints(m, baseline, generated_floor, para_floor):
                     continue
                 if _objective_key(m) > best_key:
                     best, best_metrics, best_key = trial, m, _objective_key(m)
@@ -445,6 +457,7 @@ def search(
     refine_step: float,
     top_k: int,
     scratch_dir: Path,
+    para_floor: float = 0.0,
 ) -> dict:
     """Run the full search. Returns a result dict with the winner (or None),
     winner/baseline metrics on tune + holdout, and generalization verdict."""
@@ -475,7 +488,7 @@ def search(
         )
         _write_temp_candidate(cand, scratch)
         m = evaluate_candidate(scratch, tune_rows)
-        if not satisfies_constraints(m, baseline, generated_floor):
+        if not satisfies_constraints(m, baseline, generated_floor, para_floor):
             continue
         scored.append((_objective_key(m), cand, m))
 
@@ -488,6 +501,7 @@ def search(
         rcand, rm = _refine_candidate(
             cand, tune_rows, baseline, generated_floor,
             refine_step, weight_floor, scratch, m,
+            para_floor=para_floor,
         )
         refined.append((_objective_key(rm), rcand, rm))
     refined.sort(key=lambda t: t[0], reverse=True)
@@ -503,7 +517,7 @@ def search(
             hm["macro_primary_accuracy"]
             >= m["macro_primary_accuracy"] - holdout_tol - 1e-9
         )
-        if generalizes and satisfies_constraints(hm, baseline, generated_floor):
+        if generalizes and satisfies_constraints(hm, baseline, generated_floor, para_floor):
             winner, winner_tune, winner_holdout = cand, m, hm
             verdict = "ok"
             break
@@ -618,6 +632,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--holdout-tol", type=float, default=DEFAULT_HOLDOUT_TOL)
     ap.add_argument("--generated-floor", type=float,
                     default=DEFAULT_GENERATED_FLOOR)
+    ap.add_argument("--para-floor", type=float, default=DEFAULT_PARA_FLOOR,
+                    help="hard floor on ai_paraphrased primary_accuracy (0.0 = disabled)")
     ap.add_argument("--refine-step", type=float, default=DEFAULT_REFINE_STEP)
     ap.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
     args = ap.parse_args(argv)
@@ -635,7 +651,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         alpha_mult=args.alpha_mult, weight_floor=args.weight_floor,
         band_delta=args.band_delta, generated_floor=args.generated_floor,
         holdout_tol=args.holdout_tol, refine_step=args.refine_step,
-        top_k=args.top_k, scratch_dir=args.out_dir,
+        top_k=args.top_k, scratch_dir=args.out_dir, para_floor=args.para_floor,
     )
 
     print(f"\n{'#' * 70}")
@@ -643,6 +659,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"# tune rows: {result['n_tune']}  holdout rows: {result['n_holdout']}")
     print(f"# candidates satisfying constraints: "
           f"{result['n_candidates_satisfying']}")
+    print(f"# generated_floor={args.generated_floor}  para_floor={args.para_floor}")
     print(f"# baseline constants: {baseline}")
     print(f"{'#' * 70}")
 
@@ -666,6 +683,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "band_delta": args.band_delta,
         "holdout_tol": args.holdout_tol,
         "generated_floor": args.generated_floor,
+        "para_floor": args.para_floor,
         "refine_step": args.refine_step,
         "top_k": args.top_k,
         "n_tune": result["n_tune"],
