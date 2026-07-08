@@ -70,6 +70,7 @@ Add one muted presentation band in `poc/report/deberta.py` (e.g. `review` / `pos
 | **`poc/report/report.py::_sync_deberta_headline_from_heatmap` (~1387)** | **MISSED SURFACE (Fable 5):** rebuilds the badge `ai_signal_deberta` tile via `_build_headline` (0.99 flags) → tile still says "High AI-writing signal" on a green doc. Must consume the gated rows so the tile agrees with the map. |
 | **`poc/report/render_panels.py`** | **MISSED SURFACE (Fable 5):** colors by RAW score, not band — `_DEBERTA_SEVERITY_COLORS` (~803), `_severity_color` (~821), `render_signal_highlights_intro` (~901), `render_highlighted_document` (~933), flagged-para chip (~860). Route ALL of these through the gated band/color, or the **PDF + page keep the red wall**. |
 | **`poc/report/paragraph_explainer.py`** | **MISSED SURFACE (Fable 5):** score-keyed too — route through the gated band. |
+| **`poc/report/render.py` (the ACTIVE PDF renderer, `render_report` @ worker/app/tasks.py:225)** | **MISSED SURFACE (Fable 5, post-impl review):** `render_panels.py` is only *part* of the PDF — `render.py` has its OWN score-keyed card path. `_deberta_paragraph_groups` (~1615) built the finding-card `title`/`tier`/`adjusted_risk` from raw `score >= 99`, and `_render_finding_card` (~1300) colored the FLAGGED-SENTENCES chip `#dc2626` from raw score → green docs kept a red wall on the finding cards. **Fix:** both now read the gated band from the segment signal's `title="deberta_<band>"`. Plus a display-only findings-tree stamp in `render_report` (~1646) so the degraded fallback (`_paragraph_finding_groups`, fed by `builder.py`'s ungated Tier.HIGH synthesis @ ~879) also mutes on green — no tier re-bucketing, so counts/scores are untouched. |
 | `poc/detect_v7/deep_scan_heatmap.py` | No change (already single-band ≥0.999). |
 | Verification | **RENDER + visually inspect PDF + page** for green & non-green docs (grep proves emit, not render). |
 
@@ -108,3 +109,16 @@ Changes incorporated:
 4. **Missed surfaces added to §4:** `_sync_deberta_headline_from_heatmap` (badge tile), `render_panels.py` (raw-score coloring — PDF/page), `paragraph_explainer.py`. **This was the critical catch — fixing only the segment band would have left the red wall on the PDF/page where users reported it.**
 
 **Single most important implementation rule:** every score-keyed highlight consumer must read the gated band/color — one presentation source — or the green doc keeps its red wall.
+
+## 10. Fable 5 post-implementation review record (verdict: REVISE → fixed)
+
+Reviewed commit `6501c504`. Verdict **REVISE** — one confirmed red-wall survivor:
+
+- **Critical catch:** the ACTIVE PDF renderer is `poc/report/render.py::render_report` (worker/app/tasks.py:225), which calls the (already-gated) `render_panels.py` functions **but also has its own** score-keyed finding-card path (`_deberta_paragraph_groups` + `_render_finding_card`) that §4 never enumerated. Green docs kept a red "High-confidence AI" wall on the PDF finding cards. **Fixed** (band-driven; validated green→muted / red→red via `_deberta_paragraph_groups` + `_render_finding_card` unit test).
+- Confirmed PASS by review: primary gate reads the right fused badge tier; `{green, clean}` set correct (`acceptable`/word-tiers never occur on the badge); headline/tile denominator is score-based (unaffected); frontend band-parse correct.
+
+**Recorded decisions (deliberate residuals, not defects):**
+1. **Green-doc PDF shows muted "Possible AI — review" cards**, not an empty findings section. Matches the user's "Tiered — both, honestly labeled" choice; the spec requires no *red*, not no *cards*.
+2. **Masthead finding COUNT (`n_high`) is not re-bucketed** on green docs (keeps `findings_by_tier`/scores untouched, per §5). A green doc can still show a non-zero high-finding count in the masthead while the map/cards are muted — a display-count coherence item deferred to avoid entangling the fix with scoring. Documented, not silently dropped.
+3. **Degraded fallback** (segments absent → `_paragraph_finding_groups`): sentence chips mute via the findings-tree band stamp, but the card *header icon* still reads the ungated tier. Rare path (heatmap failure); acceptable residual.
+4. Minor: stale legend copy in `report.js` (i18n en/zh, "strong" band) — cosmetic, out of scope.
