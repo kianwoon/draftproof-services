@@ -159,6 +159,97 @@ def test_ai_assisted_polished_band_accessor():
     assert band["low"] < band["high"]
 
 
+def test_paraphrase_mismatch_normalization_accessor():
+    norm = v7config.get_paraphrase_mismatch_normalization()
+    # Phase A study percentiles (phase_a_interaction_study.json, 2026-07-08).
+    assert abs(norm["p10"] - 0.0589) < _TOL
+    assert abs(norm["p90"] - 0.1623) < _TOL
+    assert norm["p10"] < norm["p90"]
+
+
+def test_paraphrase_mismatch_normalization_missing_raises(monkeypatch, tmp_path):
+    alt_weights = {
+        "_notes": {"marker": "no-norm-block-fixture"},
+        "fusion_weights": {
+            "quick_scan": {"composite": 1.0},
+            "deep_scan_2detector": {"deberta_large": 0.5, "composite": 0.5},
+            "deep_scan_3detector_inert": {
+                "deberta_large": 0.45,
+                "composite": 0.35,
+                "ou_advacheck": 0.20,
+            },
+        },
+        "category_weights": {
+            "student_owned": [{"signal": "specificity_score", "weight": 1.0}],
+            "ai_assisted_polished": [
+                {"signal": "calibrated_detector_score", "weight": 1.0}
+            ],
+            "ai_paraphrased_with_comparison": [
+                {"signal": "semantic_drift", "weight": 1.0}
+            ],
+            "ai_paraphrased_without_comparison": [
+                {"signal": "semantic_drift", "weight": 1.0}
+            ],
+            "ai_generated_like": [
+                {"signal": "calibrated_detector_score", "weight": 1.0}
+            ],
+        },
+        "ai_assisted_polished_band": {"low": 0.35, "high": 0.70},
+        "flatness_thresholds": {
+            "confidence_low_gap": 0.10,
+            "mixed_signals_max_category": 0.35,
+        },
+        "esl_guard": {
+            "esl_high_threshold": 0.70,
+            "ai_generated_damping": 0.85,
+            "detector_disagreement_confidence_cap_threshold": 0.25,
+            "esl_disagreement_cotrigger_threshold": 0.60,
+            "confidence_cap_value": "low",
+        },
+        "display_bands": {"strong_min": 0.5, "some_min": 0.25, "little_min": 0.10},
+    }
+    fixture_path = tmp_path / "no_norm_weights.json"
+    fixture_path.write_text(json.dumps(alt_weights), encoding="utf-8")
+    monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(fixture_path))
+    v7config.reload_weights(force=True)
+    with pytest.raises(KeyError):
+        v7config.get_paraphrase_mismatch_normalization()
+
+
+def _install_norm_fixture(tmp_path, monkeypatch, p10, p90):
+    """Point config at a minimal temp weights file with the given
+    paraphrase_mismatch_normalization bounds (the accessor reads only that
+    block, so a minimal file suffices)."""
+    fixture_path = tmp_path / "norm_bounds_weights.json"
+    fixture_path.write_text(
+        json.dumps({"paraphrase_mismatch_normalization": {"p10": p10, "p90": p90}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(fixture_path))
+    v7config.reload_weights(force=True)
+
+
+def test_paraphrase_mismatch_normalization_equal_bounds_raises(monkeypatch, tmp_path):
+    """p10 == p90 would make signal_adapter row 9c's (p90 - p10) divisor zero —
+    the accessor must fail loud (ValueError), never let a ZeroDivisionError
+    reach the live scan breakdown path."""
+    _install_norm_fixture(tmp_path, monkeypatch, 0.1, 0.1)
+    with pytest.raises(ValueError):
+        v7config.get_paraphrase_mismatch_normalization()
+
+
+def test_paraphrase_mismatch_normalization_inverted_bounds_raises(monkeypatch, tmp_path):
+    _install_norm_fixture(tmp_path, monkeypatch, 0.2, 0.1)
+    with pytest.raises(ValueError):
+        v7config.get_paraphrase_mismatch_normalization()
+
+
+def test_paraphrase_mismatch_normalization_non_numeric_raises(monkeypatch, tmp_path):
+    _install_norm_fixture(tmp_path, monkeypatch, "0.0589", 0.1623)
+    with pytest.raises(ValueError):
+        v7config.get_paraphrase_mismatch_normalization()
+
+
 def test_env_var_override_loads_alternate_file(tmp_path, monkeypatch):
     alt_weights = {
         "_notes": {"marker": "alt-fixture-weights"},
@@ -217,3 +308,98 @@ def test_missing_file_raises_file_not_found(tmp_path, monkeypatch):
     with pytest.raises(FileNotFoundError) as exc_info:
         v7config.reload_weights(force=True)
     assert str(nonexistent) in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# display_fallback accessor (V8 three-way display fallback)
+# ---------------------------------------------------------------------------
+
+
+def _install_display_fallback_fixture(tmp_path, monkeypatch, display_fallback):
+    """Deep-copy the real bundled weights, swap in a display_fallback block
+    (or drop it entirely when display_fallback is None), write to tmp, and
+    point the loader at it."""
+    from pathlib import Path
+
+    real = json.loads(
+        (Path(v7config.__file__).resolve().parent / "weights.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if display_fallback is None:
+        real.pop("display_fallback", None)
+    else:
+        real["display_fallback"] = display_fallback
+    fixture_path = tmp_path / "display_fallback_weights.json"
+    fixture_path.write_text(json.dumps(real), encoding="utf-8")
+    monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(fixture_path))
+    v7config.reload_weights(force=True)
+
+
+def test_display_fallback_config_accessor():
+    cfg = v7config.get_display_fallback_config()
+    assert cfg["mode"] == "three_way"
+    assert cfg["merged_display_category"] == "ai_transformed"
+    assert cfg["merged_from"] == ["ai_paraphrased", "ai_generated_like"]
+
+
+def test_display_fallback_config_missing_raises(tmp_path, monkeypatch):
+    _install_display_fallback_fixture(tmp_path, monkeypatch, None)
+    with pytest.raises(KeyError):
+        v7config.get_display_fallback_config()
+
+
+def test_display_fallback_four_way_mode_is_valid(tmp_path, monkeypatch):
+    _install_display_fallback_fixture(
+        tmp_path,
+        monkeypatch,
+        {
+            "mode": "four_way",
+            "merged_display_category": "ai_transformed",
+            "merged_from": ["ai_paraphrased", "ai_generated_like"],
+        },
+    )
+    cfg = v7config.get_display_fallback_config()
+    assert cfg["mode"] == "four_way"
+
+
+def test_display_fallback_unknown_mode_raises(tmp_path, monkeypatch):
+    _install_display_fallback_fixture(
+        tmp_path,
+        monkeypatch,
+        {
+            "mode": "five_way",
+            "merged_display_category": "ai_transformed",
+            "merged_from": ["ai_paraphrased", "ai_generated_like"],
+        },
+    )
+    with pytest.raises(ValueError):
+        v7config.get_display_fallback_config()
+
+
+def test_display_fallback_unknown_merged_from_raises(tmp_path, monkeypatch):
+    _install_display_fallback_fixture(
+        tmp_path,
+        monkeypatch,
+        {
+            "mode": "three_way",
+            "merged_display_category": "ai_transformed",
+            "merged_from": ["ai_paraphrased", "not_a_category"],
+        },
+    )
+    with pytest.raises(ValueError):
+        v7config.get_display_fallback_config()
+
+
+def test_display_fallback_merged_name_collision_raises(tmp_path, monkeypatch):
+    _install_display_fallback_fixture(
+        tmp_path,
+        monkeypatch,
+        {
+            "mode": "three_way",
+            "merged_display_category": "student_owned",
+            "merged_from": ["ai_paraphrased", "ai_generated_like"],
+        },
+    )
+    with pytest.raises(ValueError):
+        v7config.get_display_fallback_config()

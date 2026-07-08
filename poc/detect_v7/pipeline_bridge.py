@@ -543,29 +543,90 @@ def _build_raw_signals(detection_result: Any) -> dict[str, Any]:
     }
 
 
+def _compose_display_fallback(breakdown: dict[str, Any]) -> None:
+    """V8 three-way display fallback (owner decision 2026-07-08, evidence
+    ``calibration/v12_validation/v8_frontier_result.json``): ``ai_paraphrased``
+    is measurably inseparable from ``ai_generated_like`` on single-document
+    evidence, so the user-facing breakdown MERGES the two indistinguishable AI
+    indicators into one ``ai_transformed`` display category.
+
+    Strictly ADDITIVE + presentation-only. Mutates ``breakdown`` in place to
+    add three fields — ``display_taxonomy``, ``display_shares``,
+    ``display_primary`` — computed from the existing four-way
+    ``document_breakdown_raw`` shares. The four-way fields
+    (``document_breakdown_raw``/``document_breakdown_bands``/
+    ``primary_category``) are NEVER touched; they are retained for audit and
+    the V8b paired-draft feature family that may later recover the separation.
+
+    Runs BEFORE ``_apply_tier_consistency_guard`` so the guard can inspect
+    ``display_primary`` (see that function). Config-driven, no hardcode:
+    ``config.get_display_fallback_config()`` supplies the merge spec and the
+    on/off ``mode``. When ``mode != "three_way"`` (e.g. the ``"four_way"``
+    off-switch) NO ``display_*`` fields are emitted — a forward-compatible
+    kill switch that leaves the four-way breakdown byte-identical.
+    """
+    fallback = config.get_display_fallback_config()
+    if fallback["mode"] != "three_way":
+        return
+
+    merged_from = fallback["merged_from"]
+    merged_category = fallback["merged_display_category"]
+    raw_shares = breakdown["document_breakdown_raw"]
+
+    display_shares: dict[str, float] = {
+        category: share
+        for category, share in raw_shares.items()
+        if category not in merged_from
+    }
+    display_shares[merged_category] = sum(raw_shares[c] for c in merged_from)
+
+    # argmax of the merged shares; ties break on first-seen order, matching
+    # aggregate.aggregate_document's max(...) convention for primary_category.
+    display_primary = max(display_shares.items(), key=lambda item: item[1])[0]
+
+    breakdown["display_taxonomy"] = fallback["mode"]
+    breakdown["display_shares"] = display_shares
+    breakdown["display_primary"] = display_primary
+
+
 def _apply_tier_consistency_guard(breakdown: dict[str, Any], tier: Optional[str]) -> None:
     """Owner-approved tier-consistency display guard (companion to the
     2026-07-08 category_weights re-tune, see ``weights.json``'s
     ``display_consistency_guard._notes``): a badge tier in the configured
     trigger set (``concerning``/``strong`` by default) paired with a
-    ``student_owned`` primary category is a contradictory display — red
-    tier + "the writing looks student-owned". Per the project's "guards
-    ANNOTATE, never SUPPRESS" alignment principle, this NEVER touches
+    ``student_owned`` primary read is a contradictory display — red tier +
+    "the writing looks student-owned". Per the project's "guards ANNOTATE,
+    never SUPPRESS" alignment principle, this NEVER touches
     ``document_breakdown_raw``/``document_breakdown_bands``/
     ``primary_category`` — it only reuses the existing mixed_signals
     presentation + ``primary_category_reliable=False`` mechanism
     (``breakdown_composer``'s flatness guard already uses this same
     ``"mixed_signals"`` value) and appends an uncertainty flag.
 
+    The "student_owned primary read" it challenges is EITHER the four-way
+    ``primary_category`` OR — once the V8 three-way display fallback has run
+    (``_compose_display_fallback``, called just before this guard) — the
+    ``display_primary`` shown to the user. The merge can only ever move the
+    top category AWAY from ``student_owned`` (it pools the two AI indicators
+    into ``ai_transformed``), so ``display_primary == student_owned`` implies
+    ``primary_category == student_owned`` too; the extra ``display_primary``
+    check is defensive and future-proof (it fires even if a later merge spec
+    changes that relationship) rather than strictly additive coverage today.
+
     Fail-open by construction: mutates ``breakdown`` in place only when
-    ``tier`` is a non-``None`` string in the configured trigger set AND
-    ``primary_category`` is ``"student_owned"``; a missing/unresolved tier
-    (e.g. the caller's ``detection_result`` never carried one) silently
-    does nothing, matching this bridge's overall fail-open contract.
+    ``tier`` is a non-``None`` string in the configured trigger set AND the
+    four-way primary OR the display primary is ``"student_owned"``; a
+    missing/unresolved tier (e.g. the caller's ``detection_result`` never
+    carried one) silently does nothing, matching this bridge's overall
+    fail-open contract.
     """
     if tier is None:
         return
-    if breakdown.get("primary_category") != _STUDENT_OWNED_CATEGORY:
+    student_owned_read = (
+        breakdown.get("primary_category") == _STUDENT_OWNED_CATEGORY
+        or breakdown.get("display_primary") == _STUDENT_OWNED_CATEGORY
+    )
+    if not student_owned_read:
         return
     guard_config = config.get_display_consistency_guard_config()
     trigger_tiers = guard_config["student_owned_contradiction_tiers"]
@@ -706,6 +767,11 @@ def run_v7_breakdown(detection_result: Any) -> Optional[dict[str, Any]]:
         flags = breakdown.setdefault("uncertainty_flags", [])
         if _UNCERTAINTY_FLAG_ESL_GUARD_UNAVAILABLE not in flags:
             flags.append(_UNCERTAINTY_FLAG_ESL_GUARD_UNAVAILABLE)
+        # V8 three-way display fallback: compose display_* fields from the
+        # four-way shares BEFORE the guard runs, so the extended guard can
+        # challenge a student_owned display_primary too (additive; four-way
+        # fields untouched — see _compose_display_fallback).
+        _compose_display_fallback(breakdown)
         _apply_tier_consistency_guard(breakdown, _extract_tier(detection_result))
         return breakdown
     except Exception:

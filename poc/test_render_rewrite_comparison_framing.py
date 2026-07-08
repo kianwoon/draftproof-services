@@ -74,3 +74,24 @@ def test_legacy_scans_without_breakdown_render_unchanged():
 
 def test_no_scans_returns_empty_string():
     assert _executive_comparison_html({}, review_required=False) == ""
+
+
+def test_three_way_display_fallback_applies_per_column():
+    # V8 three-way display fallback (poc/detect_v7/pipeline_bridge.py::
+    # _compose_display_fallback) reuses render_panels._authorship_bars_html via
+    # _cmp_column, so the merged ai_transformed share renders identically in each
+    # of the two rewrite-comparison columns.
+    three_way_breakdown = {
+        **_BREAKDOWN,
+        "display_taxonomy": "three_way",
+        "display_shares": {"student_owned": 0.37, "ai_assisted_polished": 0.21, "ai_transformed": 0.42},
+        "display_primary": "ai_transformed",
+    }
+    summary = {
+        "detect_scan_original_saved": {"ai_risk_badge": {**_badge(45.0, "amber"), "authorship_breakdown": three_way_breakdown}},
+        "detect_scan_rewritten": {"ai_risk_badge": {**_badge(18.0, "green"), "authorship_breakdown": three_way_breakdown}},
+    }
+    html = _executive_comparison_html(summary, review_required=False)
+    assert html.count("AI-transformed") >= 2
+    assert "AI-paraphrased" not in html
+    assert "AI-generated-like" not in html

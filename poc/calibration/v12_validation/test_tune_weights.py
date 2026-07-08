@@ -62,3 +62,17 @@ def test_candidate_weights_normalized():
     band = cand["ai_assisted_polished_band"]
     lo, hi = tw.band_bounds(band)
     assert lo < hi
+
+
+def test_para_floor_constraint():
+    metrics = {"macro_primary_accuracy": 0.7, "student_owned_false_ai_rate": 0.05,
+               "per_class": {"ai_generated_like": {"primary_accuracy": 0.8},
+                              "ai_paraphrased": {"primary_accuracy": 0.30},
+                              "student_owned": {"primary_accuracy": 0.9},
+                              "ai_assisted_polished": {"primary_accuracy": 0.7}}}
+    baseline = {"student_owned_false_ai_rate": 0.10, "ai_generated_like_accuracy": 0.78}
+    from calibration.v12_validation.tune_weights import satisfies_constraints
+    assert satisfies_constraints(metrics, baseline, generated_floor=0.08)                    # default: no para floor
+    assert not satisfies_constraints(metrics, baseline, generated_floor=0.08, para_floor=0.40)
+    metrics["per_class"]["ai_paraphrased"]["primary_accuracy"] = 0.45
+    assert satisfies_constraints(metrics, baseline, generated_floor=0.08, para_floor=0.40)

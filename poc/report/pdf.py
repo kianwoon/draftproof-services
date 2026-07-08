@@ -427,6 +427,9 @@ img[src^="https://img.shields.io"] { height: 18px; }
 .dp-abd-fill--ai_assisted_polished { background: #888780; }
 .dp-abd-fill--ai_paraphrased { background: #D85A30; }
 .dp-abd-fill--ai_generated_like { background: #D85A30; }
+/* V8 three-way display fallback merged category — same fill as ai_paraphrased/ai_generated_like
+   above, both of which it merges. */
+.dp-abd-fill--ai_transformed { background: #D85A30; }
 
 /* Tier-consistency guard caveat (poc/detect_v7/pipeline_bridge.py::_apply_tier_consistency_guard) —
    shown when breakdown.presentation === "mixed_signals". Same amber palette as .dp-statchip--warn.
@@ -439,6 +442,14 @@ img[src^="https://img.shields.io"] { height: 18px; }
     color: #b45309;
     font-size: 8pt;
     line-height: 1.4;
+}
+
+/* V8 three-way display fallback explainer — neutral/informational, not a warning.
+   KEEP-IN-SYNC: draftproof-frontend/src/styles/site-master/06-report-overview.css
+   .merged-comp-caveat--info. */
+.dp-abd-caveat--info {
+    background: #f3f4f6;
+    color: #6b7280;
 }
 
 /* ── KPI stat row ── */

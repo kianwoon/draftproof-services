@@ -162,7 +162,16 @@ _ACB_CATEGORY_LABELS = {
     "ai_assisted_polished": "AI-assisted / polished",
     "ai_paraphrased": "AI-paraphrased",
     "ai_generated_like": "AI-generated-like",
+    # V8 three-way display fallback (poc/detect_v7/pipeline_bridge.py::_compose_display_fallback,
+    # weights.json display_fallback.mode == "three_way"): merges ai_paraphrased +
+    # ai_generated_like, measurably indistinguishable from single-document evidence.
+    # KEEP-IN-SYNC: draftproof-frontend/src/i18n/en/report.js authorshipBreakdown.categories.ai_transformed,
+    # worker/app/email_service.py _AUTHORSHIP_CATEGORY_LABELS.
+    "ai_transformed": "AI-transformed",
 }
+# Three-way category order, used when breakdown.display_taxonomy == "three_way" (display_shares
+# present). Mirrors draftproof-frontend/src/pages/report/MergedAuthorshipRisk.jsx THREE_WAY_CATEGORY_ORDER.
+_ACB_THREE_WAY_CATEGORY_ORDER = ("student_owned", "ai_assisted_polished", "ai_transformed")
 _ACB_BAND_LABELS = {"Strong": "Strong", "Some": "Some", "Little": "Little", "None": "None"}
 _ACB_FUSED_BAND_LABELS = {"low": "Low", "moderate": "Moderate", "high": "High", "critical": "Critical"}
 _ACB_TIER_TO_BAND = {"green": "low", "amber": "moderate", "orange": "high", "red": "critical"}
@@ -270,6 +279,14 @@ _MIXED_SIGNALS_CAVEAT_TEXT = (
     "Treat the composition as inconclusive and review the flagged passages."
 )
 
+# V8 three-way display fallback explainer (poc/detect_v7/pipeline_bridge.py::
+# _compose_display_fallback sets breakdown["display_taxonomy"] = "three_way"). Verbatim copy
+# KEEP-IN-SYNC with draftproof-frontend/src/i18n/en/report.js report.merged.threeWayExplainer.
+_THREE_WAY_EXPLAINER_TEXT = (
+    "Paraphrased and generated writing read the same from a single document — DraftProof "
+    "reports them as one AI-transformed share rather than guessing."
+)
+
 # Owner-mandated framing (2026-07-08): the detection tier is the AI-risk AUTHORITY;
 # the composition breakdown is a display/category INTERPRETATION. Verbatim copy KEPT
 # IN SYNC with draftproof-frontend/src/i18n/en/report.js report.merged.verdictFramingNote
@@ -291,26 +308,52 @@ _COMPOSITION_SUBHEAD_TEXT = (
 )
 
 
+def _is_three_way_display(breakdown: dict) -> bool:
+    """True when the V8 three-way display fallback fields are present (see
+    _authorship_bars_html) — the single predicate every renderer keys the
+    three-vs-four-way switch on, so intro copy and bars can never disagree."""
+    return breakdown.get("display_taxonomy") == "three_way" and isinstance(
+        breakdown.get("display_shares"), dict
+    )
+
+
 def _authorship_bars_html(breakdown: dict) -> str:
-    """The 4 color-coded category bars + disclaimer. '' when no breakdown.
+    """The category bars + disclaimer. '' when no breakdown.
 
     KEEP-IN-SYNC: draftproof-frontend/src/pages/report/MergedAuthorshipRisk.jsx's
     composition section — when breakdown.presentation == "mixed_signals" both surfaces
-    show the same tier-consistency-guard caveat immediately above the bars."""
+    show the same tier-consistency-guard caveat immediately above the bars.
+
+    V8 three-way display fallback: when breakdown["display_taxonomy"] == "three_way"
+    (and breakdown["display_shares"] is present), renders the merged student_owned /
+    ai_assisted_polished / ai_transformed shares (percentage only, no band — the backend
+    only emits raw display_shares for the merge, not thresholded bands) instead of the
+    4 four-way bars. Legacy payloads (no display_* fields) render byte-identically."""
     caveat_html = (
         f'<p class="dp-abd-caveat">{escape(_MIXED_SIGNALS_CAVEAT_TEXT)}</p>'
         if breakdown.get("presentation") == "mixed_signals" else ""
     )
-    raw_shares = breakdown.get("document_breakdown_raw") or {}
-    band_shares = breakdown.get("document_breakdown_bands") or {}
+    is_three_way = _is_three_way_display(breakdown)
+    if is_three_way:
+        caveat_html += f'<p class="dp-abd-caveat dp-abd-caveat--info">{escape(_THREE_WAY_EXPLAINER_TEXT)}</p>'
+        category_order = _ACB_THREE_WAY_CATEGORY_ORDER
+        raw_shares = breakdown["display_shares"]
+        band_shares: dict = {}
+    else:
+        category_order = _ACB_CATEGORY_ORDER
+        raw_shares = breakdown.get("document_breakdown_raw") or {}
+        band_shares = breakdown.get("document_breakdown_bands") or {}
     rows = []
-    for category in _ACB_CATEGORY_ORDER:
+    for category in category_order:
         raw = raw_shares.get(category)
         band = band_shares.get(category)
         has_raw = isinstance(raw, (int, float))
         width_pct = max(0.0, min(100.0, raw * 100)) if has_raw else 0.0
-        band_label = _ACB_BAND_LABELS.get(band, band) if band else _ACB_BAND_LABELS["None"]
-        text = f"{band_label} · {round(width_pct)}%" if has_raw else band_label
+        band_label = _ACB_BAND_LABELS.get(band, band) if band else None
+        if has_raw:
+            text = f"{band_label} · {round(width_pct)}%" if band_label else f"{round(width_pct)}%"
+        else:
+            text = band_label or _ACB_BAND_LABELS["None"]
         # Two-row layout matching the web's .merged-comp-row (label+band head, then a
         # full-width track below). A single flex row with an empty flex:1 track collapses
         # to zero width in WeasyPrint, so the colored bar vanished in the PDF.
@@ -332,8 +375,10 @@ def _authorship_bars_html(breakdown: dict) -> str:
 
 def render_authorship_breakdown(report_data: dict) -> str:
     """HTML panel mirroring draftproof-frontend's AuthorshipClarityBreakdown.jsx:
-    fused AI-likelihood headline (or deep-scan-only fallback), the 4 category bars,
-    and the verbatim disclaimer. '' when badge.authorship_breakdown is absent
+    fused AI-likelihood headline (or deep-scan-only fallback), the category bars
+    (four-way, or three-way under the V8 display fallback — the intro's style count
+    follows _is_three_way_display so copy and bars can never disagree), and the
+    verbatim disclaimer. '' when badge.authorship_breakdown is absent
     (flag off / older report) — additive, fail-open, no hardcoded thresholds
     (band labels/cutoffs are read from the badge's own fields, never invented)."""
     badge = (report_data or {}).get("ai_risk_badge") or {}
@@ -341,11 +386,16 @@ def render_authorship_breakdown(report_data: dict) -> str:
     if not breakdown:
         return ""
 
+    # Taxonomy-aware count: the V8 three-way display fallback renders three merged
+    # bars, so an intro saying "four authorship styles" above them would be exactly
+    # the page/PDF copy drift this project guards against. Legacy four-way payloads
+    # keep the pre-existing wording byte-identical.
+    style_count = "three" if _is_three_way_display(breakdown) else "four"
     # allow-hardcode: presentation copy/markup for the PDF panel, not a scoring/matching list.
     out = [
         '<div class="authorship-breakdown">',
         '<p class="dp-callout-title">Authorship clarity breakdown <span class="dp-statchip dp-statchip--info">Beta</span></p>',
-        '<p class="dp-hero-sub">How this document\'s writing signals distribute across four '
+        f'<p class="dp-hero-sub">How this document\'s writing signals distribute across {style_count} '
         "authorship styles. The shares always add up to 100% — a composition of the mix, not an "
         "AI-probability. The deep-scan estimate below comes from a separate beta detector and may "
         "differ from Text-pattern risk in the summary above — different models, and both are "

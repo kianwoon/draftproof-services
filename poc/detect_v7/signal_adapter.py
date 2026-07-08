@@ -1,5 +1,5 @@
 """V7 signal adapter — maps existing ``poc/detect/`` per-paragraph signals onto
-the 16 V7 signal names declared in ``weights.json``.
+the 17 V7 signal names declared in ``weights.json``.
 
 This module performs RENAMING/DERIVATION ONLY. It never introduces new scoring
 weights, thresholds, or blend ratios of its own — every number that flows
@@ -39,6 +39,11 @@ production shapes already used across ``poc/detect/``:
     multiplying it against ``(1 - detector_score)`` and ``detector_score``
     respectively (see rows 9a/9b in the body). The plain ``specificity_score``
     row is retained unchanged for consumers that read it directly.
+    ``paraphrase_mismatch`` (row 9c) is the Phase A interaction winner
+    ``specificity_student_evidence × calibrated_detector_score`` (content-
+    humanness × surface-AIness), quantile-normalized to spread its compressed
+    raw range — see row 9c and ``weights.json``'s
+    ``paraphrase_mismatch_normalization`` block for the study provenance.
 
 All values are read defensively (``raw_signals`` sub-dicts may be missing or
 None); a signal whose required inputs are absent maps to ``None`` with
@@ -48,16 +53,20 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from detect_v7 import config
 
-# The 16 V7 signal names, verbatim from detect_v7/weights.json category_weights
+
+# The 17 V7 signal names, verbatim from detect_v7/weights.json category_weights
 # (deduplicated across all category formulas) minus calibrated_detector_score
 # (owned by the not-yet-built detector_fusion.py), plus esl_false_positive_risk
 # (spec §5, not part of any category formula — consumed separately by the ESL
-# guard in category_scoring.py).
+# guard in category_scoring.py) and paraphrase_mismatch (V8 Task 5 — the Phase A
+# interaction winner, wired into ai_paraphrased_without_comparison).
 V7_SIGNAL_NAMES: tuple[str, ...] = (
     "specificity_score",
     "specificity_student_evidence",
     "specificity_ai_evidence",
+    "paraphrase_mismatch",
     "grounding_gap",
     "sentence_variance",
     "generic_density",
@@ -130,9 +139,9 @@ def _mean(values: list[float]) -> Optional[float]:
 
 
 def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
-    """Map one paragraph's existing poc/detect/ signals onto the 14 V7 names.
+    """Map one paragraph's existing poc/detect/ signals onto the 17 V7 names.
 
-    Returns a dict with all 16 V7 signal names as keys (float in [0,1] or
+    Returns a dict with all 17 V7 signal names as keys (float in [0,1] or
     None), plus a companion ``signal_status`` dict keyed the same way with
     values "ok" / "unavailable" (built signal, inputs absent this run) /
     "not_implemented" (signal not built yet — only the Phase-1C/2 rows) /
@@ -314,6 +323,43 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
         status["specificity_student_evidence"] = _STATUS_UNAVAILABLE
         status["specificity_ai_evidence"] = _STATUS_UNAVAILABLE
 
+    # 9c. paraphrase_mismatch — the Phase A interaction study WINNER (V8 Task 5,
+    #     provenance poc/calibration/v12_validation/phase_a_interaction_study.json,
+    #     generated 2026-07-08, corpus n=198): the product of content-humanness ×
+    #     surface-AIness, i.e.
+    #       p = specificity_student_evidence * calibrated_detector_score
+    #     which scored effective AUC 0.7202 (paraphrased vs generated, the only
+    #     pair the ai_paraphrased category historically confused) with a clean
+    #     ESL subgroup check (lower-vs-higher AUC 0.365, 20/20 coverage). Like
+    #     rows 9a/9b this is a STRUCTURAL derivation (product of two existing
+    #     [0,1] signals), not a tuned weight.
+    #
+    #     Quantile normalization: the raw product's dynamic range is compressed
+    #     (study p90=0.1623), so without spreading it the signal could only ever
+    #     contribute <=0.16*weight and the tuner could not express it. We map the
+    #     raw product through clamp01((p - p10) / (p90 - p10)) using the study's
+    #     p10/p90 read from weights.json's paraphrase_mismatch_normalization block
+    #     (config.get_paraphrase_mismatch_normalization) — NEVER Python literals
+    #     (CLAUDE.md no-hardcode-scoring-numbers rule). The starter category
+    #     weight (0.20 in ai_paraphrased_without_comparison) is the tuner's to
+    #     finalize; this row only shapes the [0,1] feature value.
+    #
+    #     None/"unavailable" when EITHER input is missing (no student-evidence
+    #     split this run, or no detector score threaded in); "ok" otherwise.
+    student_evidence = out["specificity_student_evidence"]
+    if student_evidence is not None and detector_score is not None:
+        norm = config.get_paraphrase_mismatch_normalization()
+        p10 = norm["p10"]
+        p90 = norm["p90"]
+        raw_product = student_evidence * detector_score
+        # Division safe by contract: the accessor validates p10 < p90
+        # (ValueError otherwise), so (p90 - p10) is strictly positive here.
+        out["paraphrase_mismatch"] = _clamp01((raw_product - p10) / (p90 - p10))
+        status["paraphrase_mismatch"] = _STATUS_OK
+    else:
+        out["paraphrase_mismatch"] = None
+        status["paraphrase_mismatch"] = _STATUS_UNAVAILABLE
+
     # 10. local_style_shift ← direct pass-through of criteria/style_shift.py score().value.
     local_style_shift = _get_criterion_value(criterion_scores, "style_shift")
     out["local_style_shift"] = _clamp01(local_style_shift)
@@ -352,7 +398,7 @@ def adapt_paragraph_signals(raw_signals: dict[str, Any]) -> dict[str, Any]:
     out["esl_false_positive_risk"] = None
     status["esl_false_positive_risk"] = _STATUS_NOT_IMPLEMENTED
 
-    # Assert we produced exactly the declared 14 keys — a structural self-check, not a
+    # Assert we produced exactly the declared 17 keys — a structural self-check, not a
     # runtime weight/threshold.
     assert set(out.keys()) == set(V7_SIGNAL_NAMES), (
         f"adapt_paragraph_signals output keys {sorted(out.keys())} != "

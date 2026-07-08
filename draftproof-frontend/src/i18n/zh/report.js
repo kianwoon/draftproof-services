@@ -688,7 +688,8 @@ export const report = {
       "student_owned": "学生原创",
       "ai_assisted_polished": "AI 辅助润色",
       "ai_paraphrased": "AI 改写",
-      "ai_generated_like": "疑似 AI 生成"
+      "ai_generated_like": "疑似 AI 生成",
+      "ai_transformed": "AI 改写/生成"
     },
     "bands": {
       "Strong": "明显",
@@ -748,6 +749,7 @@ export const report = {
     "compositionLens": "写作构成解读",
     "compositionLensNote": "合计为 100%——这是对写作风格的解读性拆分，不是上方的 AI 风险判定",
     "compositionMixedSignalsCaveat": "信号存在矛盾——以下各类别占比与本文档的风险等级不一致。请将该构成解读视为不确定，并复核被标记的段落。",
+    "threeWayExplainer": "改写与生成的写作在单一文档中的信号表现相同——DraftProof 将两者合并为一项「AI 改写/生成」占比，而非勉强区分。",
     "riskLens": "风险所在",
     "riskLensNote": "各自独立",
     "verdictFramingNote": "检测结论——此等级是 DraftProof 基于校准检测器给出的 AI 风险判定。下方的构成拆分仅为展示性解读，不能覆盖该判定。"

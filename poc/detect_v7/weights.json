@@ -10,7 +10,8 @@
     "deep_scan_calibration": "Per poc/calibration/v7_deberta_academic_baseline.json (checkpoint desklib/ai-text-detector-academic-v1.01 via Modal, calibrated 2026-07-04): the naive whole-document score from this checkpoint is USELESS at any reasonable threshold \u2014 its distribution is compressed near 1.0, so the production-convention SENT_THRESHOLD=0.99 gave a 68% FPR on human ESL essays when applied doc-level. Calibration was instead done at SENTENCE granularity, mirroring poc/detect/deberta_signal.py's SENT_THRESHOLD/DOC_FLOOR_PCT threshold-proportion design (see that file's module docstring for why averaging/isotonic calibration was rejected there too): each essay is split into sentences (poc.detect.deberta_windowing.split_sentences \u2014 the same splitter deberta_signal.py uses), each sentence is scored independently via Modal, and the document signal is proportion = fraction of sentences scoring >= sent_threshold. The swept threshold_sweep entry 'sent>=0.999_docfloor>=0.3' was selected: sent_threshold=0.999, doc_floor=0.3, giving fpr_higher_pct=6.5, fpr_lower_pct=5.3, parity_gap_pct=-1.2, tpr_ai_pct=100.0, sentence_auc_ai_vs_human=0.929 (n=139 higher-proficiency essays, 133 lower-proficiency essays, 65 AI texts). doc_floor=0.3 is a RELIABILITY floor, not a score floor: a proportion below it means too few sentences crossed sent_threshold to trust the reading, so pipeline_bridge.py must flag it as low-reliability (uncertainty_flags) rather than silently treating it as a small-but-meaningful signal or zeroing it out.",
     "deep_scan_display_bands": "User-facing 'Deep-scan AI estimate' tier bands for the sentence-proportion signal, mirroring poc/detect/deberta_signal.py's _band_for philosophy: NO 'green' band exists \u2014 a proportion below the reliability floor is 'insufficient evidence', never 'clean'. insufficient_below=0.3 is BY CONTRACT equal to deep_scan_calibration.doc_floor (the reliability floor; config.py enforces the equality). orange_min=0.5 and red_min=0.7 are presentational severity cutoffs, not independently calibrated verdict thresholds; they are anchored to poc/calibration/v7_deberta_academic_baseline.json's threshold_sweep at sent_threshold=0.999: 'sent>=0.999_docfloor>=0.5' measured fpr_higher_pct=0.7, fpr_lower_pct=0.8, parity_gap_pct=0.1, tpr_ai_pct=95.4 (a document at/above 0.5 is almost never a human ESL essay \u2014 sub-1% FPR \u2014 hence 'orange'); 'sent>=0.999_docfloor>=0.7' measured fpr_higher_pct=0.0, fpr_lower_pct=0.0, parity_gap_pct=0.0, tpr_ai_pct=76.9 (zero measured human FPR at/above 0.7 \u2014 hence 'red'). Between doc_floor (0.3, where measured FPR was 6.5%/5.3%) and 0.5 the signal is real but has non-trivial false-positive mass, so it displays as 'amber'.",
     "tier_authority": "Per the V7 fused-score authority re-base (2026-07-03, poc/calibration/v7_fused_gate_result.json \u2014 GATE PASS): fused_score = 0.40 * composite_score_0_100 + 0.60 * deep_scan_proportion_0_1 * 100. The fused scale beats the composite alone on every gate axis (overall FPR 2.9%->0.4% at the 50-point composite/48-point-equivalent operating point, AUC 0.755->0.9955). A cutoff sweep ON THE FUSED SCALE validated that the EXISTING tier cutoffs (32/48/65, previously tuned for the composite-only scale) carry over unchanged: at 32, FPR 5.9%/TPR 99.2%; at 48, FPR 0.4%/TPR 89.5%; at 65, FPR 0%/TPR 46%. These are the same cutoff numbers as poc/detect/'s existing amber/orange/red tier boundaries \u2014 carried over, not re-derived \u2014 because the sweep showed the fused scale preserves them. Tier bands: green below amber, amber [32,48), orange [48,65), red >=65. This section only takes effect when DRAFTPROOF_V7_TIER_AUTHORITY is truthy AND a real deep-scan proportion is available (fail-open otherwise per poc/detect_v7/pipeline_bridge.py's is_v7_enabled/is_deep_scan_enabled pattern).",
-    "category_weights_tuning": "Tuned 2026-07-08 (detector-gated specificity split experiment; driver in scratchpad, transient/not committed). seed 45, 2000 Dirichlet trials + top-5 coordinate refinement, 70/30 stratified holdout, replayed offline over calibration/v12_validation/captures/signals_fused_v2.jsonl (captures derived from the fused path AFTER the split signals were added to the adapter). The split disambiguates the raw low_specificity criterion via the calibrated detector score: specificity_student_evidence = low_specificity*(1-detector), specificity_ai_evidence = low_specificity*detector (structural derivation in signal_adapter.py rows 9a/9b, not a tuned weight). student_owned now weights specificity_student_evidence and ai_generated_like weights specificity_ai_evidence; ai_assisted_polished keeps the raw specificity_score. Winner metrics (tune/holdout): false-AI 3.6%/0.0%, generated-like 80.4%/70.8%, ai_assisted_polished 85.2%/91.7%, macro 65.5%/65.6% \u2014 all four owner accuracy targets met. Class-level means (198-doc fused corpus) confirm monotone separation across student->polished->paraphrased->generated: student_ev 0.502/0.335/0.289/0.247, ai_ev 0.108/0.239/0.271/0.281. Supersedes the seed-42 promotion (2026-07-08). Do NOT touch tier_authority/fusion_weights/deep_scan_calibration/esl_guard/display_consistency_guard/flatness/display_bands."
+    "category_weights_tuning": "Tuned 2026-07-08 (detector-gated specificity split experiment; driver in scratchpad, transient/not committed). seed 45, 2000 Dirichlet trials + top-5 coordinate refinement, 70/30 stratified holdout, replayed offline over calibration/v12_validation/captures/signals_fused_v2.jsonl (captures derived from the fused path AFTER the split signals were added to the adapter). The split disambiguates the raw low_specificity criterion via the calibrated detector score: specificity_student_evidence = low_specificity*(1-detector), specificity_ai_evidence = low_specificity*detector (structural derivation in signal_adapter.py rows 9a/9b, not a tuned weight). student_owned now weights specificity_student_evidence and ai_generated_like weights specificity_ai_evidence; ai_assisted_polished keeps the raw specificity_score. Winner metrics (tune/holdout): false-AI 3.6%/0.0%, generated-like 80.4%/70.8%, ai_assisted_polished 85.2%/91.7%, macro 65.5%/65.6% \u2014 all four owner accuracy targets met. Class-level means (198-doc fused corpus) confirm monotone separation across student->polished->paraphrased->generated: student_ev 0.502/0.335/0.289/0.247, ai_ev 0.108/0.239/0.271/0.281. Supersedes the seed-42 promotion (2026-07-08). Do NOT touch tier_authority/fusion_weights/deep_scan_calibration/esl_guard/display_consistency_guard/flatness/display_bands.",
+    "paraphrase_mismatch_normalization": "V8 Task 5 (2026-07-08): quantile-normalization bounds for the NEW paraphrase_mismatch derived signal (signal_adapter.py row 9c), the WINNER of the Phase A interaction study (poc/calibration/v12_validation/phase_a_interaction_study.json, corpus n=198). paraphrase_mismatch = quantile_norm(specificity_student_evidence * calibrated_detector_score) = content-humanness x surface-AIness. That raw product scored effective AUC 0.7202 for ai_paraphrased_vs_ai_generated_like (the pair the ai_paraphrased category historically confused, both above the 0.70 gate) with a clean ESL subgroup check (lower-vs-higher AUC 0.365, 20/20 coverage, no ESL false-positive skew). p10=0.0589 / p90=0.1623 are the study's raw-product percentiles; the adapter maps p through clamp01((p-p10)/(p90-p10)) because the raw range is compressed (p90 only 0.1623) and without spreading the signal could contribute at most ~0.16*weight, leaving the tuner unable to express it. The 0.20 starter weight in ai_paraphrased_without_comparison (existing entries scaled by 0.8 so the list still sums to 1.0) is a STARTER for the MLflow validation harness to finalize (spec \u00a79) \u2014 the tuner owns the final weight, this block only shapes the [0,1] feature value. Do NOT hardcode p10/p90 in Python; config.get_paraphrase_mismatch_normalization reads them here."
   },
   "fusion_weights": {
     "quick_scan": {
@@ -128,27 +129,32 @@
     "ai_paraphrased_without_comparison": [
       {
         "signal": "calibrated_detector_score",
-        "weight": 0.4345851318428811,
+        "weight": 0.3476681054743049,
         "direction": "direct"
       },
       {
         "signal": "sentence_smoothness",
-        "weight": 0.23535254755410256,
+        "weight": 0.18828203804328205,
         "direction": "direct"
       },
       {
         "signal": "paraphrase_pattern_score",
-        "weight": 0.12904785568929394,
+        "weight": 0.10323828455143515,
+        "direction": "direct"
+      },
+      {
+        "signal": "paraphrase_mismatch",
+        "weight": 0.2,
         "direction": "direct"
       },
       {
         "signal": "author_voice_absence",
-        "weight": 0.02,
+        "weight": 0.016,
         "direction": "direct"
       },
       {
         "signal": "generic_density",
-        "weight": 0.18101446491372244,
+        "weight": 0.14481157193097795,
         "direction": "direct"
       }
     ],
@@ -194,6 +200,10 @@
     "low": 0.385408797975002,
     "high": 0.9346951388551599
   },
+  "paraphrase_mismatch_normalization": {
+    "p10": 0.0589,
+    "p90": 0.1623
+  },
   "flatness_thresholds": {
     "confidence_low_gap": 0.1,
     "mixed_signals_max_category": 0.35
@@ -238,5 +248,14 @@
       "strong"
     ],
     "_notes": "Owner-approved companion to the 2026-07-08 category_weights re-tune (seed 42, see category_weights_tuning note above): post-rewire, 17/80 AI-generated docs in the \u00a712 validation set (poc/calibration/v12_validation/false_ai_diagnosis.json) display 'student_owned' as their top V7 category share while the badge tier (fused-score-driven, untouched by this guard) correctly reads concerning/strong \u2014 a contradictory display (red tier + 'the writing looks student-owned'). Per project alignment principle 'guards ANNOTATE, never SUPPRESS' (CLAUDE.md), this does not change shares or primary_category; it reuses the existing mixed_signals presentation + primary_category_reliable=False mechanism (poc/detect_v7/breakdown_composer.py's flatness guard) plus an uncertainty_flags entry, applied in poc/detect_v7/pipeline_bridge.py::run_v7_breakdown where the badge tier is available. Trigger tier set is 'concerning'/'strong' only (green/amber/clean/acceptable tiers are not contradicted by a student_owned read, so the guard fail-opens and does not fire there)."
+  },
+  "display_fallback": {
+    "mode": "three_way",
+    "merged_display_category": "ai_transformed",
+    "merged_from": [
+      "ai_paraphrased",
+      "ai_generated_like"
+    ],
+    "_notes": "V8 measured resolution (owner decision 2026-07-08, evidence poc/calibration/v12_validation/v8_frontier_result.json). The V8 tuning frontier proved ai_paraphrased cannot be separated from ai_generated_like on single-document evidence: acceptance required para>=0.40 AND polished>=0.65 AND macro>=~0.65 and NO operating point satisfies all three (binding wall: paraphrase_mismatch feature mean sits on the wrong side, polished 0.694 > paraphrased 0.644, so the tuner can only buy paraphrase wins by relabeling polished as paraphrased). Rather than assert a distinction the signal cannot support, the user-facing breakdown MERGES the two indistinguishable AI indicators into a single 'ai_transformed' display category. ADDITIVE, presentation-only: pipeline_bridge.py::run_v7_breakdown composes display_taxonomy/display_shares/display_primary from the merged shares while the four-way document_breakdown_raw/document_breakdown_bands/primary_category/guards stay byte-identical (retained for audit + the V8b paired-draft feature family that may later recover the separation). mode 'three_way' emits the display_* fields; mode 'four_way' is the forward-compatible off-switch (no display_* fields). config.py::get_display_fallback_config validates fail-loud (KeyError if missing; ValueError on unknown mode, unknown merged_from category, or a merged_display_category colliding with an existing four-way category name)."
   }
 }

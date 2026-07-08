@@ -109,6 +109,40 @@ def test_mixed_signals_caveat_absent_when_presentation_missing():
     assert "Mixed signals" not in html
 
 
+def test_three_way_bars_render_when_display_fields_present():
+    # V8 three-way display fallback (poc/detect_v7/pipeline_bridge.py::
+    # _compose_display_fallback): display_taxonomy == "three_way" + display_shares ->
+    # 3 merged bars (student_owned / ai_assisted_polished / ai_transformed), the
+    # explainer caveat, and NO four-way ai_paraphrased/ai_generated_like rows.
+    breakdown = {
+        **_BADGE["authorship_breakdown"],
+        "display_taxonomy": "three_way",
+        "display_shares": {"student_owned": 0.37, "ai_assisted_polished": 0.21, "ai_transformed": 0.42},
+        "display_primary": "ai_transformed",
+    }
+    html = render_authorship_breakdown({"ai_risk_badge": {**_BADGE, "authorship_breakdown": breakdown}})
+    assert "AI-transformed" in html
+    assert "42" in html  # merged share percentage
+    assert "reports them as one AI-transformed share" in html
+    assert "AI-paraphrased" not in html
+    assert "AI-generated-like" not in html
+    # Taxonomy-aware intro copy: three bars must never sit under a "four styles" intro.
+    assert "four authorship styles" not in html
+    assert "three authorship styles" in html
+
+
+def test_four_way_bars_unchanged_when_display_fields_absent():
+    # Legacy payloads (mode "four_way" / older reports) carry no display_* fields ->
+    # byte-identical four-way rendering, no three-way explainer, original intro copy.
+    html = render_authorship_breakdown({"ai_risk_badge": _BADGE})
+    assert "AI-paraphrased" in html
+    assert "AI-generated-like" in html
+    assert "AI-transformed" not in html
+    assert "reports them as one AI-transformed share" not in html
+    assert "four authorship styles" in html
+    assert "three authorship styles" not in html
+
+
 def _make_report_with_breakdown_and_sr():
     from types import SimpleNamespace
     badge = {
