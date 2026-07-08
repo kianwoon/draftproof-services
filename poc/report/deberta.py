@@ -9,21 +9,32 @@ from typing import Any
 # DeBERTa learned-classifier heatmap: band → color/label/description/tier. Drives the
 # Signal-highlights paragraph colors (replacing the perplexity-family signals). Distinct colors
 # per band carried on the signal so the frontend's --signal-color mechanism needs no new CSS.
+# allow-hardcode: these are band→display metadata (colors/labels/descriptions) keyed by a fixed
+# internal band enum {clean,moderate,high,review}. They are human-reviewed presentation craft, NOT
+# a scoring/matching oracle — nothing here inspects user text; the band is decided upstream by the
+# calibrated detector + verdict gate. Adding a band = adding a display row, not a detection rule.
 DEBERTA_HEAT_COLORS = {
     "clean": "#94a3b8",     # neutral slate — human-like; not surfaced in the legend
     "moderate": "#f97316",  # orange — clear AI-like reading (0.80-0.99)
     "high": "#dc2626",      # red — the >=0.99 high-confidence AI band
+    "review": "#c99a3b",    # muted amber/gold — VERDICT-GATED review candidate (see description)
 }
-DEBERTA_HEAT_TIERS = {"clean": "", "moderate": "medium", "high": "high"}
+DEBERTA_HEAT_TIERS = {"clean": "", "moderate": "medium", "high": "high", "review": "low"}
 DEBERTA_HEAT_LABELS = {
     "clean": "No AI signal",
     "moderate": "Strong AI signal",
     "high": "High-confidence AI signal",
+    "review": "Possible AI — review",
 }
 DEBERTA_HEAT_DESCRIPTIONS = {
     "clean": "The learned classifier reads this passage as human.",
     "moderate": "The second-opinion detector sees strong AI-like signal (below its high-confidence bar).",
     "high": "The second-opinion detector is >=99% confident this passage is AI-like.",
+    # VERDICT-GATED (2026-07-09): the detector scores this sentence >=0.999, BUT the document's
+    # calibrated verdict reads clean/green. The per-sentence detector saturates (~24% of HUMAN
+    # sentences cross 0.999), so one 1.0 sentence is NOT a verdict when the document overall reads
+    # human. Surfaced for review honestly — neither a confident AI verdict (red) nor hidden.
+    "review": "The sentence detector flags this passage, but your document reads clean overall — worth a review.",
 }
 # Band-specific, student-facing edit guidance. Drives the issue-card "recommendation".
 # V7-aligned (2026-07-04): leads with the GROUNDING action (V7's model — the risk is
@@ -33,12 +44,14 @@ DEBERTA_HEAT_DESCRIPTIONS = {
 DEBERTA_HEAT_RECOMMENDATIONS = {
     "moderate": "This passage leans generic and template-like — the kind of writing detectors over-flag. Make it unmistakably yours: anchor it to a specific, verifiable detail from your own work (a name, a number, an observation) and vary the phrasing.",
     "high": "This passage is broad and unanchored — fluent but missing the specifics that show the thinking is yours (which is also what reads as AI to detectors). Ground each claim in a concrete detail only you would know — a name, a number, an observation — and put it in your own voice.",
+    "review": "Your document reads clean overall, but this specific line tripped the sentence detector. Give it a quick look — if it's genuinely yours, no action needed; if it leans generic, anchor it to a concrete detail only you would know.",
 }
 # Plain-language reader summary per band — what a human reviewer would notice. V7: lead with
 # the missing grounding, not the AI-accusation.
 DEBERTA_HEAT_READER_SUMMARY = {
     "moderate": "This passage follows a familiar, template-like pattern and could use more of your own specific detail.",
     "high": "This passage is fluent but generic — it lacks the specific, lived detail that shows the thinking is yours.",
+    "review": "The sentence detector flagged this line, but the document overall reads as human — worth a quick review.",
 }
 
 
