@@ -818,6 +818,33 @@ def _deberta_score_of(segment: dict):
     return None
 
 
+def _deberta_primary(segment: dict) -> dict | None:
+    """The DeBERTa primary_signal carried on a segment — already VERDICT-GATED upstream
+    (report.py::_gate_heatmap_bands). Renderers MUST read its band/color, NOT re-derive
+    from the raw score (which stays 100 on muted 'review' sentences → the red wall)."""
+    ps = segment.get("primary_signal")
+    if isinstance(ps, dict) and ps.get("key") == "ai_signal_deberta":
+        return ps
+    for s in segment.get("signals") or []:
+        if s.get("key") == "ai_signal_deberta":
+            return s
+    return None
+
+
+def _deberta_band_of(segment: dict) -> str:
+    """Gated band name ('high'/'review'/'moderate'/'clean') from primary_signal.title
+    ('deberta_<band>'). 'high' is the only genuine red AI flag post-gate."""
+    ps = _deberta_primary(segment)
+    title = str((ps or {}).get("title") or "")
+    return title.split("deberta_", 1)[-1] if "deberta_" in title else "clean"
+
+
+def _gated_color_of(segment: dict) -> str:
+    """The gated highlight color carried on the segment — '' when not highlighted."""
+    ps = _deberta_primary(segment)
+    return str((ps or {}).get("color") or "") if ps else ""
+
+
 def _severity_color(score) -> str:
     if isinstance(score, (int, float)):
         for floor, color in _DEBERTA_SEVERITY_COLORS:
@@ -856,8 +883,10 @@ def render_fix_first(data: dict, section_no: int, low_tone: bool) -> str:
     formula). '' when the report has no flagged paragraphs."""
     rows = []
     for p, segs in _segments_by_paragraph(data):
+        # Post-gate: only the 'high' (red) band is a genuine flag "to fix first" — muted
+        # 'review' candidates (green-doc saturation) are NOT surfaced here.
         flagged = sorted(
-            (s for s in segs if (_deberta_score_of(s) or 0) >= _DEBERTA_SEVERITY_COLORS[-1][0]),
+            (s for s in segs if _deberta_band_of(s) == "high"),
             key=lambda s: -(_deberta_score_of(s) or 0),
         )
         if not flagged:
@@ -910,14 +939,14 @@ def render_signal_highlights_intro(data: dict) -> str:
     blocks = []
     for s in all_segs:
         width = max(0.4, len(str(s.get("text") or "")) / total_len * 100)
-        color = _severity_color(_deberta_score_of(s)) or _DENSITY_CLEAN_COLOR
+        color = _gated_color_of(s) or _DENSITY_CLEAN_COLOR
         blocks.append(
             f'<span style="display:inline-block;height:10px;width:{width:.2f}%;'
             f'background:{color};border-right:1px solid #fff"></span>'
         )
     flagged_paras = sum(
         1 for _, segs in groups
-        if any((_deberta_score_of(s) or 0) >= _DEBERTA_SEVERITY_COLORS[-1][0] for s in segs)
+        if any(_deberta_band_of(s) == "high" for s in segs)
     )
     out = [
         '<p class="dp-hero-sub"><b>Finding density by document</b> — '
@@ -946,7 +975,7 @@ def render_highlighted_document(data: dict, original_text: str) -> str:
             text = escape(str(s.get("text") or "").strip())
             if not text:
                 continue
-            color = _severity_color(_deberta_score_of(s))
+            color = _gated_color_of(s)
             if color:
                 parts.append(f'<span style="color:{color};text-decoration:underline;'
                              f'font-weight:600">{text}</span>')

@@ -33,13 +33,16 @@ export default function SignalHighlights({
 
   if (!submittedContent?.paragraphs?.length) return null;
 
-  // DeBERTa score -> severity class (red-font flag). Shown on every tier.
-  const debertaSeverityClass = (score) => {
-    const s = Number(score);
-    if (!Number.isFinite(s) || s < 80) return '';          // clean — no flag
-    if (s >= 99) return 'is-severity-critical';            // >=0.99 high-confidence
-    if (s >= 90) return 'is-severity-high';                // 90-98
-    return 'is-severity-medium';                           // 80-89
+  // Gated band -> severity class. The band is VERDICT-GATED by the backend
+  // (report.py::_gate_heatmap_bands): 'high' stays a red flag; 'review' is a muted review
+  // candidate (a >=0.999 sentence inside a document whose calibrated verdict reads clean —
+  // the detector saturates on ~24% of human sentences, so it is NOT a red verdict). NEVER
+  // re-derive from the raw score, which stays 100 on muted 'review' sentences.
+  const debertaSeverityClass = (deb) => {
+    const band = String(deb?.title || '').replace('deberta_', '');
+    if (band === 'high') return 'is-severity-critical';    // red — high-confidence AI, doc corroborates
+    if (band === 'review') return 'is-severity-review';    // muted amber — possible AI, review candidate
+    return '';                                             // clean / gated-out — no flag
   };
 
   const FullDocument = (
@@ -76,7 +79,7 @@ export default function SignalHighlights({
               onClick={() => { onSelectParagraph(paragraph.id); setTab('issues'); }}>
               {paragraph.segments.map((segment, i) => {
                 const deb = debertaBySid.get(segment.sentence_id);
-                const sev = deb ? debertaSeverityClass(deb.score) : '';
+                const sev = deb ? debertaSeverityClass(deb) : '';
                 if (!sev) {
                   return <span key={i} className="submitted-sentence-plain">{segment.text} </span>;
                 }

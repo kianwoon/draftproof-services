@@ -1997,4 +1997,13 @@ button.paragraph-severity-seg {
   font-weight: 700;
   border-bottom: 1.5px solid #991b1b;
 }
+/* VERDICT-GATED review candidate (2026-07-09): a >=0.999 sentence inside a document whose
+   calibrated verdict reads clean. Muted amber + DOTTED underline (a tentative, non-red cue) —
+   surfaced for review, deliberately NOT a red AI verdict. See report.py::_gate_heatmap_bands. */
+.submitted-sentence-highlight.is-severity-review {
+  background: transparent;
+  color: #b07d1a;
+  font-weight: 500;
+  border-bottom: 1px dotted color-mix(in srgb, #c99a3b 65%, transparent);
+}
 

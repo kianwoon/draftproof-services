@@ -1390,12 +1390,17 @@ function buildParagraphSeverityBar(paragraphs) {
   paragraphs.forEach((paragraph) => {
     (paragraph.segments || []).forEach((segment) => {
       const deberta = (segment.signals || []).find((sg) => sg.key === 'ai_signal_deberta');
+      // Only the VERDICT-GATED 'high' band drives the red severity color; a muted 'review'
+      // candidate (green-doc saturation) must NOT paint the bar red, so its score is not counted
+      // here (falls back to the gated topTier color). Single source: the band decides, not the raw
+      // score, which stays 100 on muted sentences. See report.py::_gate_heatmap_bands.
+      const debBand = deberta ? String(deberta.title || '').replace('deberta_', '') : '';
       rows.push({
         id: segment.sentence_id || segment.id || rows.length,
         paragraphId: paragraph.id,
         length: Math.max(1, (segment.text || '').length),
         findingCount: (segment.signals || []).length,
-        maxDebertaScore: deberta ? (Number(deberta.score) || 0) : 0,
+        maxDebertaScore: debBand === 'high' ? (Number(deberta.score) || 0) : 0,
         topTier: deberta ? (deberta.tier || '') : '',
       });
     });

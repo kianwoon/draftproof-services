@@ -1297,7 +1297,10 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
             for s in (expl.get("sentence_suggestions") or [])
             if isinstance(s, dict) and s.get("sentence_id") and s.get("suggestion")
         } if isinstance(expl, dict) else {}
-        _BAND_COLORS = {"low": "#f59e0b", "medium": "#f97316", "high": "#dc2626"}
+        # Colour by the VERDICT-GATED band (metadata.deberta_band), never raw score — a green-doc
+        # review candidate carries raw score 100 but band "review" and MUST render muted, not red.
+        # Legacy findings that predate the band stamp fall back to score-derived bands.
+        _BAND_COLORS = {"review": "#c99a3b", "moderate": "#f97316", "high": "#dc2626"}
         rows = []
         for f in sorted(deberta_finds, key=lambda x: -(x.metadata.get("deberta_score", 0))):
             sc = f.metadata.get("deberta_score", 0)
@@ -1308,8 +1311,9 @@ def _render_finding_card(finding_num: int, tier_level: Tier, group: dict) -> str
             # 2026-07-06). Normalize once, here at the display boundary.
             if isinstance(sc, (int, float)) and 0 < sc <= 1.0:
                 sc = sc * 100
-            band_color = _BAND_COLORS.get(
-                "high" if sc >= 99 else "medium" if sc >= 80 else "low", "#94a3b8")
+            band = f.metadata.get("deberta_band") or (
+                "high" if sc >= 99 else "moderate" if sc >= 80 else "review")
+            band_color = _BAND_COLORS.get(band, "#94a3b8")
             sid = f.sentence_id or ""
             snippet = _truncate(f.evidence or "", 120)
             suggestion = suggestion_by_sid.get(str(sid))
@@ -1613,18 +1617,25 @@ def _deberta_paragraph_groups(data: dict) -> list[dict]:
             }
             ordered_keys.append(pid)
         score = deberta.get("score", 0)
-        tier_map = {"low": Tier.LOW, "medium": Tier.MEDIUM, "high": Tier.HIGH}
+        # VERDICT-GATED band is the single source of truth (report.py::_deberta_primary_signal
+        # encodes the doc-verdict-gated band as title="deberta_<band>" / tier). On a GREEN doc a
+        # saturated HUMAN sentence (raw score 100) arrives here as band "review", NOT "high" — so
+        # the card title/tier/colour MUST derive from the band, never the raw score, or the red
+        # "High-confidence AI" wall survives on the PDF finding cards.
+        band = str(deberta.get("title") or "").replace("deberta_", "") or (
+            "high" if score >= 99 else "moderate" if score >= 80 else "clean")
+        _band_tier = {"high": Tier.HIGH, "moderate": Tier.MEDIUM, "review": Tier.LOW}
         groups[pid]["findings"].append(Finding(
-            tier=tier_map.get(deberta.get("tier", ""), Tier.MEDIUM),
+            tier=_band_tier.get(band, Tier.MEDIUM),
             category="ai_generation",
             scanner="deberta",
-            title="high_confidence_ai_sentence" if score >= 99 else "ai_signal_deberta",
+            title="high_confidence_ai_sentence" if band == "high" else "ai_signal_deberta",
             detail=f"Learned classifier AI signal (score {score:.0f}%).",
             evidence=seg.get("text") or "",
             recommendation=deberta.get("recommendation") or "",
-            metadata={"deberta_score": score, "source": "deberta_authoritative"},
+            metadata={"deberta_score": score, "deberta_band": band, "source": "deberta_authoritative"},
             finding_id=f"deberta_{seg.get('sentence_id', '')}",
-            adjusted_risk="high" if score >= 99 else "medium",
+            adjusted_risk="high" if band == "high" else "low" if band == "review" else "medium",
             sentence_id=seg.get("sentence_id", ""),
             signal_category="authorship_risk",
         ))
@@ -1644,6 +1655,24 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     lines: list[str] = []
     data = report_to_dict(report)
     fb = report.findings_by_tier
+
+    # VERDICT-GATE the DeBERTa findings tree for DISPLAY (single source with the heatmap gate in
+    # report.py::_gate_heatmap_bands). On a GREEN doc the per-sentence classifier saturates on
+    # ~24% of HUMAN sentences (score>=0.99); builder.py synthesizes those as ungated Tier.HIGH
+    # "high_confidence_ai_sentence" findings that feed the PDF fallback card path
+    # (_paragraph_finding_groups). Stamp the muted "review" band so those cards' chips render gold,
+    # not red, on a clean verdict. Display-only and idempotent: `data` (counts, headline, JSON) is
+    # already frozen (built at report_to_dict above) and the tier BUCKETS are left intact, so no
+    # score moves — this only annotates Finding objects the PDF renderer reads downstream.
+    _doc_is_green = str((data.get("ai_risk_badge") or {}).get("tier") or "").strip().lower() in (
+        "green", "clean")
+    if _doc_is_green:
+        for _tier_val in (Tier.CRITICAL.value, Tier.HIGH.value):
+            for _f in fb.get(_tier_val, []) or []:
+                _md = getattr(_f, "metadata", None)
+                if (getattr(_f, "scanner", "") == "deberta" and isinstance(_md, dict)
+                        and _md.get("deberta_band") is None):
+                    _md["deberta_band"] = "review"
 
     # ── HEADER ────────────────────────────────────────────────────
     tier = report.overall_tier

@@ -1322,6 +1322,36 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     # the legend copy — set inside the closure below, read after the call in _scan_intelligence.
     heatmap_source = {"value": "fakespot"}
 
+    # Verdict tiers that mean "the document reads clean". A high-confidence (>=0.999) sentence
+    # inside such a document is a SATURATION artifact — the per-sentence detector crosses 0.999 on
+    # ~24% of HUMAN sentences — NOT a verdict, so it is shown muted ("review"), never red.
+    _GREEN_DOC_TIERS = {"green", "clean"}
+
+    def _gate_heatmap_bands(rows: list) -> list:
+        """SINGLE verdict-gate for the per-sentence highlight bands (2026-07-09). Applied ONCE,
+        here, so every consumer (map segments, badge tile, PDF/page renderers, paragraph explainer)
+        inherits the SAME gated band — no consumer may re-derive a band/color from the raw score.
+
+        Rule (reuses existing calibration only — the fused badge tier, no new threshold):
+          - band 'high' (>=0.999) AND the document's fused verdict is green/clean -> 'review'
+            (muted): a 1.0 sentence is not a verdict when the document overall reads human.
+          - band 'moderate' (fakespot-fallback saturated 0.5-0.99 band) -> 'clean': never an AI
+            highlight (on the fallback path only the 'high' band may highlight).
+          - otherwise unchanged (non-green docs keep 'high' red).
+        Only the 'band' field is remapped; per-sentence SCORES are untouched, so the tile headline
+        (headline_from_heatmap, score-based) and its flagged-count denominator are unaffected."""
+        if not rows:
+            return rows
+        badge = getattr(report, "ai_risk_badge", None) or {}
+        doc_is_green = str(badge.get("tier") or "").strip().lower() in _GREEN_DOC_TIERS
+        for r in rows:
+            band = r.get("band")
+            if band == "moderate":
+                r["band"] = "clean"
+            elif band == "high" and doc_is_green:
+                r["band"] = "review"
+        return rows
+
     def _compute_deberta_heatmap() -> list:
         """Return the per-sentence heatmap that drives Signal-highlights + fix-first, computed
         from _source_segments(complete=True) — the EXACT sentence list the map renders. This is
@@ -1367,7 +1397,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 deep_result = compose_deep_scan_heatmap(sens)
                 if deep_result and deep_result.get("available"):
                     heatmap_source["value"] = "deep_scan"
-                    return deep_result.get("sentence_scores") or []
+                    return _gate_heatmap_bands(deep_result.get("sentence_scores") or [])
         except Exception:
             logger.exception(
                 "report.report: deep-scan heatmap failed; falling back to ai_signal_deberta "
@@ -1381,7 +1411,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         result = compose_from_sentences(sens)
         if not result or not result.get("available"):
             return []
-        return result.get("sentence_scores") or []
+        return _gate_heatmap_bands(result.get("sentence_scores") or [])
 
     def _sync_deberta_headline_from_heatmap(heatmap_rows: list) -> None:
         """Rebuild the badge's ai_signal_deberta headline from the SAME heatmap the map uses, so
