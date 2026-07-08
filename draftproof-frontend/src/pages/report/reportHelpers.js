@@ -1401,6 +1401,10 @@ function buildParagraphSeverityBar(paragraphs) {
         length: Math.max(1, (segment.text || '').length),
         findingCount: (segment.signals || []).length,
         maxDebertaScore: debBand === 'high' ? (Number(deberta.score) || 0) : 0,
+        // A muted 'review' candidate must render the SAME amber the full-document underline uses
+        // (is-severity-review), NOT fall through to the 'low' tier green. Without this flag the bar
+        // disagreed with the "Read full document" heatmap: amber sentence -> green bar segment.
+        reviewBand: debBand === 'review',
         topTier: deberta ? (deberta.tier || '') : '',
       });
     });
@@ -1413,6 +1417,7 @@ function buildParagraphSeverityBar(paragraphs) {
     findingCount: row.findingCount,
     topTier: row.topTier,
     maxDebertaScore: row.maxDebertaScore,
+    reviewBand: row.reviewBand,
     widthPct: (row.length / totalLength) * 100,
     intensity: 1,
   }));
