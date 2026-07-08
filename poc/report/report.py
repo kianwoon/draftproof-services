@@ -20,6 +20,81 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+# Deep-scan band severity ladder (weights.json cutoffs, no "green" band — see
+# detect_v7.pipeline_bridge._deep_scan_band). Used to clamp a per-paragraph row
+# so it can never be MORE severe than the whole-document verdict.
+_DEEP_SCAN_SEVERITY = {"insufficient": 0, "amber": 1, "orange": 2, "red": 3}
+
+
+def rebuild_deep_scan_paragraph_rows(existing_rows, heatmap_rows, doc_band, band_fn):
+    """Rebuild the per-paragraph deep-scan table rows from the CANONICAL sentence
+    heatmap (the same per-sentence scores the issue card + Signal-highlights map
+    read), so the table can never disagree with the card on which sentences are
+    flagged or on the verdict band.
+
+    Pure function (no I/O, no globals) so it is unit-testable in isolation.
+
+    - ``existing_rows``: the bridge's own per-paragraph rows
+      (pipeline_bridge._per_paragraph_proportions). Their ``sentence_count`` is
+      already the canonical count and their ``index`` is the body ordinal — both
+      are preserved. They are used only for alignment + index/shape.
+    - ``heatmap_rows``: canonical per-sentence heatmap rows
+      ``{sentence_id, paragraph_id, score, band}``. A row is "flagged" when its
+      band != "clean" (the deep-scan heatmap emits only "high"/"clean" at
+      sent_threshold; the green-doc gate remaps "high"->"review", still flagged).
+    - ``doc_band``: the document's deep-scan band. Each row is CLAMPED so it can
+      never exceed this — a paragraph is a smaller, noisier sample than the whole
+      document and cannot carry a stronger verdict. Below floor (``insufficient``)
+      → every row reads ``insufficient``.
+    - ``band_fn``: proportion -> band (pipeline_bridge._deep_scan_band), injected
+      so tests don't import the heavy bridge module.
+
+    Returns the rebuilt rows, or ``None`` if the canonical groups cannot be
+    aligned to ``existing_rows`` (fail-open: caller keeps the bridge rows). The
+    document-level proportion is NEVER recomputed here — presentation only.
+    """
+    if not existing_rows or not heatmap_rows:
+        return None
+    from collections import OrderedDict
+
+    groups = OrderedDict()
+    for r in heatmap_rows:
+        pid = r.get("paragraph_id") or "p001"
+        groups.setdefault(pid, []).append(r)
+    canonical = [
+        (len(rows), sum(1 for r in rows if (r.get("band") or "clean") != "clean"))
+        for rows in groups.values()
+    ]
+    doc_rank = _DEEP_SCAN_SEVERITY.get(str(doc_band or "insufficient"), 0)
+    new_rows = []
+    ci = 0
+    for row in existing_rows:
+        # Forward cursor: match each body row to the next canonical group of the
+        # same size, skipping heading/title groups the bridge excluded (a title is
+        # one "sentence"). Both lists are in document order.
+        target = row.get("sentence_count")
+        while ci < len(canonical) and canonical[ci][0] != target:
+            ci += 1
+        if ci >= len(canonical):
+            return None  # cannot align — keep the bridge's rows unchanged
+        denom, flagged = canonical[ci]
+        ci += 1
+        if not isinstance(denom, int) or denom <= 0:
+            return None
+        prop = flagged / denom
+        row_band = band_fn(prop)
+        if _DEEP_SCAN_SEVERITY.get(row_band, 0) > doc_rank:
+            row_band = str(doc_band or "insufficient")
+        new_rows.append({
+            "index": row.get("index") if isinstance(row.get("index"), int) else len(new_rows),
+            "sentence_count": denom,
+            "flagged_count": flagged,
+            "proportion": round(prop, 4),
+            "band": row_band,
+        })
+    return new_rows if len(new_rows) == len(existing_rows) else None
+
+
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
 from report.authorship_evidence import build_authorship_evidence, strengthen_anchor_sentences
 from detect.authorship_windows import build_ai_footprint_profile, build_authorship_window_profile
@@ -1439,6 +1514,64 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         if new_headline and badge.get("ai_signal_deberta") is not None:
             report.ai_risk_badge["ai_signal_deberta"] = new_headline
 
+    def _sync_deep_scan_paragraphs_from_heatmap(heatmap_rows: list) -> None:
+        """Rebuild authorship_breakdown.deep_scan.paragraphs from the SAME canonical
+        heatmap the issue card + Signal-highlights map read, so the per-paragraph
+        deep-scan TABLE can never disagree with the card on (a) which sentences are
+        flagged or (b) the verdict band.
+
+        This mirrors _sync_deberta_headline_from_heatmap: the DeBERTa tile headline
+        was already re-sourced onto this canonical heatmap to kill an identical
+        "two splitters disagree" mismatch (see builder.py L1609). The per-paragraph
+        table was the LAST surface still built from the bridge's OWN sentence split
+        (pipeline_bridge._per_paragraph_proportions over
+        deberta_windowing.split_sentences), which over-segments and flagged a
+        DIFFERENT count than the card — observed live 2026-07-09: the table said
+        "Paragraph 3 — 1 of 3 · 33% Amber" while the card flagged 2 sentences in the
+        same paragraph, on a green/14% below-floor document.
+
+        Rebuilt rows:
+          - sentence_count / flagged_count / proportion come from the canonical
+            heatmap grouped by paragraph_id (band != "clean" == flagged, the SAME
+            sent_threshold cut the bridge uses), so the table's "X of Y" equals the
+            card's flagged sentences exactly.
+          - band is GATED by the document's own deep-scan reliability: a paragraph
+            is a SMALLER, noisier sample than the whole document and can never carry
+            a MORE severe verdict than the document band. When the document is below
+            its reliability floor (band "insufficient"), every row reads
+            "insufficient", never amber/orange/red — matching the card's LOW verdict.
+
+        The document-level deep_scan.proportion (frozen, ESL-FPR-gated, feeds the
+        fused tier) is NOT touched — this rewrites presentation rows only. Fail-open:
+        any missing structure / shape mismatch leaves the bridge's rows unchanged."""
+        if not heatmap_rows:
+            return
+        try:
+            badge = getattr(report, "ai_risk_badge", None) or {}
+            breakdown = badge.get("authorship_breakdown")
+            if not isinstance(breakdown, dict):
+                return
+            deep_scan = breakdown.get("deep_scan")
+            if not isinstance(deep_scan, dict):
+                return
+            existing_rows = deep_scan.get("paragraphs")
+            if not isinstance(existing_rows, list) or not existing_rows:
+                return  # deep scan absent / single paragraph — nothing to override
+
+            from detect_v7.pipeline_bridge import _deep_scan_band  # noqa: E402
+
+            new_rows = rebuild_deep_scan_paragraph_rows(
+                existing_rows, heatmap_rows,
+                deep_scan.get("band"), _deep_scan_band,
+            )
+            if new_rows is not None:
+                deep_scan["paragraphs"] = new_rows
+        except Exception:
+            logger.exception(
+                "report.report: deep-scan per-paragraph canonical sync failed; "
+                "keeping bridge rows (additive, non-fatal)."
+            )
+
     def _deberta_primary_signal(heat_row: dict) -> dict | None:
         """Build a primary_signal dict (the shape _segment_signal returns) from a DeBERTa
         heatmap row. This is the SOLE signal on a segment — no perplexity secondaries.
@@ -1468,6 +1601,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         segments = []
         deberta_heat = _compute_deberta_heatmap()
         _sync_deberta_headline_from_heatmap(deberta_heat)
+        _sync_deep_scan_paragraphs_from_heatmap(deberta_heat)
         deberta_by_sid = {row["sentence_id"]: row for row in deberta_heat} if deberta_heat else {}
         for item in _source_segments(complete):
             sid = item.get("sentence_id")
