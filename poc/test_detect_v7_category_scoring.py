@@ -18,6 +18,10 @@ def _full_signals(**overrides) -> dict:
         # specificity_ai_evidence (see weights.json _notes.category_weights_tuning).
         "specificity_student_evidence": 0.5,
         "specificity_ai_evidence": 0.5,
+        # Phase A interaction winner (V8 Task 5): paraphrase_mismatch rides in
+        # ai_paraphrased_without_comparison, so populate it or that category
+        # degrades (see weights.json _notes.paraphrase_mismatch_normalization).
+        "paraphrase_mismatch": 0.5,
         "grounding_gap": 0.5,
         "sentence_variance": 0.5,
         "generic_density": 0.5,

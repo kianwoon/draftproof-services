@@ -159,6 +159,63 @@ def test_ai_assisted_polished_band_accessor():
     assert band["low"] < band["high"]
 
 
+def test_paraphrase_mismatch_normalization_accessor():
+    norm = v7config.get_paraphrase_mismatch_normalization()
+    # Phase A study percentiles (phase_a_interaction_study.json, 2026-07-08).
+    assert abs(norm["p10"] - 0.0589) < _TOL
+    assert abs(norm["p90"] - 0.1623) < _TOL
+    assert norm["p10"] < norm["p90"]
+
+
+def test_paraphrase_mismatch_normalization_missing_raises(monkeypatch, tmp_path):
+    alt_weights = {
+        "_notes": {"marker": "no-norm-block-fixture"},
+        "fusion_weights": {
+            "quick_scan": {"composite": 1.0},
+            "deep_scan_2detector": {"deberta_large": 0.5, "composite": 0.5},
+            "deep_scan_3detector_inert": {
+                "deberta_large": 0.45,
+                "composite": 0.35,
+                "ou_advacheck": 0.20,
+            },
+        },
+        "category_weights": {
+            "student_owned": [{"signal": "specificity_score", "weight": 1.0}],
+            "ai_assisted_polished": [
+                {"signal": "calibrated_detector_score", "weight": 1.0}
+            ],
+            "ai_paraphrased_with_comparison": [
+                {"signal": "semantic_drift", "weight": 1.0}
+            ],
+            "ai_paraphrased_without_comparison": [
+                {"signal": "semantic_drift", "weight": 1.0}
+            ],
+            "ai_generated_like": [
+                {"signal": "calibrated_detector_score", "weight": 1.0}
+            ],
+        },
+        "ai_assisted_polished_band": {"low": 0.35, "high": 0.70},
+        "flatness_thresholds": {
+            "confidence_low_gap": 0.10,
+            "mixed_signals_max_category": 0.35,
+        },
+        "esl_guard": {
+            "esl_high_threshold": 0.70,
+            "ai_generated_damping": 0.85,
+            "detector_disagreement_confidence_cap_threshold": 0.25,
+            "esl_disagreement_cotrigger_threshold": 0.60,
+            "confidence_cap_value": "low",
+        },
+        "display_bands": {"strong_min": 0.5, "some_min": 0.25, "little_min": 0.10},
+    }
+    fixture_path = tmp_path / "no_norm_weights.json"
+    fixture_path.write_text(json.dumps(alt_weights), encoding="utf-8")
+    monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(fixture_path))
+    v7config.reload_weights(force=True)
+    with pytest.raises(KeyError):
+        v7config.get_paraphrase_mismatch_normalization()
+
+
 def test_env_var_override_loads_alternate_file(tmp_path, monkeypatch):
     alt_weights = {
         "_notes": {"marker": "alt-fixture-weights"},

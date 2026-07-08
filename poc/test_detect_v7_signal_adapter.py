@@ -4,8 +4,11 @@ Run:  cd poc && python -m pytest test_detect_v7_signal_adapter.py -v
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from detect_v7 import config as v7config
 from detect_v7.signal_adapter import V7_SIGNAL_NAMES, adapt_paragraph_signals
 from detect.criteria import specificity as specificity_criterion
 from detect.criteria import style_shift as style_shift_criterion
@@ -84,10 +87,12 @@ def test_all_signal_keys_present():
     assert set(V7_SIGNAL_NAMES) == set(out.keys()) - {"signal_status"}
     # 14 original V7 signals + 2 detector-gated specificity-split derivations
     # (specificity_student_evidence / specificity_ai_evidence, 2026-07-08 —
-    # see weights.json _notes.category_weights_tuning).
-    assert len(V7_SIGNAL_NAMES) == 16
+    # see weights.json _notes.category_weights_tuning) + 1 Phase A interaction
+    # winner (paraphrase_mismatch, V8 Task 5, 2026-07-08).
+    assert len(V7_SIGNAL_NAMES) == 17
     assert "specificity_student_evidence" in V7_SIGNAL_NAMES
     assert "specificity_ai_evidence" in V7_SIGNAL_NAMES
+    assert "paraphrase_mismatch" in V7_SIGNAL_NAMES
     for name in V7_SIGNAL_NAMES:
         assert name in out
         assert name in out["signal_status"]
@@ -250,3 +255,86 @@ def test_unbuilt_signals_stay_not_implemented():
 def test_empty_raw_signals_dict_does_not_raise():
     out = adapt_paragraph_signals({})
     assert set(out.keys()) - {"signal_status"} == set(V7_SIGNAL_NAMES)
+
+
+# --- paraphrase_mismatch: Phase A interaction winner (V8 Task 5) --------------
+
+
+@pytest.fixture
+def _weights_with_norm(tmp_path, monkeypatch):
+    """Point config at a temp weights file whose paraphrase_mismatch_normalization
+    block we control, so the row-9c formula can be checked against known p10/p90.
+    The adapter reads ONLY that block, so a minimal file suffices."""
+
+    def _install(p10: float, p90: float) -> None:
+        fixture = tmp_path / "norm_weights.json"
+        fixture.write_text(
+            json.dumps({"paraphrase_mismatch_normalization": {"p10": p10, "p90": p90}}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(fixture))
+        v7config.reload_weights(force=True)
+
+    yield _install
+    monkeypatch.delenv("DRAFTPROOF_V7_WEIGHTS_PATH", raising=False)
+    v7config.reload_weights(force=True)
+
+
+def test_paraphrase_mismatch_is_quantile_normalized_product(_weights_with_norm):
+    """value == clamp01((student_ev * detector - p10) / (p90 - p10)), with the
+    raw product bracketed by p10/p90 so the map is in its linear (unclamped)
+    region."""
+    raw = _full_raw_signals()  # detector = 0.60
+    # First read the actual student-evidence product this fixture text yields.
+    baseline = adapt_paragraph_signals(raw)
+    student_ev = baseline["specificity_student_evidence"]
+    assert student_ev is not None
+    product = student_ev * 0.60
+    p10, p90 = product - 0.05, product + 0.05  # bracket -> normalized 0.5
+    _weights_with_norm(p10, p90)
+    out = adapt_paragraph_signals(raw)
+    expected = (product - p10) / (p90 - p10)
+    assert out["signal_status"]["paraphrase_mismatch"] == "ok"
+    assert abs(out["paraphrase_mismatch"] - expected) < 1e-9
+    assert abs(out["paraphrase_mismatch"] - 0.5) < 1e-9
+
+
+def test_paraphrase_mismatch_clamps_below_p10_to_zero(_weights_with_norm):
+    raw = _full_raw_signals()
+    baseline = adapt_paragraph_signals(raw)
+    product = baseline["specificity_student_evidence"] * 0.60
+    # p10 above the actual product -> negative pre-clamp -> 0.0
+    _weights_with_norm(product + 0.20, product + 0.30)
+    out = adapt_paragraph_signals(raw)
+    assert out["paraphrase_mismatch"] == 0.0
+    assert out["signal_status"]["paraphrase_mismatch"] == "ok"
+
+
+def test_paraphrase_mismatch_clamps_above_p90_to_one(_weights_with_norm):
+    raw = _full_raw_signals()
+    baseline = adapt_paragraph_signals(raw)
+    product = baseline["specificity_student_evidence"] * 0.60
+    # p90 below the actual product -> >1 pre-clamp -> 1.0
+    _weights_with_norm(product - 0.30, product - 0.20)
+    out = adapt_paragraph_signals(raw)
+    assert out["paraphrase_mismatch"] == 1.0
+    assert out["signal_status"]["paraphrase_mismatch"] == "ok"
+
+
+def test_paraphrase_mismatch_none_when_no_detector_score():
+    raw = _full_raw_signals()
+    raw.pop("calibrated_detector_score")
+    out = adapt_paragraph_signals(raw)
+    assert out["paraphrase_mismatch"] is None
+    assert out["signal_status"]["paraphrase_mismatch"] == "unavailable"
+
+
+def test_paraphrase_mismatch_none_when_no_specificity():
+    """No criterion_scores -> specificity_student_evidence is None -> the
+    interaction product is undefined -> paraphrase_mismatch unavailable."""
+    raw = _full_raw_signals()
+    raw["criterion_scores"] = {}
+    out = adapt_paragraph_signals(raw)
+    assert out["specificity_student_evidence"] is None
+    assert out["paraphrase_mismatch"] is None
+    assert out["signal_status"]["paraphrase_mismatch"] == "unavailable"

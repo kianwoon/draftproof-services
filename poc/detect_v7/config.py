@@ -203,6 +203,22 @@ def get_ai_assisted_polished_band() -> dict[str, float]:
     return dict(_weights()["ai_assisted_polished_band"])
 
 
+def get_paraphrase_mismatch_normalization() -> dict[str, float]:
+    """Return the {p10, p90} quantile-normalization bounds for the
+    ``paraphrase_mismatch`` derived signal (V8 Task 5, the Phase A interaction
+    winner ``specificity_student_evidence × calibrated_detector_score``).
+
+    ``signal_adapter.py`` row 9c reads these to spread the compressed raw
+    product across [0,1] via ``clamp01((p - p10) / (p90 - p10))``. The values
+    are the study percentiles from
+    ``poc/calibration/v12_validation/phase_a_interaction_study.json``; keeping
+    them in ``weights.json`` (not as Python literals) upholds the no-hardcode
+    rule. A missing block raises ``KeyError`` (fail loud), matching
+    ``get_display_consistency_guard_config``'s direct-lookup pattern.
+    """
+    return dict(_weights()["paraphrase_mismatch_normalization"])
+
+
 def get_tier_authority_config() -> dict[str, Any]:
     """Return the fused-score tier-authority config (weights + cutoffs).
 
