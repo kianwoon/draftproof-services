@@ -43,12 +43,29 @@ export DRAFTPROOF_DEBERTA_MODEL="${DRAFTPROOF_DEBERTA_MODEL:-/app/hf_cache/deber
 # math to degenerate. Leave this empty; kept as an env var only for backwards compatibility.
 export DRAFTPROOF_DEBERTA_CALIBRATOR="${DRAFTPROOF_DEBERTA_CALIBRATOR:-}"
 
+# V7 fused-score tier authority ON in production — every scan is decided by the
+# gate-passed fused stack (0.40*composite + 0.60*desklib deep-scan proportion),
+# NOT the weak rule-based composite alone. GATE PASS 2026-07-04
+# (poc/calibration/v7_fused_gate_result.json): overall FPR 2.9%->0.4%, AUC
+# 0.755->0.9955, TPR@primary 9.7%->89.5%. Requires the Modal endpoint creds
+# (DRAFTPROOF_MODAL_ENDPOINT_URL/_TOKEN) to be set as Koyeb runtime env — if they
+# are unset or the endpoint is unreachable, get_deep_scan_proportion fail-opens to
+# None and the badge silently falls back to the composite tier (no fused authority).
+# Cost: one paid Modal desklib call per scan. Kill switch: set any of these =0.
+# The fused TIER override (compute_fused_authority in poc/report/builder.py) gates only on
+# DEEP_SCAN + TIER_AUTHORITY. AUTHORSHIP_BREAKDOWN turns on the additive category display,
+# which reuses the SAME paid deep-scan call (_precomputed_deep_scan) — no extra Modal cost.
+export DRAFTPROOF_V7_DEEP_SCAN="${DRAFTPROOF_V7_DEEP_SCAN:-1}"
+export DRAFTPROOF_V7_TIER_AUTHORITY="${DRAFTPROOF_V7_TIER_AUTHORITY:-1}"
+export DRAFTPROOF_V7_AUTHORSHIP_BREAKDOWN="${DRAFTPROOF_V7_AUTHORSHIP_BREAKDOWN:-1}"
+
 echo "[entrypoint] ============================================"
 echo "[entrypoint] DraftProof Worker Startup"
 echo "[entrypoint] HF_HOME=${HF_HOME}"
 echo "[entrypoint] Cache dir: ${CACHE_DIR}"
 echo "[entrypoint] PREDICTABILITY_MODEL=${MODEL}"
 echo "[entrypoint] SEMANTIC_EMBEDDING_MODEL=${SEMANTIC_MODEL}"
+echo "[entrypoint] V7_TIER_AUTHORITY=${DRAFTPROOF_V7_TIER_AUTHORITY} DEEP_SCAN=${DRAFTPROOF_V7_DEEP_SCAN} MODAL_ENDPOINT=$([ -n "${DRAFTPROOF_MODAL_ENDPOINT_URL}" ] && echo SET || echo MISSING-will-fail-open-to-composite)"
 echo "[entrypoint] OMP_NUM_THREADS=${OMP_NUM_THREADS}"
 echo "[entrypoint] MKL_NUM_THREADS=${MKL_NUM_THREADS}"
 echo "[entrypoint] TORCH_NUM_THREADS=${TORCH_NUM_THREADS}"
