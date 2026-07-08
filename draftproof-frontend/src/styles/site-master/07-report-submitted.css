@@ -1954,6 +1954,16 @@ button.paragraph-severity-seg {
   flex: 0 0 auto; font-size: .68rem; font-weight: 800; line-height: 1.5;
   padding: 0 .4rem; border-radius: 5px; color: #fff; background: var(--signal-color, #dc2626);
 }
+/* Per-sentence verdict badge — the calibrated tier word (LOW/MEDIUM/HIGH), NOT the raw
+   saturated classifier score. Same palette as the paragraph tier chip so the sentence-level
+   read agrees with the paragraph- and document-level verdict. */
+.deberta-evidence-tier {
+  flex: 0 0 auto; font-size: .62rem; font-weight: 800; letter-spacing: .04em;
+  line-height: 1.6; padding: 0 .42rem; border-radius: 5px; text-transform: uppercase;
+}
+.deberta-evidence-tier.is-high, .deberta-evidence-tier.is-critical { background: #fef2f2; color: #b91c1c; }
+.deberta-evidence-tier.is-moderate, .deberta-evidence-tier.is-medium { background: #fffbeb; color: #92400e; }
+.deberta-evidence-tier.is-low, .deberta-evidence-tier.is-info { background: #f0fdf4; color: #15803d; }
 .deberta-evidence-text { font-size: .85rem; line-height: 1.45; color: #475569; flex: 1 1 200px; }
 /* Per-sentence tailored fix (LLM). Own line under the sentence so it reads as "here's the fix"
    rather than more evidence text — fail-open: absent whenever the explainer had no suggestion. */

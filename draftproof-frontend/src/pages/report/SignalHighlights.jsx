@@ -219,7 +219,15 @@ export default function SignalHighlights({
                               <ul className="deberta-evidence-list">
                                 {selectedParagraph.flaggedSentences.slice(0, 3).map((sent) => (
                                   <li key={sent.sentence_id}>
-                                    <span className="deberta-evidence-score">{Math.round(sent.score)}%</span>
+                                    {/* The per-sentence classifier score saturates (~100 on any flagged
+                                        unit) and is NOT a calibrated probability — printing it as a raw
+                                        "%" contradicts the de-escalated verdict (e.g. 100% on a green/LOW
+                                        doc). Show the calibrated tier word the verdict-gate already set. */}
+                                    {sent.tier && (
+                                      <span className={`deberta-evidence-tier is-${sent.tier}`}>
+                                        {t(`report.severities.${sent.tier}`, { defaultValue: sent.tier })}
+                                      </span>
+                                    )}
                                     <span className="deberta-evidence-text">{sent.text}</span>
                                     {sent.suggestion && (
                                       <span className="deberta-evidence-suggestion">{sent.suggestion}</span>

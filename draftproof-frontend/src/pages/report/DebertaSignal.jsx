@@ -26,7 +26,9 @@ function FlaggedPassages({ t, passages }) {
       <ul>
         {passages.map((p) => (
           <li key={p.sentence_id} className="deberta-flagged-item">
-            <span className="deberta-flagged-score">{Math.round((p.score || 0) * 100)}%</span>
+            {/* No per-passage "%": the raw classifier score saturates (~100 on any flagged
+                passage) and is not a calibrated probability. The panel header already shows the
+                calibrated band/verdict; these are simply the passages to review. */}
             <span className="deberta-flagged-text">{p.text}</span>
           </li>
         ))}

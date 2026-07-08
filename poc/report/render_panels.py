@@ -117,11 +117,14 @@ def render_deberta_signal(report_data: dict) -> str:
     n_flagged = sig.get("sentences_flagged") if isinstance(sig.get("sentences_flagged"), int) else len(flagged)
     n_scored = sig.get("sentences_scored") if isinstance(sig.get("sentences_scored"), int) else 0
 
-    # Flagged passages list (capped; highest-score first as built by compose).
+    # Flagged passages list (capped; highest-score first as built by compose). No per-passage
+    # "%": the raw classifier score saturates (~100 on any flagged passage) and is not a
+    # calibrated probability, so printing it contradicts the calibrated band in the header
+    # above. These are simply the passages to review.
     flagged_html = ""
     if flagged:
         items = "".join(
-            f'<li><b>{round(float(p.get("score") or 0) * 100)}%</b> — {escape(_truncate(p.get("text") or ""))}</li>'
+            f'<li>{escape(_truncate(p.get("text") or ""))}</li>'
             for p in flagged
         )
         flagged_html = f'<ul class="dp-flagged">{items}</ul>'
