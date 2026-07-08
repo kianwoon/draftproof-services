@@ -435,3 +435,42 @@ def test_scan_email_legacy_breakdown_without_reliability_field_keeps_old_behavio
         settings=_settings(),
     )
     assert "Authorship read: mostly student-owned" in payload["text"]
+
+
+def test_scan_email_uses_merged_display_primary_when_three_way():
+    # V8 three-way display fallback (poc/detect_v7/pipeline_bridge.py::
+    # _compose_display_fallback): display_taxonomy == "three_way" -> the email claim
+    # uses the merged display_primary term ("ai_transformed"), not the raw four-way
+    # primary_category, so it matches what the report page/PDF show.
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="s-4",
+        pdf_bytes=b"%PDF-1.7 scan",
+        authorship_breakdown={
+            "primary_category": "ai_generated_like",
+            "primary_category_reliable": True,
+            "display_taxonomy": "three_way",
+            "display_primary": "ai_transformed",
+            "deep_scan": {"proportion": 0.8, "band": "red", "calibrated": True},
+        },
+        settings=_settings(),
+    )
+    assert "Authorship read: mostly AI-transformed" in payload["text"]
+    assert "mostly AI-generated-like" not in payload["text"]
+
+
+def test_scan_email_three_way_absent_keeps_four_way_category():
+    # No display_* fields (legacy payload / mode "four_way") -> byte-identical
+    # four-way behavior, unaffected by the three-way branch.
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="s-5",
+        pdf_bytes=b"%PDF-1.7 scan",
+        authorship_breakdown={
+            "primary_category": "ai_generated_like",
+            "primary_category_reliable": True,
+            "deep_scan": {"proportion": 0.8, "band": "red", "calibrated": True},
+        },
+        settings=_settings(),
+    )
+    assert "Authorship read: mostly AI-generated-like" in payload["text"]

@@ -695,7 +695,12 @@ export const report = {
       "student_owned": "Student-owned",
       "ai_assisted_polished": "AI-assisted / polished",
       "ai_paraphrased": "AI-paraphrased",
-      "ai_generated_like": "AI-generated-like"
+      "ai_generated_like": "AI-generated-like",
+      // V8 three-way display fallback (weights.json display_fallback.mode == "three_way"):
+      // merges ai_paraphrased + ai_generated_like, which are measurably indistinguishable
+      // from single-document evidence. KEEP-IN-SYNC: poc/report/render_panels.py
+      // _ACB_CATEGORY_LABELS, worker/app/email_service.py _AUTHORSHIP_CATEGORY_LABELS.
+      "ai_transformed": "AI-transformed"
     },
     "bands": {
       "Strong": "Strong",
@@ -757,6 +762,10 @@ export const report = {
     "compositionLens": "How the writing reads",
     "compositionLensNote": "sums to 100% — an interpretive breakdown of writing character, not the AI-risk verdict above",
     "compositionMixedSignalsCaveat": "Mixed signals — the category shares below conflict with this document's risk tier. Treat the composition as inconclusive and review the flagged passages.",
+    // V8 three-way display fallback explainer, shown only when
+    // breakdown.display_taxonomy === "three_way". KEEP-IN-SYNC: poc/report/render_panels.py
+    // _THREE_WAY_EXPLAINER_TEXT.
+    "threeWayExplainer": "Paraphrased and generated writing read the same from a single document — DraftProof reports them as one AI-transformed share rather than guessing.",
     "riskLens": "Where the risk sits",
     "riskLensNote": "independent",
     "verdictFramingNote": "Detection verdict — this tier is DraftProof's AI-risk assessment, driven by the calibrated detector. The composition breakdown below is a display interpretation and does not override it."

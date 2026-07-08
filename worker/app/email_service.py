@@ -25,11 +25,20 @@ _EXTERNAL_BAND_LABELS = {
 
 # Mirrors draftproof-frontend/src/i18n/en/report.js authorshipBreakdown.categories —
 # keep the wording in sync with AuthorshipClarityBreakdown.jsx CATEGORY_ORDER labels.
+# allow-hardcode: human-reviewed presentation copy mapping machine category CODES (a fixed,
+# backend-defined enum, not free text) to email wording — not a scoring/matching oracle over
+# document content. The "ai_transformed" entry is the V8 three-way display fallback
+# (poc/detect_v7/pipeline_bridge.py::_compose_display_fallback, weights.json
+# display_fallback.mode == "three_way"), merging ai_paraphrased + ai_generated_like (measurably
+# indistinguishable from single-document evidence). KEEP-IN-SYNC:
+# draftproof-frontend/src/i18n/en/report.js authorshipBreakdown.categories.ai_transformed,
+# poc/report/render_panels.py _ACB_CATEGORY_LABELS.
 _AUTHORSHIP_CATEGORY_LABELS = {
     "student_owned": "mostly student-owned",
     "ai_assisted_polished": "mostly AI-assisted / polished",
     "ai_paraphrased": "mostly AI-paraphrased",
     "ai_generated_like": "mostly AI-generated-like",
+    "ai_transformed": "mostly AI-transformed",
 }
 
 # Keep in sync with report.render.EXTERNAL_ESTIMATE_DISPLAY_ENABLED. The badge carries DraftProof's
@@ -271,6 +280,14 @@ def build_scan_completion_email(
     # Older reports without the field keep the previous behavior (is not False).
     bd = authorship_breakdown or {}
     primary_category = bd.get("primary_category")
+    # V8 three-way display fallback (poc/detect_v7/pipeline_bridge.py::
+    # _compose_display_fallback): when the payload carries display_taxonomy ==
+    # "three_way", the merged display_primary is what the report page/PDF show —
+    # use that term for the email claim instead of the raw four-way category so
+    # the surfaces agree. Absent display_* fields (legacy payloads / mode
+    # "four_way"), primary_category is used unchanged — byte-identical behavior.
+    if bd.get("display_taxonomy") == "three_way" and bd.get("display_primary") in _AUTHORSHIP_CATEGORY_LABELS:
+        primary_category = bd.get("display_primary")
     if primary_category and primary_category in _AUTHORSHIP_CATEGORY_LABELS:
         # AI-flavored categories are an accusation-shaped claim: additionally
         # require the deep scan to have actually run (breakdown carries a

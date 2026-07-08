@@ -12,6 +12,18 @@ const CATEGORY_ORDER = [
   'ai_generated_like',
 ];
 
+// V8 three-way display fallback (poc/detect_v7/pipeline_bridge.py::_compose_display_fallback,
+// weights.json display_fallback.mode == "three_way"): ai_paraphrased + ai_generated_like are
+// measurably indistinguishable from single-document evidence, so the DISPLAY merges them into
+// one "ai_transformed" share. Used only when breakdown.display_taxonomy === 'three_way' &&
+// breakdown.display_shares is present; the four-way CATEGORY_ORDER above remains the fallback
+// path for legacy payloads (mode 'four_way' / older reports with no display_* fields).
+const THREE_WAY_CATEGORY_ORDER = [
+  'student_owned',
+  'ai_assisted_polished',
+  'ai_transformed',
+];
+
 // Bar-fill color per category (spec Global Constraints — must match PDF pdf.py).
 // allow-hardcode: presentation colors (bar fills), not a scoring/matching list.
 const CATEGORY_COLOR = {
@@ -19,6 +31,9 @@ const CATEGORY_COLOR = {
   ai_assisted_polished: '#888780',
   ai_paraphrased: '#D85A30',
   ai_generated_like: '#D85A30',
+  // ai_transformed merges ai_paraphrased + ai_generated_like — same fill color, both
+  // legacy categories already shared it, so no new color decision is needed.
+  ai_transformed: '#D85A30',
 };
 
 const KNOWN_DEEP_SCAN_BANDS = ['insufficient', 'amber', 'orange', 'red'];
@@ -33,9 +48,13 @@ export const TIER_TO_BAND = { green: 'low', amber: 'moderate', orange: 'high', r
 function CategoryBar({ t, category, raw, band }) {
   const hasRaw = typeof raw === 'number' && Number.isFinite(raw);
   const widthPct = hasRaw ? Math.max(0, Math.min(100, raw * 100)) : 0;
-  const bandLabel = band
-    ? t(`report.authorshipBreakdown.bands.${band}`)
-    : t('report.authorshipBreakdown.bands.None');
+  // `band` is only supplied for the four-way categories (backend-computed,
+  // document_breakdown_bands). The V8 three-way merged "ai_transformed" share has
+  // no corresponding band field (the backend deliberately emits only display_shares,
+  // not thresholded bands, for the merge) — recomputing a band client-side would
+  // duplicate the backend's threshold logic (a no-hardcode violation, same reasoning
+  // as TIER_TO_BAND above), so that row shows the percentage alone.
+  const bandLabel = band ? t(`report.authorshipBreakdown.bands.${band}`) : null;
   return (
     <div className="merged-comp-row">
       <div className="merged-comp-row-head">
@@ -43,7 +62,9 @@ function CategoryBar({ t, category, raw, band }) {
           {t(`report.authorshipBreakdown.categories.${category}`)}
         </span>
         <span className="merged-comp-band">
-          {hasRaw ? `${bandLabel} · ${Math.round(widthPct)}%` : bandLabel}
+          {hasRaw
+            ? (bandLabel ? `${bandLabel} · ${Math.round(widthPct)}%` : `${Math.round(widthPct)}%`)
+            : (bandLabel || t('report.authorshipBreakdown.bands.None'))}
         </span>
       </div>
       <div className="merged-comp-track">
@@ -159,6 +180,14 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
 
   const rawShares = (breakdown && breakdown.document_breakdown_raw) || {};
   const bandShares = (breakdown && breakdown.document_breakdown_bands) || {};
+  // V8 three-way display fallback: when the backend emits display_taxonomy ==
+  // 'three_way' (weights.json display_fallback.mode), render the merged
+  // student_owned / ai_assisted_polished / ai_transformed shares instead of the
+  // four-way breakdown. Absent display_shares (legacy payloads / mode 'four_way')
+  // falls back to the byte-identical four-way rendering below.
+  const isThreeWay = !!(breakdown && breakdown.display_taxonomy === 'three_way' && breakdown.display_shares);
+  const compositionShares = isThreeWay ? breakdown.display_shares : rawShares;
+  const compositionOrder = isThreeWay ? THREE_WAY_CATEGORY_ORDER : CATEGORY_ORDER;
   const axes = (sr && sr.axes) || {};
   const textPattern = axes.text_pattern || {};
   const hasScore = typeof textPattern.display_score === 'number';
@@ -198,9 +227,20 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
               {breakdown.presentation === 'mixed_signals' && (
                 <p className="merged-comp-caveat">{t('report.merged.compositionMixedSignalsCaveat')}</p>
               )}
+              {isThreeWay && (
+                <p className="merged-comp-caveat merged-comp-caveat--info">
+                  {t('report.merged.threeWayExplainer')}
+                </p>
+              )}
               <div className="merged-comp-bars">
-                {CATEGORY_ORDER.map((category) => (
-                  <CategoryBar key={category} t={t} category={category} raw={rawShares[category]} band={bandShares[category]} />
+                {compositionOrder.map((category) => (
+                  <CategoryBar
+                    key={category}
+                    t={t}
+                    category={category}
+                    raw={compositionShares[category]}
+                    band={isThreeWay ? undefined : bandShares[category]}
+                  />
                 ))}
               </div>
             </div>
