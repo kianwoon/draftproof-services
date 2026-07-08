@@ -226,10 +226,12 @@ class TestTierConsistencyGuard:
     """
 
     @staticmethod
-    def _patch_fixed_breakdown(monkeypatch, primary_category: str):
+    def _patch_fixed_breakdown(monkeypatch, primary_category: str, raw_shares=None):
         fixed = {
             "schema_version": "v7_phase1a",
-            "document_breakdown_raw": {
+            "document_breakdown_raw": raw_shares
+            if raw_shares is not None
+            else {
                 "student_owned": 0.7,
                 "ai_assisted_polished": 0.1,
                 "ai_paraphrased": 0.1,
@@ -306,12 +308,24 @@ class TestTierConsistencyGuard:
 
     def test_guard_does_not_fire_non_student_owned_primary(self, monkeypatch):
         monkeypatch.setenv(_ENV_VAR, "1")
-        self._patch_fixed_breakdown(monkeypatch, "ai_generated_like")
+        # Neither the four-way primary NOR the merged display_primary is
+        # student_owned (AI-dominant shares) -> guard must stay quiet.
+        self._patch_fixed_breakdown(
+            monkeypatch,
+            "ai_generated_like",
+            raw_shares={
+                "student_owned": 0.1,
+                "ai_assisted_polished": 0.1,
+                "ai_paraphrased": 0.2,
+                "ai_generated_like": 0.6,
+            },
+        )
         detection_result = _realistic_detection_result()
         detection_result["tier"] = "strong"
 
         result = pipeline_bridge.run_v7_breakdown(detection_result)
 
+        assert result["display_primary"] == "ai_transformed"
         assert result["primary_category_reliable"] is True
         assert "tier_category_contradiction" not in result["uncertainty_flags"]
 
@@ -326,6 +340,155 @@ class TestTierConsistencyGuard:
         assert result is not None
         assert result["primary_category_reliable"] is True
         assert "tier_category_contradiction" not in result["uncertainty_flags"]
+
+
+class TestThreeWayDisplayFallback:
+    """V8 three-way display fallback: additive display_* fields that merge the
+    two indistinguishable AI indicators (ai_paraphrased + ai_generated_like)
+    into ai_transformed. The four-way fields stay byte-identical.
+    """
+
+    @staticmethod
+    def _patch_breakdown(monkeypatch, raw_shares, primary_category):
+        fixed = {
+            "schema_version": "v7_phase1a",
+            "document_breakdown_raw": dict(raw_shares),
+            "document_breakdown_bands": {},
+            "primary_category": primary_category,
+            "primary_category_reliable": True,
+            "confidence": "high",
+            "paragraph_count": 1,
+            "degraded_paragraph_count": 0,
+            "display_mode": "bands",
+            "degraded_display": False,
+            "uncertainty_flags": [],
+            "disclaimer": "x",
+        }
+        monkeypatch.setattr(
+            pipeline_bridge.breakdown_composer,
+            "compose_authorship_breakdown",
+            lambda *a, **k: dict(fixed),
+        )
+        return fixed
+
+    def test_display_shares_merge_and_passthrough(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        raw = {
+            "student_owned": 0.5,
+            "ai_assisted_polished": 0.2,
+            "ai_paraphrased": 0.18,
+            "ai_generated_like": 0.12,
+        }
+        self._patch_breakdown(monkeypatch, raw, "student_owned")
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result())
+
+        assert result["display_taxonomy"] == "three_way"
+        ds = result["display_shares"]
+        assert set(ds) == {"student_owned", "ai_assisted_polished", "ai_transformed"}
+        assert ds["student_owned"] == pytest.approx(0.5)
+        assert ds["ai_assisted_polished"] == pytest.approx(0.2)
+        assert ds["ai_transformed"] == pytest.approx(0.18 + 0.12)
+        # sum of display shares equals sum of four-way shares (mass preserved)
+        assert sum(ds.values()) == pytest.approx(sum(raw.values()))
+
+    def test_display_primary_is_argmax_of_merged_shares(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        # four-way primary is ai_paraphrased (0.35), but merged ai_transformed
+        # (0.35 + 0.30 = 0.65) is the display argmax.
+        raw = {
+            "student_owned": 0.20,
+            "ai_assisted_polished": 0.15,
+            "ai_paraphrased": 0.35,
+            "ai_generated_like": 0.30,
+        }
+        self._patch_breakdown(monkeypatch, raw, "ai_paraphrased")
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result())
+
+        assert result["primary_category"] == "ai_paraphrased"  # four-way unchanged
+        assert result["display_primary"] == "ai_transformed"
+
+    def test_four_way_fields_unchanged_by_display_composition(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        raw = {
+            "student_owned": 0.5,
+            "ai_assisted_polished": 0.2,
+            "ai_paraphrased": 0.18,
+            "ai_generated_like": 0.12,
+        }
+        self._patch_breakdown(monkeypatch, raw, "student_owned")
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result())
+
+        assert result["document_breakdown_raw"] == raw
+        assert result["primary_category"] == "student_owned"
+
+    def test_display_primary_student_owned_triggers_guard_under_red_tier(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        # four-way primary is ai_generated_like (guard would NOT fire on it),
+        # but display_primary is student_owned -> extended guard MUST fire.
+        raw = {
+            "student_owned": 0.45,
+            "ai_assisted_polished": 0.15,
+            "ai_paraphrased": 0.20,
+            "ai_generated_like": 0.20,
+        }
+        self._patch_breakdown(monkeypatch, raw, "ai_generated_like")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "strong"
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result["display_primary"] == "student_owned"
+        assert result["primary_category"] == "ai_generated_like"
+        assert result["presentation"] == "mixed_signals"
+        assert result["primary_category_reliable"] is False
+        assert "tier_category_contradiction" in result["uncertainty_flags"]
+
+    def test_display_primary_not_student_no_guard(self, monkeypatch):
+        monkeypatch.setenv(_ENV_VAR, "1")
+        raw = {
+            "student_owned": 0.20,
+            "ai_assisted_polished": 0.15,
+            "ai_paraphrased": 0.35,
+            "ai_generated_like": 0.30,
+        }
+        self._patch_breakdown(monkeypatch, raw, "ai_paraphrased")
+        detection_result = _realistic_detection_result()
+        detection_result["tier"] = "strong"
+        result = pipeline_bridge.run_v7_breakdown(detection_result)
+
+        assert result["display_primary"] == "ai_transformed"
+        assert result["primary_category_reliable"] is True
+        assert "tier_category_contradiction" not in result["uncertainty_flags"]
+
+    def test_four_way_mode_emits_no_display_fields(self, monkeypatch, tmp_path):
+        import json as _json
+        from pathlib import Path
+
+        monkeypatch.setenv(_ENV_VAR, "1")
+        real = _json.loads(
+            (Path(pipeline_bridge.config.__file__).resolve().parent / "weights.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        real["display_fallback"]["mode"] = "four_way"
+        fp = tmp_path / "four_way_weights.json"
+        fp.write_text(_json.dumps(real), encoding="utf-8")
+        monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(fp))
+        pipeline_bridge.config.reload_weights(force=True)
+
+        raw = {
+            "student_owned": 0.5,
+            "ai_assisted_polished": 0.2,
+            "ai_paraphrased": 0.18,
+            "ai_generated_like": 0.12,
+        }
+        self._patch_breakdown(monkeypatch, raw, "student_owned")
+        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result())
+
+        assert "display_taxonomy" not in result
+        assert "display_shares" not in result
+        assert "display_primary" not in result
+        monkeypatch.delenv("DRAFTPROOF_V7_WEIGHTS_PATH", raising=False)
+        pipeline_bridge.config.reload_weights(force=True)
 
 
 class TestIsDeepScanEnabled:

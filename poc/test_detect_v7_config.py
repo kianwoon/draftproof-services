@@ -308,3 +308,98 @@ def test_missing_file_raises_file_not_found(tmp_path, monkeypatch):
     with pytest.raises(FileNotFoundError) as exc_info:
         v7config.reload_weights(force=True)
     assert str(nonexistent) in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# display_fallback accessor (V8 three-way display fallback)
+# ---------------------------------------------------------------------------
+
+
+def _install_display_fallback_fixture(tmp_path, monkeypatch, display_fallback):
+    """Deep-copy the real bundled weights, swap in a display_fallback block
+    (or drop it entirely when display_fallback is None), write to tmp, and
+    point the loader at it."""
+    from pathlib import Path
+
+    real = json.loads(
+        (Path(v7config.__file__).resolve().parent / "weights.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if display_fallback is None:
+        real.pop("display_fallback", None)
+    else:
+        real["display_fallback"] = display_fallback
+    fixture_path = tmp_path / "display_fallback_weights.json"
+    fixture_path.write_text(json.dumps(real), encoding="utf-8")
+    monkeypatch.setenv("DRAFTPROOF_V7_WEIGHTS_PATH", str(fixture_path))
+    v7config.reload_weights(force=True)
+
+
+def test_display_fallback_config_accessor():
+    cfg = v7config.get_display_fallback_config()
+    assert cfg["mode"] == "three_way"
+    assert cfg["merged_display_category"] == "ai_transformed"
+    assert cfg["merged_from"] == ["ai_paraphrased", "ai_generated_like"]
+
+
+def test_display_fallback_config_missing_raises(tmp_path, monkeypatch):
+    _install_display_fallback_fixture(tmp_path, monkeypatch, None)
+    with pytest.raises(KeyError):
+        v7config.get_display_fallback_config()
+
+
+def test_display_fallback_four_way_mode_is_valid(tmp_path, monkeypatch):
+    _install_display_fallback_fixture(
+        tmp_path,
+        monkeypatch,
+        {
+            "mode": "four_way",
+            "merged_display_category": "ai_transformed",
+            "merged_from": ["ai_paraphrased", "ai_generated_like"],
+        },
+    )
+    cfg = v7config.get_display_fallback_config()
+    assert cfg["mode"] == "four_way"
+
+
+def test_display_fallback_unknown_mode_raises(tmp_path, monkeypatch):
+    _install_display_fallback_fixture(
+        tmp_path,
+        monkeypatch,
+        {
+            "mode": "five_way",
+            "merged_display_category": "ai_transformed",
+            "merged_from": ["ai_paraphrased", "ai_generated_like"],
+        },
+    )
+    with pytest.raises(ValueError):
+        v7config.get_display_fallback_config()
+
+
+def test_display_fallback_unknown_merged_from_raises(tmp_path, monkeypatch):
+    _install_display_fallback_fixture(
+        tmp_path,
+        monkeypatch,
+        {
+            "mode": "three_way",
+            "merged_display_category": "ai_transformed",
+            "merged_from": ["ai_paraphrased", "not_a_category"],
+        },
+    )
+    with pytest.raises(ValueError):
+        v7config.get_display_fallback_config()
+
+
+def test_display_fallback_merged_name_collision_raises(tmp_path, monkeypatch):
+    _install_display_fallback_fixture(
+        tmp_path,
+        monkeypatch,
+        {
+            "mode": "three_way",
+            "merged_display_category": "student_owned",
+            "merged_from": ["ai_paraphrased", "ai_generated_like"],
+        },
+    )
+    with pytest.raises(ValueError):
+        v7config.get_display_fallback_config()

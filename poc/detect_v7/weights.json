@@ -248,5 +248,14 @@
       "strong"
     ],
     "_notes": "Owner-approved companion to the 2026-07-08 category_weights re-tune (seed 42, see category_weights_tuning note above): post-rewire, 17/80 AI-generated docs in the \u00a712 validation set (poc/calibration/v12_validation/false_ai_diagnosis.json) display 'student_owned' as their top V7 category share while the badge tier (fused-score-driven, untouched by this guard) correctly reads concerning/strong \u2014 a contradictory display (red tier + 'the writing looks student-owned'). Per project alignment principle 'guards ANNOTATE, never SUPPRESS' (CLAUDE.md), this does not change shares or primary_category; it reuses the existing mixed_signals presentation + primary_category_reliable=False mechanism (poc/detect_v7/breakdown_composer.py's flatness guard) plus an uncertainty_flags entry, applied in poc/detect_v7/pipeline_bridge.py::run_v7_breakdown where the badge tier is available. Trigger tier set is 'concerning'/'strong' only (green/amber/clean/acceptable tiers are not contradicted by a student_owned read, so the guard fail-opens and does not fire there)."
+  },
+  "display_fallback": {
+    "mode": "three_way",
+    "merged_display_category": "ai_transformed",
+    "merged_from": [
+      "ai_paraphrased",
+      "ai_generated_like"
+    ],
+    "_notes": "V8 measured resolution (owner decision 2026-07-08, evidence poc/calibration/v12_validation/v8_frontier_result.json). The V8 tuning frontier proved ai_paraphrased cannot be separated from ai_generated_like on single-document evidence: acceptance required para>=0.40 AND polished>=0.65 AND macro>=~0.65 and NO operating point satisfies all three (binding wall: paraphrase_mismatch feature mean sits on the wrong side, polished 0.694 > paraphrased 0.644, so the tuner can only buy paraphrase wins by relabeling polished as paraphrased). Rather than assert a distinction the signal cannot support, the user-facing breakdown MERGES the two indistinguishable AI indicators into a single 'ai_transformed' display category. ADDITIVE, presentation-only: pipeline_bridge.py::run_v7_breakdown composes display_taxonomy/display_shares/display_primary from the merged shares while the four-way document_breakdown_raw/document_breakdown_bands/primary_category/guards stay byte-identical (retained for audit + the V8b paired-draft feature family that may later recover the separation). mode 'three_way' emits the display_* fields; mode 'four_way' is the forward-compatible off-switch (no display_* fields). config.py::get_display_fallback_config validates fail-loud (KeyError if missing; ValueError on unknown mode, unknown merged_from category, or a merged_display_category colliding with an existing four-way category name)."
   }
 }

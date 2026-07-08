@@ -276,3 +276,70 @@ def get_display_consistency_guard_config() -> dict[str, Any]:
     ascending-cutoffs invariant.
     """
     return dict(_weights()["display_consistency_guard"])
+
+
+# Accepted values for display_fallback.mode. "three_way" emits the merged
+# display_* fields; "four_way" is the forward-compatible off-switch (no
+# display_* fields). These are structural schema identifiers, not scoring
+# numbers, so they live here rather than as weights.json values.
+_DISPLAY_FALLBACK_MODES = ("three_way", "four_way")
+
+
+def get_display_fallback_config() -> dict[str, Any]:
+    """Return the V8 three-way display-fallback config (see ``weights.json``'s
+    ``display_fallback._notes`` for the measured motivation:
+    ``ai_paraphrased`` cannot be separated from ``ai_generated_like`` on
+    single-document evidence, so the two are merged into one user-facing
+    ``ai_transformed`` display category).
+
+    Fail-loud, matching this module's validation precedents:
+    - a missing ``display_fallback`` block raises ``KeyError`` (like
+      ``get_display_consistency_guard_config``);
+    - ``mode`` not in ``_DISPLAY_FALLBACK_MODES`` raises ``ValueError``;
+    - any name in ``merged_from`` that is not one of the canonical four-way
+      categories raises ``ValueError``;
+    - a ``merged_display_category`` that collides with an existing four-way
+      category name raises ``ValueError`` (the merged label must be new, not
+      an alias of a category it is meant to sit alongside).
+
+    The canonical four-way category names are sourced from
+    ``breakdown_composer._CATEGORY_NAMES`` (imported locally to avoid a
+    module-level import cycle: ``breakdown_composer`` imports ``config``), so
+    this validation never duplicates that list.
+    """
+    section = _weights()["display_fallback"]
+
+    from . import breakdown_composer  # local import: avoids config<-composer cycle
+
+    valid_categories = set(breakdown_composer._CATEGORY_NAMES)
+
+    mode = section["mode"]
+    if mode not in _DISPLAY_FALLBACK_MODES:
+        # allow-hardcode: human-readable error message text, not a scoring/matching list
+        raise ValueError(
+            f"weights.json contract violation: display_fallback.mode must be "
+            f"one of {list(_DISPLAY_FALLBACK_MODES)!r}, got {mode!r}."
+        )
+
+    merged_from = section["merged_from"]
+    unknown = [c for c in merged_from if c not in valid_categories]
+    if unknown:
+        # allow-hardcode: human-readable error message text, not a scoring/matching list
+        raise ValueError(
+            f"weights.json contract violation: display_fallback.merged_from "
+            f"names unknown categories {unknown!r}; valid four-way categories "
+            f"are {sorted(valid_categories)!r}."
+        )
+
+    merged_display_category = section["merged_display_category"]
+    if merged_display_category in valid_categories:
+        # allow-hardcode: human-readable error message text, not a scoring/matching list
+        raise ValueError(
+            f"weights.json contract violation: display_fallback."
+            f"merged_display_category {merged_display_category!r} collides "
+            f"with an existing four-way category name — the merged display "
+            f"label must be a NEW category, not an alias of one it merges/"
+            f"sits alongside."
+        )
+
+    return dict(section)
