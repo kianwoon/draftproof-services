@@ -29,6 +29,31 @@ def test_gate_pass_on_separable_synthetic():
     assert result["winner"]["effective_auc_vs_generated"] >= 0.70
 
 
+def test_gate_fails_closed_when_esl_coverage_missing():
+    # Separable rows that would PASS, but prof_by_key={} means the ESL check
+    # is unverifiable — the gate must fail CLOSED, not pass vacuously.
+    rows = ([_row("ai_paraphrased", 0.9, 0.2, 0.9, 0.8, key=f"p{i}") for i in range(10)]
+            + [_row("ai_generated_like", 0.1, 0.8, 0.9, 0.8, key=f"g{i}") for i in range(10)]
+            + [_row("student_owned", 0.9, 0.2, 0.1, 0.1, key=f"s{i}") for i in range(10)])
+    result = pa.run_study(rows, prof_by_key={})
+    assert result["gate_verdict"] == "FAIL"
+    assert result["gate_fail_reason"] == "esl_check_unverifiable_insufficient_subgroup_coverage"
+    assert result["winner"] is not None  # table data kept intact for inspection
+    assert result["esl_coverage"] == {"n_higher": 0, "n_lower": 0}
+
+
+def test_gate_fails_closed_when_esl_coverage_one_sided():
+    # Both-subgroup coverage is required — all-"higher" mapping is still
+    # unverifiable in the lower-vs-higher direction.
+    rows = ([_row("ai_paraphrased", 0.9, 0.2, 0.9, 0.8, key=f"p{i}") for i in range(10)]
+            + [_row("ai_generated_like", 0.1, 0.8, 0.9, 0.8, key=f"g{i}") for i in range(10)]
+            + [_row("student_owned", 0.9, 0.2, 0.1, 0.1, key=f"s{i}") for i in range(10)])
+    result = pa.run_study(rows, prof_by_key={f"s{i}": "higher" for i in range(10)})
+    assert result["gate_verdict"] == "FAIL"
+    assert result["gate_fail_reason"] == "esl_check_unverifiable_insufficient_subgroup_coverage"
+    assert result["esl_coverage"] == {"n_higher": 10, "n_lower": 0}
+
+
 def test_gate_fail_on_inseparable_synthetic():
     rows = ([_row("ai_paraphrased", 0.5, 0.5, 0.5, 0.5, key=f"p{i}") for i in range(10)]
             + [_row("ai_generated_like", 0.5, 0.5, 0.5, 0.5, key=f"g{i}") for i in range(10)]

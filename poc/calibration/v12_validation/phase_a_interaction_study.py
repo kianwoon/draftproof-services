@@ -165,6 +165,21 @@ def run_study(rows: List[dict], prof_by_key: Dict[str, str],
 
     class_counts = {c: sum(1 for d in docs if d["label"] == c) for c in _CLASSES}
 
+    # Fail-closed ESL coverage guard (layered here, on top of the shared
+    # evaluate_gate, which treats an absent ESL check as passing): a PASS is
+    # only valid when the winner's ESL check was actually computable from
+    # BOTH proficiency subgroups. Otherwise the check is vacuous — the exact
+    # covert-ESL-detector failure the gate exists to prevent.
+    esl_coverage = {"n_higher": 0, "n_lower": 0}
+    if gate["best_feature"] is not None:
+        cov = esl_subgroup[gate["best_feature"]]
+        esl_coverage = {"n_higher": cov["n_higher"], "n_lower": cov["n_lower"]}
+    gate_verdict = "PASS" if gate["gate_passed"] else "FAIL"
+    gate_fail_reason = None
+    if gate_verdict == "PASS" and not (esl_coverage["n_higher"] > 0 and esl_coverage["n_lower"] > 0):
+        gate_verdict = "FAIL"
+        gate_fail_reason = "esl_check_unverifiable_insufficient_subgroup_coverage"
+
     # allow-hardcode: `_notes` is human-reviewed report annotation describing
     # the winning composition and methodology for the reader of the JSON —
     # it is never matched against, scored, or used as detection logic.
@@ -180,7 +195,9 @@ def run_study(rows: List[dict], prof_by_key: Dict[str, str],
         "feature_correlation_matrix": corr,
         "gate_detail": gate,
         "winner": winner,
-        "gate_verdict": "PASS" if gate["gate_passed"] else "FAIL",
+        "esl_coverage": esl_coverage,
+        "gate_verdict": gate_verdict,
+        "gate_fail_reason": gate_fail_reason,
         "_notes": {
             "winning_composition": (
                 None if winner is None else
@@ -261,6 +278,8 @@ def main() -> int:
     out.write_text(json.dumps(result, indent=2, ensure_ascii=False))
 
     print(json.dumps({"gate_verdict": result["gate_verdict"],
+                      "gate_fail_reason": result["gate_fail_reason"],
+                      "esl_coverage": result["esl_coverage"],
                       "winner": result["winner"],
                       "skip_counts": result["skip_counts"]}, indent=2))
     print(f"study -> {out}")
