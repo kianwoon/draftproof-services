@@ -63,7 +63,10 @@ class TestGetTierAuthorityConfig:
         assert cutoffs["amber"] < cutoffs["orange"] < cutoffs["red"]
         assert cutoffs == {"amber": 32, "orange": 48, "red": 65}
         weights = cfg["weights"]
-        assert weights == {"composite": 0.40, "deep_scan_proportion": 0.60}
+        # Re-weighted 2026-07-09 (RAID benchmark, holdout-validated): 0.50/0.50
+        # beats the prior 0.40/0.60 on out-of-sample TPR at fixed FPR. See
+        # weights.json's tier_authority._notes for the full evidence.
+        assert weights == {"composite": 0.50, "deep_scan_proportion": 0.50}
         assert pytest.approx(sum(weights.values())) == 1.0
 
     def test_non_ascending_cutoffs_raise(self, monkeypatch):
@@ -100,19 +103,19 @@ class TestGetTierAuthorityConfig:
 
 class TestComputeFusedAuthority:
     def test_formula_matches_spec(self):
-        # fused = 0.40 * composite + 0.60 * proportion * 100
+        # fused = 0.50 * composite + 0.50 * proportion * 100 (re-weighted 2026-07-09)
         result = pipeline_bridge.compute_fused_authority(50.0, 0.5)
-        assert result["fused_score"] == pytest.approx(0.40 * 50.0 + 0.60 * 0.5 * 100.0)
+        assert result["fused_score"] == pytest.approx(0.50 * 50.0 + 0.50 * 0.5 * 100.0)
         assert result["fused_score"] == pytest.approx(50.0)
 
     def test_pure_composite_zero_proportion(self):
         result = pipeline_bridge.compute_fused_authority(100.0, 0.0)
-        assert result["fused_score"] == pytest.approx(40.0)
-        assert result["tier"] == "amber"  # 40 in [32, 48)
+        assert result["fused_score"] == pytest.approx(50.0)
+        assert result["tier"] == "orange"  # 50 in [48, 65)
 
     def test_pure_proportion_zero_composite(self):
         result = pipeline_bridge.compute_fused_authority(0.0, 1.0)
-        assert result["fused_score"] == pytest.approx(60.0)
+        assert result["fused_score"] == pytest.approx(50.0)
         assert result["tier"] == "orange"
 
     @pytest.mark.parametrize(
@@ -251,10 +254,10 @@ class TestTierAuthorityFlagOnWithDeepScan:
         assert prov["source"] == "v7_fused"
         assert prov["proportion"] == 1.0
         assert prov["fused_score"] == pytest.approx(
-            0.40 * prov["composite_score"] + 0.60 * 1.0 * 100.0, abs=0.02
+            0.50 * prov["composite_score"] + 0.50 * 1.0 * 100.0, abs=0.02
         )
         assert prov["flag_line"] == config.get_tier_authority_config()["cutoffs"]["amber"]
-        # With proportion=1.0 fully weighted, fused_score is at least 60 -> orange or red.
+        # With proportion=1.0 at weight 0.50, fused_score is at least 50 -> orange or red.
         assert badge["tier"] in {"orange", "red"}
         assert badge["ai_likelihood_score"] == pytest.approx(prov["fused_score"], abs=0.01)
 
