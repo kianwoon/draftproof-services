@@ -62,12 +62,6 @@ export default function ReportHero({
             )}
           </div>
           <div className="report-hero-side">
-            <div className="report-hero-stats is-single" aria-label={t('report.overview')}>
-              <div className="report-hero-stat">
-                <span>{t('report.summary.riskTier')}</span>
-                <strong style={{ color: tier.color }}>{t(`report.tiers.${report.tier}`, { defaultValue: tier.label })}</strong>
-              </div>
-            </div>
             {isRewrittenView && onDownloadRewrittenPdf ? (
               <div className="report-download-group">
                 <button type="button" className="download-pdf-btn" onClick={onDownloadRewrittenPdf}>
@@ -89,6 +83,12 @@ export default function ReportHero({
                 <span>{t('report.retentionNotice')}</span>
               </div>
             )}
+            <div className="report-hero-stats is-single" aria-label={t('report.overview')}>
+              <div className="report-hero-stat">
+                <span>{t('report.summary.riskTier')}</span>
+                <strong style={{ color: tier.color }}>{t(`report.tiers.${report.tier}`, { defaultValue: tier.label })}</strong>
+              </div>
+            </div>
           </div>
         </div>
 
