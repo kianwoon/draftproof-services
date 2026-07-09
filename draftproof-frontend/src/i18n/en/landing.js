@@ -415,7 +415,7 @@ export const landing = {
     {
       "id": "authorshipBreakdown",
       "label": "Authorship Breakdown",
-      "summary": "4-way composition"
+      "summary": "3-way composition"
     },
     {
       "id": "aiSignal",

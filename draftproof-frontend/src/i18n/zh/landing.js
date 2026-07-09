@@ -413,7 +413,7 @@ export const landing = {
     {
       "id": "authorshipBreakdown",
       "label": "作者身份细分",
-      "summary": "四类构成"
+      "summary": "三类构成"
     },
     {
       "id": "aiSignal",

@@ -476,18 +476,44 @@ def _extract_tier(detection_result: Any) -> Optional[str]:
 
 
 def _extract_calibrated_score(detection_result: Any) -> Optional[float]:
-    """Pull the composite ``ai_likelihood_score`` (0-100 scale in builder.py's
+    """Pull the composite ``ai_likelihood`` (0-100 scale in builder.py's
     ``ai_risk_badge``) and normalize to 0-1 for ``detector_fusion.py``.
+
+    PREFERS ``pre_fusion_composite`` when builder.py supplies it: the RAW
+    composite ai_likelihood BEFORE V7 tier-authority DeBERTa fusion. With
+    tier-authority ON, ``ai_likelihood_score`` is ALREADY
+    0.4*composite + 0.6*deberta, and this bridge fuses ``composite`` with
+    ``deberta_large`` AGAIN (see :func:`run_v7_breakdown`); feeding the fused
+    authority score would double-fuse. Using the pre-fusion composite keeps the
+    breakdown's detector input aligned with the offline-tuned category weights
+    (``calibration/v12_validation/capture_signals.py`` runs with tier-authority
+    UNSET, i.e. a single fusion). Absent / None / non-numeric ->
+    byte-identical fallback to ``ai_likelihood_score`` (non-tier-authority /
+    quick-scan / object detection_result paths).
     """
     if isinstance(detection_result, dict):
-        value = detection_result.get("ai_likelihood_score")
+        value = detection_result.get("pre_fusion_composite")
     else:
-        value = getattr(detection_result, "ai_likelihood_score", None)
+        value = getattr(detection_result, "pre_fusion_composite", None)
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        # Fallback: original ai_likelihood_score path, unchanged.
+        if isinstance(detection_result, dict):
+            value = detection_result.get("ai_likelihood_score")
+        else:
+            value = getattr(detection_result, "ai_likelihood_score", None)
     if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    value = float(value)
-    if value > 1.0:
-        value = value / 100.0
+    # Contract (see docstring): the input is ALWAYS 0-100 (builder.py never sends
+    # an already-0-1 fraction here — verified against every producer:
+    # ai_risk_badge["ai_likelihood_score"], pre_fusion_composite, and
+    # capture_signals.py's badge copy are all round(...*100, 2) / fused_score on
+    # the 0-100 scale). The old `if value > 1.0` heuristic silently passed a
+    # genuine low composite (e.g. 0.5, meaning 0.5% AI-likelihood — a very-human
+    # document) through UNDIVIDED, so it was read as 0.5 = 50% by the fusion
+    # below: a ~100x inflation for exactly the clean/ESL-safe documents this
+    # score most needs to get right. Always divide; the clamp below still
+    # guards any out-of-contract caller.
+    value = float(value) / 100.0
     return max(0.0, min(1.0, value))
 
 
