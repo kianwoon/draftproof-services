@@ -93,6 +93,11 @@ export const turnitinScore = {
       "body": "How Turnitin, GPTZero, and Originality.ai actually compare."
     },
     {
+      "label": "Turnitin alternatives",
+      "to": "/turnitin-alternatives",
+      "body": "Which AI detector is most like Turnitin — and what to run first."
+    },
+    {
       "label": "How to reduce AI detection (honestly)",
       "to": "/reduce-ai-detection",
       "body": "Why beating the detector is the wrong goal."

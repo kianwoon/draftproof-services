@@ -56,4 +56,7 @@ export const seo = {
   "turnitinVsDetectorsTitle": "Turnitin 与 AI 检测工具对比 | DraftProof",
   "turnitinVsDetectorsDescription": "Turnitin、GPTZero 和 Originality.ai 对 AI 写作的判断方式各不相同，结果也常常不一致。了解每个工具的计分方式、官方公布的准确率，以及各自的已知弱点——以及为什么不该由一个数字来下定论。",
   "turnitinVsDetectorsSocialDescription": "Turnitin、GPTZero 与 Originality.ai 对比——各自如何计分，又分别在哪里出错。",
+  "turnitinAlternativesTitle": "Turnitin 替代工具：哪个 AI 检测器最像 Turnitin？| DraftProof",
+  "turnitinAlternativesDescription": "在找一个像 Turnitin 的 AI 检测器？中立地了解 Turnitin、GPTZero、Originality.ai 和 Copyleaks——各自为谁而设、如何选择，以及为什么 DraftProof 是在用它们之前该先跑的提交前一步，而不是替代品。",
+  "turnitinAlternativesSocialDescription": "中立对比像 Turnitin 的 AI 检测器——以及在用任何一个之前该先做什么。DraftProof 不是替代品。",
 };

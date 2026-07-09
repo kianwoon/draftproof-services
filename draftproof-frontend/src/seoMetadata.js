@@ -14,6 +14,14 @@ const configuredSiteUrl =
   || 'https://draftproof.app';
 
 export const SITE_URL = normalizeSiteUrl(configuredSiteUrl);
+// GA4 measurement ID. No Docker build-arg wiring exists for VITE_ vars in prod
+// (see root Dockerfile — `npm run build` runs with no --build-arg), so the real
+// ID is hardcoded as the fallback, same pattern as SITE_URL above. Not a secret:
+// a GA4 measurement ID is public in every page's rendered HTML.
+export const GA_MEASUREMENT_ID =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GA_MEASUREMENT_ID)
+  || (typeof process !== 'undefined' && process.env?.VITE_GA_MEASUREMENT_ID)
+  || 'G-8NXE7ESYTQ';
 // ?v bumped whenever og-image.png is regenerated so social scrapers (which
 // cache by URL) re-fetch the updated card instead of serving a stale image.
 export const DEFAULT_IMAGE = `${SITE_URL}/og-image.png?v=2`;
@@ -113,7 +121,15 @@ export const PAGE_META = {
     socialDescriptionKey: 'seo.turnitinVsDetectorsSocialDescription',
     canonical: '/turnitin-vs-ai-detectors',
     schemaType: 'WebPage',
-    freshness: { type: 'reviewed', date: '2026-07-08' },
+    freshness: { type: 'reviewed', date: '2026-07-10' },
+  },
+  '/turnitin-alternatives': {
+    titleKey: 'seo.turnitinAlternativesTitle',
+    descriptionKey: 'seo.turnitinAlternativesDescription',
+    socialDescriptionKey: 'seo.turnitinAlternativesSocialDescription',
+    canonical: '/turnitin-alternatives',
+    schemaType: 'WebPage',
+    freshness: { type: 'reviewed', date: '2026-07-10' },
   },
   '/pricing': {
     titleKey: 'seo.pricingTitle',

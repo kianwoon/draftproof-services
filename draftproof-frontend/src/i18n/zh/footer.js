@@ -6,6 +6,8 @@ export const footer = {
   "rewrite": "改写",
   "academicIntegrity": "学术诚信",
   "turnitinScore": "Turnitin AI 分数",
+  "turnitinVsDetectors": "Turnitin 对比 AI 检测工具",
+  "turnitinAlternatives": "Turnitin 替代工具",
   "aiDeclaration": "AI 使用声明",
   "reduceDetection": "降低 AI 检测",
   "pricing": "价格",

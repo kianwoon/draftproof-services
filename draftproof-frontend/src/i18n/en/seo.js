@@ -56,4 +56,7 @@ export const seo = {
   "turnitinVsDetectorsTitle": "Turnitin vs AI Detectors: How They Compare | DraftProof",
   "turnitinVsDetectorsDescription": "Turnitin, GPTZero, and Originality.ai measure AI writing differently and often disagree. See how each one scores, its published accuracy claims, and known weak spots — and why one number shouldn't decide anything.",
   "turnitinVsDetectorsSocialDescription": "Turnitin, GPTZero, and Originality.ai compared — how each scores, and where each one gets it wrong.",
+  "turnitinAlternativesTitle": "Turnitin Alternatives: Which AI Detector Is Most Like Turnitin? | DraftProof",
+  "turnitinAlternativesDescription": "Looking for an AI detector like Turnitin? A neutral look at Turnitin, GPTZero, Originality.ai, and Copyleaks — who each is built for, how to choose, and why DraftProof is the pre-submission step to run before any of them, not a replacement.",
+  "turnitinAlternativesSocialDescription": "AI detectors like Turnitin, compared neutrally — plus what to run before any of them. DraftProof isn't a replacement.",
 };

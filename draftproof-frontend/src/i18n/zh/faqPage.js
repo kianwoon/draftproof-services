@@ -22,6 +22,25 @@ export const faqPage = {
   "viewPricing": "查看价格",
   "ctaTitle": "准备好审阅你的草稿了吗？",
   "ctaBody": "先完成扫描，阅读报告，然后在提交前修复影响最大的地方。",
+  "relatedEyebrow": "继续阅读",
+  "relatedTitle": "Turnitin 与 AI 检测指南",
+  "related": [
+    {
+      "label": "你的 Turnitin AI 分数意味着什么？",
+      "to": "/turnitin-ai-score",
+      "body": "那个百分比——以及 20% 以下的星号——究竟意味着什么。"
+    },
+    {
+      "label": "Turnitin 与其他 AI 检测工具对比",
+      "to": "/turnitin-vs-ai-detectors",
+      "body": "Turnitin、GPTZero 与 Originality.ai 有何不同，各自又在哪里出错。"
+    },
+    {
+      "label": "Turnitin 替代工具",
+      "to": "/turnitin-alternatives",
+      "body": "哪个 AI 检测器最像 Turnitin——以及该先跑什么。"
+    }
+  ],
   "groups": [
     {
       "id": "how-draftproof-helps",

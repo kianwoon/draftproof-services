@@ -25,6 +25,8 @@ export default function Footer() {
           <Link to={publicPath('/rewrite')}>{t('footer.rewrite')}</Link>
           <Link to={publicPath('/academic-integrity-ai')}>{t('footer.academicIntegrity')}</Link>
           <Link to={publicPath('/turnitin-ai-score')}>{t('footer.turnitinScore')}</Link>
+          <Link to={publicPath('/turnitin-vs-ai-detectors')}>{t('footer.turnitinVsDetectors')}</Link>
+          <Link to={publicPath('/turnitin-alternatives')}>{t('footer.turnitinAlternatives')}</Link>
           <Link to={publicPath('/ai-declaration')}>{t('footer.aiDeclaration')}</Link>
           <Link to={publicPath('/reduce-ai-detection')}>{t('footer.reduceDetection')}</Link>
           <Link to={publicPath('/pricing')}>{t('footer.pricing')}</Link>

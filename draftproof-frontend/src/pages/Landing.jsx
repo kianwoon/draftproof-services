@@ -295,6 +295,8 @@ export default function Landing() {
           </div>
           <p style={{ textAlign: 'center', marginTop: '1.25rem', fontSize: '0.875rem' }}>
             <Link to={publicPath('/features')}>{t('nav.features')} →</Link>
+            {' · '}
+            <Link to={publicPath('/turnitin-vs-ai-detectors')}>{t('footer.turnitinVsDetectors')} →</Link>
           </p>
         </div>
       </section>
@@ -325,6 +327,8 @@ export default function Landing() {
             <Link to={publicPath('/content-checker')}>{t('footer.essayChecker')}</Link>
             <Link to={publicPath('/academic-integrity-ai')}>{t('footer.academicIntegrity')}</Link>
             <Link to={publicPath('/turnitin-ai-score')}>{t('footer.turnitinScore')}</Link>
+            <Link to={publicPath('/turnitin-vs-ai-detectors')}>{t('footer.turnitinVsDetectors')}</Link>
+            <Link to={publicPath('/turnitin-alternatives')}>{t('footer.turnitinAlternatives')}</Link>
             <Link to={publicPath('/ai-declaration')}>{t('footer.aiDeclaration')}</Link>
             <Link to={publicPath('/reduce-ai-detection')}>{t('footer.reduceDetection')}</Link>
             <Link to={publicPath('/pricing')}>{t('footer.pricing')}</Link>

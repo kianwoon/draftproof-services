@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   DEFAULT_IMAGE,
+  GA_MEASUREMENT_ID,
   SITE_NAME,
   buildSchema,
   getAlternateUrls,
@@ -12,6 +13,8 @@ import {
   getSeoMeta,
 } from '../seoMetadata';
 
+let gaInitialized = false;
+
 export default function Seo() {
   const { pathname } = useLocation();
   const { t, i18n } = useTranslation();
@@ -19,6 +22,8 @@ export default function Seo() {
   useEffect(() => {
     const meta = getSeoMeta(pathname, t);
     const canonicalUrl = getCanonicalUrl(meta);
+
+    trackPageView(meta, pathname, canonicalUrl);
 
     document.title = meta.title;
     document.documentElement.lang = getHtmlLang(meta.locale);
@@ -88,6 +93,20 @@ function setAlternates(alternates) {
     tag.setAttribute('href', href);
     tag.dataset.seoAlternate = 'true';
     document.head.appendChild(tag);
+  });
+}
+
+function trackPageView(meta, pathname, canonicalUrl) {
+  if (!import.meta.env.PROD || typeof window.gtag !== 'function') return;
+  if (!gaInitialized) {
+    gaInitialized = true;
+    window.gtag('js', new Date());
+    window.gtag('config', GA_MEASUREMENT_ID, { send_page_view: false });
+  }
+  window.gtag('event', 'page_view', {
+    page_location: canonicalUrl,
+    page_path: pathname,
+    page_title: meta.title,
   });
 }
 

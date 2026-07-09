@@ -30,6 +30,7 @@ import { academicIntegrity } from './en/academicIntegrity.js';
 import { aiDeclaration } from './en/aiDeclaration.js';
 import { reduceDetection } from './en/reduceDetection.js';
 import { turnitinVsDetectors } from './en/turnitinVsDetectors.js';
+import { turnitinAlternatives } from './en/turnitinAlternatives.js';
 
 export const enTranslation = {
   "common": common,
@@ -64,4 +65,5 @@ export const enTranslation = {
   "aiDeclaration": aiDeclaration,
   "reduceDetection": reduceDetection,
   "turnitinVsDetectors": turnitinVsDetectors,
+  "turnitinAlternatives": turnitinAlternatives,
 };

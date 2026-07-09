@@ -93,6 +93,11 @@ export const turnitinScore = {
       "body": "Turnitin、GPTZero 与 Originality.ai 究竟有何不同。"
     },
     {
+      "label": "Turnitin 替代工具",
+      "to": "/turnitin-alternatives",
+      "body": "哪个 AI 检测器最像 Turnitin——以及该先跑什么。"
+    },
+    {
       "label": "如何降低 AI 检测（诚实版）",
       "to": "/reduce-ai-detection",
       "body": "为什么“骗过检测器”是错误的目标。"

@@ -6,6 +6,8 @@ export const footer = {
   "rewrite": "Rewrite",
   "academicIntegrity": "Academic integrity",
   "turnitinScore": "Turnitin AI score",
+  "turnitinVsDetectors": "Turnitin vs AI detectors",
+  "turnitinAlternatives": "Turnitin alternatives",
   "aiDeclaration": "AI declaration",
   "reduceDetection": "Reduce AI detection",
   "pricing": "Pricing",

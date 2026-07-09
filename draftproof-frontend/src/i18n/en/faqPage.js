@@ -22,6 +22,25 @@ export const faqPage = {
   "viewPricing": "View pricing",
   "ctaTitle": "Ready to review your draft?",
   "ctaBody": "Start with a scan, read the report, then fix the highest-impact issues before submission.",
+  "relatedEyebrow": "Keep reading",
+  "relatedTitle": "Turnitin & AI detection guides",
+  "related": [
+    {
+      "label": "What does your Turnitin AI score mean?",
+      "to": "/turnitin-ai-score",
+      "body": "What the percentage — and the sub-20% asterisk — actually means."
+    },
+    {
+      "label": "Turnitin vs AI detectors",
+      "to": "/turnitin-vs-ai-detectors",
+      "body": "How Turnitin, GPTZero, and Originality.ai compare, and where each gets it wrong."
+    },
+    {
+      "label": "Turnitin alternatives",
+      "to": "/turnitin-alternatives",
+      "body": "Which AI detector is most like Turnitin — and what to run first."
+    }
+  ],
   "groups": [
     {
       "id": "how-draftproof-helps",

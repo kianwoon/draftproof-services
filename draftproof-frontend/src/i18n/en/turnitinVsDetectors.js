@@ -94,6 +94,26 @@ export const turnitinVsDetectors = {
       ]
     },
     {
+      "eyebrow": "The fairness problem",
+      "title": "Where every detector struggles: non-native English writing.",
+      "lead": "The most documented failure of AI detectors is over-flagging fluent, non-native English writing as AI-generated — a big reason several universities have stepped back from detector-only enforcement.",
+      "type": "cards",
+      "items": [
+        {
+          "title": "Why ESL writing gets caught",
+          "body": "Detectors react to smooth, statistically predictable phrasing. Writers working in a second language often rely on clear, textbook-correct constructions — the exact pattern a perplexity-based model reads as machine-written. The writing is human; the flag is a false positive."
+        },
+        {
+          "title": "What DraftProof measured on its own detector",
+          "body": "In internal testing against a 272-essay corpus of non-native English student writing, DraftProof's detector held a 0.8% false-positive rate on lower-proficiency ESL writers at its standard threshold — versus 2.9% across the whole corpus. Keeping that subgroup number low is a deliberate design goal, not a public leaderboard claim."
+        },
+        {
+          "title": "What it means for your draft",
+          "body": "No detector is bias-free, DraftProof included. The reliable move is to find where your own writing reads as generic or unsupported before an institution's tool sees it — then add the specifics only you have. That lowers real risk whatever detector is on the other side."
+        }
+      ]
+    },
+    {
       "eyebrow": "Why this happens",
       "title": "Why detector scores disagree with each other.",
       "type": "steps",
@@ -120,6 +140,11 @@ export const turnitinVsDetectors = {
       "label": "What does your Turnitin AI score mean?",
       "to": "/turnitin-ai-score",
       "body": "A closer read of the number your institution sees."
+    },
+    {
+      "label": "Turnitin alternatives",
+      "to": "/turnitin-alternatives",
+      "body": "Which AI detector is most like Turnitin — and what to run first."
     },
     {
       "label": "Academic integrity & AI",

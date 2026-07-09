@@ -8,6 +8,15 @@
     <meta name="author" content="DraftProof" />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#0D1B2A" />
+    <!-- GA4 library loader only. `gtag('config', ...)` and page_view events are
+         fired from src/components/Seo.jsx, gated to production builds, so local
+         dev traffic never reports into the real property. -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-8NXE7ESYTQ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() { window.dataLayer.push(arguments); }
+      window.gtag = gtag;
+    </script>
     <meta name="application-name" content="DraftProof" />
     <meta name="apple-mobile-web-app-title" content="DraftProof" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />

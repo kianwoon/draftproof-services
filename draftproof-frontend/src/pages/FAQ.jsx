@@ -25,6 +25,7 @@ export default function FAQ() {
   const locale = getLocaleFromPathname(location.pathname);
   const publicPath = (path) => localizePath(path, locale);
   const groups = t('faqPage.groups', { returnObjects: true });
+  const relatedLinks = t('faqPage.related', { returnObjects: true });
   const totalQuestions = groups.reduce((count, group) => count + group.items.length, 0);
   const featuredGroups = groups.slice(0, 3);
 
@@ -171,6 +172,21 @@ export default function FAQ() {
             )}
           </div>
         </div>
+
+        {Array.isArray(relatedLinks) && relatedLinks.length > 0 && (
+          <section className="content-checker-section seo-related">
+            <p className="eyebrow">{t('faqPage.relatedEyebrow')}</p>
+            <h2>{t('faqPage.relatedTitle')}</h2>
+            <div className="seo-related-grid">
+              {relatedLinks.map((link) => (
+                <Link key={link.to} to={publicPath(link.to)} className="seo-related-link">
+                  <strong>{link.label}</strong>
+                  <span>{link.body}</span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="faq-cta">
           <h2>{t('faqPage.ctaTitle')}</h2>
