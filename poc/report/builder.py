@@ -1333,6 +1333,14 @@ class ReportBuilder:
         # so the SAME Modal result serves both the tier override and the breakdown
         # panel — one paid call per scan, never two.
         _deep_scan_for_authority = None
+        # Hoisted so it is in scope at the run_v7_breakdown call below even when
+        # tier-authority is OFF (stays None -> the bridge falls back to
+        # ai_likelihood_score, byte-identical). When ON it holds the RAW composite
+        # ai_likelihood BEFORE the DeBERTa fusion, so the category breakdown's
+        # "composite" detector input is NOT the already-fused authority score
+        # (which would double-fuse with deberta_large). Aligns prod with the
+        # offline-tuned weights (capture_signals.py runs with tier-authority UNSET).
+        _pre_fusion_composite = None
         # Resolved outside the try/except below so the exception branch still
         # knows the true flag state (an exception inside the try must not be
         # allowed to fabricate "enabled": True when the flag was actually off).
@@ -1597,6 +1605,14 @@ class ReportBuilder:
             # unconditionally "unavailable". Fail-open preserved: .get() -> None
             # when absent, identical to today's behavior.
             "criterion_scores": self._summaries.get("criterion_scores"),
+            # RAW composite ai_likelihood (0-100), BEFORE V7 tier-authority
+            # DeBERTa fusion. None when tier-authority is OFF -> the bridge falls
+            # back to ai_likelihood_score (byte-identical). Present + numeric only
+            # on the fused path, where ai_likelihood_score is ALREADY
+            # 0.4*composite + 0.6*deberta; feeding that as the bridge's "composite"
+            # would double-fuse with deberta_large. See pipeline_bridge
+            # ._extract_calibrated_score.
+            "pre_fusion_composite": _pre_fusion_composite,
         })
         if _v7_breakdown is not None:
             ai_risk_badge["authorship_breakdown"] = _v7_breakdown

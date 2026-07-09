@@ -63,6 +63,19 @@ def capture_one(runner, text: str, label: str) -> tuple[dict, dict]:
     if hasattr(detection_result, "criterion_scores") and detection_result.criterion_scores:
         det["criterion_scores"] = detection_result.criterion_scores
 
+    # INVARIANT (double-fusion guard): this offline replica pulls `composite`
+    # from the badge's ai_likelihood_score, which equals the RAW pre-fusion
+    # composite ONLY when tier-authority is OFF. Prod avoids double fusion by
+    # threading `pre_fusion_composite` (see pipeline_bridge._extract_calibrated_score
+    # + report/builder.py); this replica does NOT thread it, so it must run with
+    # tier-authority OFF or it would tune the category weights on a double-fused
+    # input that never matches prod. Fail loud rather than silently mistune.
+    if pipeline_bridge.is_tier_authority_enabled() and "pre_fusion_composite" not in det:
+        raise RuntimeError(
+            "capture_signals: DRAFTPROOF_V7_TIER_AUTHORITY is ON but "
+            "pre_fusion_composite is not threaded — offline category tuning would "
+            "double-fuse and diverge from prod. Unset tier-authority for capture."
+        )
     composite = pipeline_bridge._extract_calibrated_score(det)
     detector_scores = {"composite": composite}
     deep = pipeline_bridge.get_deep_scan_proportion(det)  # None on quick-scan
