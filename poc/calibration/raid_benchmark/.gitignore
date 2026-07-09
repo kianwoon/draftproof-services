@@ -1,0 +1,5 @@
+# RAID text must NOT be committed (licensing + size). Keep the .py scripts and
+# this .gitignore; ignore all data artifacts the scripts produce.
+*.jsonl
+__pycache__/
+*.pyc
