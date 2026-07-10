@@ -100,6 +100,25 @@ function WrappedSignalLabel({ label, centerX, centerY, fontSize = 12, fill = 'va
   );
 }
 
+// Renders a signal-source box as a flattened storage cylinder (top cap ellipse
+// + open body outline) instead of a plain rect, so the two inputs read as
+// "data sources" feeding the fusion score. capRy is kept small (5px) so the
+// cap curve clears the wrapped 2-line label case (see WrappedSignalLabel) —
+// don't raise it without re-checking box2's "A separate deep-reading model" wrap.
+function StorageShape({ x, y, width, height, capRy = 5, stroke = 'var(--navy-900)', strokeWidth = 1.5 }) {
+  const rx = width / 2;
+  const capCenterY = y + capRy;
+  const bottomArcY = y + height - capRy;
+  const bodyPath = `M${x},${capCenterY} L${x},${bottomArcY} A${rx},${capRy} 0 0 0 ${x + width},${bottomArcY} L${x + width},${capCenterY}`;
+
+  return (
+    <g>
+      <path d={bodyPath} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+      <ellipse cx={x + rx} cy={capCenterY} rx={rx} ry={capRy} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+    </g>
+  );
+}
+
 function SignalFusionDiagram({ data }) {
   if (!data) return null;
   const chips = Array.isArray(data.chips) ? data.chips : [];
@@ -107,10 +126,10 @@ function SignalFusionDiagram({ data }) {
   return (
     <div className="fusion-diagram">
       <svg viewBox="0 0 460 170" width="100%" height="190" role="img" aria-label={`${data.signal1} + ${data.signal2} → ${data.fusedLabel} → ${data.bandLabel}`}>
-        <rect x="10" y="14" width="150" height="48" rx="8" fill="none" stroke="var(--navy-900)" strokeWidth="1.5" />
+        <StorageShape x={10} y={14} width={150} height={48} />
         <WrappedSignalLabel label={data.signal1} centerX={85} centerY={34} />
 
-        <rect x="10" y="104" width="150" height="48" rx="8" fill="none" stroke="var(--navy-900)" strokeWidth="1.5" />
+        <StorageShape x={10} y={104} width={150} height={48} />
         <WrappedSignalLabel label={data.signal2} centerX={85} centerY={124} />
 
         <line x1="160" y1="38" x2="220" y2="85" stroke="rgba(13, 27, 42, .25)" strokeWidth="1.5" />
