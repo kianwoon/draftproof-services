@@ -24,6 +24,12 @@ from .structural_reuse import score as structural_reuse_score
 
 # Ordered list used by the composite classifier to iterate criteria.
 #
+# SCOPE NOTE (2026-07-10): tuning these weights changes AIGenerationSignalDetector's
+# own composite (per-finding metadata + a rewrite-pipeline fallback only) — it does
+# NOT affect the primary user-facing ai_risk_badge score/tier, which is computed by
+# an independent formula in detect/layer3_scoring.py:Layer3Scorer. See
+# ai_generation.py's module docstring for the full consumer list.
+#
 # Weight philosophy (aligned with evidence-strength table):
 #   Major signals (Strong):   polished_ungrounded, draft_evolution, structural_reuse
 #   Moderate signals:         low_specificity, paragraph_uniformity

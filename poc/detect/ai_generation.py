@@ -5,6 +5,17 @@ AI-generation likelihood score.  Requires multiple aligned signals before
 assigning medium or high likelihood.
 
 Phase 1–2: rule-based classifier.  Phase 3 (ML) is future work.
+
+SCOPE NOTE (2026-07-10): this scanner's ``likelihood_score`` is an
+INDEPENDENT, differently-weighted formula from the primary user-facing
+score. It is NOT read into ``ai_risk_badge["ai_likelihood_score"]`` (that
+comes from ``detect.layer3_scoring.Layer3Scorer.calculate_ai_likelihood``,
+a different weight table over a different signal set). This scanner's
+composite is only consumed for (a) per-finding display metadata
+(``report/builder.py``'s ``meta["ai_likelihood"]``) and (b) a rewrite-
+pipeline fallback (``rewrite/rewrite.py:_original_ai_likelihood``) used only
+when the calibrated report badge isn't available. Do not assume tuning the
+weights below moves the primary score or tier — it does not.
 """
 
 import re
@@ -88,7 +99,10 @@ class AIGenerationSignalDetector(BaseDetector):
             criteria_results.append(result)
             feature_summary[criterion_name] = result.value
 
-        # Weighted composite score
+        # Weighted composite score. SCOPE: see module docstring — this is NOT
+        # the primary ai_risk_badge score (Layer3Scorer computes that
+        # separately); this composite only reaches per-finding metadata and
+        # a rewrite-pipeline fallback.
         total_weight = sum(weights.get(cr.name, 0) for cr in criteria_results)
         if total_weight > 0:
             composite = sum(

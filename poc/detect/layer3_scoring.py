@@ -1190,6 +1190,16 @@ class Layer3Scorer:
         cluster_boost = 0.0
         cluster_name = None
 
+        # UNREACHABLE while the M4 stubs above (repeated_sentence_structure_risk,
+        # balanced_hedging_risk) stay hardcoded at 0.0: `repeated_struct` and
+        # `balanced_hedging` can never satisfy a positive threshold, so
+        # `known_ai_style`, `humanised_ai`, and `template_ai_style` below can
+        # never evaluate True, and template_ai_style's score floor/ceiling
+        # (~:1251-1254 in the current layout) never applies either. Kept
+        # in place deliberately (not dead-code-deleted) so the boosts activate
+        # automatically once the stub generators are built — do not remove
+        # without re-checking whether the generators have shipped. Only
+        # `qualifying_density_ai` and `fragmented_evasion` are live today.
         known_ai_style = (
             predictability >= 0.42
             and genericity >= 0.08
@@ -1210,6 +1220,8 @@ class Layer3Scorer:
             and generic_assertion >= 0.80
         )
 
+        # UNREACHABLE — see the comment above known_ai_style; gates on the
+        # same permanently-zeroed repeated_struct stub.
         template_ai_style = (
             predictability >= 0.42
             and topk >= 0.75
@@ -1399,6 +1411,15 @@ class Layer3Scorer:
             reasons=reasons,
         ), quality_tier
 
+    # NOT the single source of truth for these three numbers — they are
+    # duplicated (same values) in poc/detect_v7/weights.json's tier_authority
+    # cutoffs, gate-validated separately on the FUSED scale ("A cutoff sweep
+    # ON THE FUSED SCALE confirmed the EXISTING tier cutoffs 32/48/65 carry
+    # over unchanged", see that file's tier_authority._notes). This copy
+    # gates the PRE-FUSION Layer3 score specifically (badge tier when V7
+    # tier-authority is off, or as the fallback). If either path is ever
+    # re-tuned, check whether the other still holds — there is no code link
+    # forcing them to move together.
     def _derive_ai_tier(self, ai_score: float) -> Tier:
         if ai_score >= 0.65:
             return Tier.RED
@@ -1414,7 +1435,7 @@ class Layer3Scorer:
     # is one re-scan away from AMBER). MUST stay < the smallest gap between cutoffs (0.16)
     # so the band never spans two tiers.
     _BOUNDARY_BAND = 0.07
-    _TIER_CUTOFFS = (0.32, 0.48, 0.65)
+    _TIER_CUTOFFS = (0.32, 0.48, 0.65)  # kept in sync with _derive_ai_tier's literals above
 
     def _near_boundary(self, ai_score: float) -> bool:
         return any(c - self._BOUNDARY_BAND <= ai_score < c for c in self._TIER_CUTOFFS)
