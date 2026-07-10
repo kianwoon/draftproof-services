@@ -255,8 +255,36 @@ async def _processing_rewrite_is_stale(job: RewriteJob, *, now: datetime | None 
 
 
 async def _mark_rewrite_interrupted(session, job: RewriteJob) -> None:
+    # The rewrite.json R2 key is keyed by scan_id, not by this job's own id — a
+    # scan can accumulate multiple rewrite job attempts over time (retries), and
+    # each successful worker run overwrites the same key. Without the rewrite_id
+    # check below, a stale job B could "inherit" a prior job A's already-billed
+    # artifact (because A completed and uploaded before B ever got that far) and
+    # get incorrectly marked completed + billed for work it never did. Only trust
+    # the artifact as evidence of THIS job's delivery if it says so explicitly;
+    # missing/mismatched rewrite_id (including pre-fix artifacts with no field at
+    # all) falls through to the existing "failed, release credits" branch — the
+    # fail-safe direction for a billing decision.
     saved_report = await _fetch_rewrite_report_json(str(job.scan_id))
-    if _rewrite_report_has_delivered_content(saved_report):
+    saved_rewrite_id = (
+        str(saved_report.get("rewrite_id") or "")
+        if isinstance(saved_report, dict)
+        else ""
+    )
+    if saved_rewrite_id and saved_rewrite_id != str(job.id):
+        logger.info(
+            "Rewrite %s: saved rewrite.json belongs to a different job (%s) — "
+            "not reusing it for recovery, treating as interrupted.",
+            job.id,
+            saved_rewrite_id,
+        )
+    elif not saved_rewrite_id and saved_report is not None:
+        logger.info(
+            "Rewrite %s: saved rewrite.json has no rewrite_id (pre-fix artifact) — "
+            "not reusing it for recovery, treating as interrupted.",
+            job.id,
+        )
+    if saved_rewrite_id == str(job.id) and _rewrite_report_has_delivered_content(saved_report):
         job.status = "completed"
         job.error = None
         job.progress_percent = 100

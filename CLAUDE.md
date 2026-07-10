@@ -105,16 +105,34 @@ curl http://localhost:8000/api/health   # returns {"status":"ok","db":"up"} or 5
 
 ### Rewrite Pipeline (`worker/app/tasks.py` → `poc/rewrite_v6/`)
 
-`run_rewrite` Celery task calls `poc.rewrite_v6.pipeline.RewritePipeline`:
+`run_rewrite` Celery task calls `poc.rewrite_v6.production.run_rewrite_pipeline_v6` (there is **no**
+`RewritePipeline` class — `pipeline.py` holds the legacy planner functions, not the entry point).
+That function branches on two independent, stacked kill switches:
+
+1. `DRAFTPROOF_REWRITE_V6_ENABLED` (default `True`) — v6 vs. `poc.rewrite_pipeline.run_rewrite_pipeline`,
+   a **separate, pre-v6 standalone codebase** with no evidence of live production or CI use.
+2. Inside v6, `DRAFTPROOF_V6_DIRECT_REWRITE` (default `"1"`) — **the direct path is the actual
+   default and the objective-aligned winner** (see `poc/rewrite_v6/direct_rewrite.py`'s module
+   docstring): one writer call per flagged paragraph, hard-rejects only on broken grammar or an
+   unusable/stub result, everything else ships as a review flag. Set to `0` to fall back to the
+   internal legacy planner pipeline below — also untested in production.
+
+Both non-default branches log a loud warning when selected (2026-07-10 risk review) — flipping either
+during an incident is not a validated fallback, just an untested code path.
+
+**Internal legacy planner pipeline** (only reached with `DRAFTPROOF_V6_DIRECT_REWRITE=0`):
 - **plan.py / planner_llm.py** — identify problematic paragraphs, plan per-paragraph rewrites
 - **write.py** — multi-variant generation per paragraph via LLM
 - **writer_feedback.py** — feedback loop on variants
 - **selector_diagnostics.py** — pick best variant
-- **integrity_guard.py / coverage_guard.py** — safety checks (no content loss)
+- **integrity_guard.py / coverage_guard.py** — safety checks (no content loss); its `ADVISORY_BLOCKERS`
+  frozenset is FATAL-heavy in a way that no longer matches the direct path's "annotate, don't suppress"
+  philosophy — moot only because this pipeline isn't the default
 - **author_proxy.py** — preserves author intent
 - Final comparison report uploaded to R2; credits deducted via `worker/app/db.py`
 
-`poc/rewrite_v3/`, `v4/`, `v5/` are legacy and not used in production. Use `rewrite_v6/`.
+`poc/rewrite_v3/`, `v4/`, `v5/`, and `poc/rewrite/rewrite.py` (an unversioned pre-v6 standalone
+orchestrator) are all legacy and not reachable from the production worker. Use `rewrite_v6/`.
 
 ### LLM Routing (`poc/rewrite_v6/llm_config.py`, `poc/llm/`)
 
@@ -138,7 +156,8 @@ V6 uses separate planner/writer/selector models with fallback chains:
 | `draftproof-api/app/models/db.py` | SQLAlchemy models (User, ScanJob, RewriteJob, CreditAccount, etc.) |
 | `worker/app/tasks.py` | `scan_document` and `run_rewrite` Celery task entrypoints |
 | `poc/detect/run.py` | `DetectionRunner` — main detection orchestrator |
-| `poc/rewrite_v6/pipeline.py` | `RewritePipeline` — main rewrite orchestrator |
+| `poc/rewrite_v6/production.py` | `run_rewrite_pipeline_v6` — real rewrite entry point |
+| `poc/rewrite_v6/direct_rewrite.py` | Default rewrite path (`run_direct_rewrite_all`) |
 | `worker/app/db.py` | DB ops called from tasks (status updates, credit capture) |
 | `worker/app/progress.py` | Publish progress events to Redis streams |
 

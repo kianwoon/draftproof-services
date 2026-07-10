@@ -66,10 +66,23 @@ os.environ.setdefault("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS", "1")
 
 
 def _selected_rewrite_pipeline(settings_obj) -> str:
-    """Return the enabled rewrite pipeline (v6 only; legacy fallback)."""
+    """Return the enabled rewrite pipeline (v6 only; legacy fallback).
 
+    UNTESTED-PATH WARNING (2026-07-10 risk review): the "legacy" branch routes to
+    `poc.rewrite_pipeline.run_rewrite_pipeline`, a separate pre-v6 codebase with no
+    evidence of live production or CI use since v6 became the default. Flipping
+    DRAFTPROOF_REWRITE_V6_ENABLED=0 during an incident lands on this untested path,
+    not a safer fallback. Prefer troubleshooting v6 (including its own internal
+    DRAFTPROOF_V6_DIRECT_REWRITE kill switch) before reaching for this one.
+    """
     if getattr(settings_obj, "DRAFTPROOF_REWRITE_V6_ENABLED", False):
         return "v6"
+    logger.warning(
+        "DRAFTPROOF_REWRITE_V6_ENABLED is off — routing to the legacy pre-v6 "
+        "rewrite pipeline (poc.rewrite_pipeline), which has no evidence of live "
+        "production or CI use. This is NOT a validated fallback; expect untested "
+        "behavior. See _selected_rewrite_pipeline's docstring."
+    )
     return "legacy"
 
 
@@ -438,7 +451,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
 )
 def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
     """Run the rewrite pipeline on a completed scan's results."""
-    from .storage import upload_rewrite_checkpoint, upload_rewrite_files, _client as _r2_client
+    from .storage import upload_rewrite_files, _client as _r2_client
     from .config import settings as worker_settings
     import tempfile
 
@@ -466,104 +479,6 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         "reason": "rewrite_not_completed",
     }
     scan_job = None
-    last_rewrite_checkpoint: dict = {}
-
-    def checkpoint_markdown(checkpoint_json: dict) -> str:
-        summary = checkpoint_json.get("summary") if isinstance(checkpoint_json.get("summary"), dict) else {}
-        final_text = str(checkpoint_json.get("final_text") or "")
-        scores = ((summary.get("v5_scores") or {}).get("deltas") or {}) if isinstance(summary.get("v5_scores"), dict) else {}
-        return "\n\n".join([
-            "# Rewrite checkpoint",
-            f"Status: {checkpoint_json.get('status') or 'partial_candidate_not_strict_safe'}",
-            f"AI delta: {scores.get('ai_delta', '-')}",
-            "This is the latest scanner-accepted rewrite saved before the full pipeline completed.",
-            "## Rewritten content",
-            final_text,
-        ])
-
-    def persist_rewrite_checkpoint(checkpoint_json: dict) -> None:
-        nonlocal last_rewrite_checkpoint
-        if not isinstance(checkpoint_json, dict):
-            return
-        rewritten_text = str(checkpoint_json.get("final_text") or "")
-        if not rewritten_text.strip():
-            return
-        last_rewrite_checkpoint = checkpoint_json
-        upload_rewrite_checkpoint(
-            scan_id,
-            checkpoint_json,
-            rewritten_text,
-            checkpoint_markdown(checkpoint_json),
-        )
-
-    def complete_from_rewrite_checkpoint(reason: str) -> dict | None:
-        nonlocal billing_decision
-        if not last_rewrite_checkpoint:
-            return None
-        checkpoint_json = dict(last_rewrite_checkpoint)
-        checkpoint_json["checkpoint_recovery_reason"] = reason
-        rewritten_text = str(checkpoint_json.get("final_text") or "")
-        upload_rewrite_checkpoint(
-            scan_id,
-            checkpoint_json,
-            rewritten_text,
-            checkpoint_markdown(checkpoint_json),
-        )
-        billing_decision = _rewrite_billing_decision(
-            {"status": checkpoint_json.get("status")},
-            checkpoint_json,
-        )
-        checkpoint_status_written = update_rewrite_status(
-            rewrite_id,
-            "completed",
-            progress_percent=100,
-            progress_message="Rewrite complete from saved checkpoint",
-        )
-        if not checkpoint_status_written:
-            raise_if_canceled()
-            logger.warning("Rewrite %s checkpoint completion status was not written; skipping delivery email", rewrite_id)
-            return {"status": "skipped", "reason": "checkpoint_completion_status_not_written"}
-        raise_if_canceled()
-        user_id = scan_job.get("user_id", "") if scan_job else ""
-        if user_id and billing_decision.get("billable"):
-            capture_rewrite_credits(str(user_id), rewrite_id)
-        else:
-            release_rewrite_credits(rewrite_id)
-        publish_progress("completed", 100, "Rewrite complete from saved checkpoint")
-        checkpoint_pdf_bytes = b""
-        try:
-            from report.render_rewrite import render_rewrite_report
-            from report.pdf import render_pdf
-
-            with tempfile.TemporaryDirectory() as checkpoint_tmpdir:
-                checkpoint_pdf_path = os.path.join(checkpoint_tmpdir, "rewrite.pdf")
-                checkpoint_md = render_rewrite_report(
-                    summary=checkpoint_json.get("summary") or {},
-                    sentence_comparison=checkpoint_json.get("sentence_comparison") or [],
-                    ai_findings=[],
-                    verbose=False,
-                    original_text=checkpoint_json.get("original_text") or "",
-                    final_text=rewritten_text,
-                    # This closure only runs after run_rewrite fetched report.json; the
-                    # surrounding try/except fails open if it is somehow unbound.
-                    original_scan_report=report_json if isinstance(report_json, dict) else None,
-                )
-                render_pdf(checkpoint_md, checkpoint_pdf_path)
-                with open(checkpoint_pdf_path, "rb") as f:
-                    checkpoint_pdf_bytes = f.read()
-        except Exception:
-            logger.warning("Failed to build checkpoint rewrite completion PDF for %s", rewrite_id, exc_info=True)
-        recipient_email = get_rewrite_user_email(rewrite_id)
-        send_rewrite_completion_email(
-            recipient_email=recipient_email,
-            rewrite_id=rewrite_id,
-            scan_id=scan_id,
-            final_text=rewritten_text,
-            rewrite_summary=checkpoint_json.get("summary") if isinstance(checkpoint_json.get("summary"), dict) else {},
-            pdf_bytes=checkpoint_pdf_bytes,
-            settings=settings,
-        )
-        return {"status": "completed", "checkpoint_recovered": True, "reason": reason}
 
     try:
         rewrite_job = claim_rewrite_job(rewrite_id)
@@ -878,6 +793,12 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 rewritten_text = rw.mp_result.final_text or ""
 
             rewrite_json = {
+                # Stamped so a stale-job reconciler (draftproof-api's
+                # _mark_rewrite_interrupted) can verify this artifact belongs to
+                # THIS job before trusting it as evidence of delivery — the R2 key
+                # is per-scan, not per-job, so a retry job could otherwise inherit
+                # (and get billed for) a prior job's already-delivered artifact.
+                "rewrite_id": rewrite_id,
                 "status": result.get("status"),
                 "elapsed": result.get("elapsed"),
                 "original_text": rewritten_text and getattr(rw.mp_result, "original_text", "") if rw and hasattr(rw, "mp_result") and rw.mp_result else "",
@@ -964,9 +885,6 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         return {"status": "completed"}
 
     except SoftTimeLimitExceeded:
-        recovered = complete_from_rewrite_checkpoint("soft_time_limit_exceeded_after_accepted_candidate")
-        if recovered:
-            return recovered
         timeout_minutes = max(1, settings.REWRITE_SOFT_TIME_LIMIT_SECONDS // 60)
         update_rewrite_status(
             rewrite_id,
@@ -987,9 +905,6 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         publish_progress("canceled", None, "Rewrite canceled", "Rewrite canceled by user")
         return {"status": "canceled"}
     except Exception as e:
-        recovered = complete_from_rewrite_checkpoint("exception_after_accepted_candidate")
-        if recovered:
-            return recovered
         if self.request.retries < self.max_retries:
             update_rewrite_status(
                 rewrite_id,

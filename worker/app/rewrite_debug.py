@@ -308,6 +308,10 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         else:
             compact_summary[key] = _compact_debug_value(summary.get(key))
     compact_payload = {
+        # Must survive truncation — draftproof-api's stale-job reconciler reads
+        # this to verify artifact ownership before billing. See tasks.py's
+        # rewrite_json construction for why.
+        "rewrite_id": payload.get("rewrite_id"),
         "status": payload.get("status"),
         "elapsed": payload.get("elapsed"),
         "original_text": payload.get("original_text"),
@@ -344,6 +348,8 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         return compact_payload
 
     return {
+        # See the compact_payload branch above — must survive every truncation tier.
+        "rewrite_id": payload.get("rewrite_id"),
         "status": payload.get("status"),
         "elapsed": payload.get("elapsed"),
         "original_text": _truncate_debug_value(payload.get("original_text"), 1000),

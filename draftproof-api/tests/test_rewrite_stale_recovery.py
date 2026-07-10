@@ -155,6 +155,90 @@ async def test_old_processing_rewrite_with_invalid_heartbeat_uses_hard_stale_thr
     assert await rewrite_service._processing_rewrite_is_stale(job, now=now) is True
 
 
+def _patch_recovery_boundary(monkeypatch, *, saved_report):
+    """Isolate _mark_rewrite_interrupted's branch logic from the DB/R2 boundary."""
+    captured = {"completed": False, "released": False}
+
+    async def fake_fetch(_scan_id):
+        return saved_report
+
+    async def fake_capture(_session, _job_id):
+        captured["completed"] = True
+
+    async def fake_release(_session, _job_id):
+        captured["released"] = True
+
+    monkeypatch.setattr(rewrite_service, "_fetch_rewrite_report_json", fake_fetch)
+    monkeypatch.setattr(rewrite_service, "_capture_active_rewrite_reservation", fake_capture)
+    monkeypatch.setattr(rewrite_service, "_release_active_reservation", fake_release)
+    return captured
+
+
+def _delivered_report(rewrite_id: str) -> dict:
+    return {
+        "rewrite_id": rewrite_id,
+        "status": "rewrite_candidate_generated_needs_external_review",
+        "final_text": "a rewritten paragraph with real content",
+        "original_text": "the original paragraph",
+        "summary": {"outcome": "ai_mitigated"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_mark_interrupted_captures_when_artifact_belongs_to_this_job(monkeypatch):
+    job = SimpleNamespace(id="job-b", scan_id="scan-1", status="processing")
+    captured = _patch_recovery_boundary(monkeypatch, saved_report=_delivered_report("job-b"))
+
+    await rewrite_service._mark_rewrite_interrupted(session=None, job=job)
+
+    assert job.status == "completed"
+    assert captured["completed"] is True
+    assert captured["released"] is False
+
+
+@pytest.mark.asyncio
+async def test_mark_interrupted_does_not_bill_a_different_jobs_artifact(monkeypatch):
+    """Regression test: a stale retry job (B) must not be billed for a prior
+    job's (A) already-delivered, already-billed artifact just because they
+    share the same scan_id R2 key."""
+    job = SimpleNamespace(id="job-b", scan_id="scan-1", status="processing")
+    captured = _patch_recovery_boundary(monkeypatch, saved_report=_delivered_report("job-a"))
+
+    await rewrite_service._mark_rewrite_interrupted(session=None, job=job)
+
+    assert job.status == "failed"
+    assert captured["completed"] is False
+    assert captured["released"] is True
+
+
+@pytest.mark.asyncio
+async def test_mark_interrupted_does_not_bill_pre_fix_artifact_without_rewrite_id(monkeypatch):
+    """Fail-safe direction: an artifact uploaded before this fix shipped has no
+    rewrite_id at all — must not be trusted as evidence of delivery either."""
+    job = SimpleNamespace(id="job-b", scan_id="scan-1", status="processing")
+    report_without_id = _delivered_report("job-a")
+    del report_without_id["rewrite_id"]
+    captured = _patch_recovery_boundary(monkeypatch, saved_report=report_without_id)
+
+    await rewrite_service._mark_rewrite_interrupted(session=None, job=job)
+
+    assert job.status == "failed"
+    assert captured["completed"] is False
+    assert captured["released"] is True
+
+
+@pytest.mark.asyncio
+async def test_mark_interrupted_fails_when_no_artifact_saved(monkeypatch):
+    job = SimpleNamespace(id="job-b", scan_id="scan-1", status="processing")
+    captured = _patch_recovery_boundary(monkeypatch, saved_report=None)
+
+    await rewrite_service._mark_rewrite_interrupted(session=None, job=job)
+
+    assert job.status == "failed"
+    assert captured["completed"] is False
+    assert captured["released"] is True
+
+
 @pytest.mark.asyncio
 async def test_processing_rewrite_without_heartbeat_uses_conservative_fallback(monkeypatch):
     now = datetime(2026, 5, 11, 0, 0, tzinfo=timezone.utc)

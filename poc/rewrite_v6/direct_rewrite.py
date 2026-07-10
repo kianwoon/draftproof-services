@@ -10,6 +10,7 @@ over-truncation) so a bad draw can't silently ship a meaning flip. Enable via DR
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -42,11 +43,32 @@ try:
 except ImportError:
     from poc.report.authorship_evidence import paragraph_authorship_targets, authorship_boost_enabled
 
+logger = logging.getLogger(__name__)
+
 
 def direct_rewrite_enabled() -> bool:
-    # Default ON (the objective-aligned path). Kill switch: set DRAFTPROOF_V6_DIRECT_REWRITE=0 to
-    # fall back to the legacy planner/selector pipeline without a redeploy.
-    return os.environ.get("DRAFTPROOF_V6_DIRECT_REWRITE", "1").strip().lower() not in {"0", "false", "no", "off"}
+    # Default ON (the objective-aligned path, validated by the A/B probe in this
+    # module's docstring). Kill switch: set DRAFTPROOF_V6_DIRECT_REWRITE=0 to fall
+    # back to the legacy internal planner/writer/selector pipeline without a
+    # redeploy.
+    #
+    # UNTESTED-PATH WARNING (2026-07-10 risk review): that legacy planner pipeline
+    # has no evidence of live production or CI use since this path became the
+    # default, and its guard tiering (integrity_guard.py's ADVISORY_BLOCKERS) is
+    # FATAL-heavy in a way that contradicts this project's "annotate, don't
+    # suppress" rewrite philosophy — moot only because it isn't the default.
+    # Flipping this switch during an incident is not a validated fallback.
+    enabled = os.environ.get("DRAFTPROOF_V6_DIRECT_REWRITE", "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+    if not enabled:
+        logger.warning(
+            "DRAFTPROOF_V6_DIRECT_REWRITE is off — routing to the legacy internal "
+            "planner/writer/selector pipeline, which has no evidence of live "
+            "production or CI use and whose guard tiering does not match the "
+            "current rewrite philosophy. This is NOT a validated fallback."
+        )
+    return enabled
 
 
 def residual_fix_enabled() -> bool:
