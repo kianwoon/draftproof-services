@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-07T20:38:36.185034+00:00",
+  "generated_at": "2026-07-10T06:10:49.635533+00:00",
   "spec": "v7 §12 category agreement — construction labels, deep-scan-fused path (cached Modal)",
   "caveats": [
     "construction labels, not human reviewer labels",
@@ -9,12 +9,12 @@
   "per_class": {
     "student_owned": {
       "n": 40,
-      "primary_accuracy": 0.625,
-      "false_ai_primary_rate": 0.375
+      "primary_accuracy": 0.975,
+      "false_ai_primary_rate": 0.025
     },
     "ai_assisted_polished": {
       "n": 39,
-      "primary_accuracy": 0.0
+      "primary_accuracy": 0.7436
     },
     "ai_paraphrased": {
       "n": 39,
@@ -22,32 +22,44 @@
     },
     "ai_generated_like": {
       "n": 80,
-      "primary_accuracy": 0.875
+      "primary_accuracy": 0.775
     }
   },
   "confusion": {
     "student_owned": {
-      "student_owned": 25,
-      "ai_generated_like": 15
+      "student_owned": 39,
+      "ai_assisted_polished": 1
     },
     "ai_assisted_polished": {
-      "ai_generated_like": 37,
-      "student_owned": 2
+      "ai_assisted_polished": 29,
+      "student_owned": 6,
+      "ai_generated_like": 4
     },
     "ai_paraphrased": {
-      "ai_generated_like": 36,
-      "student_owned": 3
+      "ai_generated_like": 17,
+      "ai_assisted_polished": 16,
+      "student_owned": 6
     },
     "ai_generated_like": {
-      "ai_generated_like": 70,
-      "student_owned": 10
+      "ai_generated_like": 62,
+      "ai_assisted_polished": 3,
+      "student_owned": 15
     }
   },
   "reliable_assertions": {
-    "student_owned": {},
-    "ai_assisted_polished": {},
-    "ai_paraphrased": {},
-    "ai_generated_like": {}
+    "student_owned": {
+      "student_owned": 30
+    },
+    "ai_assisted_polished": {
+      "student_owned": 1
+    },
+    "ai_paraphrased": {
+      "student_owned": 1
+    },
+    "ai_generated_like": {
+      "ai_generated_like": 1,
+      "student_owned": 14
+    }
   },
-  "macro_primary_accuracy": 0.375
+  "macro_primary_accuracy": 0.6234
 }
