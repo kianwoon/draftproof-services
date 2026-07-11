@@ -142,7 +142,10 @@ export default function SignalHighlights({
           aria-controls="sh-panel-issues"
           className={`submitted-tab${tab === 'issues' ? ' is-active' : ''}`}
           onClick={() => setTab('issues')}>
-          {t('report.submitted.tabIssues', { count: highlightedParagraphs.length })}
+          {t('report.submitted.tabIssues', {
+            count: highlightedParagraphs.length,
+            total: submittedContent.paragraphs.length,
+          })}
         </button>
         <button type="button" role="tab" id="sh-tab-document" aria-selected={tab === 'document'}
           aria-controls="sh-panel-document"
