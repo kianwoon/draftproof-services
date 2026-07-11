@@ -11,8 +11,13 @@
 
 .report-strategy-track {
   display: flex;
+  /* flex-start (not the flex default 'stretch') so each slide keeps its own
+     intrinsic height — required for the JS active-slide height measurement
+     in Landing.jsx (useActiveSlideHeight) to read real content height rather
+     than a height already forced by the track's own inline style. */
+  align-items: flex-start;
   transform: translateX(calc(var(--active-slide) * -100%));
-  transition: transform 680ms cubic-bezier(.22, 1, .36, 1);
+  transition: transform 680ms cubic-bezier(.22, 1, .36, 1), height 320ms ease;
   will-change: transform;
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import CodeTexture from '../components/CodeTexture';
@@ -57,8 +57,6 @@ export default function Landing() {
   const competitors = t('featuresPage.competitors', { returnObjects: true });
   const comparisonRows = t('featuresPage.rows', { returnObjects: true });
   const reportValueCards = t('landing.reportValueCards', { returnObjects: true });
-  const humanWrittenSignals = t('landing.humanWrittenSignals', { returnObjects: true });
-  const humanizerSignals = t('landing.humanizerSignals', { returnObjects: true });
   const anchorCards = t('landing.anchorCards', { returnObjects: true });
   const anchorWorkflow = t('landing.anchorWorkflow', { returnObjects: true });
   const heroReviewSteps = t('landing.heroReviewSteps', { returnObjects: true });
@@ -190,8 +188,6 @@ export default function Landing() {
       <ContentRiskCarousel
         anchorCards={anchorCards}
         anchorWorkflow={anchorWorkflow}
-        humanizerSignals={humanizerSignals}
-        humanWrittenSignals={humanWrittenSignals}
         useCases={useCases}
       />
 
@@ -354,11 +350,13 @@ function HeroReviewPanel({ steps }) {
 
   return (
     <aside
+      ref={carousel.sectionRef}
       className="review-panel"
       aria-label={t('landing.quickSummary')}
       onMouseEnter={carousel.pause}
       onMouseLeave={carousel.resume}
       onFocusCapture={carousel.pause}
+      onTouchStart={carousel.pause}
     >
       <div className="review-panel-top">
         <p className="card-kicker">{t('landing.quickSummary')}</p>
@@ -487,7 +485,7 @@ const USE_CASE_IMAGES = {
   'ai-banned': '/landing/use-case-banned.svg',
 };
 
-function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals, useCases }) {
+function ContentRiskCarousel({ anchorCards, anchorWorkflow, useCases }) {
   const { t } = useTranslation();
   const slides = useMemo(() => ([
     {
@@ -532,89 +530,61 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, humanizerSignals, hu
         />
       ),
     },
+    ...(Array.isArray(useCases) ? useCases : [])
+      .filter((uc) => uc.id === 'score-vs-coaching')
+      .map((uc) => ({
+        id: `use-case-${uc.id}`,
+        eyebrow: uc.eyebrow,
+        title: uc.title,
+        imageSrc: USE_CASE_IMAGES[uc.id],
+        body: Array.isArray(uc.body) ? uc.body : [uc.body],
+        renderPanel: () => (
+          <SignalPanel
+            label={uc.eyebrow}
+            signals={Array.isArray(uc.points) ? uc.points : []}
+            guardrails={Array.isArray(uc.guardrails) ? uc.guardrails : []}
+            punch={uc.punch || uc.tag}
+          />
+        ),
+      })),
     {
-      id: 'student-detector-misconception',
-      eyebrow: t('landing.studentMisuseEyebrow'),
-      title: t('landing.studentMisuseTitle'),
-      imageSrc: '/landing/student-misconception.svg',
-      body: [t('landing.studentMisuseBody1'), t('landing.studentMisuseBody2')],
+      id: 'policy-aware',
+      eyebrow: t('landing.policyAwareEyebrow'),
+      title: t('landing.policyAwareTitle'),
+      body: [t('landing.policyAwareBody')],
       renderPanel: () => (
-        <SignalPanel
-          label={t('landing.studentMisuseSignalsLabel')}
-          signals={t('landing.studentMisuseSignals', { returnObjects: true })}
-          guardrails={[
-            t('landing.studentMisuseGuardrail1'),
-            t('landing.studentMisuseGuardrail2'),
-          ]}
-          punch={t('landing.studentMisusePunch')}
+        <PolicyAwarePanel
+          useCases={(Array.isArray(useCases) ? useCases : []).filter(
+            (uc) => uc.id === 'ai-allowed' || uc.id === 'ai-banned',
+          )}
         />
       ),
     },
-    {
-      id: 'humanizer-trap',
-      eyebrow: t('landing.humanizerEyebrow'),
-      title: t('landing.humanizerTitle'),
-      imageSrc: '/landing/humanizer-trap.svg',
-      body: [t('landing.humanizerBody1'), t('landing.humanizerBody2')],
-      sourceLabel: t('landing.humanizerSourceLabel'),
-      sourceUrl: t('landing.humanizerSourceUrl'),
-      renderPanel: () => (
-        <SignalPanel
-          label={t('landing.humanizerSignalsLabel')}
-          signals={humanizerSignals}
-          guardrails={[
-            t('landing.humanizerGuardrail1'),
-            t('landing.humanizerGuardrail2'),
-          ]}
-          punch={t('landing.humanizerPunch')}
-        />
-      ),
-    },
-    {
-      id: 'ai-like-signals',
-      eyebrow: t('landing.humanWrittenEyebrow'),
-      title: t('landing.humanWrittenTitle'),
-      imageSrc: '/landing/signal-review.svg',
-      body: [t('landing.humanWrittenBody1'), t('landing.humanWrittenBody2')],
-      renderPanel: () => (
-        <SignalPanel
-          label={t('landing.humanWrittenSignalsLabel')}
-          signals={humanWrittenSignals}
-          guardrails={[
-            t('landing.humanWrittenGuardrail1'),
-            t('landing.humanWrittenGuardrail2'),
-          ]}
-          punch={t('landing.humanWrittenPunch')}
-        />
-      ),
-    },
-    ...(Array.isArray(useCases) ? useCases : []).map((uc) => ({
-      id: `use-case-${uc.id}`,
-      eyebrow: uc.eyebrow,
-      title: uc.title,
-      imageSrc: USE_CASE_IMAGES[uc.id],
-      body: Array.isArray(uc.body) ? uc.body : [uc.body],
-      renderPanel: () => (
-        <SignalPanel
-          label={uc.eyebrow}
-          signals={Array.isArray(uc.points) ? uc.points : []}
-          guardrails={Array.isArray(uc.guardrails) ? uc.guardrails : []}
-          punch={uc.punch || uc.tag}
-        />
-      ),
-    })),
-  ]), [anchorCards, anchorWorkflow, humanizerSignals, humanWrittenSignals, useCases, t]);
+  ]), [anchorCards, anchorWorkflow, useCases, t]);
   const carousel = useLandingCarousel(slides.length);
+  const { trackRef, height: activeSlideHeight } = useActiveSlideHeight(
+    carousel.activeSlide,
+    '.content-carousel-slide.is-active',
+  );
 
   return (
     <section
+      ref={carousel.sectionRef}
       className="landing-section content-carousel-section"
       aria-label={t('landing.contentCarouselLabel')}
       onMouseEnter={carousel.pause}
       onMouseLeave={carousel.resume}
       onFocusCapture={carousel.pause}
+      onTouchStart={carousel.pause}
     >
-      <div className="content-carousel-track" style={{ '--active-slide': carousel.activeSlide }}>
+      <div
+        ref={trackRef}
+        className="content-carousel-track"
+        style={{
+          '--active-slide': carousel.activeSlide,
+          ...(activeSlideHeight ? { height: `${activeSlideHeight}px` } : {}),
+        }}
+      >
         {slides.map((slide, index) => (
           <article
             className={`section-inner content-carousel-slide${carousel.activeSlide === index ? ' is-active' : ''}`}
@@ -726,18 +696,31 @@ function ReportStrategyCarousel({ contentStrategies, publicPath, reportValueCard
     },
   ]), [contentStrategies, publicPath, reportValueCards, t]);
   const carousel = useLandingCarousel(slides.length, 7200);
+  const { trackRef, height: activeSlideHeight } = useActiveSlideHeight(
+    carousel.activeSlide,
+    '.report-strategy-slide.is-active',
+  );
 
   return (
     <section
+      ref={carousel.sectionRef}
       id="report"
       className="landing-section report-strategy-carousel-section"
       aria-label={t('landing.reportStrategyCarouselLabel')}
       onMouseEnter={carousel.pause}
       onMouseLeave={carousel.resume}
       onFocusCapture={carousel.pause}
+      onTouchStart={carousel.pause}
     >
       <div className="section-inner report-strategy-carousel-shell">
-        <div className="report-strategy-track" style={{ '--active-slide': carousel.activeSlide }}>
+        <div
+          ref={trackRef}
+          className="report-strategy-track"
+          style={{
+            '--active-slide': carousel.activeSlide,
+            ...(activeSlideHeight ? { height: `${activeSlideHeight}px` } : {}),
+          }}
+        >
           {slides.map((slide, index) => (
             <div
               className={`report-strategy-slide${carousel.activeSlide === index ? ' is-active' : ''}`}
@@ -767,9 +750,26 @@ function ReportStrategyCarousel({ contentStrategies, publicPath, reportValueCard
 function useLandingCarousel(slideCount, intervalMs = 6500) {
   const [activeSlide, setActiveSlide] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  // Off-screen sections shouldn't keep auto-advancing: a user scrolling past
+  // loses slides they never saw, and the section can land on a later slide
+  // the instant it re-enters view. Gate autoplay on real viewport visibility.
+  const [isVisible, setIsVisible] = useState(true);
+  const sectionRef = useRef(null);
 
   useEffect(() => {
-    if (isPaused || slideCount < 2) return undefined;
+    const node = sectionRef.current;
+    if (!node || typeof IntersectionObserver === 'undefined') return undefined;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setIsVisible(entry.isIntersecting),
+      { threshold: 0.3 },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (isPaused || !isVisible || slideCount < 2) return undefined;
     // CSS handles prefers-reduced-motion (disables transitions) — don't stop rotation here
 
     const timer = window.setTimeout(() => {
@@ -777,10 +777,11 @@ function useLandingCarousel(slideCount, intervalMs = 6500) {
     }, intervalMs);
 
     return () => window.clearTimeout(timer);
-  }, [activeSlide, intervalMs, isPaused, slideCount]);
+  }, [activeSlide, intervalMs, isPaused, isVisible, slideCount]);
 
   return {
     activeSlide,
+    sectionRef,
     goToSlide: (index) => {
       setActiveSlide(index);
       setIsPaused(true);
@@ -789,9 +790,41 @@ function useLandingCarousel(slideCount, intervalMs = 6500) {
       setActiveSlide((current) => (current + 1) % slideCount);
       setIsPaused(true);
     },
+    // Touch has no hover equivalent — treat a first tap in the carousel like
+    // a mouseenter so mobile readers get the same "stop moving under me" pause.
     pause: () => setIsPaused(true),
     resume: () => setIsPaused(false),
   };
+}
+
+// The carousel tracks below lay every slide out in a single flex row (so the
+// horizontal translateX animation works), which means the row's height
+// defaults to the TALLEST slide — a short active slide leaves a dead gap
+// where the tallest sibling's height used to be. Measure the active slide's
+// own intrinsic height and pin the track to that instead, animating between
+// heights so shorter/taller slides no longer leave (or need) empty space.
+function useActiveSlideHeight(activeSlide, activeSelector) {
+  const trackRef = useRef(null);
+  const [height, setHeight] = useState(null);
+
+  useLayoutEffect(() => {
+    const activeEl = trackRef.current?.querySelector(activeSelector);
+    if (activeEl) setHeight(activeEl.getBoundingClientRect().height);
+  }, [activeSlide, activeSelector]);
+
+  useEffect(() => {
+    const activeEl = trackRef.current?.querySelector(activeSelector);
+    if (!activeEl || typeof ResizeObserver === 'undefined') return undefined;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setHeight(entry.contentRect.height);
+    });
+    observer.observe(activeEl);
+    return () => observer.disconnect();
+  }, [activeSlide, activeSelector]);
+
+  return { trackRef, height };
 }
 
 function LandingCarouselControls({ activeSlide, className = '', dotsLabel, nextLabel, onNext, onSelect, slides }) {
@@ -839,6 +872,28 @@ function SignalPanel({ label, signals, guardrails, punch }) {
         ))}
         <strong>{punch}</strong>
       </div>
+    </div>
+  );
+}
+
+// Compact side-by-side "allowed vs banned" comparison — merges what used to
+// be two separate carousel slides into one, so the policy-aware claim (the
+// one comparison-table row every competitor loses) reads as a single beat.
+function PolicyAwarePanel({ useCases }) {
+  return (
+    <div className="policy-aware-panel">
+      {useCases.map((uc) => (
+        <article className="policy-aware-column" key={uc.id}>
+          <span className="policy-aware-tag">{uc.tag}</span>
+          <h3>{uc.title}</h3>
+          <ul>
+            {(Array.isArray(uc.points) ? uc.points : []).slice(0, 3).map((point) => (
+              <li key={point}>{point}</li>
+            ))}
+          </ul>
+          <strong>{uc.punch}</strong>
+        </article>
+      ))}
     </div>
   );
 }
