@@ -841,6 +841,26 @@
   margin: 0 0 28px;
 }
 
+/* Concrete before/after example, folded into this slide (was a separate
+   standalone section — merged in since it repeated the Findings-tab example
+   right above it). */
+.sample-report-rewrite {
+  margin: 8px 0 26px;
+}
+
+.sample-report-rewrite-caption {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: .86rem;
+  line-height: 1.55;
+}
+
+.sample-report-rewrite-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: .875rem;
+}
+
 .sample-report-value-grid article {
   min-width: 0;
   min-height: 126px;

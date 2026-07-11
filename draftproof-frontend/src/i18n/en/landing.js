@@ -1,6 +1,4 @@
 export const landing = {
-  "rewriteTeaserEyebrow": "The Rewrite",
-  "rewriteTeaserTitle": "Flagged a weak claim? See the fix.",
   "rewriteTeaserBody": "When a scan flags a thin passage, the rewrite shows a worked before/after — a teaching draft you finish in your own words.",
   "rewriteTeaserBeforeLabel": "Before",
   "rewriteTeaserAfterLabel": "After",
@@ -319,25 +317,6 @@ export const landing = {
   "samplePoint1": "Explain the score instead of guessing from one percentage",
   "samplePoint2": "Prioritize citation, source, similarity, and AI-style risks",
   "samplePoint3": "Keep a PDF review trail before submission",
-  "reportValueLabel": "What DraftProof report gives you",
-  "reportValueCards": [
-    {
-      "title": "Explain the score",
-      "body": "See the signal profile behind AI-style writing, grounding risk, similarity, and authorship uncertainty."
-    },
-    {
-      "title": "Prioritize the fix",
-      "body": "Focus first on citation gaps, weak source support, and high-impact writing issues."
-    },
-    {
-      "title": "Review responsibly",
-      "body": "Use rewrite guidance as a teaching draft for stronger grounding, then finish it with your own real details."
-    },
-    {
-      "title": "Keep a record",
-      "body": "Download a PDF report showing what was checked before submission."
-    }
-  ],
   "runOwnScan": "Run your own scan",
   "helpEyebrow": "How DraftProof Helps",
   "helpTitle": "Prepare your content before review.",

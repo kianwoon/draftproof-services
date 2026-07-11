@@ -1,6 +1,4 @@
 export const landing = {
-  "rewriteTeaserEyebrow": "改写",
-  "rewriteTeaserTitle": "有论断被标记了？看看该怎么修。",
   "rewriteTeaserBody": "当扫描标记出单薄的段落时，改写会给出一份可对照的「改写前／改写后」——一份你用自己的话写完的学习草稿。",
   "rewriteTeaserBeforeLabel": "改写前",
   "rewriteTeaserAfterLabel": "改写后",
@@ -317,25 +315,6 @@ export const landing = {
   "samplePoint1": "解释分数，而不是只看一个百分比猜测",
   "samplePoint2": "优先处理引用、来源、相似度和 AI 风格风险",
   "samplePoint3": "提交前保留一份 PDF 审阅记录",
-  "reportValueLabel": "DraftProof 报告带来的价值",
-  "reportValueCards": [
-    {
-      "title": "解释分数",
-      "body": "查看 AI 风格写作、依据风险、相似度和作者身份不确定性背后的信号画像。"
-    },
-    {
-      "title": "确定修复优先级",
-      "body": "优先处理引用缺口、来源支撑薄弱和影响最大的写作问题。"
-    },
-    {
-      "title": "负责任地修改",
-      "body": "把改写建议当作强化依据的示范草稿，然后用你自己的真实细节完成。"
-    },
-    {
-      "title": "保留记录",
-      "body": "下载 PDF 报告，记录提交前检查过的内容。"
-    }
-  ],
   "runOwnScan": "审阅你的内容",
   "helpEyebrow": "DraftProof 如何帮助你",
   "helpTitle": "在正式审阅前准备好你的内容。",

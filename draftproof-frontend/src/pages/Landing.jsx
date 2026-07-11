@@ -56,7 +56,6 @@ export default function Landing() {
   const contentStrategies = t('landing.contentStrategies', { returnObjects: true });
   const competitors = t('featuresPage.competitors', { returnObjects: true });
   const comparisonRows = t('featuresPage.rows', { returnObjects: true });
-  const reportValueCards = t('landing.reportValueCards', { returnObjects: true });
   const anchorCards = t('landing.anchorCards', { returnObjects: true });
   const anchorWorkflow = t('landing.anchorWorkflow', { returnObjects: true });
   const heroReviewSteps = t('landing.heroReviewSteps', { returnObjects: true });
@@ -194,28 +193,7 @@ export default function Landing() {
       <ReportStrategyCarousel
         contentStrategies={contentStrategies}
         publicPath={publicPath}
-        reportValueCards={reportValueCards}
       />
-
-      <section id="rewrite-teaser" className="landing-section">
-        <div className="section-inner">
-          <p className="eyebrow">{t('landing.rewriteTeaserEyebrow')}</p>
-          <h2>{t('landing.rewriteTeaserTitle')}</h2>
-          <p className="section-lead" style={{ color: 'var(--muted)', marginBottom: '1.25rem' }}>{t('landing.rewriteTeaserBody')}</p>
-          <div style={{ maxWidth: '640px' }}>
-            <RewriteBeforeAfter
-              before={t('landing.rewriteTeaserBefore')}
-              after={t('landing.rewriteTeaserAfter')}
-              marker={t('landing.rewriteTeaserMarker')}
-              beforeLabel={t('landing.rewriteTeaserBeforeLabel')}
-              afterLabel={t('landing.rewriteTeaserAfterLabel')}
-            />
-          </div>
-          <p style={{ marginTop: '1.25rem', fontSize: '0.875rem' }}>
-            <Link to={publicPath('/rewrite')}>{t('landing.rewriteTeaserLink')}</Link>
-          </p>
-        </div>
-      </section>
 
       <section id="help" className="landing-section help-section">
         <div className="section-inner">
@@ -632,7 +610,7 @@ function ContentRiskCarousel({ anchorCards, anchorWorkflow, useCases }) {
   );
 }
 
-function ReportStrategyCarousel({ contentStrategies, publicPath, reportValueCards }) {
+function ReportStrategyCarousel({ contentStrategies, publicPath }) {
   const { t } = useTranslation();
   const slides = useMemo(() => ([
     {
@@ -649,14 +627,19 @@ function ReportStrategyCarousel({ contentStrategies, publicPath, reportValueCard
               <span>{t('landing.samplePoint2')}</span>
               <span>{t('landing.samplePoint3')}</span>
             </div>
-            <div className="sample-report-value-grid" aria-label={t('landing.reportValueLabel')}>
-              {reportValueCards.map((card) => (
-                <article key={card.title}>
-                  <strong>{card.title}</strong>
-                  <p>{card.body}</p>
-                </article>
-              ))}
+
+            <div className="sample-report-rewrite">
+              <p className="sample-report-rewrite-caption">{t('landing.rewriteTeaserBody')}</p>
+              <RewriteBeforeAfter
+                before={t('landing.rewriteTeaserBefore')}
+                after={t('landing.rewriteTeaserAfter')}
+                marker={t('landing.rewriteTeaserMarker')}
+                beforeLabel={t('landing.rewriteTeaserBeforeLabel')}
+                afterLabel={t('landing.rewriteTeaserAfterLabel')}
+              />
+              <Link to={publicPath('/rewrite')} className="sample-report-rewrite-link">{t('landing.rewriteTeaserLink')}</Link>
             </div>
+
             <Link to={publicPath('/content-checker')} className="btn btn-primary">{t('landing.runOwnScan')}</Link>
           </div>
 
@@ -694,7 +677,7 @@ function ReportStrategyCarousel({ contentStrategies, publicPath, reportValueCard
         </article>
       ),
     },
-  ]), [contentStrategies, publicPath, reportValueCards, t]);
+  ]), [contentStrategies, publicPath, t]);
   const carousel = useLandingCarousel(slides.length, 7200);
   const { trackRef, height: activeSlideHeight } = useActiveSlideHeight(
     carousel.activeSlide,
@@ -903,13 +886,30 @@ function SampleReportPreview() {
   const [activeSection, setActiveSection] = useState('authorshipBreakdown');
   const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [isHoverPaused, setIsHoverPaused] = useState(false);
+  // Same off-screen problem as the two carousels: this tab rotation used to
+  // run on a bare setTimeout with no visibility gating, so it kept cycling
+  // through tabs while scrolled out of view — see useLandingCarousel.
+  const [isVisible, setIsVisible] = useState(true);
+  const sectionRef = useRef(null);
   const sampleActionItems = t('landing.sampleActionItems', { returnObjects: true });
   const sampleFlaggedSentences = t('landing.sampleFlaggedSentences', { returnObjects: true });
   const sampleCriticalQuestions = t('landing.sampleCriticalQuestions', { returnObjects: true });
   const previewTabs = t('landing.reportPreviewTabs', { returnObjects: true });
   const previewTabIds = useMemo(() => previewTabs.map((tab) => tab.id), [previewTabs]);
   const currentTab = previewTabs.find((tab) => tab.id === activeSection) || previewTabs[0];
-  const isPreviewPaused = isAutoPaused || isHoverPaused;
+  const isPreviewPaused = isAutoPaused || isHoverPaused || !isVisible;
+
+  useEffect(() => {
+    const node = sectionRef.current;
+    if (!node || typeof IntersectionObserver === 'undefined') return undefined;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setIsVisible(entry.isIntersecting),
+      { threshold: 0.3 },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (isPreviewPaused || previewTabIds.length < 2) return undefined;
@@ -932,11 +932,13 @@ function SampleReportPreview() {
 
   return (
     <article
+      ref={sectionRef}
       className={`sample-report-preview${isPreviewPaused ? ' is-paused' : ''}`}
       aria-label={t('landing.reportPreviewLabel')}
       onMouseEnter={() => setIsHoverPaused(true)}
       onMouseLeave={() => setIsHoverPaused(false)}
       onFocusCapture={() => setIsAutoPaused(true)}
+      onTouchStart={() => setIsAutoPaused(true)}
     >
       <div className="sample-preview-tabs" role="tablist" aria-label={t('landing.reportPreviewTabsLabel')}>
         {previewTabs.map((tab) => (
