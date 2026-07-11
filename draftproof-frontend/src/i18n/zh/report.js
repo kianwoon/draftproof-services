@@ -502,7 +502,7 @@ export const report = {
     "kicker": "提交内容",
     "title": "信号高亮",
     "highlightedSections": "个标记段落",
-    "tabIssues": "段落 · {{count}}",
+    "tabIssues": "标记段落 · {{count}}",
     "tabDocument": "查看完整文档",
     "moreDetail": "＋ 更多细节",
     "lessDetail": "− 收起细节",

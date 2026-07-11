@@ -507,7 +507,7 @@ export const report = {
     "kicker": "Submitted Content",
     "title": "Signal highlights",
     "highlightedSections": "flagged paragraphs",
-    "tabIssues": "Paragraphs · {{count}}",
+    "tabIssues": "Flagged paragraphs · {{count}}",
     "tabDocument": "Read full document",
     "moreDetail": "＋ More detail",
     "lessDetail": "− Less detail",
