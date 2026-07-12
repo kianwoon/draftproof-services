@@ -82,6 +82,10 @@ export default function Header() {
             <div className="header-account-menu" role="menu">
               <span className="header-account-email">{user.email}</span>
               <Link to="/api-keys" className="header-account-item" role="menuitem">
+                <svg className="header-account-item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="8" cy="15" r="4" />
+                  <path d="M11.5 11.5 20 3M16 3h4v4M14 9l2.5 2.5" />
+                </svg>
                 {t('nav.apiKeys')}
               </Link>
               <button
@@ -90,6 +94,10 @@ export default function Header() {
                 className="header-account-item header-account-signout"
                 role="menuitem"
               >
+                <svg className="header-account-item-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M15 4H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h9" />
+                  <path d="M10 12h11m0 0-3.5-3.5M21 12l-3.5 3.5" />
+                </svg>
                 {t('nav.signOut')}
               </button>
             </div>

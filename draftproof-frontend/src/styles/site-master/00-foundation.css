@@ -867,7 +867,9 @@ svg { display: block; }
 }
 
 .header-account-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
   padding: 9px 12px;
@@ -878,6 +880,17 @@ svg { display: block; }
   font: inherit;
   cursor: pointer;
   text-decoration: none;
+}
+
+.header-account-item-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .72;
 }
 
 .header-account-item:hover { background: var(--surface-soft, rgba(13, 27, 42, .05)); }
