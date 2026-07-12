@@ -1196,11 +1196,114 @@
   font-weight: 800;
 }
 
+.content-checker-check-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 14px;
+  border-radius: 9px;
+  background: var(--green-100);
+  color: var(--green-700);
+}
+
+.content-checker-check-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
 .content-checker-grid h3 {
   margin-bottom: 8px;
   color: var(--ink);
   font-size: 1rem;
   font-weight: 700;
+}
+
+/* ── Steps flow strip (sits above the 3-card grid) ── */
+.content-checker-flow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 14px clamp(12px, 3vw, 24px);
+  border: .5px solid rgba(13, 27, 42, .08);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow-x: auto;
+}
+
+.content-checker-flow-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.content-checker-flow-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.content-checker-flow-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+}
+
+.content-checker-flow-item:last-child .content-checker-flow-icon {
+  background: var(--green);
+}
+
+.content-checker-flow-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.content-checker-flow-label {
+  color: var(--ink);
+  font-size: .85rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.content-checker-flow-arrow {
+  flex-shrink: 0;
+  margin: 0 8px;
+  color: var(--muted);
+  font-size: 1rem;
+}
+
+@media (max-width: 640px) {
+  .content-checker-flow {
+    flex-direction: column;
+    align-items: stretch;
+    overflow-x: visible;
+  }
+
+  .content-checker-flow-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .content-checker-flow-arrow {
+    align-self: flex-start;
+    margin: 6px 0 6px 15px;
+    transform: rotate(90deg);
+  }
+
+  .content-checker-flow-label {
+    white-space: normal;
+  }
 }
 
 .content-checker-cta {

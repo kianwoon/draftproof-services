@@ -1,7 +1,7 @@
 export const essayChecker = {
   "eyebrow": "Content checker",
   "title": "Check your content before submission.",
-  "lead": "DraftProof reviews citation gaps, weak claim grounding, source fit, similarity risk, and AI-like writing signals so students can revise responsibly before submission.",
+  "lead": "DraftProof reviews your draft signal-by-signal, then shows exactly what needs attention before you submit.",
   "startReview": "Start a review",
   "viewSample": "View sample report",
   "heroStatLabel": "Best for",

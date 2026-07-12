@@ -1,7 +1,7 @@
 export const essayChecker = {
   "eyebrow": "内容检查器",
   "title": "提交前检查你的内容。",
-  "lead": "DraftProof 会审阅引用缺口、论断依据薄弱、来源适配、相似度风险和类似 AI 的写作信号，帮助学生在提交前负责任地修改。",
+  "lead": "DraftProof 会逐项审阅你的草稿信号，清楚显示提交前需要注意的地方。",
   "startReview": "开始审阅",
   "viewSample": "查看示例报告",
   "heroStatLabel": "适合场景",
