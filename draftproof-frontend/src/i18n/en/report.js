@@ -638,6 +638,18 @@ export const report = {
       "high": "likely to draw external-detector attention (a warning, not a verdict)"
     },
     "verdictFix": "The main writing issue to fix is the {{driver}}.",
+    // Headline-confidence caution (badge.headline_confidence, reason codes from
+    // poc/report/headline_confidence.py). KEEP IN SYNC with render.py
+    // _HEADLINE_CONFIDENCE_CLAUSES (PDF wording).
+    "headlineConfidence": {
+      "frame": "Treat the headline percentage as low-confidence: {{clauses}} — review the flagged passages before relying on the number.",
+      "clauses": {
+        "second_opinion_divergence": "a second detector flagged {{pct}}% of sentences as high-confidence AI",
+        "raw_tier_divergence": "the uncalibrated writing-pattern read was {{rawTier}} before the calibrated score re-based it",
+        "verdict_low_confidence": "the sample is short or the score sits near a band boundary",
+        "deep_scan_below_floor": "the deep scan had too little flagged text for a verdict"
+      }
+    },
     "draftproof": "DraftProof (conservative)",
     "draftproofNote": "Conservative AI-style estimate — mostly writing fluency that grounding won't fully move. The grounding fix above is the real thing to act on.",
     "external": "Turnitin / external (estimated)",

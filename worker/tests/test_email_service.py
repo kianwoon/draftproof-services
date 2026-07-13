@@ -217,6 +217,38 @@ def test_build_scan_completion_email_formats_page_aligned_lead():
     assert "Findings: 37" in payload["text"]
 
 
+def test_build_scan_completion_email_renders_headline_confidence_caution():
+    # badge.headline_confidence (poc/report/headline_confidence.py): a clean-looking
+    # headline contradicted by other evidence must carry a caution line in the email too.
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-hc",
+        tier="green",
+        ai_score=0.0,
+        headline_confidence={
+            "level": "low",
+            "reasons": ["second_opinion_divergence", "raw_tier_divergence"],
+            "detail": {"second_opinion_pct": 33, "raw_tier": "high"},
+        },
+        pdf_bytes=b"%PDF-1.7 scan",
+        settings=_settings(),
+    )
+    assert "low-confidence" in payload["text"]
+    assert "33%" in payload["text"]
+
+
+def test_build_scan_completion_email_omits_caution_without_headline_confidence():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-nohc",
+        tier="green",
+        ai_score=0.0,
+        pdf_bytes=b"%PDF-1.7 scan",
+        settings=_settings(),
+    )
+    assert "low-confidence" not in payload["text"]
+
+
 def test_build_scan_completion_email_does_not_surface_legacy_ai_score_lines():
     # ai_score / authorship_rating_label are accepted for backward compatibility
     # but intentionally NOT rendered (email mirrors the V7 page lead instead).

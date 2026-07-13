@@ -391,6 +391,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
                     submission_risk=badge.get("submission_risk") if badge else None,
                     policy_risk=badge.get("policy_risk") if badge else None,
                     authorship_breakdown=badge.get("authorship_breakdown") if badge else None,
+                    headline_confidence=badge.get("headline_confidence") if badge else None,
                     pdf_bytes=pdf_bytes,
                     settings=settings,
                 )

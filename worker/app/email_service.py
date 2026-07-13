@@ -102,6 +102,43 @@ def _badge(scan: dict | None) -> dict:
     return (scan or {}).get("ai_risk_badge") or {} if isinstance(scan, dict) else {}
 
 
+# Headline-confidence caution clauses, keyed by machine reason CODE
+# (poc/report/headline_confidence.py). Presentation strings — KEEP IN SYNC with
+# poc/report/render.py _HEADLINE_CONFIDENCE_CLAUSES (PDF wording).
+_HEADLINE_CONFIDENCE_CLAUSES = {
+    "second_opinion_divergence": "a second detector flagged {second_opinion_pct}% of sentences as high-confidence AI",
+    "raw_tier_divergence": "the uncalibrated writing-pattern read was {raw_tier} before the calibrated score re-based it",
+    "verdict_low_confidence": "the sample is short or the score sits near a band boundary",
+    "deep_scan_below_floor": "the deep scan had too little flagged text for a verdict",
+}
+
+
+def _headline_confidence_line(hc: dict | None) -> str | None:
+    """One caution line for the scan email when the badge carries the
+    headline_confidence annotation (clean-looking headline contradicted by other
+    evidence on the report). Mirrors the PDF's _headline_confidence_sentence;
+    None when absent/malformed (fail-open, line simply omitted)."""
+    if not isinstance(hc, dict) or not hc.get("reasons"):
+        return None
+    detail = hc.get("detail") or {}
+    clauses = []
+    for reason in hc["reasons"]:
+        template = _HEADLINE_CONFIDENCE_CLAUSES.get(reason)
+        if not template:
+            continue
+        try:
+            clauses.append(template.format(**detail))
+        except (KeyError, IndexError):
+            continue
+    if not clauses:
+        return None
+    return (
+        "Treat the headline percentage as low-confidence: "
+        + "; ".join(clauses)
+        + " — review the flagged passages in the report before relying on the number."
+    )
+
+
 def _scan_ai_percent(scan: dict | None) -> float | None:
     """Fused ai_likelihood_score for a stored rewrite scan (badge or top-level ai_score).
     Mirrors poc.report.render_rewrite._ai_score / _display_ai_score: when the V7 tier-authority
@@ -237,6 +274,7 @@ def build_scan_completion_email(
     submission_risk: dict | None = None,
     policy_risk: dict | None = None,
     authorship_breakdown: dict | None = None,
+    headline_confidence: dict | None = None,
     pdf_bytes: bytes | None = None,
     pdf_filename: str | None = None,
     settings,
@@ -246,6 +284,11 @@ def build_scan_completion_email(
     # (ai_score / external_estimate / authorship_rating_label kept in the signature for
     # backward compatibility but intentionally not rendered).
     details = [f"Scan ID: {scan_id}"]
+    # Headline-confidence caution first: if the report's clean-looking headline is
+    # contradicted by other evidence, the email must not read as an all-clear either.
+    _hc_line = _headline_confidence_line(headline_confidence)
+    if _hc_line:
+        details.append(_hc_line)
     sr = (submission_risk or {}).get("overall") or {}
     if sr.get("level") and sr["level"] != "unknown":
         line = f"Submission risk: {_SR_LEVEL_LABELS.get(sr['level'], sr['level'])}"
@@ -437,6 +480,7 @@ def send_scan_completion_email(
     submission_risk: dict | None = None,
     policy_risk: dict | None = None,
     authorship_breakdown: dict | None = None,
+    headline_confidence: dict | None = None,
     pdf_bytes: bytes | None = None,
     settings,
 ) -> bool:
@@ -462,6 +506,7 @@ def send_scan_completion_email(
             submission_risk=submission_risk,
             policy_risk=policy_risk,
             authorship_breakdown=authorship_breakdown,
+            headline_confidence=headline_confidence,
             pdf_bytes=pdf_bytes,
             settings=settings,
         )

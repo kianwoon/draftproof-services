@@ -1367,7 +1367,32 @@ class ReportBuilder:
                 _deep_scan_for_authority = _get_deep_scan_proportion(
                     {"document_text": self._original_text}
                 )
-                if _deep_scan_for_authority is not None:
+                # Below-floor abstain (weights.json tier_authority.below_floor_policy,
+                # default "abstain"): a proportion below the reliability floor is
+                # INSUFFICIENT EVIDENCE — deberta_signal.py's own "below floor = no
+                # verdict, never clean" philosophy — so it must not fuse as
+                # exculpatory 0 and re-base the tier (live scan d449aca9: 0.0 below
+                # the 0.3 floor dragged a HIGH raw tier to green/0%). Badge stays
+                # composite-driven; the deep-scan result still flows to
+                # run_v7_breakdown below (panel + uncertainty flags unchanged).
+                _below_floor_abstain = (
+                    _deep_scan_for_authority is not None
+                    and _deep_scan_for_authority.get("below_floor") is True
+                    and _get_tier_authority_config()["below_floor_policy"] == "abstain"
+                )
+                if _below_floor_abstain:
+                    logger.warning(
+                        "report.builder: V7 tier-authority abstaining — deep-scan "
+                        "proportion %s is below the reliability floor; badge stays "
+                        "composite-driven (below_floor_policy=abstain).",
+                        _deep_scan_for_authority.get("proportion"),
+                    )
+                    tier_authority_status = {
+                        "enabled": True,
+                        "applied": False,
+                        "reason": "deep_scan_below_floor",
+                    }
+                elif _deep_scan_for_authority is not None:
                     _fused = _compute_fused_authority(
                         _pre_fusion_composite, _deep_scan_for_authority["proportion"]
                     )

@@ -685,9 +685,21 @@ def render_merged_authorship_risk(report, data) -> str:
     if there's no submission-risk section, it's just the authorship panel."""
     badge = getattr(report, "ai_risk_badge", None) or {}
     breakdown = badge.get("authorship_breakdown")
+    # Headline-confidence caution (badge.headline_confidence, poc/report/
+    # headline_confidence.py): a clean-looking headline contradicted by other
+    # evidence on the same report carries its qualifier right under the panel's
+    # headline — panel-level (not inside _authorship_headline_html) so it renders
+    # on BOTH the fused-hero and the no-breakdown/lead-only paths. Same sentence
+    # as render.py's legacy verdict path, so page/PDF wording stays identical.
+    from .render import _headline_confidence_sentence
+    _caution = _headline_confidence_sentence(badge.get("headline_confidence"))
+    caution_html = (
+        f'<p class="dp-hero-sub dp-headline-caution"><b>{escape(_caution)}</b></p>'
+        if _caution else ""
+    )
     lead = render_scan_lead(report, data, suppress_ai_likelihood=bool(breakdown))
     if not breakdown:
-        return lead
+        return (caution_html + lead) if lead else lead
     # Owner-mandated framing: the verdict headline above is the AI-risk AUTHORITY;
     # the composition bars below are a display INTERPRETATION. KEEP-IN-SYNC:
     # draftproof-frontend/src/pages/report/MergedAuthorshipRisk.jsx's
@@ -698,6 +710,7 @@ def render_merged_authorship_risk(report, data) -> str:
               '<p class="dp-callout-title">Authorship &amp; submission risk '
               '<span class="dp-statchip dp-statchip--info">Beta</span></p>'
               + _authorship_headline_html(badge, breakdown)
+              + caution_html
               + verdict_framing
               + composition_subhead
               + _authorship_bars_html(breakdown)

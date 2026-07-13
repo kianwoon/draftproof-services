@@ -77,9 +77,29 @@ function CategoryBar({ t, category, raw, band }) {
   );
 }
 
+// Headline-confidence caution (badge.headline_confidence, poc/report/headline_confidence.py):
+// a clean-looking headline (green/0%) contradicted by other evidence on the same report
+// (second-opinion tile, raw pattern tier, thin sample, below-floor deep scan). Composes the
+// reason clauses via i18n. Annotate-not-suppress: qualifies the number, never hides it.
+// KEEP IN SYNC with render.py _HEADLINE_CONFIDENCE_CLAUSES (PDF wording).
+function headlineConfidenceNote(t, headlineConfidence) {
+  const reasons = (headlineConfidence && headlineConfidence.reasons) || [];
+  if (!reasons.length) return '';
+  const detail = headlineConfidence.detail || {};
+  const clauses = reasons
+    .map((reason) => t(`report.aiLikelihood.headlineConfidence.clauses.${reason}`, {
+      pct: detail.second_opinion_pct,
+      rawTier: detail.raw_tier,
+      defaultValue: '',
+    }))
+    .filter(Boolean);
+  if (!clauses.length) return '';
+  return t('report.aiLikelihood.headlineConfidence.frame', { clauses: clauses.join('; ') });
+}
+
 // The ONE headline. Fused score (verdict) when tier_authority present, else the
 // deep-scan-only estimate. The ownership lead + flag-line note ride alongside.
-function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority }) {
+function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence }) {
   const hasAuthoritativeTier = KNOWN_AUTHORITATIVE_TIERS.includes(authoritativeTier);
   const level = sr && sr.overall ? sr.overall.level : null;
 
@@ -130,6 +150,7 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority }) {
     evidenceEl = <p className="merged-verdict-evidence">{t('report.authorshipBreakdown.deepScan.notTurnitin')}</p>;
   }
 
+  const cautionNote = headlineConfidenceNote(t, headlineConfidence);
   const ownershipLead = level
     ? t(`report.submissionRisk.ownershipLead.${level}`, { defaultValue: '' })
     : '';
@@ -157,6 +178,7 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority }) {
           composition breakdown below (which is a display interpretation). Verbatim
           copy KEPT IN SYNC with poc/report/render_panels.py render_merged_authorship_risk. */}
       <p className="merged-verdict-framing">{t('report.merged.verdictFramingNote')}</p>
+      {cautionNote && <p className="merged-comp-caveat merged-verdict-caution">{cautionNote}</p>}
       {ownershipLead && <p className="merged-verdict-lead">{ownershipLead}</p>}
       {evidenceEl}
       {flagNote && <p className="merged-verdict-note">{flagNote}</p>}
@@ -170,7 +192,7 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority }) {
 // Omitting `sections` (every Report.jsx call site) renders every section, unchanged.
 const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'deepScanParagraphs', 'scale', 'disclaimer'];
 
-export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, sections }) {
+export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence, sections }) {
   const hasBreakdown = !!breakdown;
   const hasSr = !!(sr && sr.overall && sr.overall.level);
   if (!hasBreakdown && !hasSr) return null;
@@ -211,6 +233,7 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
           sr={hasSr ? sr : null}
           authoritativeTier={authoritativeTier}
           tierAuthority={tierAuthority}
+          headlineConfidence={headlineConfidence}
         />
       )}
 

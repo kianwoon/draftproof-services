@@ -403,6 +403,42 @@ _FLAG_PHRASE = {"low": "unlikely to be flagged by external detectors",
                 "high": "likely to be flagged by external detectors"}
 
 
+# allow-hardcode: presentation clauses for the headline-confidence qualifier, keyed by
+# machine reason CODE (poc/report/headline_confidence.py). Display strings, never matched
+# against document text. KEEP IN SYNC with frontend i18n report.aiLikelihood.headlineConfidence*.
+_HEADLINE_CONFIDENCE_CLAUSES = {
+    "second_opinion_divergence": "a second detector flagged {second_opinion_pct}% of sentences as high-confidence AI",
+    "raw_tier_divergence": "the uncalibrated writing-pattern read was {raw_tier} before the calibrated score re-based it",
+    "verdict_low_confidence": "the sample is short or the score sits near a band boundary",
+    "deep_scan_below_floor": "the deep scan had too little flagged text for a verdict",
+}
+
+
+def _headline_confidence_sentence(hc: dict | None) -> str:
+    """Compose the low-confidence qualifier from the badge's headline_confidence
+    annotation (annotate-not-suppress: qualifies the clean headline, never hides the
+    number or the contrary evidence). Empty string when absent/malformed."""
+    if not isinstance(hc, dict) or not hc.get("reasons"):
+        return ""
+    detail = hc.get("detail") or {}
+    clauses = []
+    for reason in hc["reasons"]:
+        template = _HEADLINE_CONFIDENCE_CLAUSES.get(reason)
+        if not template:
+            continue
+        try:
+            clauses.append(template.format(**detail))
+        except (KeyError, IndexError):
+            continue  # detail missing for this clause — skip it, keep the rest
+    if not clauses:
+        return ""
+    return (
+        "Treat the headline percentage as low-confidence: "
+        + "; ".join(clauses)
+        + " — review the flagged passages before relying on the number."
+    )
+
+
 def _ai_signal_verdict(badge: dict) -> str:
     """One-line scoped read of the external-detector / AI-writing dimension. NOT an
     overall verdict (the Submission-risk band leads that)."""
@@ -419,8 +455,13 @@ def _ai_signal_verdict(badge: dict) -> str:
     verdict += "."
     # Reliability qualifier: a near-boundary or thin-sample score is unstable — surface it
     # honestly rather than as a confident verdict (mirrors Turnitin's suppression of the
-    # unstable band). The tier itself is unchanged.
-    if (badge or {}).get("verdict_low_confidence"):
+    # unstable band). The tier itself is unchanged. When the richer headline_confidence
+    # annotation is present (clean-looking headline contradicted by other evidence on the
+    # same report), it REPLACES the generic sentence with the specific contradictions.
+    _hc_sentence = _headline_confidence_sentence((badge or {}).get("headline_confidence"))
+    if _hc_sentence:
+        verdict += f" {_hc_sentence}"
+    elif (badge or {}).get("verdict_low_confidence"):
         verdict += " Low confidence — the score sits near a band boundary or the sample is short, so treat this as provisional and review before relying on it."
     if driver:
         verdict += f" The main writing issue to fix is the {driver}."

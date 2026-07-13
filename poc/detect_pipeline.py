@@ -124,6 +124,15 @@ def run_detect(
     md_path = os.path.join(output_dir, f"draftproof_{ts}.md")
     json_path = os.path.join(output_dir, f"draftproof_{ts}.json")
 
+    # Build the report JSON BEFORE rendering markdown/PDF: report_to_dict is
+    # where the badge picks up its post-build annotations (the deberta-tile
+    # heatmap sync and headline_confidence — see poc/report/report.py). It
+    # mutates draft_report.ai_risk_badge in place, so rendering first shipped a
+    # first-pass PDF missing fields the JSON carried (observed 2026-07-13 with
+    # headline_confidence; the deferred enrichment re-render in worker/app/
+    # tasks.py masked this for scans where reflective questions fired).
+    json_data = report_to_dict(draft_report)
+
     if progress_callback:
         progress_callback(88, "Rendering markdown report")
     with open(md_path, "w") as f:
@@ -136,7 +145,6 @@ def run_detect(
 
     if progress_callback:
         progress_callback(95, "Writing scan results")
-    json_data = report_to_dict(draft_report)
     json_data["input_text"] = text
     if raw_text.strip() and raw_text.strip() != text:
         json_data["raw_input_text"] = raw_text

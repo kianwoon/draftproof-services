@@ -1552,6 +1552,7 @@ export default function Report() {
         sr={submissionRisk(variantBadge)}
         authoritativeTier={variantBadge.tier || report.tier}
         tierAuthority={variantBadge.tier_authority || null}
+        headlineConfidence={variantBadge.headline_confidence || null}
         sections={['verdict', 'composition', 'riskAxes']}
       />
     );
@@ -1974,6 +1975,7 @@ export default function Report() {
               sr={heroSubmissionRisk}
               authoritativeTier={heroBadge.tier || heroReport.tier}
               tierAuthority={(heroBadge && heroBadge.tier_authority) || null}
+              headlineConfidence={(heroBadge && heroBadge.headline_confidence) || null}
             />
           }
         />

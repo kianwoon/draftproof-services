@@ -3419,6 +3419,25 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     result["scan_intelligence"] = scan_intelligence
     result["highlight_segments"] = scan_intelligence["document"]["segments"]
 
+    # Headline-confidence annotation (additive, annotate-not-suppress). MUST run
+    # here — after _scan_intelligence() → _document_segments() has synced the
+    # ai_signal_deberta tile from the deep-scan heatmap — so the divergence check
+    # reads the FINAL tile, not builder.py's stale pre-sync headline. Never
+    # changes tier/score; fail-open on any error (a display qualifier must never
+    # break a report build).
+    try:
+        from report.headline_confidence import compute_headline_confidence  # noqa: E402
+        _headline_conf = compute_headline_confidence(
+            result.get("ai_risk_badge"), report.raw_overall_tier
+        )
+        if _headline_conf is not None:
+            result["ai_risk_badge"]["headline_confidence"] = _headline_conf
+    except Exception:
+        logger.exception(
+            "report.report: headline_confidence annotation failed; omitting "
+            "(additive, non-fatal)."
+        )
+
     result["scan_time_seconds"] = report.scan_time_seconds
     if report.generated_at:
         result["generated_at"] = report.generated_at

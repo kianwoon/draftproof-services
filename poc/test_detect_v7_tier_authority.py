@@ -271,6 +271,75 @@ class TestTierAuthorityFlagOnWithDeepScan:
         assert badge.get("tier_authority_status") == {"enabled": True, "applied": True}
 
 
+class TestTierAuthorityBelowFloorPolicy:
+    """below_floor_policy (weights.json tier_authority) gates whether a
+    below-reliability-floor deep-scan proportion may still drive the fused tier
+    override. DEFAULT IS "fuse" (pre-existing behavior, byte-identical): the
+    committed v7_fused_gate_result.json shows the proportion term pulling
+    below-floor HUMAN docs green is where the fused path's ESL-FPR win lives
+    (composite-only FPR@40 15.8% vs fused 2.6%), so abstaining by default would
+    revert below-floor human/ESL docs to composite tiers — see the weights.json
+    _below_floor_policy_notes for the full evidence. "abstain" (config-driven,
+    corpus A/B required before defaulting) skips the override with an explicit
+    status reason; display payloads (deep-scan panel, breakdown flags) are
+    untouched either way."""
+
+    def _below_floor_deep_scan(self, monkeypatch):
+        def _fake_deep_scan_proportion(detection_result):
+            return {
+                "proportion": 0.0,
+                "uncalibrated": False,
+                "below_floor": True,
+                "payload": {"proportion": 0.0, "band": "insufficient", "calibrated": True},
+            }
+
+        monkeypatch.setattr(pipeline_bridge, "get_deep_scan_proportion", _fake_deep_scan_proportion)
+
+    def _set_policy(self, monkeypatch, policy):
+        real_config = config.get_tier_authority_config
+
+        def _patched():
+            cfg = real_config()
+            cfg["below_floor_policy"] = policy
+            return cfg
+
+        monkeypatch.setattr(config, "get_tier_authority_config", _patched)
+
+    def test_abstain_policy_skips_fused_override_below_floor(self, monkeypatch):
+        monkeypatch.setenv(_TIER_ENV_VAR, "1")
+        self._below_floor_deep_scan(monkeypatch)
+        self._set_policy(monkeypatch, "abstain")
+
+        runner = DetectionRunner()
+        result = _scan(runner)
+        badge = result.get("ai_risk_badge") or {}
+
+        assert "tier_authority" not in badge
+        assert badge.get("signal_source") != "v7_fused"
+        assert badge.get("tier_authority_status") == {
+            "enabled": True,
+            "applied": False,
+            "reason": "deep_scan_below_floor",
+        }
+
+    def test_default_fuse_policy_still_overrides_below_floor(self, monkeypatch):
+        """The committed default ("fuse") keeps today's behavior byte-identical:
+        the override applies even below floor."""
+        monkeypatch.setenv(_TIER_ENV_VAR, "1")
+        self._below_floor_deep_scan(monkeypatch)
+
+        runner = DetectionRunner()
+        result = _scan(runner)
+        badge = result.get("ai_risk_badge") or {}
+
+        assert badge.get("signal_source") == "v7_fused"
+        assert "tier_authority" in badge
+        assert badge.get("tier_authority_status") == {"enabled": True, "applied": True}
+
+    def test_config_exposes_below_floor_policy_default_fuse(self):
+        assert config.get_tier_authority_config()["below_floor_policy"] == "fuse"
+
+
 class TestPrecomputedDeepScanReuse:
     """A scan with BOTH flags on must pay for exactly ONE Modal call: the
     builder's tier-authority block computes the proportion, then hands it to

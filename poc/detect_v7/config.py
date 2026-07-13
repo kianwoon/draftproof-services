@@ -242,12 +242,14 @@ def get_paraphrase_mismatch_normalization() -> dict[str, float]:
 
 
 def get_tier_authority_config() -> dict[str, Any]:
-    """Return the fused-score tier-authority config (weights + cutoffs).
+    """Return the fused-score tier-authority config (weights + cutoffs +
+    below_floor_policy).
 
-    Validates that cutoffs are strictly ascending (amber < orange < red) —
-    a config error here must fail loudly rather than silently produce a
-    tier ordering that contradicts itself. Raises ``ValueError`` on a
-    malformed/non-ascending cutoff set.
+    Validates that cutoffs are strictly ascending (amber < orange < red) and
+    that below_floor_policy is one of "abstain"/"fuse" — a config error here
+    must fail loudly rather than silently produce a tier ordering that
+    contradicts itself or an unrecognized floor policy. Raises ``ValueError``
+    on either violation.
     """
     section = _weights()["tier_authority"]
     cutoffs = section["cutoffs"]
@@ -259,9 +261,17 @@ def get_tier_authority_config() -> dict[str, Any]:
             f"strictly ascending (amber < orange < red), got amber={amber!r}, "
             f"orange={orange!r}, red={red!r}."
         )
+    below_floor_policy = section["below_floor_policy"]
+    if below_floor_policy not in ("abstain", "fuse"):
+        # allow-hardcode: human-readable error message text, not a scoring/matching list
+        raise ValueError(
+            f"weights.json contract violation: tier_authority.below_floor_policy "
+            f"must be 'abstain' or 'fuse', got {below_floor_policy!r}."
+        )
     return {
         "weights": dict(section["weights"]),
         "cutoffs": dict(cutoffs),
+        "below_floor_policy": below_floor_policy,
     }
 
 

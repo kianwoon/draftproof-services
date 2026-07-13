@@ -631,6 +631,17 @@ export const report = {
       "high": "很可能引起外部检测器注意（这是提醒，并非定论）"
     },
     "verdictFix": "首要的写作问题是{{driver}}。",
+    // 标题可信度提示（badge.headline_confidence，原因代码见 poc/report/headline_confidence.py）。
+    // 与 render.py _HEADLINE_CONFIDENCE_CLAUSES（PDF 文案）保持同步。
+    "headlineConfidence": {
+      "frame": "请将标题百分比视为低置信度结果：{{clauses}}——在依赖这个数字之前，请先复核被标记的段落。",
+      "clauses": {
+        "second_opinion_divergence": "另一个检测器将 {{pct}}% 的句子标记为高置信度 AI",
+        "raw_tier_divergence": "未经校准的写作模式初读偏高，随后被校准分数重新定级",
+        "verdict_low_confidence": "样本较短，或分数处于分级边界附近",
+        "deep_scan_below_floor": "深度扫描中被标记的文本过少，不足以给出判定"
+      }
+    },
     "draftproof": "DraftProof（保守估计）",
     "draftproofNote": "保守的 AI 风格估计——主要反映写作流畅度，加强支撑也无法完全改变它。上方的支撑修复才是真正应当着力之处。",
     "external": "Turnitin / 外部检测器（估计）",
