@@ -235,6 +235,13 @@
   opacity: .86;
 }
 
+/* Stop the drift + release the compositor layer once the hero/CTA section
+   scrolls out of view (toggled via Landing.jsx's useIsVisible). */
+.is-offscreen .code-row {
+  animation-play-state: paused;
+  will-change: auto;
+}
+
 /* Translate distance = one text period in SVG units expressed as vw.
    SVG viewBox is 1440 wide with preserveAspectRatio="none", so
    1440 SVG units = 100vw at any viewport. Row-a avg period ≈ 1065 SVG units

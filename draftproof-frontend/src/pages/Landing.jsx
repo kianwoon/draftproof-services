@@ -67,15 +67,27 @@ export default function Landing() {
   const canHover = typeof window !== 'undefined' && window.matchMedia?.('(hover: hover)').matches;
   const useCases = t('landing.useCases', { returnObjects: true });
   const heroVideoRef = useRef(null);
+  const heroSectionRef = useRef(null);
+  const ctaSectionRef = useRef(null);
+  // Gate the always-on hero video + code-texture drift on real viewport visibility —
+  // otherwise both keep decoding/animating for as long as the tab stays open, even
+  // scrolled far past the fold. Mirrors the carousels' existing visibility gating.
+  const isHeroVisible = useIsVisible(heroSectionRef, 0);
+  const isCtaVisible = useIsVisible(ctaSectionRef, 0);
 
   // Mobile browsers (esp. iOS Safari) only autoplay a video they consider
   // muted + inline. React's `muted` JSX attribute does NOT reliably set the
   // underlying DOM property, so force it here and kick off playback explicitly;
-  // skip when the user prefers reduced motion (CSS hides the video → webp poster).
+  // skip when the user prefers reduced motion (CSS hides the video → webp poster),
+  // and pause playback outright once the hero scrolls out of view.
   useEffect(() => {
     const video = heroVideoRef.current;
     if (!video) return undefined;
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
+    if (!isHeroVisible) {
+      video.pause();
+      return undefined;
+    }
     video.muted = true;
     video.setAttribute('muted', '');
     const attemptPlay = () => {
@@ -86,11 +98,21 @@ export default function Landing() {
     // Retry once the tab/clip is actually ready in case the first call was too early.
     video.addEventListener('loadeddata', attemptPlay, { once: true });
     return () => video.removeEventListener('loadeddata', attemptPlay);
-  }, []);
+  }, [isHeroVisible]);
 
   return (
     <main className="landing-page">
-      <section id="hero" className="landing-hero">
+      <section
+        id="hero"
+        className={`landing-hero${isHeroVisible ? '' : ' is-offscreen'}`}
+        ref={(node) => {
+          heroSectionRef.current = node;
+          // The hero title carousel has no section of its own — it shares this one,
+          // so its visibility gate (useLandingCarousel's useIsVisible) needs the
+          // same DOM node or it never fires and the headline rotates forever.
+          heroTitleCarousel.sectionRef.current = node;
+        }}
+      >
         <video
           ref={heroVideoRef}
           className="hero-bg-video"
@@ -275,7 +297,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="cta" className="landing-cta">
+      <section id="cta" className={`landing-cta${isCtaVisible ? '' : ' is-offscreen'}`} ref={ctaSectionRef}>
         <CodeTexture id="landingCta" />
         <div className="section-inner">
           <p className="brand-pill">{t('landing.ctaPill')}</p>
@@ -730,26 +752,32 @@ function ReportStrategyCarousel({ contentStrategies, publicPath }) {
   );
 }
 
-function useLandingCarousel(slideCount, intervalMs = 6500) {
-  const [activeSlide, setActiveSlide] = useState(0);
-  const [isPaused, setIsPaused] = useState(false);
-  // Off-screen sections shouldn't keep auto-advancing: a user scrolling past
-  // loses slides they never saw, and the section can land on a later slide
-  // the instant it re-enters view. Gate autoplay on real viewport visibility.
+// Shared viewport-visibility gate: off-screen sections shouldn't keep
+// auto-advancing carousels, decoding video, or animating — a user scrolling
+// past loses motion they never saw, and it burns CPU/GPU/battery for nothing.
+function useIsVisible(ref, threshold = 0.3) {
   const [isVisible, setIsVisible] = useState(true);
-  const sectionRef = useRef(null);
 
   useEffect(() => {
-    const node = sectionRef.current;
+    const node = ref.current;
     if (!node || typeof IntersectionObserver === 'undefined') return undefined;
 
     const observer = new IntersectionObserver(
       ([entry]) => setIsVisible(entry.isIntersecting),
-      { threshold: 0.3 },
+      { threshold },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [ref, threshold]);
+
+  return isVisible;
+}
+
+function useLandingCarousel(slideCount, intervalMs = 6500) {
+  const [activeSlide, setActiveSlide] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const sectionRef = useRef(null);
+  const isVisible = useIsVisible(sectionRef, 0.3);
 
   useEffect(() => {
     if (isPaused || !isVisible || slideCount < 2) return undefined;
@@ -886,11 +914,8 @@ function SampleReportPreview() {
   const [activeSection, setActiveSection] = useState('authorshipBreakdown');
   const [isAutoPaused, setIsAutoPaused] = useState(false);
   const [isHoverPaused, setIsHoverPaused] = useState(false);
-  // Same off-screen problem as the two carousels: this tab rotation used to
-  // run on a bare setTimeout with no visibility gating, so it kept cycling
-  // through tabs while scrolled out of view — see useLandingCarousel.
-  const [isVisible, setIsVisible] = useState(true);
   const sectionRef = useRef(null);
+  const isVisible = useIsVisible(sectionRef, 0.3);
   const sampleActionItems = t('landing.sampleActionItems', { returnObjects: true });
   const sampleFlaggedSentences = t('landing.sampleFlaggedSentences', { returnObjects: true });
   const sampleCriticalQuestions = t('landing.sampleCriticalQuestions', { returnObjects: true });
@@ -898,18 +923,6 @@ function SampleReportPreview() {
   const previewTabIds = useMemo(() => previewTabs.map((tab) => tab.id), [previewTabs]);
   const currentTab = previewTabs.find((tab) => tab.id === activeSection) || previewTabs[0];
   const isPreviewPaused = isAutoPaused || isHoverPaused || !isVisible;
-
-  useEffect(() => {
-    const node = sectionRef.current;
-    if (!node || typeof IntersectionObserver === 'undefined') return undefined;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => setIsVisible(entry.isIntersecting),
-      { threshold: 0.3 },
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     if (isPreviewPaused || previewTabIds.length < 2) return undefined;
