@@ -498,3 +498,90 @@ def estimate_external_grouped_score(
             "legacy_likelihood": legacy_likelihood,
         },
     }
+
+
+# ─── Deep-scan flag-mass lift (2026-07-14) ────────────────────────────────────
+# Routes the desklib deep-scan read into THIS lens (the external flag-risk
+# warning) instead of the authorship tier. Rationale: on GPT-5.6 the composite
+# and every desklib aggregation fail at ESL-safe thresholds for an AUTHORSHIP
+# verdict, but as a prediction of external-detector behavior the aggressive
+# desklib read is honest — external detectors over-flag the same essays. The
+# operating point and its measured over-warn rate live in
+# calibration/flag_mass_lens_baseline.json (numbers-only artifact); the
+# over-warn rate is DISCLOSED in the estimate note. This function never touches
+# the badge tier / ai_likelihood_score.
+
+_FLAG_MASS_BASELINE_PATH = None  # resolved lazily; module dir may move under test
+
+
+def _flag_mass_calibration() -> dict[str, Any] | None:
+    """Load the committed lens calibration; None (lens no-ops) when absent."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "calibration" / "flag_mass_lens_baseline.json"
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def apply_deep_scan_flag_mass(
+    estimate: dict[str, Any] | None,
+    tile_pct: float | None,
+    raw_tier: str | None,
+) -> dict[str, Any] | None:
+    """Lift the external estimate to at least the calibrated band when the
+    deep-scan flag mass + raw perplexity tier trigger fires. Mutates and
+    returns `estimate`. Fail-open on any malformed input: returns the input
+    unchanged (a warning lens must never break a report build).
+
+    tile_pct: share (0-100) of sentences the post-sync desklib tile flags at
+    >= 0.99 (badge.ai_signal_deberta.signal_pct).
+    raw_tier: report.raw_overall_tier (pre-override perplexity tier).
+    """
+    if not isinstance(estimate, dict):
+        return estimate
+    if isinstance(tile_pct, bool) or not isinstance(tile_pct, (int, float)):
+        return estimate
+    if not isinstance(raw_tier, str):
+        return estimate
+    cal = _flag_mass_calibration()
+    if not cal:
+        return estimate
+    trigger = cal.get("trigger") or {}
+    if raw_tier.strip().lower() != str(trigger.get("raw_tier", "")).lower():
+        return estimate
+    if float(tile_pct) < float(trigger.get("tile_pct_min", 101)):
+        return estimate
+
+    min_band = (cal.get("lift") or {}).get("min_band", "elevated")
+    floor = HIGH_BAND_MIN if min_band == "high" else ELEVATED_BAND_MIN
+    measured = cal.get("measured") or {}
+    old_score = estimate.get("score")
+    if isinstance(old_score, (int, float)) and not isinstance(old_score, bool):
+        estimate["score"] = round(max(float(old_score), floor), 3)
+    else:
+        estimate["score"] = floor
+    estimate["band"] = _band(estimate["score"])
+    estimate["deep_scan_flag_mass"] = {
+        "applied": True,
+        "tile_pct": tile_pct,
+        "raw_tier": raw_tier,
+        "esl_overwarn_pct": measured.get("esl_overwarn_pct"),
+        "pre_lift_score": old_score,
+    }
+    # allow-hardcode: presentation copy for the disclosure sentence, not a
+    # scoring/matching list; the NUMBER comes from the calibration artifact.
+    overwarn = measured.get("esl_overwarn_pct")
+    disclosure = (
+        f" A detector-class model reads {round(float(tile_pct))}% of sentences as "
+        f"high-confidence AI, so strict external detectors may flag this. This is a "
+        f"warning about detector behavior, not an authorship verdict — such detectors "
+        f"also over-flag fluent human and ESL writing"
+        + (f" (~{overwarn:g}% of human essays in our reference corpus trigger this same warning)."
+           if isinstance(overwarn, (int, float)) else ".")
+    )
+    note = estimate.get("note")
+    estimate["note"] = (str(note) + disclosure) if note else disclosure.strip()
+    return estimate

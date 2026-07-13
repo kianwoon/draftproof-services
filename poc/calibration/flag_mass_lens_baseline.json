@@ -1,0 +1,18 @@
+{
+  "_provenance": "Measured 2026-07-14 on SCoCESLE 272 human ESL essays (local-only corpus; numbers only committed) + 91 retune AI cases incl. 31 GPT-5.6 (calibration/authorship_cases). UNIT: tile_pct is the PRODUCTION badge.ai_signal_deberta.signal_pct — share of >=0.99 desklib scores among >=8-WORD scored sentences (an earlier draft measured over ALL sentences, a different unit: the casual doc reads 43% all-sentences but 33% in the production unit). Trigger sweep in production units: cutoff 33 = 20.6% ESL over-warn but sits EXACTLY on the motivating doc (overfit to n=1); cutoff 40 = 16.5% but misses d449aca9-type docs entirely (defeats the lens's purpose); cutoff 30 chosen = margin below the motivating doc. Raw perplexity tier from DetectionRunner (raw_overall_tier, pre-override). This lens lifts ONLY badge.external_detector_estimate (a warning about external-detector behavior) — it never touches the authorship tier/ai_likelihood_score, so the ESL authorship gate is unaffected by construction; the over-warn rate is DISCLOSED in the estimate note instead. To trade coverage for less warning noise, raise tile_pct_min to 40 (16.5% over-warn, loses casual-register GPT-5.6).",
+  "trigger": {
+    "raw_tier": "high",
+    "tile_pct_min": 30
+  },
+  "lift": {
+    "min_band": "elevated"
+  },
+  "measured": {
+    "esl_overwarn_pct": 22.4,
+    "ai_catch_pct": 63.7,
+    "gpt56_catch_pct": 81.0,
+    "casual_doc_d449aca9": "fires (production-unit tile 33%, raw high)",
+    "corpus": "SCoCESLE-272 + retune-AI-91",
+    "date": "2026-07-14"
+  }
+}

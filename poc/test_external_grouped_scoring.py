@@ -118,3 +118,67 @@ def test_topk_heavy_case_no_longer_becomes_sixty_from_likelihood_alone():
     assert out["score"] < 50
     assert out["band"] == "elevated"
     assert out["alternates"]["legacy_likelihood"]["score"] == 59.8
+
+
+# ─── deep-scan flag-mass lens (2026-07-14) ────────────────────────────────────
+# The external flag-risk lens gains a desklib-informed lift: when the raw
+# perplexity tier is HIGH and the (post-sync) desklib tile flags >= the
+# calibrated share of sentences, the external estimate is lifted to at least
+# the elevated band — a WARNING about external-detector behavior, never the
+# authorship tier. Operating point measured 2026-07-14 on SCoCESLE-272 +
+# retune AI-91: ESL over-warn 17.3%, AI catch 63.7%, GPT-5.6 catch 81%,
+# catches live scan d449aca9 (tile 43%, raw high, base estimate 14.3/low).
+
+def _base_estimate(score=14.3):
+    from detect.external_grouped_scoring import _band
+    return {"score": score, "band": _band(score), "model": "external_grouped_v3",
+            "confidence": "high", "note": "existing note", "groups": {}, "signals": []}
+
+
+def test_flag_mass_lifts_low_estimate_to_elevated():
+    from detect.external_grouped_scoring import apply_deep_scan_flag_mass, ELEVATED_BAND_MIN
+
+    out = apply_deep_scan_flag_mass(_base_estimate(14.3), tile_pct=43, raw_tier="high")
+    assert out["band"] == "elevated"
+    assert out["score"] >= ELEVATED_BAND_MIN
+    prov = out.get("deep_scan_flag_mass")
+    assert prov and prov["applied"] is True and prov["tile_pct"] == 43
+    assert prov["esl_overwarn_pct"] > 0  # measured, disclosed
+    assert "over-flag" in out["note"] or "over-warn" in out["note"]
+
+
+def test_flag_mass_no_trigger_below_tile_cutoff_or_without_raw_high():
+    from detect.external_grouped_scoring import apply_deep_scan_flag_mass
+
+    base = _base_estimate(14.3)
+    out = apply_deep_scan_flag_mass(dict(base), tile_pct=25, raw_tier="high")
+    assert out["score"] == base["score"] and out["band"] == base["band"]
+    assert "deep_scan_flag_mass" not in out
+    out2 = apply_deep_scan_flag_mass(dict(base), tile_pct=80, raw_tier="low")
+    assert out2["score"] == base["score"] and "deep_scan_flag_mass" not in out2
+
+
+def test_flag_mass_never_lowers_an_already_high_estimate():
+    from detect.external_grouped_scoring import apply_deep_scan_flag_mass
+
+    out = apply_deep_scan_flag_mass(_base_estimate(60.0), tile_pct=55, raw_tier="high")
+    assert out["score"] == 60.0 and out["band"] == "high"
+    assert out["deep_scan_flag_mass"]["applied"] is True  # provenance still recorded
+
+
+def test_flag_mass_fails_open_on_malformed_inputs():
+    from detect.external_grouped_scoring import apply_deep_scan_flag_mass
+
+    assert apply_deep_scan_flag_mass(None, tile_pct=50, raw_tier="high") is None
+    base = _base_estimate()
+    assert apply_deep_scan_flag_mass(dict(base), tile_pct=None, raw_tier="high") == base
+    assert apply_deep_scan_flag_mass(dict(base), tile_pct=50, raw_tier=None) == base
+
+
+def test_flag_mass_calibration_artifact_is_committed_and_sane():
+    import json
+    from pathlib import Path
+    art = json.loads((Path(__file__).parent / "calibration" / "flag_mass_lens_baseline.json").read_text())
+    assert art["trigger"]["raw_tier"] == "high"
+    assert 30 <= art["trigger"]["tile_pct_min"] <= 60
+    assert 0 < art["measured"]["esl_overwarn_pct"] < 25

@@ -3438,6 +3438,27 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "(additive, non-fatal)."
         )
 
+    # Deep-scan flag-mass lift for the external flag-risk lens (additive,
+    # annotate-not-suppress). Same post-sync seam as headline_confidence: the
+    # ai_signal_deberta tile must be the FINAL (deep-scan-synced) one. Lifts
+    # ONLY badge.external_detector_estimate — never the tier — per the
+    # calibrated operating point in calibration/flag_mass_lens_baseline.json.
+    try:
+        from detect.external_grouped_scoring import apply_deep_scan_flag_mass  # noqa: E402
+        _badge_fm = result.get("ai_risk_badge") or {}
+        _tile_fm = _badge_fm.get("ai_signal_deberta") or {}
+        if _tile_fm.get("available") is True:
+            apply_deep_scan_flag_mass(
+                _badge_fm.get("external_detector_estimate"),
+                _tile_fm.get("signal_pct"),
+                report.raw_overall_tier,
+            )
+    except Exception:
+        logger.exception(
+            "report.report: deep-scan flag-mass lens lift failed; omitting "
+            "(additive, non-fatal)."
+        )
+
     result["scan_time_seconds"] = report.scan_time_seconds
     if report.generated_at:
         result["generated_at"] = report.generated_at
