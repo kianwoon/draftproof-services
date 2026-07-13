@@ -89,7 +89,12 @@ def _weights_cfg(weights_path: Path = DEFAULT_WEIGHTS) -> tuple[float, float, fl
     w = json.loads(Path(weights_path).read_text())
     fusion = w["fusion_weights"]["deep_scan_2detector"]
     sent_thr = w["deep_scan_calibration"]["sent_threshold"]
-    return float(fusion["fakespot"]), float(fusion["deberta_large"]), float(sent_thr)
+    # The 2-detector fusion key was renamed "fakespot" -> "composite"
+    # (2026-07-06 accuracy review; weights.json's _notes explain the mislabel).
+    # Accept the legacy key so the script still runs against a pre-rename
+    # weights file handed in via --weights.
+    composite = fusion["composite"] if "composite" in fusion else fusion["fakespot"]
+    return float(composite), float(fusion["deberta_large"]), float(sent_thr)
 
 
 def _load_progress(progress_path: Path = PROGRESS) -> dict[str, dict]:

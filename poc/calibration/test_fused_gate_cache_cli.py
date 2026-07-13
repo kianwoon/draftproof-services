@@ -44,3 +44,19 @@ def test_existing_defaults_preserved():
     assert Path(args.progress) == fg.PROGRESS
     assert str(args.corpus) == str(fg.DEFAULT_CORPUS)
     assert Path(args.weights) == (fg._POC / "detect_v7" / "weights.json")
+
+
+def test_weights_cfg_reads_committed_weights_json():
+    """_weights_cfg must parse the REAL committed weights.json: the
+    deep_scan_2detector fusion key was renamed 'fakespot' -> 'composite'
+    (2026-07-06 accuracy review), but this script kept reading 'fakespot'
+    and every paid fused-gate run KeyError'd (observed 2026-07-13 as
+    calibration=error:fused). Reading the committed file, not a fixture,
+    is the point — it catches the next key rename too."""
+    from calibration.v7_fused_gate_run import _weights_cfg
+
+    composite_w, deberta_w, sent_thr = _weights_cfg()
+    assert 0.0 < composite_w < 1.0
+    assert 0.0 < deberta_w < 1.0
+    assert abs((composite_w + deberta_w) - 1.0) < 1e-9
+    assert 0.9 <= sent_thr <= 1.0
