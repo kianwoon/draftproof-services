@@ -43,6 +43,12 @@ def run_cycle(ai_dir: Path, scocesle_dir: Path | None, manifest_path: Path, log_
 
     calibration = "skipped"
     if paid:
+        # The paid subprocesses (academic calibrate / fused gate) need the
+        # Modal creds from the repo-root .env. load_env() previously ran only
+        # under --generate, so a plain `--paid` run spawned them with no
+        # DRAFTPROOF_MODAL_ENDPOINT_URL/_TOKEN and died (2026-07-13).
+        # setdefault semantics: never overrides an already-set environment.
+        load_env()
         base_staging = staging_dir or DEFAULT_STAGING
         safe_now_iso = now_iso.replace(":", "-").replace("+", "-").replace(".", "-")
         run_staging = Path(base_staging) / f"run-{safe_now_iso}"

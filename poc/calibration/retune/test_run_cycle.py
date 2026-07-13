@@ -165,3 +165,27 @@ def test_run_cycle_paid_explicit_cache_path_overrides_default(tmp_path):
                         cache_path=custom_cache)
 
     assert Path(captured["cache_path"]) == custom_cache
+
+
+def test_run_cycle_paid_loads_env_without_generate(tmp_path, monkeypatch):
+    """--paid without --generate must still load .env: the paid subprocesses
+    (academic calibrate / fused gate) need DRAFTPROOF_MODAL_ENDPOINT_URL/_TOKEN,
+    which live in the repo-root .env. Before this fix load_env() only ran under
+    --generate, so every plain `--paid` run died with 'MODAL_ENDPOINT not set'
+    (observed 2026-07-13; the golden path's --generate had masked it)."""
+    ai = _seed_ai(tmp_path)
+    manifest = tmp_path / "manifest.json"
+    log = tmp_path / "RETUNE_LOG.md"
+    fake_gate = lambda **kw: GateResult(passed=True, exit_code=0, corpus_available=True, stdout="AUC 0.75")
+    calls = []
+    monkeypatch.setattr(run_cycle, "load_env", lambda: calls.append("load_env"))
+
+    def fake_calibrate(staging_dir, corpus, weights_path, limit,
+                       runner=None, cache_path=None):
+        return CalibrationResult(ran=True, fused_verdict="candidate-pass",
+                                 staging_dir=str(staging_dir), steps=["academic", "fused"])
+
+    run_cycle.run_cycle(ai, None, manifest, log, now_iso="2026-07-06T00:00:00Z",
+                        generate=False, gate_fn=fake_gate, paid=True,
+                        staging_dir=tmp_path / "staging", calibrate_fn=fake_calibrate)
+    assert calls == ["load_env"]
