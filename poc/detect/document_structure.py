@@ -197,45 +197,111 @@ def _virtual_paragraph_groups(rows: list[dict[str, Any]]) -> list[list[dict[str,
 
 def _semantic_blocks(text: str) -> list[str]:
     raw_blocks = _physical_blocks(text)
-    blocks: list[str] = []
-    pending: list[str] = []
-    pending_words = 0
     max_words = _int_env("DRAFTPROOF_STRUCTURE_MAX_PARAGRAPH_WORDS", 170, minimum=60, maximum=320)
     min_words = _int_env("DRAFTPROOF_STRUCTURE_MIN_PARAGRAPH_WORDS", 70, minimum=20, maximum=max_words)
     max_sentences = _int_env("DRAFTPROOF_STRUCTURE_MAX_PARAGRAPH_SENTENCES", 8, minimum=3, maximum=16)
+    # Minimum run length (in consecutive short items) before a stretch of one/two-sentence
+    # lines is treated as intentional short-form writing (LinkedIn posts, ad copy, scripts)
+    # and merged into full paragraphs. Below this, two adjacent short lines fall back to the
+    # original continuation/anchor logic so genuinely independent short paragraphs stay apart.
+    run_floor = _int_env("DRAFTPROOF_STRUCTURE_SHORT_RUN_FLOOR", 3, minimum=2, maximum=10)
+
+    items = _flatten_semantic_items(text, raw_blocks)
+
+    blocks: list[str] = []
+    pending: list[str] = []
+    pending_words = 0
 
     def flush_pending() -> None:
         nonlocal pending, pending_words
         if not pending:
             return
-        text = " ".join(part.strip() for part in pending if part.strip()).strip()
+        merged = " ".join(part.strip() for part in pending if part.strip()).strip()
         orphan_words = pending_words
         pending = []
         pending_words = 0
-        if not text:
+        if not merged:
             return
         # A short orphan -- e.g. a lone sentence sitting between two paragraphs -- attaches to the
         # preceding real paragraph instead of standing alone, so the scanner and rewrite see a full
         # paragraph rather than a one-sentence fragment. Caps still apply (see _can_absorb_orphan).
-        if blocks and _can_absorb_orphan(blocks[-1], text, orphan_words, min_words, max_words, max_sentences):
-            blocks[-1] = (blocks[-1] + " " + text).strip()
+        if blocks and _can_absorb_orphan(blocks[-1], merged, orphan_words, min_words, max_words, max_sentences):
+            blocks[-1] = (blocks[-1] + " " + merged).strip()
         else:
-            blocks.append(text)
+            blocks.append(merged)
 
+    def is_orphan(item: dict[str, Any]) -> bool:
+        return item["kind"] == "text" and item["words"] < min_words and item["sentences"] <= 2
+
+    index = 0
+    while index < len(items):
+        item = items[index]
+        if item["kind"] == "heading":
+            flush_pending()
+            blocks.append(item["text"])
+            index += 1
+            continue
+
+        run_end = index
+        while run_end < len(items) and is_orphan(items[run_end]):
+            run_end += 1
+        run_length = run_end - index
+
+        if run_length >= run_floor:
+            # A genuine run of short lines anchors itself -- no preceding "substantial"
+            # paragraph is needed. Re-run the shared capping logic over the run's raw
+            # sentence rows (not a hand count of items) so the packed output obeys the
+            # same max_words/max_sentences caps the ID path (_virtual_paragraph_groups)
+            # reproduces on re-scan -- keeping normalize and structured_* in lockstep.
+            flush_pending()
+            run_rows = [row for run_item in items[index:run_end] for row in run_item["rows"]]
+            for packed_group in _semantic_sentence_groups(run_rows):
+                packed_text = " ".join(
+                    str(row.get("sentence") or "").strip()
+                    for row in packed_group
+                    if str(row.get("sentence") or "").strip()
+                ).strip()
+                if packed_text:
+                    blocks.append(packed_text)
+            index = run_end
+            continue
+
+        paragraph_text = item["text"]
+        group_words = item["words"]
+        group_sentences = item["sentences"]
+        if (
+            pending
+            and pending_words + group_words <= max_words
+            and len(_split_pending_sentences(pending)) + group_sentences <= max_sentences
+            and _looks_like_continuation(paragraph_text)
+        ):
+            pending.append(paragraph_text)
+            pending_words += group_words
+        else:
+            flush_pending()
+            if group_words < min_words and group_sentences <= 2:
+                pending.append(paragraph_text)
+                pending_words = group_words
+            else:
+                blocks.append(paragraph_text)
+        index += 1
+    flush_pending()
+    return blocks
+
+
+def _flatten_semantic_items(source: str, raw_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
     for block in raw_blocks:
         block_text = str(block.get("text") or "").strip()
         if not block_text:
             continue
         if _looks_like_heading(block_text):
-            flush_pending()
-            blocks.append(block_text)
+            items.append({"kind": "heading", "text": block_text})
             continue
-
-        sentence_rows = _sentence_rows_for_block(text, block)
+        sentence_rows = _sentence_rows_for_block(source, block)
         if not sentence_rows:
             continue
-        groups = _semantic_sentence_groups(sentence_rows)
-        for group in groups:
+        for group in _semantic_sentence_groups(sentence_rows):
             paragraph_text = " ".join(
                 str(row.get("sentence") or "").strip()
                 for row in group
@@ -243,25 +309,14 @@ def _semantic_blocks(text: str) -> list[str]:
             ).strip()
             if not paragraph_text:
                 continue
-            group_words = sum(int(row.get("word_count") or 0) for row in group)
-            group_sentences = len(group)
-            if (
-                pending
-                and pending_words + group_words <= max_words
-                and len(_split_pending_sentences(pending)) + group_sentences <= max_sentences
-                and _looks_like_continuation(paragraph_text)
-            ):
-                pending.append(paragraph_text)
-                pending_words += group_words
-                continue
-            flush_pending()
-            if group_words < min_words and group_sentences <= 2:
-                pending.append(paragraph_text)
-                pending_words = group_words
-            else:
-                blocks.append(paragraph_text)
-    flush_pending()
-    return blocks
+            items.append({
+                "kind": "text",
+                "text": paragraph_text,
+                "words": sum(int(row.get("word_count") or 0) for row in group),
+                "sentences": len(group),
+                "rows": group,
+            })
+    return items
 
 
 def _semantic_sentence_groups(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
