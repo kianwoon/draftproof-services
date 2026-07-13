@@ -46,7 +46,9 @@ def test_run_cycle_paid_calls_calibrate_and_logs_verdict(tmp_path):
     fake_result = CalibrationResult(ran=True, fused_verdict="candidate-pass",
                                      staging_dir=str(tmp_path / "staging"), steps=["academic", "fused"])
     captured = {}
-    def fake_calibrate(staging_dir, corpus, weights_path, limit, cache_path):
+    def fake_calibrate(staging_dir, corpus, weights_path, limit,
+                       runner=None, cache_path=None):  # REAL run_calibration signature
+        assert runner is None or callable(runner), f"runner got non-callable {runner!r}"
         captured["args"] = (staging_dir, corpus, weights_path, limit, cache_path)
         return fake_result
 
@@ -68,7 +70,9 @@ def test_run_cycle_paid_uses_per_run_staging_subdir(tmp_path):
     log = tmp_path / "RETUNE_LOG.md"
     fake_gate = lambda **kw: GateResult(passed=True, exit_code=0, corpus_available=True, stdout="AUC 0.75")
     received = []
-    def fake_calibrate(staging_dir, corpus, weights_path, limit, cache_path):
+    def fake_calibrate(staging_dir, corpus, weights_path, limit,
+                       runner=None, cache_path=None):  # REAL run_calibration signature
+        assert runner is None or callable(runner), f"runner got non-callable {runner!r}"
         received.append(staging_dir)
         return CalibrationResult(ran=True, fused_verdict="candidate-pass",
                                   staging_dir=str(staging_dir), steps=["academic", "fused"])
@@ -87,7 +91,9 @@ def test_run_cycle_paid_different_timestamps_get_different_staging_dirs(tmp_path
     ai = _seed_ai(tmp_path)
     fake_gate = lambda **kw: GateResult(passed=True, exit_code=0, corpus_available=True, stdout="AUC 0.75")
     received = []
-    def fake_calibrate(staging_dir, corpus, weights_path, limit, cache_path):
+    def fake_calibrate(staging_dir, corpus, weights_path, limit,
+                       runner=None, cache_path=None):  # REAL run_calibration signature
+        assert runner is None or callable(runner), f"runner got non-callable {runner!r}"
         received.append(Path(staging_dir))
         return CalibrationResult(ran=True, fused_verdict="candidate-pass",
                                   staging_dir=str(staging_dir), steps=["academic", "fused"])
@@ -123,7 +129,9 @@ def test_run_cycle_paid_defaults_cache_path_to_persistent_default(tmp_path):
     log = tmp_path / "RETUNE_LOG.md"
     fake_gate = lambda **kw: GateResult(passed=True, exit_code=0, corpus_available=True, stdout="AUC 0.75")
     captured = {}
-    def fake_calibrate(staging_dir, corpus, weights_path, limit, cache_path):
+    def fake_calibrate(staging_dir, corpus, weights_path, limit,
+                       runner=None, cache_path=None):  # REAL run_calibration signature
+        assert runner is None or callable(runner), f"runner got non-callable {runner!r}"
         captured["cache_path"] = cache_path
         captured["staging_dir"] = staging_dir
         return CalibrationResult(ran=True, fused_verdict="candidate-pass",
@@ -144,7 +152,9 @@ def test_run_cycle_paid_explicit_cache_path_overrides_default(tmp_path):
     fake_gate = lambda **kw: GateResult(passed=True, exit_code=0, corpus_available=True, stdout="AUC 0.75")
     custom_cache = tmp_path / "custom_cache" / "deepscan_scores.jsonl"
     captured = {}
-    def fake_calibrate(staging_dir, corpus, weights_path, limit, cache_path):
+    def fake_calibrate(staging_dir, corpus, weights_path, limit,
+                       runner=None, cache_path=None):  # REAL run_calibration signature
+        assert runner is None or callable(runner), f"runner got non-callable {runner!r}"
         captured["cache_path"] = cache_path
         return CalibrationResult(ran=True, fused_verdict="candidate-pass",
                                   staging_dir=str(staging_dir), steps=["academic", "fused"])

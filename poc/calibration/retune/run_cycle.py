@@ -48,7 +48,13 @@ def run_cycle(ai_dir: Path, scocesle_dir: Path | None, manifest_path: Path, log_
         run_staging = Path(base_staging) / f"run-{safe_now_iso}"
         run_staging.mkdir(parents=True, exist_ok=True)
         effective_cache = cache_path if cache_path is not None else deepscan_cache.DEFAULT_CACHE
-        cal_result = calibrate_fn(run_staging, scocesle_dir, weights_path, limit, effective_cache)
+        # cache_path MUST be a keyword: run_calibration's 5th positional is the
+        # injectable `runner` (a Path there = "'PosixPath' object is not callable",
+        # the 2026-07-13 paid-run crash; the old test fakes had drifted from the
+        # real signature and hid it).
+        cal_result = calibrate_fn(
+            run_staging, scocesle_dir, weights_path, limit, cache_path=effective_cache
+        )
         calibration = cal_result.fused_verdict
 
     append_log(log_path, {"version": now_iso, "n_rows": n_rows, "families": _families(rows),
