@@ -378,7 +378,12 @@
   color: #fff;
 }
 
-.landing-hero .detector-update-note {
+/* Chained selector (0,3,0) deliberately beats .landing-hero .trust-note (0,2,0)
+   regardless of source order — a same-specificity override here previously lost
+   the cascade tie to the later .trust-note rule below. Note: this only matches
+   while the JSX keeps BOTH classes on the element; dropping .trust-note there
+   would silently stop this override from applying. */
+.landing-hero .trust-note.detector-update-note {
   color: rgba(255, 255, 255, .78);
   margin-top: 8px;
 }
