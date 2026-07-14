@@ -91,13 +91,25 @@ export default function Landing() {
     video.muted = true;
     video.setAttribute('muted', '');
     const attemptPlay = () => {
+      // Don't spend decode cycles on a backgrounded tab. IntersectionObserver
+      // reports the hero as "visible" even when the tab is hidden, so gate on
+      // document visibility explicitly.
+      if (document.hidden) return;
       const played = video.play();
       if (played?.catch) played.catch(() => {});
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) video.pause();
+      else attemptPlay();
     };
     attemptPlay();
     // Retry once the tab/clip is actually ready in case the first call was too early.
     video.addEventListener('loadeddata', attemptPlay, { once: true });
-    return () => video.removeEventListener('loadeddata', attemptPlay);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      video.removeEventListener('loadeddata', attemptPlay);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [isHeroVisible]);
 
   return (

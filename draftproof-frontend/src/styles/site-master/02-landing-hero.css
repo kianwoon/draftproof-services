@@ -151,6 +151,27 @@
   height: 100%;
   pointer-events: none;
   opacity: .86;
+  overflow: hidden;
+  /* Horizontal edge-fade — replaces the old inline SVG <mask> so the drift can
+     animate on the compositor instead of forcing a per-frame SVG relayout. */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, .95) 12%, rgba(0, 0, 0, .74) 82%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, .95) 12%, rgba(0, 0, 0, .74) 82%, transparent 100%);
+}
+
+/* Two identical SVG copies side by side; translating one copy width (-50%)
+   loops seamlessly. Transform lives on this <div>, so the drift is fully
+   compositor-accelerated (no main-thread style/layout per frame). */
+.code-texture-track {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  width: 200%;
+}
+
+.code-texture-svg {
+  flex: none;
+  width: 50%;
+  height: 100%;
 }
 
 .hero-code-field {
@@ -242,17 +263,15 @@
   will-change: auto;
 }
 
-/* Translate distance = one text period in SVG units expressed as vw.
-   SVG viewBox is 1440 wide with preserveAspectRatio="none", so
-   1440 SVG units = 100vw at any viewport. Row-a avg period ≈ 1065 SVG units
-   (65 chars × ~15.4px/char + 64px gap) = 74vw. Row-b avg ≈ 980 = 68vw. */
+/* Each track holds two identical copies, so one copy width = -50% of the track.
+   Translating by exactly that loops seamlessly. Compositor-only (no vw relayout). */
 @keyframes codeDriftLeft {
   from { transform: translateX(0); }
-  to   { transform: translateX(-74vw); }
+  to   { transform: translateX(-50%); }
 }
 
 @keyframes codeDriftRight {
-  from { transform: translateX(-68vw); }
+  from { transform: translateX(-50%); }
   to   { transform: translateX(0); }
 }
 
@@ -419,15 +438,33 @@
   color: var(--green);
 }
 
+.landing-hero .detector-update-note .hero-free-credit-spark {
+  position: relative;
+}
+
+/* Breathing ring on a composited ::after (transform + opacity) instead of an
+   animated box-shadow — box-shadow is a paint property, so animating it forced a
+   main-thread style recalc every frame. Reduced-motion users keep the static
+   base-ring box-shadow (line ~366) untouched. */
 @media (prefers-reduced-motion: no-preference) {
   .landing-hero .detector-update-note .hero-free-credit-spark {
+    box-shadow: none;
+  }
+
+  .landing-hero .detector-update-note .hero-free-credit-spark::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    box-shadow: 0 0 0 4px rgba(46, 204, 113, .18);
     animation: detector-note-pulse 2.4s ease-in-out infinite;
+    will-change: transform, opacity;
   }
 }
 
 @keyframes detector-note-pulse {
-  0%, 100% { box-shadow: 0 0 0 4px rgba(46, 204, 113, .18); }
-  50% { box-shadow: 0 0 0 7px rgba(46, 204, 113, .05); }
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.45); opacity: .3; }
 }
 
 .landing-hero .btn-ghost,
@@ -573,6 +610,7 @@
 
 .review-panel .live-dot::before {
   animation: reviewLivePulse 1.8s ease-in-out infinite;
+  will-change: opacity;
 }
 
 .hero-review-visual {
@@ -787,15 +825,11 @@
   }
 }
 
+/* Opacity-only (compositor-accelerated). The former expanding box-shadow ring
+   was a paint-property animation that forced a main-thread recalc every frame. */
 @keyframes reviewLivePulse {
-  0%, 100% {
-    opacity: .55;
-    box-shadow: 0 0 0 0 rgba(58, 168, 118, .28);
-  }
-  50% {
-    opacity: 1;
-    box-shadow: 0 0 0 5px rgba(58, 168, 118, 0);
-  }
+  0%, 100% { opacity: .5; }
+  50% { opacity: 1; }
 }
 
 .trust-bar {
