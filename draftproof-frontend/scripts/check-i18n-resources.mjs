@@ -34,7 +34,7 @@ const checks = [
   {
     label: 'English detector update note',
     value: resources.en.translation.landing.detectorUpdateNote,
-    matches: /^Detector freshly fine-tuned on frontier AI writing/,
+    matches: /^Detector freshly fine-tuned on frontier AI/,
   },
   {
     label: 'Chinese detector update note',

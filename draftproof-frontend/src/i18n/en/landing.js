@@ -28,10 +28,12 @@ export const landing = {
   "trustNote": "Not a Turnitin replacement · Not a misconduct verdict · Prepare before submission, with evidence of responsible AI use.",
   // allow-hardcode: static landing-page marketing copy announcing the fine-tune v1
   // detector (2026-07-14, poc/detect_v7/weights.json re-weight commits
-  // 647fac65/ea5847bf — ESL FPR 0.74%/272, NOT 0%). Not a scoring oracle. If the
+  // 647fac65/ea5847bf — ESL FPR 0.74%/272, NOT 0%). Not a scoring oracle. Named
+  // generators (GPT-5.x/Gemini/Qwen) are owner-confirmed: AI sample data generated
+  // via OpenRouter, see poc/calibration/retune/models.json generators list. If the
   // live ESL FPR or operating point changes again, re-verify against weights.json
   // before editing this string. TODO: revisit/remove this framing after 2026-08-15.
-  "detectorUpdateNote": "Detector freshly fine-tuned on frontier AI writing and thousands of real essays — ESL false positives held under 1%, even as detection accuracy rose.",
+  "detectorUpdateNote": "Detector freshly fine-tuned on frontier AI (GPT5.x/Gemini/Qwen...etc) writing and thousands of real essays — ESL false positives held under 1%, even as detection accuracy rose.",
   // allow-hardcode: visible "when updated" label for the announcement above. Bump the
   // month when the detector is re-tuned; keep in sync with detectorUpdateNote's TODO.
   "detectorUpdateDate": "Updated July 2026",
