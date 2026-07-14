@@ -182,14 +182,14 @@ export default function Landing() {
               {t('landing.heroFreeCreditsPost')}
             </p>
 
-            <div className="trust-note">
-              <span className="mini-shield" aria-hidden="true" />
-              <span>{t('landing.trustNote')}</span>
-            </div>
-
             <div className="trust-note detector-update-note">
               <span className="hero-free-credit-spark" aria-hidden="true" />
               <span>{t('landing.detectorUpdateNote')}</span>
+            </div>
+
+            <div className="trust-note">
+              <span className="mini-shield" aria-hidden="true" />
+              <span>{t('landing.trustNote')}</span>
             </div>
           </div>
 

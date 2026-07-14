@@ -378,14 +378,42 @@
   color: #fff;
 }
 
-/* Chained selector (0,3,0) deliberately beats .landing-hero .trust-note (0,2,0)
-   regardless of source order — a same-specificity override here previously lost
-   the cascade tie to the later .trust-note rule below. Note: this only matches
-   while the JSX keeps BOTH classes on the element; dropping .trust-note there
-   would silently stop this override from applying. */
+/* Prominent announcement callout. Chained selector (0,3,0) deliberately beats
+   .landing-hero .trust-note (0,2,0) regardless of source order — a same-specificity
+   override here previously lost the cascade tie to the later .trust-note rule below.
+   Note: this only matches while the JSX keeps BOTH classes on the element; dropping
+   .trust-note there would silently stop this override from applying. */
 .landing-hero .trust-note.detector-update-note {
-  color: rgba(255, 255, 255, .78);
-  margin-top: 8px;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: .55rem;
+  margin: 4px 0 12px;
+  padding: 11px 16px;
+  max-width: 100%;
+  border-radius: 12px;
+  background: rgba(46, 204, 113, .13);
+  border: 1px solid rgba(46, 204, 113, .40);
+  color: rgba(255, 255, 255, .95);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.landing-hero .detector-update-note .hero-free-credit-spark {
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .landing-hero .detector-update-note .hero-free-credit-spark {
+    animation: detector-note-pulse 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes detector-note-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(46, 204, 113, .18); }
+  50% { box-shadow: 0 0 0 7px rgba(46, 204, 113, .05); }
 }
 
 .landing-hero .btn-ghost,
