@@ -237,15 +237,36 @@ def get_deep_scan_proportion(detection_result: Any) -> Optional[dict[str, Any]]:
             "produced no sentences; skipping deep-scan proportion."
         )
         return None
-    modal_response = modal_client.call_deep_scan(sentences)
-    chunk_scores = modal_response.get("chunk_scores") if isinstance(modal_response, dict) else None
-    if not (
+    # Score 3-sentence WINDOWS and aggregate back to per-sentence means — the
+    # SAME unit the heatmap path (deep_scan_heatmap) and every calibration
+    # eval use. Sending raw sentences scored isolated short fragments near 0
+    # on the window-trained checkpoint and cratered the calibrated MEAN below
+    # its lo anchor (2026-07-14 prod incident, scan cf893c09: fused 0.0 while
+    # the tile read 73% red). The proportion representation was merely noisy
+    # under raw sentences; the mean representation is WRONG under them — the
+    # anchors are fit in windowed units.
+    from detect.deberta_windowing import aggregate as _aggregate, build_windows as _build_windows
+
+    windows = _build_windows(sentences, size=3, step=1)
+    modal_response = modal_client.call_deep_scan(windows)
+    window_scores = modal_response.get("chunk_scores") if isinstance(modal_response, dict) else None
+    if (
         isinstance(modal_response, dict)
         and modal_response.get("available") is True
-        and isinstance(chunk_scores, list)
-        and len(chunk_scores) == len(sentences)
-        and all(isinstance(s, (int, float)) and not isinstance(s, bool) for s in chunk_scores)
+        and isinstance(window_scores, list)
+        and len(window_scores) == len(windows)
+        and all(isinstance(s, (int, float)) and not isinstance(s, bool) for s in window_scores)
     ):
+        _agg = _aggregate(sentences, windows, window_scores, size=3, step=1)
+        # Keep sentence<->score alignment (aggregate may return None for
+        # uncovered sentences): filter PAIRS so _per_paragraph_proportions'
+        # equal-length contract and its normalized-text cursor mapping hold.
+        _pairs = [(s, sc) for s, sc in zip(sentences, _agg["sentence_scores"]) if sc is not None]
+        sentences = [s for s, _ in _pairs]
+        chunk_scores = [float(sc) for _, sc in _pairs]
+    else:
+        chunk_scores = None
+    if not (isinstance(chunk_scores, list) and chunk_scores):
         logger.info(
             "detect_v7.pipeline_bridge: Modal deep scan unavailable/failed/malformed; "
             "skipping deep-scan proportion."
