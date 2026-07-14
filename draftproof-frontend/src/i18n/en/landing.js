@@ -32,6 +32,9 @@ export const landing = {
   // live ESL FPR or operating point changes again, re-verify against weights.json
   // before editing this string. TODO: revisit/remove this framing after 2026-08-15.
   "detectorUpdateNote": "Detector freshly fine-tuned on frontier AI writing and thousands of real essays — ESL false positives held under 1%, even as detection accuracy rose.",
+  // allow-hardcode: visible "when updated" label for the announcement above. Bump the
+  // month when the detector is re-tuned; keep in sync with detectorUpdateNote's TODO.
+  "detectorUpdateDate": "Updated July 2026",
   // allow-hardcode: i18n display copy for the landing use-case carousel — UI text rendered to users,
   // never compared against document content or used as a scoring/matching oracle (same category as heroReviewSteps/anchorCards).
   "useCasesLabel": "How DraftProof helps in your situation",

@@ -27,6 +27,8 @@ export const landing = {
   "trustNote": "不是 Turnitin 的替代品 · 不是学术不端判定 · 在提交前做好准备，并留存负责任使用 AI 的证据。",
   // allow-hardcode: 见 en/landing.js 同名条目注释 — 静态营销文案，非评分依据。
   "detectorUpdateNote": "检测器刚完成微调，训练数据涵盖前沿 AI 生成文本与数千篇真实文章 —— 检测准确率提升的同时，英语非母语写作者的误判率控制在 1% 以下。",
+  // allow-hardcode: 见 en/landing.js 同名条目注释 — 公告的“更新时间”标签，重新微调时同步更新月份。
+  "detectorUpdateDate": "2026 年 7 月更新",
   // allow-hardcode: i18n 展示文案，用于落地页用例轮播——仅作为界面文本呈现给用户，
   // 绝不与文档内容比对、也不作为评分/匹配判定（与上方 heroReviewSteps/anchorCards 同类）。
   "useCasesLabel": "DraftProof 如何针对你的情况提供帮助",

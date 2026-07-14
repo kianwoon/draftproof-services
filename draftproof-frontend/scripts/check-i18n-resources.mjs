@@ -41,6 +41,16 @@ const checks = [
     value: resources.zh.translation.landing.detectorUpdateNote,
     matches: /^检测器刚完成微调/,
   },
+  {
+    label: 'English detector update date',
+    value: resources.en.translation.landing.detectorUpdateDate,
+    matches: /^Updated \w+ 20\d\d$/,
+  },
+  {
+    label: 'Chinese detector update date',
+    value: resources.zh.translation.landing.detectorUpdateDate,
+    matches: /20\d\d\s*年/,
+  },
 ];
 
 for (const check of checks) {

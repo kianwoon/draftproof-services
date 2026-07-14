@@ -184,7 +184,10 @@ export default function Landing() {
 
             <div className="trust-note detector-update-note">
               <span className="hero-free-credit-spark" aria-hidden="true" />
-              <span>{t('landing.detectorUpdateNote')}</span>
+              <span className="detector-update-body">
+                <span className="detector-update-date">{t('landing.detectorUpdateDate')}</span>
+                <span>{t('landing.detectorUpdateNote')}</span>
+              </span>
             </div>
 
             <div className="trust-note">
