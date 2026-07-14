@@ -378,6 +378,11 @@
   color: #fff;
 }
 
+.landing-hero .detector-update-note {
+  color: rgba(255, 255, 255, .78);
+  margin-top: 8px;
+}
+
 .landing-hero .btn-ghost,
 .landing-cta .btn-ghost {
   min-width: 204px;
