@@ -31,6 +31,16 @@ const checks = [
     value: resources.zh.translation.legal.security.title,
     matches: /^我们如何保护你的作品$/,
   },
+  {
+    label: 'English detector update note',
+    value: resources.en.translation.landing.detectorUpdateNote,
+    matches: /^Detector freshly fine-tuned on frontier AI writing/,
+  },
+  {
+    label: 'Chinese detector update note',
+    value: resources.zh.translation.landing.detectorUpdateNote,
+    matches: /^检测器刚完成微调/,
+  },
 ];
 
 for (const check of checks) {
