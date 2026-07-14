@@ -61,6 +61,21 @@ BATCH_SIZE = 25
 MIN_SENTENCE_WORDS = 4  # skip near-empty fragments (headers, stray newlines)
 
 
+DEFAULT_CHECKPOINT = "desklib/ai-text-detector-academic-v1.01"
+
+
+def _checkpoint_label() -> str:
+    """Provenance label for the checkpoint actually scored via Modal.
+
+    Derives from DRAFTPROOF_MODAL_CHECKPOINT when set (the endpoint may be running a
+    fine-tuned/staging checkpoint, not the original desklib model), falling back to the
+    original literal only when the env var is unset -- so calibration artifacts never
+    misreport what was actually scored.
+    """
+    checkpoint = os.environ.get("DRAFTPROOF_MODAL_CHECKPOINT") or DEFAULT_CHECKPOINT
+    return f"{checkpoint} (via Modal, uncalibrated)"
+
+
 def _endpoint_config() -> tuple[str, str]:
     url = os.environ.get("DRAFTPROOF_MODAL_ENDPOINT_URL")
     token = os.environ.get("DRAFTPROOF_MODAL_ENDPOINT_TOKEN")
@@ -227,7 +242,7 @@ def measure(corpus: str, limit_per_group: int | None) -> dict:
 
     elapsed = time.time() - t0
     return {
-        "checkpoint": "desklib/ai-text-detector-academic-v1.01 (via Modal, uncalibrated)",
+        "checkpoint": _checkpoint_label(),
         "methodology": "sentence-level threshold-proportion (mirrors deberta_signal.py SENT_THRESHOLD design)",
         "n": {
             "higher_essays": len(essay_results["higher"]), "lower_essays": len(essay_results["lower"]),
