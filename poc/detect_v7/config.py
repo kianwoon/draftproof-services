@@ -167,7 +167,32 @@ def get_esl_guard_config() -> dict[str, Any]:
 
 
 def get_deep_scan_calibration() -> dict[str, Any]:
-    return dict(_weights()["deep_scan_calibration"])
+    """Doc-level deep-scan calibration. ``representation`` selects the
+    doc-level fusion signal: "proportion" (legacy, default when the key is
+    absent for backward compat) = fraction of sentences >= sent_threshold;
+    "calibrated_mean" (owner-approved 2026-07-14, see weights.json
+    deep_scan_calibration._representation_notes) = clip((mean(sentence
+    scores)-lo)/(hi-lo), 0, 1). calibrated_mean requires 0 < lo < hi <= 1 —
+    a config error here is loud (ValueError), never silently ignored.
+    """
+    calibration = dict(_weights()["deep_scan_calibration"])
+    representation = calibration.get("representation", "proportion")
+    if representation not in ("calibrated_mean", "proportion"):
+        raise ValueError(
+            f"weights.json deep_scan_calibration.representation must be "
+            f"'calibrated_mean' or 'proportion', got {representation!r}."
+        )
+    if representation == "calibrated_mean":
+        lo = calibration.get("mean_anchor_lo")
+        hi = calibration.get("mean_anchor_hi")
+        if not (isinstance(lo, (int, float)) and isinstance(hi, (int, float))
+                and 0 < lo < hi <= 1):
+            raise ValueError(
+                f"weights.json deep_scan_calibration representation="
+                f"'calibrated_mean' requires 0 < mean_anchor_lo < "
+                f"mean_anchor_hi <= 1, got lo={lo!r} hi={hi!r}."
+            )
+    return calibration
 
 
 def get_deep_scan_display_bands() -> dict[str, float]:

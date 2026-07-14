@@ -255,8 +255,21 @@ def get_deep_scan_proportion(detection_result: Any) -> Optional[dict[str, Any]]:
     calibration = config.get_deep_scan_calibration()
     sent_threshold = calibration["sent_threshold"]
     doc_floor = calibration["doc_floor"]
-    flagged = sum(1 for s in chunk_scores if s >= sent_threshold)
-    proportion = flagged / len(chunk_scores)
+    representation = calibration.get("representation", "proportion")
+    if representation == "calibrated_mean":
+        # Doc-level fusion signal = calibrated mean of the per-sentence
+        # scores, NOT the sent_threshold proportion (owner-approved
+        # 2026-07-14 for the fine-tune-v1 checkpoint; see weights.json
+        # deep_scan_calibration._representation_notes for the evidence).
+        # Per-paragraph display rows below are UNCHANGED — they still use
+        # the sent_threshold/proportion math via _per_paragraph_proportions.
+        lo = calibration["mean_anchor_lo"]
+        hi = calibration["mean_anchor_hi"]
+        mean_score = sum(chunk_scores) / len(chunk_scores)
+        proportion = (mean_score - lo) / (hi - lo)
+    else:
+        flagged = sum(1 for s in chunk_scores if s >= sent_threshold)
+        proportion = flagged / len(chunk_scores)
     deberta_score = max(0.0, min(1.0, float(proportion)))
     payload = {
         "proportion": deberta_score,

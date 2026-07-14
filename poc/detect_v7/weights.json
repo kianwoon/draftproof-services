@@ -223,12 +223,16 @@
   "deep_scan_calibration": {
     "sent_threshold": 0.99,
     "doc_floor": 0.3,
+    "representation": "calibrated_mean",
+    "mean_anchor_lo": 0.93,
+    "mean_anchor_hi": 0.96,
     "display_bands": {
       "insufficient_below": 0.3,
       "orange_min": 0.5,
       "red_min": 0.7
     },
-    "_provenance": "poc/calibration/v7_deberta_academic_baseline.json, checkpoint desklib/ai-text-detector-academic-v1.01, sentence_auc_ai_vs_human=0.929, fpr_higher_pct=6.5, fpr_lower_pct=5.3, parity_gap_pct=-1.2, tpr_ai_pct=100.0, calibrated 2026-07-04. Methodology: sentence-level threshold-proportion, mirrors poc/detect/deberta_signal.py's SENT_THRESHOLD/DOC_FLOOR_PCT design (see that file for why naive whole-document isotonic calibration was rejected)."
+    "_provenance": "poc/calibration/v7_deberta_academic_baseline.json, checkpoint desklib/ai-text-detector-academic-v1.01, sentence_auc_ai_vs_human=0.929, fpr_higher_pct=6.5, fpr_lower_pct=5.3, parity_gap_pct=-1.2, tpr_ai_pct=100.0, calibrated 2026-07-04. Methodology: sentence-level threshold-proportion, mirrors poc/detect/deberta_signal.py's SENT_THRESHOLD/DOC_FLOOR_PCT design (see that file for why naive whole-document isotonic calibration was rejected). sent_threshold/doc_floor are STILL used by per-paragraph display rows, the ai_signal_deberta tile, and the flag-mass lens — only the DOC-LEVEL fusion signal is affected by representation below.",
+    "_representation_notes": "calibrated_mean ADDED 2026-07-14 (owner-approved) for the fine-tune-v1 checkpoint: doc-level deep-scan signal = clip((mean(sentence_scores)-lo)/(hi-lo),0,1) instead of the >=sent_threshold proportion. Evidence (offline, /tmp/bakeoff/eval_repr.py method, RAID 70/30 holdout seed 42 on new-checkpoint scores): casual-doc noise swing 10.0->0.0 under ±0.005 perturbation, RAID paraphrase TPR 68.3->85.0, ESL FPR@32 1.10->0.74% (parity 0.72/0.75), RAID human FPR 0%, gpt-5.6 100% at composite=0. This OVERTURNS the 2026-07-09 mean rejection, which was measured on the OLD checkpoint. lo = train-split (seed42 50/50) ESL mean p99; hi = lo+0.03. ANCHORS ARE CHECKPOINT-SPECIFIC — refit on any checkpoint change. representation:\"proportion\" restores legacy behavior (config-only rollback). Per-paragraph display rows and the ai_signal_deberta tile keep the sent_threshold logic — only the DOC-LEVEL fusion signal changes."
   },
   "tier_authority": {
     "weights": {
