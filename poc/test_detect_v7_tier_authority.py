@@ -63,10 +63,11 @@ class TestGetTierAuthorityConfig:
         assert cutoffs["amber"] < cutoffs["orange"] < cutoffs["red"]
         assert cutoffs == {"amber": 32, "orange": 48, "red": 65}
         weights = cfg["weights"]
-        # Re-weighted 2026-07-09 (RAID benchmark, holdout-validated): 0.50/0.50
-        # beats the prior 0.40/0.60 on out-of-sample TPR at fixed FPR. See
-        # weights.json's tier_authority._notes for the full evidence.
-        assert weights == {"composite": 0.50, "deep_scan_proportion": 0.50}
+        # Re-weighted 2026-07-14 for the promoted fine-tune-v1 checkpoint:
+        # 0.35/0.65 @ sent_threshold 0.99 (offline grid: ESL FPR 0.74%, RAID
+        # TPR none 90.0/para 74.0, gpt-5.6 100% at live composite=0). See
+        # weights.json's tier_authority._reweight_2026_07_14 for the evidence.
+        assert weights == {"composite": 0.35, "deep_scan_proportion": 0.65}
         assert pytest.approx(sum(weights.values())) == 1.0
 
     def test_non_ascending_cutoffs_raise(self, monkeypatch):
@@ -103,20 +104,23 @@ class TestGetTierAuthorityConfig:
 
 class TestComputeFusedAuthority:
     def test_formula_matches_spec(self):
-        # fused = 0.50 * composite + 0.50 * proportion * 100 (re-weighted 2026-07-09)
+        # fused = w_c * composite + w_d * proportion * 100 — weights from config
+        # (re-weighted 2026-07-14 for fine-tune v1: 0.35/0.65).
+        w = config.get_tier_authority_config()["weights"]
         result = pipeline_bridge.compute_fused_authority(50.0, 0.5)
-        assert result["fused_score"] == pytest.approx(0.50 * 50.0 + 0.50 * 0.5 * 100.0)
-        assert result["fused_score"] == pytest.approx(50.0)
+        assert result["fused_score"] == pytest.approx(
+            w["composite"] * 50.0 + w["deep_scan_proportion"] * 0.5 * 100.0)
 
     def test_pure_composite_zero_proportion(self):
         result = pipeline_bridge.compute_fused_authority(100.0, 0.0)
-        assert result["fused_score"] == pytest.approx(50.0)
-        assert result["tier"] == "orange"  # 50 in [48, 65)
+        assert result["fused_score"] == pytest.approx(35.0)  # 0.35 * 100
+        assert result["tier"] == "amber"  # 35 in [32, 48)
 
     def test_pure_proportion_zero_composite(self):
+        # The live GPT-5.6 pattern: composite blind (0), deep-scan loud.
         result = pipeline_bridge.compute_fused_authority(0.0, 1.0)
-        assert result["fused_score"] == pytest.approx(50.0)
-        assert result["tier"] == "orange"
+        assert result["fused_score"] == pytest.approx(65.0)  # 0.65 * 100
+        assert result["tier"] == "red"
 
     @pytest.mark.parametrize(
         "fused_input_score,expected_tier",
@@ -253,8 +257,10 @@ class TestTierAuthorityFlagOnWithDeepScan:
         prov = badge["tier_authority"]
         assert prov["source"] == "v7_fused"
         assert prov["proportion"] == 1.0
+        _w = config.get_tier_authority_config()["weights"]
         assert prov["fused_score"] == pytest.approx(
-            0.50 * prov["composite_score"] + 0.50 * 1.0 * 100.0, abs=0.02
+            _w["composite"] * prov["composite_score"] + _w["deep_scan_proportion"] * 1.0 * 100.0,
+            abs=0.02,
         )
         assert prov["flag_line"] == config.get_tier_authority_config()["cutoffs"]["amber"]
         # With proportion=1.0 at weight 0.50, fused_score is at least 50 -> orange or red.
