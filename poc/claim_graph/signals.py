@@ -59,6 +59,10 @@ _META_BASE = {
     "fairness_gate_passed": None,
 }
 
+# M5 (owner 2026-07-15): the §B calibration record that promotes interrogatability
+# to ADVISORY in its verified-only configuration. See docs/plans/phase2_n6_calibration_report.md.
+CALIBRATION_VERSION_N6 = "n6-2026-07-15"
+
 
 def _meta(signal: str, **extra: Any) -> dict[str, Any]:
     out = {"signal": signal}
@@ -216,6 +220,22 @@ def compute_interrogatability(
         extra["specificity_verified_only"] = True
         limitations.append("specificity credit is VERIFIED-ONLY (N4 gaming fix, "
                            "M4 rec (f)1): only entailed specifics earn credit")
+        # M5 promotion (owner decision 2026-07-15): interrogatability graduates
+        # EXPERIMENTAL → ADVISORY *only in this verified-only configuration* — the
+        # gaming-defence realisation validated by the N6 §B calibration (gaming
+        # interrogatability 0.725→0.459, high-band 86.7%→0%, 0 false-verified;
+        # real slice entailed 8/8 verified, 0/8 grounded work mislabelled).
+        # Still ANNOTATION-ONLY: scoring_enabled stays False, fusion_weight 0.
+        # NOT promoted in the count-all mode (entailment off) — the M4 weakness
+        # persists there. External verified-credit *display* stays gated pending a
+        # wider real-citation corpus than the N6 n=15 slice.
+        extra["status"] = "advisory"
+        extra["calibration_version"] = CALIBRATION_VERSION_N6
+        extra["fairness_gate_passed"] = True
+        extra["promotion_scope"] = "gaming_defence_only"
+        limitations.append("ADVISORY (M5 2026-07-15) for the gaming-defence use "
+                           "only; external verified-credit display remains gated "
+                           "pending a wider real-citation corpus (N6 slice n=15)")
 
     sig = _meta(
         "interrogatability",

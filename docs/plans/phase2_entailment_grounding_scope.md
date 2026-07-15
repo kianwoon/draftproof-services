@@ -199,6 +199,32 @@ No decisions block N0/N1 kickoff.
 
 ---
 
+## 8b. M5 decision record (owner, 2026-07-15) — PHASE 2 COMPLETE
+
+**Decision: promote interrogatability to ADVISORY for the gaming-defence use only; pause after.**
+
+On the N6 §B calibration evidence (`docs/plans/phase2_n6_calibration_report.md`):
+- Interrogatability graduates EXPERIMENTAL → **ADVISORY** *only in its verified-only
+  configuration* (`specificity_verified_only=True`, i.e. entailment on). In the count-all mode the
+  M4 gaming weakness persists, so it stays EXPERIMENTAL there. Implemented in `signals.py`
+  (`status="advisory"`, `calibration_version="n6-2026-07-15"`, `promotion_scope="gaming_defence_only"`).
+- **Still annotation-only:** `scoring_enabled=False`, `fusion_weight=0`. ADVISORY signals surface as
+  evidence when `DRAFTPROOF_CLAIM_GRAPH` is on; they never move the AI-likelihood score.
+- **External verified-credit display stays gated** pending a real-citation corpus wider than the N6
+  n=15 slice (single slice, near-verbatim positive control under-tests paraphrase distance).
+- `substitutability` and `origin_map` stay **EXPERIMENTAL** (N6 validated interrogatability + the
+  entailment path, not those two).
+- The §B scoring CI guard (`test_scoring_promotion_ci_guard`) is untouched and still binds: any future
+  `scoring_enabled` flip still requires `fairness_gate_passed && calibration_version`.
+
+**Next: paused.** Phase 2 (external entailment, Track A) is complete: N1–N4 + N6 shipped, N5 (context
+grounding) deferred doc-only. Reactivation paths when the owner returns: widen the real-citation
+corpus and re-run N6 before any external verified-credit display; or scope Phase 3 (data-derived
+fusion + Evidence Level 5 provenance). The deployed NLI endpoint idles at zero cost but is a standing
+service — `modal app stop draftproof-entailment-nli` if Phase 2 is shelved.
+
+---
+
 ## 9. What Phase 2 does NOT do
 
 - Does not touch the AI-likelihood score, tier, or verdict (signals stay EXPERIMENTAL, `fusion_weight=0`).

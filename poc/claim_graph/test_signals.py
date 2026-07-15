@@ -92,6 +92,26 @@ def test_interrogatability_emits_question_nodes_for_unverified_specifics():
     assert sig["value"]["unverified_specific_rate"] == 1.0
 
 
+def test_interrogatability_m5_advisory_only_in_verified_only_mode():
+    """M5 (owner 2026-07-15): interrogatability is ADVISORY *only* in its
+    verified-only configuration (the gaming-defence realisation), and stays
+    EXPERIMENTAL in count-all mode where the M4 weakness persists. Annotation-only
+    either way — scoring_enabled must stay False (fusion_weight 0)."""
+    claims = [_claim("c_001", "The 2019 trial cut cost by 35%.",
+                     status="verified", origins=["external_source"])]
+    adv, _ = signals.compute_interrogatability(claims, [], specificity_verified_only=True)
+    assert adv["status"] == "advisory"
+    assert adv["calibration_version"] == signals.CALIBRATION_VERSION_N6
+    assert adv["fairness_gate_passed"] is True
+    assert adv["promotion_scope"] == "gaming_defence_only"
+    assert adv["scoring_enabled"] is False  # ADVISORY never scores
+
+    exp, _ = signals.compute_interrogatability(claims, [], specificity_verified_only=False)
+    assert exp["status"] == "experimental"
+    assert exp["calibration_version"] is None
+    assert exp["scoring_enabled"] is False
+
+
 def test_interrogatability_verified_specifics_emit_no_questions():
     claims = [_claim("c_001", "The 2019 Stanford trial cut cost by 35%.",
                      status="internally_supported", origins=["external_source"])]
