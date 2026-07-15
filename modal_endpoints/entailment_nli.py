@@ -13,10 +13,12 @@ cross-encoder consumes premise/hypothesis as SCORED TEXT, not instructions, and
 §C caps LLM-judged engines at Moderate confidence — letting one mint Level-4
 ``verified`` would gut §A. Only this model's score grants ``verified``.
 
-Model: ``MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli`` (FEVER/ANLI-trained —
-apt for claim↔source verification). Env-overridable via ``ENTAILMENT_MODEL_ID``.
-Cheap fallback (swap the env var / CHECKPOINT_ID) is
-``MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli`` — smaller/faster, lower ceiling.
+Model: ``MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli`` (FEVER/ANLI/
+LingNLI/WANLI-trained — apt for claim↔source verification; the plain
+``...-mnli-fever-anli`` large id does NOT exist on HF, verified 2026-07-15).
+Env-overridable via ``ENTAILMENT_MODEL_ID``. Cheap fallback (swap the env var /
+CHECKPOINT_ID) is ``MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli`` — smaller/
+faster, lower ceiling.
 
 LABEL ORDER (do not assume): MNLI/FEVER/ANLI models commonly order labels
 {entailment, neutral, contradiction} but this is VERIFIED at load from
@@ -70,7 +72,7 @@ class PairsRequest(BaseModel):
 # Checkpoint is PROVISIONAL + env-overridable so swapping it (to the cheap base
 # fallback, or a re-calibrated model) is a one-line/one-env change.
 CHECKPOINT_ID = os.environ.get(
-    "ENTAILMENT_MODEL_ID", "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli")
+    "ENTAILMENT_MODEL_ID", "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli")
 MAX_LEN = 512  # premise+hypothesis truncated to the encoder's window
 
 # Canonical named NLI classes the endpoint always returns (order-independent —
