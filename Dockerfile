@@ -4,7 +4,10 @@ WORKDIR /app
 COPY draftproof-frontend/package*.json ./
 RUN npm ci
 COPY draftproof-frontend/ .
-RUN npm run build
+# build:deploy = build + a best-effort IndexNow ping (fires once per deploy, not
+# on local `npm run build`). The ping is non-fatal: a network failure here never
+# breaks the image build.
+RUN npm run build:deploy
 
 # Stage 2: API + static frontend
 FROM python:3.12-slim
