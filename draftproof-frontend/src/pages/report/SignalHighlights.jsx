@@ -69,7 +69,15 @@ export default function SignalHighlights({
           const deb = (segment.signals || []).find((sg) => sg.key === 'ai_signal_deberta');
           if (deb) debertaBySid.set(segment.sentence_id, deb);
         });
-        const hasAny = debertaBySid.size > 0;
+        // Render per-sentence when the paragraph has a DeBERTa AI signal OR any
+        // grounding/reasoning issue tag. Without the second clause, a paragraph
+        // whose ONLY issue is weak grounding / reasoning (no AI-flagged sentence)
+        // fell into the clean-paragraph branch below and its amber/purple
+        // underlines were silently dropped (e.g. s009 in an all-clean paragraph).
+        const hasIssueUnderline = paragraph.segments.some(
+          (seg) => (issueTagsBySid.get(seg.sentence_id) || []).some((tg) => tg.type !== 'ai'),
+        );
+        const hasAny = debertaBySid.size > 0 || hasIssueUnderline;
         if (!hasAny) {
           return (
             <p key={paragraph.id}>
