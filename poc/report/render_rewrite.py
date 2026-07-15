@@ -9,7 +9,24 @@ from typing import List, Dict, Any, Optional
 # page / email so the rewrite PDF's Turnitin row reads identically).
 from .contribution import contribution_pair, contribution_pair_int
 from .render import _EXTERNAL_BAND_LABELS, EXTERNAL_ESTIMATE_DISPLAY_ENABLED
-from poc.rewrite_v6 import verdict_reframe
+
+
+def _verdict_reframe_module():
+    """LAZY import (2026-07-15 prod incident, task c1af10b0): a module-level
+    `from poc.rewrite_v6 import verdict_reframe` created a circular import in
+    the worker — rewrite_v6/__init__ imports production, production imports
+    THIS module at line ~16, and this module importing the rewrite_v6 package
+    back (worse: under the alternate top-level name `poc.rewrite_v6`, re-running
+    the package __init__) crashed every run_rewrite task with
+    "partially initialized module". Import inside the function, matching the
+    repo's dual-name convention, so module import order can never deadlock.
+    verdict_reframe itself has no heavy deps — the per-call cost is a dict hit
+    on sys.modules after the first call."""
+    try:
+        from rewrite_v6 import verdict_reframe as _vr  # worker sys.path (/app/poc)
+    except ImportError:
+        from poc.rewrite_v6 import verdict_reframe as _vr
+    return _vr
 
 
 _TIER_ORDER = ["critical", "high", "medium", "low"]
@@ -873,6 +890,7 @@ def _verdict_reframe_lines(summary: dict) -> List[str]:
     secondary row with the make-it-yours note (annotate-never-suppress). Empty list when
     the reframe is off or the field is absent (legacy rewrites) — caller keeps legacy hero."""
     label = summary.get("verdict_label")
+    verdict_reframe = _verdict_reframe_module()
     if not (verdict_reframe.reframe_enabled() and label):
         return []
     title = verdict_reframe.LABEL_TITLES.get(str(label), str(label))
@@ -1106,6 +1124,7 @@ def render_rewrite_report(
         # Reframe rewire (scope §4): when the gap-resolution verdict is present, it is the
         # AUTHORITY for the headline + green-hero, NOT ai_improved/score_worse. The legacy
         # score-delta branches are demoted to supporting detail. Off / field-absent → legacy.
+        verdict_reframe = _verdict_reframe_module()
         _reframe_verdict = summary.get("verdict_label") if verdict_reframe.reframe_enabled() else None
         _reframe_good = None
         if _reframe_verdict:

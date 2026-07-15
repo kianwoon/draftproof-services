@@ -261,3 +261,23 @@ def test_attach_verdict_reframe_fails_open_on_malformed_scores(monkeypatch):
         summary, changed=True, orig_report={}, new_report={"weird": object()},
     )
     assert "verdict_label" not in summary or summary.get("verdict_label") is None
+
+
+def test_no_circular_import_under_worker_import_order():
+    """PROD INCIDENT 2026-07-15 (task c1af10b0): `from rewrite_v6 import
+    run_rewrite_pipeline_v6` in the worker crashed with 'partially initialized
+    module report.render_rewrite' — render_rewrite had a module-level import of
+    poc.rewrite_v6 (the reframe), closing a cycle through rewrite_v6/__init__ ->
+    production -> render_rewrite. Reproduce the worker's exact import order in a
+    FRESH interpreter (this process has everything cached, so a subprocess is
+    required)."""
+    import subprocess, sys, pathlib
+    poc = pathlib.Path(__file__).resolve().parent
+    code = (
+        "import sys; sys.path.insert(0, r'%s'); sys.path.insert(0, r'%s');\n"
+        "from rewrite_v6 import run_rewrite_pipeline_v6\n"
+        "from report.render_rewrite import render_rewrite_report\n"
+        "print('IMPORT_OK')" % (str(poc), str(poc.parent))
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=180)
+    assert "IMPORT_OK" in proc.stdout, f"stderr tail: {proc.stderr[-500:]}"
