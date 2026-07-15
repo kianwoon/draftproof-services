@@ -124,6 +124,12 @@ def test_bounded_payload_keeps_verdict_reframe_fields():
     every surface rendered legacy. Additive fields MUST be added to the
     compaction keep-list (project rule: additive composers reach ALL surfaces,
     including the storage compactor)."""
+    import os
+    import sys
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    for pth in (repo_root, os.path.join(repo_root, "poc")):
+        if pth not in sys.path:
+            sys.path.insert(0, pth)
     from app.rewrite_debug import _bounded_rewrite_json_payload
 
     payload = {
@@ -133,11 +139,11 @@ def test_bounded_payload_keeps_verdict_reframe_fields():
             "gap_resolution": {"findings_resolved": 3, "anchors_added": 5},
             "ai_likelihood_note": "make it yours",
             "outcome": "partial_candidate_not_strict_safe",
-            "padding": "x" * 100,
+            "padding": "x" * 20000,  # inflate past max_bytes to trigger tier-1 compaction
         },
         "final_text": "t",
     }
-    out = _bounded_rewrite_json_payload(payload, max_bytes=200)  # force compaction
+    out = _bounded_rewrite_json_payload(payload, max_bytes=8000)  # tier-1: keep-list fires, compact payload fits
     s = out["summary"]
     assert s.get("verdict_label") == "gaps_partially_resolved"
     assert s.get("gap_resolution") == {"findings_resolved": 3, "anchors_added": 5}
