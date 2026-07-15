@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from contextlib import nullcontext
@@ -867,16 +868,32 @@ def _attach_verdict_reframe(
     The after-score (final_risk/original_risk) is NEVER touched (annotate-never-suppress)."""
     if not verdict_reframe.reframe_enabled():
         return
-    detect_scores = summary.get("detect_scores") if isinstance(summary.get("detect_scores"), dict) else {}
-    spans = summary.get("bracket_grounding_spans")
-    gap = verdict_reframe.build_gap_resolution(detect_scores, spans, orig_report, new_report)
+    # Fail-open (pre-push review finding on d020fafc): this is an additive
+    # ANNOTATOR — a malformed detect_scores value (legacy/corrupted scan
+    # payloads carry non-numeric fields) must never crash the rewrite job.
+    # On any exception, leave the summary untouched (all surfaces then render
+    # the legacy score-delta verdict, same as kill-switch off).
+    try:
+        detect_scores = summary.get("detect_scores") if isinstance(summary.get("detect_scores"), dict) else {}
+        spans = summary.get("bracket_grounding_spans")
+        gap = verdict_reframe.build_gap_resolution(detect_scores, spans, orig_report, new_report)
+        verdict_label = verdict_reframe.compute_verdict_label(
+            changed=bool(changed),
+            no_text_change=bool(summary.get("no_text_change")),
+            status=str(summary.get("status") or ""),
+            gap=gap,
+        )
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "rewrite_v6.production: verdict reframe annotation failed; "
+            "falling back to legacy verdict (additive, non-fatal)."
+        )
+        summary.pop("gap_resolution", None)
+        summary.pop("verdict_label", None)
+        summary.pop("ai_likelihood_note", None)
+        return
     summary["gap_resolution"] = gap
-    summary["verdict_label"] = verdict_reframe.compute_verdict_label(
-        changed=bool(changed),
-        no_text_change=bool(summary.get("no_text_change")),
-        status=str(summary.get("status") or ""),
-        gap=gap,
-    )
+    summary["verdict_label"] = verdict_label
     summary["ai_likelihood_note"] = verdict_reframe.AI_LIKELIHOOD_NOTE
 
 

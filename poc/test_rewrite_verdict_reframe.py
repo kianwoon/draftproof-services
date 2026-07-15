@@ -238,3 +238,26 @@ def test_pdf_render_legacy_when_field_absent(monkeypatch):
         _render_summary(verdict_label=None), [], [],
         original_text="Original body.", final_text="Rewritten body text.")
     assert vr.LABEL_TITLES[vr.LABEL_GAPS_RESOLVED] not in md
+
+
+def test_attach_verdict_reframe_fails_open_on_malformed_scores(monkeypatch):
+    """Reviewer finding (2026-07-14, pre-push review of d020fafc): a malformed
+    value in detect_scores (e.g. a non-numeric findings count from a legacy or
+    corrupted scan payload) must NOT crash the rewrite job — the hook is an
+    additive annotator and must fail open, leaving the summary untouched."""
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_VERDICT_REFRAME", "1")
+    from rewrite_v6 import production
+
+    summary = {
+        "detect_scores": {
+            "original_findings": "not-a-number",
+            "rewritten_findings": None,
+            "grounding_quality_risk_original": {"bad": "shape"},
+        },
+        "bracket_grounding_spans": [{"kind": "improved"}],
+    }
+    # must not raise, and must not attach partial reframe fields
+    production._attach_verdict_reframe(
+        summary, changed=True, orig_report={}, new_report={"weird": object()},
+    )
+    assert "verdict_label" not in summary or summary.get("verdict_label") is None
