@@ -1997,7 +1997,6 @@ export default function Report() {
               authoritativeTier={heroBadge.tier || heroReport.tier}
               tierAuthority={(heroBadge && heroBadge.tier_authority) || null}
               headlineConfidence={(heroBadge && heroBadge.headline_confidence) || null}
-              evidenceLevels={(heroBadge && heroBadge.authorship_evidence_levels) || null}
               claimGraphDisplay={(authorshipEvidence && authorshipEvidence.claim_graph_display) || null}
             />
           }
@@ -2080,6 +2079,7 @@ export default function Report() {
             highlightedParagraphs={highlightedParagraphs}
             paragraphSeverityBar={paragraphSeverityBar}
             selectedCriticalThinking={selectedCriticalThinking}
+            evidenceLevels={(heroBadge && heroBadge.authorship_evidence_levels) || null}
             showSubmittedEditEntry={showSubmittedEditEntry}
             onSelectParagraph={lockAndScrollParagraph}
             onPreviewParagraph={previewParagraph}

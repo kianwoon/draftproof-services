@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { signalClassName, signalLabel, signalDescription } from './reportHelpers';
 import ParagraphSeverityBar from '../../components/ParagraphSeverityBar';
 import EditPencilIcon from './EditPencilIcon';
+import { EvidenceLevelPanel } from './MergedAuthorshipRisk';
 
 // Flagged finding sentences render in RED FONT (owner decision 2026-07-04): they
 // must stay visible on EVERY document — including Low-Risk (green) ones — so the
@@ -12,7 +13,7 @@ import EditPencilIcon from './EditPencilIcon';
 export default function SignalHighlights({
   submittedContent, selectedParagraph, selectedParagraphId, highlightedParagraphs,
   paragraphSeverityBar,
-  selectedCriticalThinking,
+  selectedCriticalThinking, evidenceLevels,
   showSubmittedEditEntry, onSelectParagraph, onPreviewParagraph, onAdjacent,
   onEditParagraph, onCopyGuidance,
 }) {
@@ -45,6 +46,13 @@ export default function SignalHighlights({
   const ISSUE_COLOR_HEX = { red: '#dc2626', amber: '#f59e0b', purple: '#7c3aed' };
   const issueLabel = (code) => t(`report.submitted.issueTags.${code}`, { defaultValue: code });
   const issueFix = (tag) => tag.fix_text || issueLabel(tag.fix_code);
+
+  // Consolidated header: the 4-dimension Authorship-evidence-level summary (lifted
+  // out of MergedAuthorshipRisk) now frames THIS section, directly above the
+  // underlined document it describes. Its per-dimension colour swatches (red/amber/
+  // purple) ARE the underline key, so the standalone "underline key" legend below is
+  // shown ONLY as a fallback when no evidence-level summary is present (older reports).
+  const hasAel = !!(evidenceLevels && typeof evidenceLevels === 'object' && evidenceLevels.lenses);
 
   // Gated band -> severity class. The band is VERDICT-GATED by the backend
   // (report.py::_gate_heatmap_bands): 'high' stays a red flag; 'review' is a muted review
@@ -171,6 +179,12 @@ export default function SignalHighlights({
         </div>
       </div>
 
+      {hasAel && (
+        <div className="submitted-evidence-summary">
+          <EvidenceLevelPanel t={t} ael={evidenceLevels} />
+        </div>
+      )}
+
       {paragraphSeverityBar?.length > 0 && (
         <ParagraphSeverityBar bar={paragraphSeverityBar} selectedId={selectedParagraph?.id} onSelect={onSelectParagraph} />
       )}
@@ -215,7 +229,7 @@ export default function SignalHighlights({
 
       {tab === 'document' && (
         <div role="tabpanel" id="sh-panel-document" aria-labelledby="sh-tab-document">
-          {issueTags && (
+          {issueTags && !hasAel && (
             <div className="submitted-issue-legend" aria-label={t('report.submitted.issueTags.legendTitle')}>
               <span className="submitted-issue-legend-title">{t('report.submitted.issueTags.legendTitle')}</span>
               {issueTags.legend.map((row) => (

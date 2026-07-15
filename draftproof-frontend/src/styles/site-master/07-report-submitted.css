@@ -2023,6 +2023,13 @@ button.paragraph-severity-seg {
    A sentence with multiple issues stacks ALL underlines (layered background
    gradients, set inline in SignalHighlights.jsx) — nothing hidden. Text stays
    default colour / readable. Source: poc/report/sentence_issue_tags.py. */
+/* Consolidated evidence-summary header (2026-07-16, owner-approved): the
+   Authorship-evidence-level panel now frames the "Read full document" section,
+   sitting directly above the underlined document it summarizes. The lifted panel
+   keeps its own .merged-ael styling; this wrapper only spaces it as a header. */
+.submitted-evidence-summary { margin-bottom: 1rem; }
+.submitted-evidence-summary .merged-ael { margin: 0; }
+
 .submitted-issue-swatch {
   display: inline-block;
   width: 22px;

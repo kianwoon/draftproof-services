@@ -193,6 +193,15 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headl
 // Band/level CODES map to i18n keys (report.evidenceLevels.*) — KEEP IN SYNC
 // with poc/report/render_panels.py render_authorship_evidence_levels.
 const AEL_LENSES = ['ai_pattern', 'grounding', 'citation', 'reasoning'];
+// Consolidated-header swatch: each dimension carries the SAME colour as its
+// per-sentence underline in SignalHighlights (red = reads as AI, amber = weak
+// grounding, purple = reasoning jump). The swatch <span> reuses the shared
+// `.submitted-issue-swatch is-{color}` CSS (07-report-submitted.css), whose
+// hexes ARE the SignalHighlights ISSUE_COLOR_HEX values (#dc2626/#f59e0b/#7c3aed)
+// — one source of truth, no new colour. `citation` (Source traceability) is a
+// DOCUMENT-level dimension with no sentence underline, so it gets NO swatch
+// (honest: there is nothing to point at in the text).
+const AEL_LENS_SWATCH = { ai_pattern: 'red', grounding: 'amber', reasoning: 'purple' };
 // Map each lens's raw band/level code to a display band token + level class.
 const AEL_TIER_BAND = { green: 'low', clean: 'low', low: 'low', amber: 'moderate', orange: 'high', red: 'high', high: 'high' };
 const AEL_GROUNDING_BAND = { likely_human: 'strong', some_texture: 'moderate', moderate: 'moderate', strong: 'elevated', very_strong: 'elevated' };
@@ -222,7 +231,7 @@ function aelAnchorText(t, code, params, fallback, keyspace) {
   return fallback || '';
 }
 
-function EvidenceLevelPanel({ t, ael }) {
+export function EvidenceLevelPanel({ t, ael }) {
   if (!ael || typeof ael !== 'object' || !ael.lenses) return null;
   const level = ael.level;
   const maxLevel = ael.max_level_assessable != null ? ael.max_level_assessable : 2;
@@ -248,10 +257,16 @@ function EvidenceLevelPanel({ t, ael }) {
           const fix = anchor && anchor.fix
             ? aelAnchorText(t, anchor.fix_code, null, anchor.fix, 'anchorFix')
             : null;
+          const swatch = AEL_LENS_SWATCH[lensId] || null;
           return (
             <div className="merged-ael-lens" key={lensId}>
               <div className={`merged-axis is-${cls}`}>
-                <span>{t(`report.evidenceLevels.lenses.${lensId}`)}</span>
+                <span className="merged-ael-lens-name">
+                  {swatch ? (
+                    <span className={`submitted-issue-swatch is-${swatch}`} aria-hidden="true" />
+                  ) : null}
+                  {t(`report.evidenceLevels.lenses.${lensId}`)}
+                </span>
                 <strong>
                   {band ? t(`report.evidenceLevels.bands.${band}`) : t('report.evidenceLevels.bands.notAssessed')}
                   {conf ? ` · ${t(`report.evidenceLevels.confidence.${conf}`)}` : ''}
@@ -361,9 +376,14 @@ function ClaimGraphPanel({ t, cg }) {
 // page's marketing preview splits the composition lens and the verdict+risk lens
 // across two tabs) instead of re-implementing the markup as a separate mockup.
 // Omitting `sections` (every Report.jsx call site) renders every section, unchanged.
-const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'deepScanParagraphs', 'evidenceLevels', 'claimGraph', 'scale', 'disclaimer'];
+// NOTE: 'evidenceLevels' is intentionally ABSENT — the Authorship-evidence-level
+// panel (EvidenceLevelPanel, exported above) was lifted OUT of this card and now
+// renders as the consolidated header of the "Read full document" section
+// (SignalHighlights.jsx), directly above the underlined document it describes.
+// This card no longer double-renders it.
+const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'deepScanParagraphs', 'claimGraph', 'scale', 'disclaimer'];
 
-export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence, evidenceLevels, claimGraphDisplay, sections }) {
+export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence, claimGraphDisplay, sections }) {
   const hasBreakdown = !!breakdown;
   const hasSr = !!(sr && sr.overall && sr.overall.level);
   if (!hasBreakdown && !hasSr) return null;
@@ -511,10 +531,6 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
             })}
           </div>
         </div>
-      )}
-
-      {show('evidenceLevels') && evidenceLevels && (
-        <EvidenceLevelPanel t={t} ael={evidenceLevels} />
       )}
 
       {show('claimGraph') && claimGraphDisplay && (
