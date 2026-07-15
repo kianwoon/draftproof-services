@@ -59,20 +59,33 @@ def max_edges() -> int:
 
 
 def _phase_state_policy() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Return ``(forbidden_states, reachable_states)`` for THIS validation run.
+    """Return ``(forbidden_states, reachable_states)`` for INGESTION of a raw
+    proposal, for THIS validation run.
 
-    Phase-conditional (plan §5 N0), resolved at validation time so a mid-process
-    flag flip is honoured deterministically:
+    Headline invariant (module docstring): **no LLM owns graph truth.** ``verified``
+    is the strongest credit in the system (Evidence Level 4) and may be set ONLY
+    post-hoc by ``build._promote_verification_states`` from an actual entailment
+    verdict — NEVER accepted from a raw extraction proposal (that would let the
+    document steer the extractor into self-declaring ``verified`` and bypass the
+    N4 verified-only gaming fix entirely — no entailment call needed). So
+    ``verified`` is NEVER in ``reachable_states`` here, regardless of the flag.
+
+    Phase-conditional part (plan §5 N0), resolved at validation time so a
+    mid-process flag flip is honoured deterministically:
       - entailment OFF → Phase-1 invariant, byte-identical: ``verified`` and
-        ``corroborated`` are both forbidden; reachable = PHASE1_REACHABLE_STATES.
-      - entailment ON  → ``verified`` becomes legal (permitted, not produced —
-        N1 never mints it; that is N4); ``corroborated`` stays forbidden
-        (kickoff decision 3).
+        ``corroborated`` are both FORBIDDEN (a proposal carrying either is dropped).
+      - entailment ON  → ``corroborated`` stays forbidden (kickoff decision 3);
+        ``verified`` is NOT forbidden but NOT reachable, so a proposal carrying it
+        is CLAMPED to ``unverified`` (the claim survives so entailment can promote
+        it legitimately later) rather than dropped.
+
+    Promotion bypasses this gate (it mutates ClaimNode objects directly, never
+    re-runs ``validate_claims``), so clamping here never blocks a real verdict.
     """
     from . import entailment_enabled  # lazy — keeps validators import-light
 
     if entailment_enabled():
-        return schema.PHASE2_FORBIDDEN_STATES, schema.PHASE1_REACHABLE_STATES + ("verified",)
+        return schema.PHASE2_FORBIDDEN_STATES, schema.PHASE1_REACHABLE_STATES
     return schema.PHASE1_FORBIDDEN_STATES, schema.PHASE1_REACHABLE_STATES
 
 

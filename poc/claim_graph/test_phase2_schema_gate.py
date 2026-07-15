@@ -67,12 +67,17 @@ def test_flag_off_corroborated_rejected(monkeypatch):
     assert _build("corroborated")["claims"] == []
 
 
-# ── (b) flag ON → verified ACCEPTED, corroborated STILL rejected ─────────────
-def test_flag_on_verified_accepted(monkeypatch):
+# ── (b) flag ON → a raw proposal CANNOT self-declare verified; corroborated rejected ─
+def test_flag_on_verified_from_proposal_clamped_not_self_declarable(monkeypatch):
+    """SECURITY (no-LLM-owns-truth): the extractor (steered by the document) must
+    NOT be able to mint ``verified`` by writing it into its proposal — that would
+    bypass the N4 verified-only gaming fix with no entailment call. Flag ON → a
+    proposal carrying ``verified`` is CLAMPED to ``unverified`` (claim survives so
+    real entailment can promote it later), NEVER accepted as-declared."""
     monkeypatch.setenv(ENV, "1")
     graph = _build("verified")
-    assert len(graph["claims"]) == 1
-    assert graph["claims"][0]["verification_status"] == "verified"
+    assert len(graph["claims"]) == 1, "claim must survive (clamped, not dropped)"
+    assert graph["claims"][0]["verification_status"] == "unverified"
 
 
 def test_flag_on_corroborated_still_rejected(monkeypatch):
