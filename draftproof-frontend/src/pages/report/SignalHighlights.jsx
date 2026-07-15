@@ -33,6 +33,19 @@ export default function SignalHighlights({
 
   if (!submittedContent?.paragraphs?.length) return null;
 
+  // Per-sentence issue-tag underline layer (server composer: poc/report/
+  // sentence_issue_tags.py). Single source of truth for the colored issue
+  // underlines: red = reads as AI, amber = weak grounding, purple = reasoning
+  // jump. Null on older reports / clean docs -> the view renders exactly as
+  // before (byte-identical). AI's red treatment stays on the existing heatmap
+  // span; this layer ADDS the amber/purple underlines (stacked) + a per-sentence
+  // popover listing every issue with its one-line fix.
+  const issueTags = submittedContent.sentenceIssueTags || null;
+  const issueTagsBySid = new Map(Object.entries(issueTags?.sentences || {}));
+  const ISSUE_COLOR_HEX = { red: '#dc2626', amber: '#f59e0b', purple: '#7c3aed' };
+  const issueLabel = (code) => t(`report.submitted.issueTags.${code}`, { defaultValue: code });
+  const issueFix = (tag) => tag.fix_text || issueLabel(tag.fix_code);
+
   // Gated band -> severity class. The band is VERDICT-GATED by the backend
   // (report.py::_gate_heatmap_bands): 'high' stays a red flag; 'review' is a muted review
   // candidate (a >=0.999 sentence inside a document whose calibrated verdict reads clean —
@@ -80,14 +93,51 @@ export default function SignalHighlights({
               {paragraph.segments.map((segment, i) => {
                 const deb = debertaBySid.get(segment.sentence_id);
                 const sev = deb ? debertaSeverityClass(deb) : '';
-                if (!sev) {
-                  return <span key={i} className="submitted-sentence-plain">{segment.text} </span>;
+                const tags = issueTagsBySid.get(segment.sentence_id) || [];
+                // Only grounding/reasoning add a NEW underline here — AI's red is
+                // already on the heatmap span below (backward-compat).
+                const extraTags = tags.filter((tg) => tg.type !== 'ai');
+                // Byte-identical path: nothing new to mark -> render exactly as before.
+                if (extraTags.length === 0) {
+                  if (!sev) {
+                    return <span key={i} className="submitted-sentence-plain">{segment.text} </span>;
+                  }
+                  return (
+                    <span key={i}
+                      className={`submitted-sentence-highlight ${sev}`}
+                      title={signalDescription(deb.key, deb.description, t)}>
+                      {segment.text}
+                    </span>
+                  );
                 }
+                // NEW issue-underline layer: stack the grounding/reasoning underlines
+                // beneath the sentence (layered background gradients, so 2+ issues each
+                // show their own colored line — nothing hidden) and attach a popover
+                // listing every issue on this sentence with its one-line fix.
+                const markStyle = {
+                  backgroundImage: extraTags
+                    .map((tg) => `linear-gradient(${ISSUE_COLOR_HEX[tg.color]}, ${ISSUE_COLOR_HEX[tg.color]})`).join(', '),
+                  backgroundSize: extraTags.map(() => '100% 2px').join(', '),
+                  backgroundPosition: extraTags.map((_, idx) => `0 calc(100% - ${idx * 3}px)`).join(', '),
+                  backgroundRepeat: 'no-repeat',
+                  paddingBottom: `${extraTags.length * 3 + 2}px`,
+                };
+                const titleText = tags.map((tg) => `${issueLabel(tg.label_code)} — ${issueFix(tg)}`).join('\n');
                 return (
-                  <span key={i}
-                    className={`submitted-sentence-highlight ${sev}`}
-                    title={signalDescription(deb.key, deb.description, t)}>
-                    {segment.text}
+                  <span key={i} className="submitted-sentence-issue" style={markStyle} title={titleText}>
+                    {sev
+                      ? <span className={`submitted-sentence-highlight ${sev}`}>{segment.text}</span>
+                      : segment.text}
+                    {' '}
+                    <span className="submitted-sentence-issue-pop" role="note">
+                      {tags.map((tg, ti) => (
+                        <span key={ti} className="submitted-sentence-issue-pop-row">
+                          <span className={`submitted-issue-swatch is-${tg.color}`} aria-hidden="true" />
+                          <span className="submitted-issue-pop-label">{issueLabel(tg.label_code)}</span>
+                          <span className="submitted-issue-pop-fix">{issueFix(tg)}</span>
+                        </span>
+                      ))}
+                    </span>
                   </span>
                 );
               })}
@@ -156,7 +206,30 @@ export default function SignalHighlights({
       </div>
 
       {tab === 'document' && (
-        <div role="tabpanel" id="sh-panel-document" aria-labelledby="sh-tab-document">{FullDocument}</div>
+        <div role="tabpanel" id="sh-panel-document" aria-labelledby="sh-tab-document">
+          {issueTags && (
+            <div className="submitted-issue-legend" aria-label={t('report.submitted.issueTags.legendTitle')}>
+              <span className="submitted-issue-legend-title">{t('report.submitted.issueTags.legendTitle')}</span>
+              {issueTags.legend.map((row) => (
+                <span key={row.color} className="submitted-issue-legend-item">
+                  <span className={`submitted-issue-swatch is-${row.color}`} aria-hidden="true" />
+                  {issueLabel(row.label_code)}
+                </span>
+              ))}
+              {issueTags.document_level?.length > 0 && (
+                <p className="submitted-issue-doc-note">
+                  {issueTags.document_level.map((d, i) => (
+                    <span key={i} className="submitted-issue-doc-note-row">
+                      <span className={`submitted-issue-swatch is-${d.color}`} aria-hidden="true" />
+                      <span><strong>{issueLabel(d.label_code)}</strong> — {issueFix(d)}</span>
+                    </span>
+                  ))}
+                </p>
+              )}
+            </div>
+          )}
+          {FullDocument}
+        </div>
       )}
       {tab === 'issues' && (
         highlightedParagraphs.length === 0 ? (

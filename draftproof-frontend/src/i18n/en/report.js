@@ -514,6 +514,15 @@ export const report = {
     "issuesEmptyTitle": "No major issues detected",
     "issuesEmptyBody": "Nothing is driving the report score. Open \"Read full document\" to review the full text.",
     "legend": "Signal color legend",
+    "issueTags": {
+      "legendTitle": "Underline key",
+      "tagAi": "Reads as AI",
+      "tagAiFix": "Rewrite in your own voice and ground it in a specific only you could know.",
+      "tagGrounding": "Weak grounding",
+      "tagGroundingFix": "Add a concrete anchor — a name, a number, an example, a source.",
+      "tagReasoning": "Reasoning jump",
+      "tagReasoningFix": "Bridge the transition with the evidence or logic that connects the ideas."
+    },
     "documentText": "Submitted document text",
     "selectedSignal": "Selected signal detail",
     "paragraphRepairTitle": "Paragraph repair note",

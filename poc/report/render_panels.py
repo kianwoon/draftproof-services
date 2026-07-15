@@ -1025,6 +1025,55 @@ def render_question_cards(badge, section_no: int = 3) -> str:
 _DEBERTA_SEVERITY_COLORS = ((99, "#dc2626"), (90, "#f97316"), (80, "#f59e0b"))
 _DENSITY_CLEAN_COLOR = "#16a34a"
 
+# Per-sentence issue-tag underline colors — the single source is
+# poc/report/sentence_issue_tags.py (red=AI / amber=weak grounding /
+# purple=reasoning jump). Mirrors the page's underline key.
+_ISSUE_COLOR_HEX = {"red": "#dc2626", "amber": "#f59e0b", "purple": "#7c3aed"}
+
+
+def _issue_tags(data: dict) -> dict:
+    """The attached sentence_issue_tags contract ({} when absent → byte-identical)."""
+    tags = (data or {}).get("sentence_issue_tags")
+    return tags if isinstance(tags, dict) else {}
+
+
+def _issue_tags_by_sid(data: dict) -> dict:
+    sents = _issue_tags(data).get("sentences")
+    return sents if isinstance(sents, dict) else {}
+
+
+def _issue_legend_html(data: dict) -> str:
+    """Underline key + any document-level note, mirroring the page. '' when absent."""
+    tags = _issue_tags(data)
+    legend = tags.get("legend") or []
+    if not legend:
+        return ""
+    _EN = {"tagAi": "Reads as AI", "tagGrounding": "Weak grounding",
+           "tagReasoning": "Reasoning jump"}
+    chips = []
+    for row in legend:
+        color = _ISSUE_COLOR_HEX.get(row.get("color"), "#94a3b8")
+        label = _EN.get(row.get("label_code"), str(row.get("label_code") or ""))
+        chips.append(
+            f'<span style="display:inline-block;margin-right:14px">'
+            f'<span style="display:inline-block;width:22px;height:3px;'
+            f'background:{color};vertical-align:middle;margin-right:6px"></span>'
+            f'{escape(label)}</span>'
+        )
+    note = ""
+    for d in (tags.get("document_level") or []):
+        color = _ISSUE_COLOR_HEX.get(d.get("color"), "#7c3aed")
+        label = _EN.get(d.get("label_code"), str(d.get("label_code") or ""))
+        fix = str(d.get("fix_text") or d.get("fix_en") or "")
+        note += (
+            f'<p class="dp-hero-sub" style="margin-top:6px">'
+            f'<span style="display:inline-block;width:22px;height:3px;'
+            f'background:{color};vertical-align:middle;margin-right:6px"></span>'
+            f'<b>{escape(label)}</b> — {escape(fix)}</p>'
+        )
+    return (f'<p class="dp-hero-sub"><b>Underline key</b> &nbsp; {"".join(chips)}</p>'
+            + note)
+
 
 def _doc_intel(data: dict) -> dict:
     return ((data or {}).get("scan_intelligence") or {}).get("document") or {}
@@ -1188,6 +1237,12 @@ def render_highlighted_document(data: dict, original_text: str) -> str:
     groups = _segments_by_paragraph(data)
     if not any(segs for _, segs in groups):
         return ""
+    # When the issue-tag layer is attached, render text in its default colour with
+    # COLORED UNDERLINES per issue type (red=AI / amber=grounding / purple=reasoning),
+    # stacked for multi-issue sentences — mirroring the page. Absent → the original
+    # severity-coloured underline path (byte-identical for older reports).
+    tag_map = _issue_tags_by_sid(data)
+    issue_present = bool(_issue_tags(data).get("legend"))
     paras_html = []
     for _p, segs in groups:
         if not segs:
@@ -1196,6 +1251,28 @@ def render_highlighted_document(data: dict, original_text: str) -> str:
         for s in sorted(segs, key=lambda x: int(x.get("start_char") or 0)):
             text = escape(str(s.get("text") or "").strip())
             if not text:
+                continue
+            if issue_present:
+                colors = []
+                ai_color = _gated_color_of(s)  # AI's red underline (verdict-gated)
+                if ai_color:
+                    colors.append(ai_color)
+                for tg in (tag_map.get(str(s.get("sentence_id") or "")) or []):
+                    if tg.get("type") == "ai":
+                        continue  # AI already covered by the gated color above
+                    c = _ISSUE_COLOR_HEX.get(tg.get("color"))
+                    if c:
+                        colors.append(c)
+                if colors:
+                    style = f"border-bottom:2px solid {colors[0]};padding-bottom:2px;"
+                    if len(colors) > 1:  # stack the rest as offset underlines
+                        shadow = ",".join(
+                            f"0 {3 * i}px 0 0 {c}" for i, c in enumerate(colors[1:], 1)
+                        )
+                        style += f"box-shadow:{shadow};"
+                    parts.append(f'<span style="{style}">{text}</span>')
+                else:
+                    parts.append(text)
                 continue
             color = _gated_color_of(s)
             if color:
@@ -1207,7 +1284,13 @@ def render_highlighted_document(data: dict, original_text: str) -> str:
             paras_html.append(f'<p>{" ".join(parts)}</p>')
     if not paras_html:
         return ""
+    intro = (
+        "<p class=\"dp-hero-sub\"><b>Read full document</b> — flagged sentences are "
+        "underlined by issue type, matching the report page.</p>"
+        if issue_present else
+        "<p class=\"dp-hero-sub\"><b>Read full document</b> — flagged sentences "
+        "are underlined in their severity color, matching the report page.</p>"
+    )
     return ('<div class="dp-hero" style="border-left-color:#94a3b8">'
-            "<p class=\"dp-hero-sub\"><b>Read full document</b> — flagged sentences "
-            "are underlined in their severity color, matching the report page.</p>"
+            + intro + _issue_legend_html(data)
             + "".join(paras_html) + "</div>")

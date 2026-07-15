@@ -3538,6 +3538,23 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "(advisory, non-fatal)."
         )
 
+    # Per-sentence issue-tag DISPLAY composer (advisory, display-only). Builds the
+    # "Read full document" issue-underline layer (red=AI / amber=weak grounding /
+    # purple=reasoning jump) from result.findings + result.highlight_segments — the
+    # single source of truth both the web view and the PDF full-doc render consume.
+    # Additive + fail-open: omitted (no new key) when there is no trustworthy
+    # finding, so the view stays byte-identical. NEVER touches tier/score/gates.
+    try:
+        from .sentence_issue_tags import compose_sentence_issue_tags  # noqa: E402
+        _issue_tags = compose_sentence_issue_tags(result)
+        if _issue_tags is not None:
+            result["sentence_issue_tags"] = _issue_tags
+    except Exception:
+        logger.exception(
+            "report.report: sentence_issue_tags compose failed; omitting "
+            "(advisory, non-fatal)."
+        )
+
     result["scan_time_seconds"] = report.scan_time_seconds
     if report.generated_at:
         result["generated_at"] = report.generated_at

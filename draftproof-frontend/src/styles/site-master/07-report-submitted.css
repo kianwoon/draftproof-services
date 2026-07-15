@@ -2017,3 +2017,116 @@ button.paragraph-severity-seg {
   border-bottom: 1px dotted color-mix(in srgb, #c99a3b 65%, transparent);
 }
 
+/* ── Per-sentence ISSUE-TAG underline layer (2026-07-16, owner-approved) ──────
+   Mark each flagged sentence with COLORED UNDERLINES per finding type (not font
+   colour). red = reads as AI, amber = weak grounding, purple = reasoning jump.
+   A sentence with multiple issues stacks ALL underlines (layered background
+   gradients, set inline in SignalHighlights.jsx) — nothing hidden. Text stays
+   default colour / readable. Source: poc/report/sentence_issue_tags.py. */
+.submitted-issue-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 3px;
+  border-radius: 2px;
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
+.submitted-issue-swatch.is-red { background: #dc2626; }
+.submitted-issue-swatch.is-amber { background: #f59e0b; }
+.submitted-issue-swatch.is-purple { background: #7c3aed; }
+
+.submitted-issue-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .55rem 1rem;
+  padding: .7rem 1.15rem;
+  margin-bottom: .35rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: .82rem;
+  color: #334155;
+}
+.submitted-issue-legend-title {
+  font-weight: 700;
+  font-size: .72rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+.submitted-issue-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+}
+.submitted-issue-doc-note {
+  flex-basis: 100%;
+  margin: .35rem 0 0;
+  padding-top: .5rem;
+  border-top: 1px dashed #e2e8f0;
+  font-size: .82rem;
+  color: #475569;
+}
+.submitted-issue-doc-note-row {
+  display: flex;
+  align-items: baseline;
+  gap: .45rem;
+}
+.submitted-issue-doc-note-row .submitted-issue-swatch { position: relative; top: 5px; }
+
+/* Marked sentence: the wrapper carries the stacked underline gradients (inline
+   style) + hosts the hover/focus popover. Text colour untouched. */
+.submitted-sentence-issue {
+  position: relative;
+  cursor: help;
+}
+.submitted-sentence-issue-pop {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  display: none;
+  min-width: 220px;
+  max-width: 340px;
+  padding: .6rem .7rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .14);
+  font-size: .8rem;
+  line-height: 1.45;
+  color: #334155;
+  white-space: normal;
+  text-align: left;
+  cursor: default;
+}
+.submitted-sentence-issue:hover .submitted-sentence-issue-pop,
+.submitted-sentence-issue:focus-within .submitted-sentence-issue-pop {
+  display: block;
+}
+.submitted-sentence-issue-pop-row {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  align-items: baseline;
+  gap: .3rem .5rem;
+  padding: .18rem 0;
+}
+.submitted-sentence-issue-pop-row + .submitted-sentence-issue-pop-row {
+  border-top: 1px solid #f1f5f9;
+}
+.submitted-sentence-issue-pop-row .submitted-issue-swatch {
+  grid-row: 1;
+  position: relative;
+  top: 6px;
+}
+.submitted-issue-pop-label {
+  grid-column: 2;
+  font-weight: 700;
+  color: #1e293b;
+}
+.submitted-issue-pop-fix {
+  grid-column: 2;
+  color: #475569;
+}
+

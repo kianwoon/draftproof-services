@@ -509,6 +509,15 @@ export const report = {
     "issuesEmptyTitle": "未检测到主要问题",
     "issuesEmptyBody": "没有信号在拉高报告分数。可打开「查看完整文档」通读全文。",
     "legend": "信号颜色图例",
+    "issueTags": {
+      "legendTitle": "下划线图例",
+      "tagAi": "疑似 AI 生成",
+      "tagAiFix": "用你自己的语气重写，并加入只有你才知道的具体细节。",
+      "tagGrounding": "论据薄弱",
+      "tagGroundingFix": "补充具体依据——姓名、数字、实例或来源。",
+      "tagReasoning": "推理跳跃",
+      "tagReasoningFix": "用连接这些观点的证据或逻辑来衔接过渡。"
+    },
     "documentText": "提交文档文本",
     "selectedSignal": "所选信号详情",
     "paragraphRepairTitle": "段落修订说明",

@@ -1376,6 +1376,12 @@ function buildSubmittedContentModel(report) {
     // legend label the map's actual source instead of always implying the fakespot second
     // opinion when deep scan is really driving it.
     signalSource: intel.document?.signal_highlight_source || 'fakespot',
+    // Per-sentence issue-tag underline layer (poc/report/sentence_issue_tags.py):
+    // { sentences: {sid: [{type,color,label_code,fix_code,...}]}, document_level: [...],
+    //   legend: [...] } or absent. The SOLE source for the colored issue underlines in
+    // the "Read full document" view. Null on older reports / clean docs -> the view
+    // renders exactly as before (byte-identical fallback).
+    sentenceIssueTags: results.sentence_issue_tags || null,
   };
 }
 
