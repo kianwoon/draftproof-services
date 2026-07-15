@@ -100,6 +100,9 @@ class ClaimNode:
     evidence_level: int = 0
     assessment_confidence: str = "low"
     limitations: list = field(default_factory=list)
+    # M3: a system-generated QUESTION node references the CLAIM it interrogates
+    # (§4a teacher-probe). ``None`` for CLAIM/INFERENCE nodes.
+    references: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +118,7 @@ class ClaimNode:
             "evidence_level": self.evidence_level,
             "assessment_confidence": self.assessment_confidence,
             "limitations": list(self.limitations),
+            "references": self.references,
         }
 
 

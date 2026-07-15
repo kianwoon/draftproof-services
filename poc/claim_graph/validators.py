@@ -387,11 +387,19 @@ def validate_graph(
     segments: list[dict[str, Any]],
     cap_claims: Optional[int] = None,
     cap_edges: Optional[int] = None,
+    compute_signals: bool = False,
+    text: str = "",
+    embedder: Any = "__resolve__",
 ) -> dict[str, Any]:
     """Validate a proposal bundle into the ``cg-1`` container.
 
     ``proposals`` is ``{"claims": [...], "edges": [...]}`` (LLM output in M2);
-    ``None``/empty yields the empty-but-valid container (M1 default)."""
+    ``None``/empty yields the empty-but-valid container (M1 default).
+
+    ``compute_signals`` (M3): compute the three EXPERIMENTAL signals on the FULL
+    validated graph *before* eviction (plan §1 — truncation never changes a signal
+    value). Emitted QUESTION nodes join the graph (subject to the same caps).
+    Default ``False`` keeps the M1/M2 path pure + byte-identical (signals=[])."""
     proposals = proposals or {}
     cap_claims = cap_claims if cap_claims is not None else max_claims()
     cap_edges = cap_edges if cap_edges is not None else max_edges()
@@ -401,13 +409,26 @@ def validate_graph(
     edges = validate_edges(proposals.get("edges") or [], claims)
     apply_verification_states(claims, edges)
 
-    # Signals (M3) would be computed HERE, on the full graph, before eviction.
+    # Signals (M3) computed HERE, on the full graph, BEFORE eviction.
+    signal_objects: list[dict[str, Any]] = []
+    if compute_signals:
+        from . import signals as _signals  # lazy — keeps validators import-light
+
+        signal_objects, question_nodes = _signals.compute_signals(
+            claims, edges, text=text, embedder=embedder
+        )
+        # Assign deterministic ids to system-generated QUESTION nodes and append
+        # them so they persist alongside the claims they interrogate.
+        for i, q in enumerate(question_nodes, start=1):
+            q.id = f"q_{i:03d}"
+        claims = claims + question_nodes
+
     kept_claims, kept_edges, dropped_ids = enforce_caps(claims, edges, cap_claims, cap_edges)
 
     return schema.build_container(
         claims=kept_claims,
         edges=kept_edges,
-        signals=[],
+        signals=signal_objects,
         truncated=bool(dropped_ids),
         truncated_dropped_ids=dropped_ids,
     )

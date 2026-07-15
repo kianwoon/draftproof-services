@@ -82,10 +82,15 @@ def build_claim_graph_extracted(
         "claims": proposals.get("claims") or [],
         "edges": list(proposals.get("edges") or []) + list(cross_edges),
     }
-    container = validators.validate_graph(merged, segments)
+    # M3: signals computed on the FULL validated graph, before eviction.
+    container = validators.validate_graph(merged, segments, compute_signals=True, text=text)
 
     extraction_stats = dict(stats)
-    extraction_stats["accepted"] = len(container.get("claims") or [])
+    # M3 QUESTION nodes (carry ``references``) are system-generated, not extracted
+    # — exclude them from the acceptance count.
+    extraction_stats["accepted"] = len(
+        [c for c in (container.get("claims") or []) if not c.get("references")]
+    )
     extraction_stats["rejected"] = int(stats.get("proposed", 0)) - extraction_stats["accepted"]
     extraction_stats.update(rec_stats)
     container["extraction_stats"] = extraction_stats
