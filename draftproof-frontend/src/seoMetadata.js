@@ -27,8 +27,11 @@ export const GA_MEASUREMENT_ID =
 export const DEFAULT_IMAGE = `${SITE_URL}/og-image.png?v=2`;
 export const SITE_NAME = 'DraftProof';
 export const SEO_REVIEW_DATE = '2026-06-05';
-// Homepage reviewed separately when the Critical Thinking module was surfaced.
-export const HOME_REVIEW_DATE = '2026-06-16';
+// Homepage reviewed when the fine-tune v1 detector announcement was added to the
+// hero (2026-07-14/15). Drives the homepage sitemap <lastmod>, JSON-LD dateModified,
+// and the visible "last reviewed" footer — bump this whenever homepage content
+// meaningfully changes so Google/Bing re-crawl and re-index the new copy.
+export const HOME_REVIEW_DATE = '2026-07-15';
 // Content-checker + FAQ copy extended to surface the Critical Thinking module.
 export const CRITICAL_THINKING_REVIEW_DATE = '2026-06-17';
 // SEO keyword landing pages (Turnitin score, academic integrity, AI declaration, reduce detection).
