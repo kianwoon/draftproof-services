@@ -220,7 +220,7 @@ export default function SignalHighlights({
                             <div className="issue-action issue-action-evidence">
                               <span className="issue-action-label">{t('report.submitted.flaggedSentences')}</span>
                               <ul className="deberta-evidence-list">
-                                {selectedParagraph.flaggedSentences.slice(0, 3).map((sent) => (
+                                {selectedParagraph.flaggedSentences.map((sent) => (
                                   <li key={sent.sentence_id}>
                                     {/* The per-sentence classifier score saturates (~100 on any flagged
                                         unit) and is NOT a calibrated probability — printing it as a raw
