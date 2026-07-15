@@ -1762,6 +1762,15 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         if _ael:
             lines.append(_ael)
             lines.append("")
+
+        # Claim-graph "Source grounding" panel (advisory, display-only). Additive:
+        # '' when authorship_evidence.claim_graph_display is absent (claim graph
+        # off / older report). Never suppresses the AI number.
+        from .render_panels import render_claim_graph_panel
+        _cgp = render_claim_graph_panel(data)
+        if _cgp:
+            lines.append(_cgp)
+            lines.append("")
     elif report.ai_risk_badge:
         # Legacy fallback (older reports without a submission_risk diagnosis).
         _submission = _render_submission_risk_headline(report.ai_risk_badge)

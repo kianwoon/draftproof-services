@@ -821,6 +821,27 @@ export const report = {
       "unverified_specifics_present": "unverified specific claims present"
     }
   },
+  // Claim-graph "Source grounding" panel (authorship_evidence.claim_graph_display,
+  // advisory/display-only, experimental — DRAFTPROOF_CLAIM_GRAPH). KEEP IN SYNC with
+  // poc/report/claim_graph_panel.py + poc/report/render_panels.py render_claim_graph_panel.
+  "claimGraph": {
+    "title": "Source grounding",
+    "advisoryPill": "Experimental · advisory",
+    "subtitle": "An evidentiary map of your specific claims and whether cited sources back them. It does not change the AI-likelihood score — verified sources are credited, and paywalled or unresolved ones are not held against you.",
+    "specificClaims": "Specific claims",
+    "verifiedToSource": "Verified to source",
+    "needGrounding": "Need grounding",
+    "citedSources": "Cited sources checked",
+    "statusVerified": "Verified to source",
+    "statusContradicted": "Source contradicts",
+    "statusPaywalled": "Source paywalled",
+    "statusUnresolved": "Not verifiable",
+    "questionsHeader": "Questions to ground your specifics",
+    "sourcesVia": "Sources checked via",
+    "limitationsLabel": "Limitations",
+    "notHeldAgainstYou": "Paywalled or unresolved sources are not held against you.",
+    "footer": "Advisory evidence view — experimental, does not affect the AI-likelihood score or tier."
+  },
   "advancedSignals": {
     "summary": "Advanced signals"
   },

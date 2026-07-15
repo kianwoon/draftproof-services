@@ -803,6 +803,26 @@ export const report = {
       "unverified_specifics_present": "存在未经核实的具体主张"
     }
   },
+  // 来源佐证面板（authorship_evidence.claim_graph_display，仅供参考/仅展示，实验性——DRAFTPROOF_CLAIM_GRAPH）。
+  // 需与 poc/report/claim_graph_panel.py 及 poc/report/render_panels.py 的 render_claim_graph_panel 保持同步。
+  "claimGraph": {
+    "title": "来源佐证",
+    "advisoryPill": "实验性 · 仅供参考",
+    "subtitle": "以证据视角呈现你的具体主张，以及所引用来源是否能予以支持。它不会改变 AI 可能性评分——已核实的来源会被计入，付费墙或无法核实的来源不会对你不利。",
+    "specificClaims": "具体主张",
+    "verifiedToSource": "已核实来源",
+    "needGrounding": "需补充佐证",
+    "citedSources": "已核查的引用来源",
+    "statusVerified": "已核实来源",
+    "statusContradicted": "来源相矛盾",
+    "statusPaywalled": "来源在付费墙内",
+    "statusUnresolved": "无法核实",
+    "questionsHeader": "用于佐证你具体主张的问题",
+    "sourcesVia": "来源核查渠道",
+    "limitationsLabel": "局限",
+    "notHeldAgainstYou": "付费墙或无法核实的来源不会对你不利。",
+    "footer": "参考性证据视图——实验性，不影响 AI 可能性评分或等级。"
+  },
   "advancedSignals": {
     "summary": "高级信号"
   },

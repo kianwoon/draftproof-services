@@ -526,6 +526,95 @@ def render_authorship_evidence_levels(report_data: dict) -> str:
     return "\n".join(p for p in out if p)
 
 
+# ── Claim-graph "Source grounding" panel (advisory, display-only) ──
+# Renders authorship_evidence.claim_graph_display (poc/report/claim_graph_panel.py
+# — the single server-side source of truth both surfaces consume). '' when the
+# field is absent (DRAFTPROOF_CLAIM_GRAPH off / older report / fail-open), so the
+# PDF is byte-identical when the claim graph is not present. NEVER affects score.
+_CG_STATUS_LABEL = {
+    "verified": ("Verified to source", "good"),
+    "contradicted": ("Source contradicts", "warn"),
+    "paywalled": ("Source paywalled", "info"),
+    "unresolved": ("Not verifiable", "info"),
+}
+
+
+def render_claim_graph_panel(report_data: dict) -> str:
+    """HTML/PDF panel for the claim-graph Source-grounding evidence view.
+
+    Evidentiary, NOT accusatory: verified-to-source (good), source-contradicts
+    (the only warn/red), paywalled + unresolved (neutral, "not held against
+    you"), plus teacher-probe questions for unverified specifics. Advisory only —
+    the AI number stays visible elsewhere; this never suppresses or changes it.
+    '' when there is no claim_graph_display.
+    """
+    ae = (report_data or {}).get("authorship_evidence") or {}
+    cg = ae.get("claim_graph_display")
+    if not isinstance(cg, dict) or cg.get("present") is not True:
+        return ""
+
+    summary = cg.get("summary") or {}
+    checks = cg.get("source_checks") or []
+    questions = cg.get("questions") or []
+    channels = cg.get("coverage_channels") or []
+    limitations = cg.get("limitations") or []
+
+    out = [
+        '<div class="claim-graph-panel">',
+        '<p class="dp-callout-title">Source grounding '
+        '<span class="dp-statchip dp-statchip--info">Experimental · advisory</span></p>',
+        '<p class="dp-hero-sub">An evidentiary map of the specific claims and '
+        'whether cited sources back them. It does <strong>not</strong> change the '
+        'AI-likelihood score — verified sources are credited, paywalled or '
+        'unresolved ones are <strong>not held against you</strong>.</p>',
+        '<table class="dp-cg-summary"><tbody>'
+        f'<tr><td>Specific claims</td><td>{escape(str(summary.get("specific_claims", 0)))}</td></tr>'
+        f'<tr><td>Verified to source</td><td>{escape(str(summary.get("verified_to_source", 0)))}</td></tr>'
+        f'<tr><td>Need grounding</td><td>{escape(str(summary.get("need_grounding", 0)))}</td></tr>'
+        '</tbody></table>',
+    ]
+
+    if checks:
+        rows = []
+        for c in checks:
+            if not isinstance(c, dict):
+                continue
+            label, kind = _CG_STATUS_LABEL.get(
+                str(c.get("status") or "").lower(), ("Checked", "info"))
+            excerpt = escape(str(c.get("claim_excerpt") or ""))
+            locator = escape(str(c.get("locator") or ""))
+            score = c.get("entailment_score")
+            score_txt = f' <span class="dp-hero-sub">({score})</span>' if isinstance(score, (int, float)) else ""
+            rows.append(
+                f'<tr><td>{_statchip(label, kind)}{score_txt}</td>'
+                f'<td>{excerpt}<br/><span class="dp-hero-sub">{locator}</span></td></tr>'
+            )
+        if rows:
+            out.append('<p class="dp-hero-sub"><strong>Cited sources checked</strong></p>')
+            out.append('<table class="dp-cg-checks"><tbody>' + "".join(rows) + "</tbody></table>")
+
+    if questions:
+        items = "".join(f"<li>{escape(str(q))}</li>" for q in questions if str(q or "").strip())
+        if items:
+            out.append('<p class="dp-hero-sub"><strong>Questions to ground your specifics</strong></p>')
+            out.append(f"<ul class=\"dp-cg-questions\">{items}</ul>")
+
+    meta_parts = []
+    if channels:
+        meta_parts.append("sources checked via: " + escape(", ".join(str(x) for x in channels)))
+    if limitations:
+        meta_parts.append("limitations: " + escape("; ".join(str(x) for x in limitations)))
+    if meta_parts:
+        out.append('<p class="dp-hero-sub">' + " · ".join(meta_parts) + "</p>")
+
+    out.append(
+        '<p class="dp-hero-sub">Advisory evidence view — experimental, does not '
+        'affect the AI-likelihood score or tier.</p>'
+    )
+    out.append("</div>")
+    return "\n".join(p for p in out if p)
+
+
 def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> str:
     """Scan-PDF lead. PAGE-PARITY contract (owner rule 2026-07-06: the PDF must
     show what the scan page shows — nothing more):

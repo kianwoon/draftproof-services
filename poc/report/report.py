@@ -3520,6 +3520,24 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     # discipline as the annotations above; see attach_claim_graph_experimental.
     attach_claim_graph_experimental(result, report.original_text or "")
 
+    # Claim-graph "Source grounding" DISPLAY composer (advisory, display-only).
+    # Derives a sibling authorship_evidence.claim_graph_display from the attached
+    # cg-1 container — the single source of truth both surfaces render. Additive +
+    # fail-open: omitted (no new key) when the graph is absent/empty, so with
+    # DRAFTPROOF_CLAIM_GRAPH OFF the report is byte-identical.
+    try:
+        from .claim_graph_panel import compose_claim_graph_display  # noqa: E402
+        _authorship_cg = result.get("authorship_evidence")
+        if isinstance(_authorship_cg, dict):
+            _cg_display = compose_claim_graph_display(_authorship_cg.get("claim_graph"))
+            if _cg_display is not None:
+                _authorship_cg["claim_graph_display"] = _cg_display
+    except Exception:
+        logger.exception(
+            "report.report: claim_graph_display compose failed; omitting "
+            "(advisory, non-fatal)."
+        )
+
     result["scan_time_seconds"] = report.scan_time_seconds
     if report.generated_at:
         result["generated_at"] = report.generated_at

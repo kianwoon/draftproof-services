@@ -268,13 +268,96 @@ function EvidenceLevelPanel({ t, ael }) {
   );
 }
 
+// Claim-graph "Source grounding" row status -> chip level class (reuse the
+// merged-axis is-* colouring). Verified = low/green (good), contradicted =
+// high/red (the ONLY red), paywalled + unresolved = neutral ("not held against
+// you"). Presentation-only; the composer (poc/report/claim_graph_panel.py) is
+// the single source of truth for the data itself.
+const CG_STATUS_CLASS = { verified: 'low', contradicted: 'high', paywalled: 'unknown', unresolved: 'unknown' };
+
+// Claim-graph "Source grounding" evidence panel. Advisory + display-only: renders
+// authorship_evidence.claim_graph_display (the server-side composer's single
+// source of truth). Returns null when absent (claim graph off / older report),
+// so the report is byte-identical when the flag is off. NEVER affects the score.
+function ClaimGraphPanel({ t, cg }) {
+  if (!cg || typeof cg !== 'object' || cg.present !== true) return null;
+  const summary = cg.summary || {};
+  const checks = Array.isArray(cg.source_checks) ? cg.source_checks : [];
+  const questions = Array.isArray(cg.questions) ? cg.questions : [];
+  const channels = Array.isArray(cg.coverage_channels) ? cg.coverage_channels : [];
+  const limitations = Array.isArray(cg.limitations) ? cg.limitations : [];
+  return (
+    <div className="merged-lens merged-claim-graph">
+      <p className="merged-lens-head">
+        {t('report.claimGraph.title')}{' '}
+        <span className="merged-beta-chip">{t('report.claimGraph.advisoryPill')}</span>
+      </p>
+      <p className="merged-verdict-lead">{t('report.claimGraph.subtitle')}</p>
+      <div className="merged-risk-axes merged-cg-summary">
+        <div className="merged-axis is-unknown">
+          <span>{t('report.claimGraph.specificClaims')}</span>
+          <strong>{String(summary.specific_claims != null ? summary.specific_claims : 0)}</strong>
+        </div>
+        <div className="merged-axis is-low">
+          <span>{t('report.claimGraph.verifiedToSource')}</span>
+          <strong>{String(summary.verified_to_source != null ? summary.verified_to_source : 0)}</strong>
+        </div>
+        <div className="merged-axis is-medium">
+          <span>{t('report.claimGraph.needGrounding')}</span>
+          <strong>{String(summary.need_grounding != null ? summary.need_grounding : 0)}</strong>
+        </div>
+      </div>
+      {checks.length > 0 && (
+        <>
+          <p className="merged-lens-note"><strong>{t('report.claimGraph.citedSources')}</strong></p>
+          <div className="merged-cg-checks">
+            {checks.map((c, i) => {
+              const status = String((c && c.status) || '').toLowerCase();
+              const cls = CG_STATUS_CLASS[status] || 'unknown';
+              const statusKey = {
+                verified: 'statusVerified', contradicted: 'statusContradicted',
+                paywalled: 'statusPaywalled', unresolved: 'statusUnresolved',
+              }[status] || 'statusUnresolved';
+              return (
+                <div className={`merged-cg-check is-${cls}`} key={i}>
+                  <span className="merged-cg-check-status">{t(`report.claimGraph.${statusKey}`)}</span>
+                  <span className="merged-cg-check-body">
+                    {(c && c.claim_excerpt) || ''}
+                    {c && c.locator ? <em className="merged-cg-check-locator">{c.locator}</em> : null}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+      {questions.length > 0 && (
+        <>
+          <p className="merged-lens-note"><strong>{t('report.claimGraph.questionsHeader')}</strong></p>
+          <ul className="merged-cg-questions">
+            {questions.map((q, i) => <li key={i}>{q}</li>)}
+          </ul>
+        </>
+      )}
+      {(channels.length > 0 || limitations.length > 0) && (
+        <p className="merged-lens-note">
+          {channels.length > 0 ? `${t('report.claimGraph.sourcesVia')}: ${channels.join(', ')}` : ''}
+          {channels.length > 0 && limitations.length > 0 ? ' · ' : ''}
+          {limitations.length > 0 ? `${t('report.claimGraph.limitationsLabel')}: ${limitations.join('; ')}` : ''}
+        </p>
+      )}
+      <p className="merged-lens-note merged-cg-footer">{t('report.claimGraph.notHeldAgainstYou')} {t('report.claimGraph.footer')}</p>
+    </div>
+  );
+}
+
 // `sections` lets a caller render only a slice of this real card (e.g. the landing
 // page's marketing preview splits the composition lens and the verdict+risk lens
 // across two tabs) instead of re-implementing the markup as a separate mockup.
 // Omitting `sections` (every Report.jsx call site) renders every section, unchanged.
-const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'deepScanParagraphs', 'evidenceLevels', 'scale', 'disclaimer'];
+const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'deepScanParagraphs', 'evidenceLevels', 'claimGraph', 'scale', 'disclaimer'];
 
-export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence, evidenceLevels, sections }) {
+export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence, evidenceLevels, claimGraphDisplay, sections }) {
   const hasBreakdown = !!breakdown;
   const hasSr = !!(sr && sr.overall && sr.overall.level);
   if (!hasBreakdown && !hasSr) return null;
@@ -426,6 +509,10 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
 
       {show('evidenceLevels') && evidenceLevels && (
         <EvidenceLevelPanel t={t} ael={evidenceLevels} />
+      )}
+
+      {show('claimGraph') && claimGraphDisplay && (
+        <ClaimGraphPanel t={t} cg={claimGraphDisplay} />
       )}
 
       {show('scale') && hasSr && hasScore && (
