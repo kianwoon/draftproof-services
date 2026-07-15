@@ -410,6 +410,119 @@ def render_authorship_breakdown(report_data: dict) -> str:
     return "\n".join(p for p in out if p)
 
 
+# ── Phase-0 Authorship Evidence Level panel (advisory, display-only) ──────
+# allow-hardcode: PRESENTATION copy keyed by machine CODES (lens ids, band/level
+# codes, limitation codes). Mirrors the frontend i18n; never matched against text.
+_AEL_LENS_LABELS = {
+    "ai_pattern": "AI-pattern signal",
+    "grounding": "Grounding",
+    "citation": "Source traceability",
+    "reasoning": "Reasoning development",
+}
+# Grounding-gap band (higher = weaker grounding) -> plain word + chip colour.
+_AEL_GROUNDING_BAND = {
+    "likely_human": ("Strong", "good"), "some_texture": ("Moderate", "info"),
+    "moderate": ("Moderate", "info"), "strong": ("Elevated", "warn"),
+    "very_strong": ("Elevated", "warn"),
+}
+_AEL_CRITICAL_BAND = {
+    "strong_control": ("Strong", "good"), "acceptable_control": ("Moderate", "info"),
+    "weak_control": ("Developing", "info"), "high_dependency": ("Limited", "warn"),
+    "very_high_dependency": ("Limited", "warn"),
+}
+_AEL_CITATION_LEVEL = {"low": ("Strong", "good"), "medium": ("Moderate", "info"),
+                       "high": ("Elevated", "warn")}
+_AEL_TIER_BAND = {"green": ("Low", "good"), "clean": ("Low", "good"), "low": ("Low", "good"),
+                  "amber": ("Elevated", "info"), "orange": ("High", "warn"),
+                  "red": ("High", "warn"), "high": ("High", "warn")}
+_AEL_CONF_LABEL = {"high": "High", "moderate": "Moderate", "low": "Low"}
+_AEL_LIMITATION_LABEL = {
+    "no_assignment_context": "No assignment brief/rubric supplied — context grounding not assessed",
+    "short_paragraphs_low_confidence": "Short paragraphs — some lenses assessed with low confidence",
+    "outside_training_coverage": "Generator provenance unavailable — coverage window unknown",
+    "unverified_specifics_present": "Unverified specific claims present",
+}
+
+
+def render_authorship_evidence_levels(report_data: dict) -> str:
+    """HTML panel for the Phase-0 Authorship Evidence Level (§10 + §14 report
+    design). Re-presents EXISTING signals as Evidence Level N/5 with per-lens
+    bands, banded assessment confidence, typed coverage, and enumerated
+    limitations — an evidentiary, NOT accusatory, view. Advisory only: the AI
+    number stays visible elsewhere; this never suppresses it. '' when the badge
+    carries no authorship_evidence_levels (flag off / older report / fail-open).
+    """
+    badge = (report_data or {}).get("ai_risk_badge") or {}
+    ael = badge.get("authorship_evidence_levels")
+    if not isinstance(ael, dict) or not ael.get("lenses"):
+        return ""
+
+    level = ael.get("level")
+    max_level = ael.get("max_level_assessable", 2)
+    lenses = ael.get("lenses") or {}
+
+    rows = []
+    for lens_id in ("ai_pattern", "grounding", "citation", "reasoning"):
+        lens = lenses.get(lens_id)
+        if not isinstance(lens, dict) or lens.get("available") is False:
+            label, kind = "Not assessed", "info"
+            conf = ""
+        else:
+            if lens_id == "ai_pattern":
+                label, kind = _AEL_TIER_BAND.get(str(lens.get("band") or "").lower(), ("—", "info"))
+            elif lens_id == "grounding":
+                label, kind = _AEL_GROUNDING_BAND.get(str(lens.get("band") or "").lower(), ("—", "info"))
+            elif lens_id == "citation":
+                label, kind = _AEL_CITATION_LEVEL.get(str(lens.get("level") or "").lower(), ("—", "info"))
+            else:  # reasoning
+                label, kind = _AEL_CRITICAL_BAND.get(str(lens.get("band") or "").lower(), ("—", "info"))
+            conf = _AEL_CONF_LABEL.get(str(lens.get("assessment_confidence") or "").lower(), "")
+        conf_suffix = f' <span class="dp-hero-sub">({conf} confidence)</span>' if conf else ""
+        rows.append(
+            f'<tr><td>{escape(_AEL_LENS_LABELS[lens_id])}</td>'
+            f'<td>{_statchip(label, kind)}{conf_suffix}</td></tr>'
+        )
+
+    # Coverage + limitations lines (§C).
+    cov_parts = []
+    for c in (ael.get("coverage") or []):
+        if not isinstance(c, dict):
+            continue
+        if c.get("type") == "generator_window":
+            cov_parts.append(f"generator window: {escape(str(c.get('value') or 'unavailable'))}")
+        elif c.get("type") == "context_availability":
+            cov_parts.append(f"context: {escape(str(c.get('value') or ''))}")
+    lim_parts = [
+        _AEL_LIMITATION_LABEL.get(code, code)
+        for code in (ael.get("limitations") or []) if isinstance(code, str)
+    ]
+    overall_conf = _AEL_CONF_LABEL.get(str(ael.get("assessment_confidence") or "").lower(), "—")
+
+    out = [
+        '<div class="authorship-evidence-levels">',
+        '<p class="dp-callout-title">Authorship evidence level '
+        '<span class="dp-statchip dp-statchip--info">Beta · advisory</span></p>',
+        f'<p class="dp-hero-sub">Evidence level <strong>{escape(str(level))}/5</strong> '
+        f'(assessable in this version: 0–{escape(str(max_level))}). An evidentiary read of '
+        'what the existing signals can support — it does not change the AI-likelihood score '
+        'and levels 3–5 (context, external corroboration, process provenance) are not '
+        'assessable yet.</p>',
+        '<table class="dp-ael-table"><tbody>',
+        "".join(rows),
+        "</tbody></table>",
+        f'<p class="dp-hero-sub">Assessment confidence: <strong>{escape(overall_conf)}</strong></p>',
+    ]
+    if cov_parts:
+        out.append(f'<p class="dp-hero-sub">Coverage: {escape("; ".join(cov_parts))}</p>')
+    if lim_parts:
+        out.append(
+            '<p class="dp-hero-sub">Limitations: '
+            + escape("; ".join(lim_parts)) + "</p>"
+        )
+    out.append("</div>")
+    return "\n".join(p for p in out if p)
+
+
 def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> str:
     """Scan-PDF lead. PAGE-PARITY contract (owner rule 2026-07-06: the PDF must
     show what the scan page shows — nothing more):

@@ -1752,6 +1752,16 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
     if _lead:
         lines.append(_lead)
         lines.append("")
+
+    # Phase-0 Authorship Evidence Level panel (advisory, display-only). Additive:
+    # '' when the badge carries no authorship_evidence_levels (flag off / older
+    # report). Never suppresses the AI number — sits alongside the merged lead.
+    if report.ai_risk_badge:
+        from .render_panels import render_authorship_evidence_levels
+        _ael = render_authorship_evidence_levels(data)
+        if _ael:
+            lines.append(_ael)
+            lines.append("")
     elif report.ai_risk_badge:
         # Legacy fallback (older reports without a submission_risk diagnosis).
         _submission = _render_submission_risk_headline(report.ai_risk_badge)
