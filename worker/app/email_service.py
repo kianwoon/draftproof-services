@@ -185,7 +185,30 @@ def _rewrite_fused_lead_lines(rewrite_summary: dict | None) -> list[str]:
     if orig_ai is None or new_ai is None:
         return []
 
-    lines = [f"AI likelihood: {orig_ai:.0f}% -> {new_ai:.0f}%"]
+    # Gap-resolution reframe (scope §5 email copy): lead with the content-gap line, THEN
+    # keep the AI-likelihood after-score with the make-it-yours note. Kill-switched +
+    # fail-open: any import/field absence reverts to the legacy AI-likelihood-first lead.
+    gap_lead: str | None = None
+    reframe_note: str | None = None
+    try:
+        from poc.rewrite_v6 import verdict_reframe  # lazy: poc path set up by tasks.py
+
+        if verdict_reframe.reframe_enabled() and summary.get("verdict_label"):
+            gap = summary.get("gap_resolution") if isinstance(summary.get("gap_resolution"), dict) else {}
+            resolved = int(gap.get("findings_resolved") or 0)
+            anchors = int(gap.get("anchors_added") or 0)
+            gap_lead = f"Content gaps: {resolved} findings resolved, {anchors} specifics added"
+            reframe_note = str(summary.get("ai_likelihood_note") or verdict_reframe.AI_LIKELIHOOD_NOTE)
+    except Exception:
+        gap_lead = None
+        reframe_note = None
+
+    lines: list[str] = []
+    if gap_lead:
+        lines.append(gap_lead)
+    lines.append(f"AI likelihood: {orig_ai:.0f}% -> {new_ai:.0f}%")
+    if reframe_note:
+        lines.append(reframe_note)
     orig_evidence = _scan_deep_scan_evidence(orig_scan)
     new_evidence = _scan_deep_scan_evidence(new_scan)
     if orig_evidence and new_evidence:

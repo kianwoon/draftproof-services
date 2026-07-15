@@ -767,5 +767,17 @@ export const report = {
   },
   "advancedSignals": {
     "summary": "高级信号"
+  },
+  // 内容缺口修复结论（与 poc/rewrite_v6/verdict_reframe.py 的 LABEL_TITLES + AI_LIKELIHOOD_NOTE 保持同步）。
+  // 改写稿是"示范解决方案"——成功的标准是补齐了内容缺口，而非降低检测分数；改写后的 AI 分数仍会显示。
+  "rewriteVerdict": {
+    "labels": {
+      "gaps_resolved": "内容缺口已修复",
+      "gaps_partially_resolved": "内容缺口部分修复",
+      "draft_for_review": "示范草稿已就绪，请改写成你自己的内容",
+      "no_usable_rewrite": "无可用改写——请手动修改"
+    },
+    "sub": "已解决 {{findings}} 项问题 · 新增 {{anchors}} 处具体内容",
+    "note": "AI 起草的文本本就会被识别为 AI——示范草稿的分数仍会偏高。请对照差异，把它改写成你自己的表述，这才是真正降低分数的方式。"
   }
 };

@@ -1646,6 +1646,27 @@ export default function Report() {
           renderTransformationDetails('original', transformation, transformationSummary, transformationOriginalScore)
         )}
       </div>
+      {rewriteResultSummary?.verdict_label ? (
+        // Gap-resolution verdict reframe: headline the content-gap outcome, keep the
+        // AI-likelihood after-score visible with the make-it-yours note (annotate, don't
+        // suppress). Only renders when production.py emitted the field (reframe on).
+        <div className="rewrite-verdict-reframe">
+          <p className="rewrite-verdict-headline">
+            {t(`report.rewriteVerdict.labels.${rewriteResultSummary.verdict_label}`, {
+              defaultValue: t('report.rewriteVerdict.labels.draft_for_review'),
+            })}
+          </p>
+          <p className="rewrite-verdict-sub">
+            {t('report.rewriteVerdict.sub', {
+              findings: rewriteResultSummary.gap_resolution?.findings_resolved ?? 0,
+              anchors: rewriteResultSummary.gap_resolution?.anchors_added ?? 0,
+            })}
+          </p>
+          <p className="rewrite-verdict-note">
+            {rewriteResultSummary.ai_likelihood_note || t('report.rewriteVerdict.note')}
+          </p>
+        </div>
+      ) : null}
     </section>
   ) : null;
 

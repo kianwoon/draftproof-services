@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 # page / email so the rewrite PDF's Turnitin row reads identically).
 from .contribution import contribution_pair, contribution_pair_int
 from .render import _EXTERNAL_BAND_LABELS, EXTERNAL_ESTIMATE_DISPLAY_ENABLED
+from poc.rewrite_v6 import verdict_reframe
 
 
 _TIER_ORDER = ["critical", "high", "medium", "low"]
@@ -866,6 +867,35 @@ def _mode_label(mode: str) -> str:
     return str(mode or "guided_revision").replace("_", " ").title()
 
 
+def _verdict_reframe_lines(summary: dict) -> List[str]:
+    """Gap-resolution verdict block (scope §5 PDF copy). Leads with the gap headline +
+    metrics as the PRIMARY line; the AI-likelihood after-score stays visible as a
+    secondary row with the make-it-yours note (annotate-never-suppress). Empty list when
+    the reframe is off or the field is absent (legacy rewrites) — caller keeps legacy hero."""
+    label = summary.get("verdict_label")
+    if not (verdict_reframe.reframe_enabled() and label):
+        return []
+    title = verdict_reframe.LABEL_TITLES.get(str(label), str(label))
+    gap = summary.get("gap_resolution") if isinstance(summary.get("gap_resolution"), dict) else {}
+    detect_scores = summary.get("detect_scores") if isinstance(summary.get("detect_scores"), dict) else {}
+    orig_ai = _first_metric(detect_scores.get("original_ai"), summary.get("original_risk"))
+    new_ai = _first_metric(detect_scores.get("rewritten_ai"), summary.get("final_risk"))
+    lines = [f"**{title}**", ""]
+    sub = verdict_reframe.gap_sub_line(gap)
+    if sub:
+        lines.append(sub)
+        lines.append("")
+    if orig_ai is not None and new_ai is not None:
+        lines.append(
+            f"AI likelihood: {float(orig_ai):.0f}% → {float(new_ai):.0f}%"
+        )
+        lines.append("")
+    note = summary.get("ai_likelihood_note") or verdict_reframe.AI_LIKELIHOOD_NOTE
+    lines.append(f"*{note}*")
+    lines.append("")
+    return lines
+
+
 def _result_label(
     *,
     no_text_change: bool,
@@ -932,6 +962,11 @@ def render_rewrite_report(
     # ── Executive Summary ───────────────────────────────────────────
     lines.append("## Executive Summary")
     lines.append("")
+
+    # Gap-resolution verdict (reframe). Additive, kill-switched; leads the summary when
+    # present so the headline is the content-gap outcome, not the score delta. The legacy
+    # hero/label below still renders (annotate, don't suppress) as supporting detail.
+    lines.extend(_verdict_reframe_lines(summary))
 
     passes = summary.get("passes_completed", 0)
     converged = summary.get("converged", False)
@@ -1068,6 +1103,15 @@ def render_rewrite_report(
         elif outcome == "topk_blocked":
             result_label = "Top-k Blocked"
 
+        # Reframe rewire (scope §4): when the gap-resolution verdict is present, it is the
+        # AUTHORITY for the headline + green-hero, NOT ai_improved/score_worse. The legacy
+        # score-delta branches are demoted to supporting detail. Off / field-absent → legacy.
+        _reframe_verdict = summary.get("verdict_label") if verdict_reframe.reframe_enabled() else None
+        _reframe_good = None
+        if _reframe_verdict:
+            result_label = verdict_reframe.LABEL_TITLES.get(str(_reframe_verdict), result_label)
+            _reframe_good = verdict_reframe.verdict_is_good(str(_reframe_verdict))
+
         # Plain-English result explanation (used as the hero panel's sub-line).
         if outcome == "cleanup_improved":
             _expl = "Review burden reduced, but AI-footprint signals are still high. Do not treat this as detector-safe mitigation."
@@ -1103,6 +1147,7 @@ def render_rewrite_report(
             from .render_panels import rewrite_hero
             lines.append(rewrite_hero(
                 result_label=result_label, explanation=_expl, outcome=outcome,
+                verdict_good=_reframe_good,
                 ai_improved=ai_improved, score_worse=score_worse, original_preserved=original_preserved,
                 orig_ai=_display_ai_score(orig_ai), new_ai=_display_ai_score(new_ai),
                 orig_human=orig_human, new_human=new_human, orig_wq=orig_wq, new_wq=new_wq,

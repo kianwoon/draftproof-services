@@ -56,6 +56,7 @@ from .report_contracts import extract_paragraph_diagnoses, extract_report_signal
 # name so the two intermediate-summary uses below are unchanged.
 from .runtime import deep_scan_suppressed as _deep_scan_suppressed
 from .scan import scan_text, scan_text_preserve_blocks, scan_text_with_report
+from . import verdict_reframe
 
 try:
     from poc.llm.gateway import LLMConfig, LLMGateway
@@ -394,6 +395,14 @@ def run_rewrite_pipeline_v6(
     # the writer. The bracket-grounding colour spans below are the validated signal:
     #   green ('improved') = qwen's generated version accepted;  amber ('kept') = not accepted / original kept.
     summary["bracket_grounding_spans"] = bracket_grounding_spans
+    # Gap-resolution verdict reframe (additive, kill-switched). Must run AFTER
+    # bracket_grounding_spans is set so anchors_added counts the final spans.
+    _attach_verdict_reframe(
+        summary,
+        changed=changed,
+        orig_report=original_scan_report,
+        new_report=rewritten_scan_report,
+    )
     # Per-candidate gate audit (original, replacement, decision, scan before/after) so the green/amber
     # decision is reviewable from rewrite.json -- the stage is no longer a black box.
     summary["bracket_grounding_audit"] = bracket_grounding_audit
@@ -840,6 +849,35 @@ def _replace_document(document: Any, **changes: Any) -> Any:
         data = dict(getattr(document, "__dict__", {}))
         data.update(changes)
         return SimpleNamespace(**data)
+
+
+def _attach_verdict_reframe(
+    summary: dict[str, Any],
+    *,
+    changed: bool,
+    orig_report: Any,
+    new_report: Any,
+) -> None:
+    """Additively stamp the gap-resolution verdict fields onto the summary (scope §3/§4).
+
+    Reuses ONLY existing detector signals already on the summary (detect_scores,
+    bracket_grounding_spans) plus the two scan reports for category component deltas.
+    Kill-switched: when DRAFTPROOF_REWRITE_VERDICT_REFRAME is "0"/"false" this is a NO-OP,
+    so every downstream surface reverts to the legacy score-delta verdict byte-identically.
+    The after-score (final_risk/original_risk) is NEVER touched (annotate-never-suppress)."""
+    if not verdict_reframe.reframe_enabled():
+        return
+    detect_scores = summary.get("detect_scores") if isinstance(summary.get("detect_scores"), dict) else {}
+    spans = summary.get("bracket_grounding_spans")
+    gap = verdict_reframe.build_gap_resolution(detect_scores, spans, orig_report, new_report)
+    summary["gap_resolution"] = gap
+    summary["verdict_label"] = verdict_reframe.compute_verdict_label(
+        changed=bool(changed),
+        no_text_change=bool(summary.get("no_text_change")),
+        status=str(summary.get("status") or ""),
+        gap=gap,
+    )
+    summary["ai_likelihood_note"] = verdict_reframe.AI_LIKELIHOOD_NOTE
 
 
 def _detect_scores_for_summary(original_report: dict[str, Any], rewritten_report: dict[str, Any]) -> dict[str, Any]:

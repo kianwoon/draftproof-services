@@ -728,14 +728,19 @@ def _num(v):
 def rewrite_hero(*, result_label, explanation, outcome, ai_improved, score_worse,
                  original_preserved, orig_ai, new_ai, orig_human, new_human,
                  orig_wq, new_wq, o_total, n_total,
-                 orig_deep_scan=None, new_deep_scan=None) -> str:
+                 orig_deep_scan=None, new_deep_scan=None, verdict_good=None) -> str:
     """Hero result panel + before→after KPI row for the rewrite report.
 
     Mirrors the scan report's hero/KPI design. All values are pre-computed by
     render_rewrite_report (already in the right units). orig/new_deep_scan are the V7
     deberta deep-scan proportions (percent); None when deep-scan is off — then the
     deep-scan chip/KPI are simply omitted (fail-open, never fabricated)."""
-    good = (str(outcome) == "ai_mitigated") or (ai_improved and not score_worse)
+    # Reframe: when the gap-resolution verdict is supplied it is the AUTHORITY for the
+    # green hero, NOT the score delta (scope §4). None → legacy score-delta behaviour.
+    if verdict_good is not None:
+        good = bool(verdict_good)
+    else:
+        good = (str(outcome) == "ai_mitigated") or (ai_improved and not score_worse)
     kind = "good" if good else ("info" if original_preserved else "warn")
 
     chips = [(result_label, kind)]

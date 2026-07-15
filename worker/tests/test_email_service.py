@@ -101,6 +101,59 @@ def test_build_rewrite_completion_email_leads_with_v7_fused_before_after():
     assert "Evidence: composite 5 -> 4, deep-scan 23.8% -> 8.7%" in payload["text"]
 
 
+def test_build_rewrite_completion_email_reframe_leads_with_gap_line(monkeypatch):
+    # Gap-resolution reframe ON: email leads with the content-gap line, THEN keeps the
+    # AI-likelihood after-score with the make-it-yours note (annotate-never-suppress).
+    # poc is placed on sys.path exactly as tasks.py does at runtime (worker prod).
+    import os
+    import sys
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_VERDICT_REFRAME", "1")
+    rewrite_summary = {
+        "verdict_label": "gaps_resolved",
+        "gap_resolution": {"findings_resolved": 3, "anchors_added": 2},
+        "ai_likelihood_note": "make it yours",
+        "detect_scan_original_saved": {"ai_score": 40.0, "ai_risk_badge": {"ai_likelihood_score": 40.0}},
+        "detect_scan_rewritten": {"ai_score": 55.0, "ai_risk_badge": {"ai_likelihood_score": 55.0}},
+    }
+    payload = build_rewrite_completion_email(
+        recipient_email="student@example.com",
+        rewrite_id="rewrite-1",
+        scan_id="scan-1",
+        final_text="Rewritten content here.",
+        rewrite_summary=rewrite_summary,
+        settings=_settings(),
+    )
+    text = payload["text"]
+    assert "Content gaps: 3 findings resolved, 2 specifics added" in text
+    assert "AI likelihood: 40% -> 55%" in text  # after-score stays visible even when higher
+    assert "make it yours" in text
+    # gap line leads the AI-likelihood line
+    assert text.index("Content gaps:") < text.index("AI likelihood:")
+
+
+def test_build_rewrite_completion_email_reframe_off_reverts_to_legacy(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_REWRITE_VERDICT_REFRAME", "0")
+    rewrite_summary = {
+        "verdict_label": "gaps_resolved",
+        "gap_resolution": {"findings_resolved": 3, "anchors_added": 2},
+        "detect_scan_original_saved": {"ai_score": 40.0, "ai_risk_badge": {"ai_likelihood_score": 40.0}},
+        "detect_scan_rewritten": {"ai_score": 12.0, "ai_risk_badge": {"ai_likelihood_score": 12.0}},
+    }
+    payload = build_rewrite_completion_email(
+        recipient_email="student@example.com",
+        rewrite_id="rewrite-1",
+        scan_id="scan-1",
+        final_text="Rewritten content here.",
+        rewrite_summary=rewrite_summary,
+        settings=_settings(),
+    )
+    assert "AI likelihood: 40% -> 12%" in payload["text"]
+    assert "Content gaps:" not in payload["text"]
+
+
 def test_build_rewrite_completion_email_legacy_before_after_without_tier_authority():
     # Legacy rewrite (no V7 tier_authority block): still shows the before/after AI-likelihood
     # lead from the plain ai_score, but never fabricates composite/deep-scan evidence lines.

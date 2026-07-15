@@ -1109,6 +1109,12 @@ function buildRewriteResultSummary(rewriteReport) {
     original_findings: originalFindings,
     rewritten_findings: rewrittenFindings,
     changed_sentences: changedSentences,
+    // Gap-resolution verdict reframe (additive, produced by production.py when
+    // DRAFTPROOF_REWRITE_VERDICT_REFRAME is on). Null on legacy rewrites → the web
+    // verdict falls back to the score-delta path (annotate-never-suppress).
+    verdict_label: summary.verdict_label ?? rewriteReport?.verdict_label ?? null,
+    gap_resolution: summary.gap_resolution ?? rewriteReport?.gap_resolution ?? null,
+    ai_likelihood_note: summary.ai_likelihood_note ?? rewriteReport?.ai_likelihood_note ?? null,
   };
 }
 

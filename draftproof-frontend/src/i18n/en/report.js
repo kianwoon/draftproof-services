@@ -784,5 +784,18 @@ export const report = {
   },
   "advancedSignals": {
     "summary": "Advanced signals"
+  },
+  // Gap-resolution verdict reframe (KEEP IN SYNC: poc/rewrite_v6/verdict_reframe.py
+  // LABEL_TITLES + AI_LIKELIHOOD_NOTE). The rewrite is a shown solution — success is
+  // content gaps filled, not a lower detector score. The after-score stays visible.
+  "rewriteVerdict": {
+    "labels": {
+      "gaps_resolved": "Content gaps resolved",
+      "gaps_partially_resolved": "Gaps partially resolved",
+      "draft_for_review": "Draft ready to make yours",
+      "no_usable_rewrite": "No usable rewrite — edit manually"
+    },
+    "sub": "{{findings}} findings resolved · {{anchors}} specifics added",
+    "note": "LLM-drafted text reads as AI — this stays high on the demo draft. Review the diff and make it yours; that is what lowers it."
   }
 };
