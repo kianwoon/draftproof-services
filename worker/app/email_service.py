@@ -139,6 +139,29 @@ def _headline_confidence_line(hc: dict | None) -> str | None:
     )
 
 
+_EVIDENCE_CONF_LABELS = {"high": "high", "moderate": "moderate", "low": "low"}
+
+
+def _evidence_level_line(ael: dict | None) -> str | None:
+    """One summary line for the scan email from the Phase-0 Authorship Evidence
+    Level annotation (badge.authorship_evidence_levels, advisory/display-only —
+    poc/report/authorship_evidence_levels.py). Fail-open: None on any malformed
+    shape so a missing/older field never breaks the email."""
+    try:
+        if not isinstance(ael, dict) or ael.get("level") is None:
+            return None
+        level = ael.get("level")
+        max_level = ael.get("max_level_assessable", 2)
+        conf = _EVIDENCE_CONF_LABELS.get(str(ael.get("assessment_confidence") or "").lower())
+        line = f"Authorship evidence level: {level}/5 (assessable this version: 0-{max_level})"
+        if conf:
+            line += f" — assessment confidence {conf}"
+        line += ". Advisory read of existing signals; does not change the AI-likelihood score."
+        return line
+    except Exception:
+        return None
+
+
 def _scan_ai_percent(scan: dict | None) -> float | None:
     """Fused ai_likelihood_score for a stored rewrite scan (badge or top-level ai_score).
     Mirrors poc.report.render_rewrite._ai_score / _display_ai_score: when the V7 tier-authority
@@ -298,6 +321,7 @@ def build_scan_completion_email(
     policy_risk: dict | None = None,
     authorship_breakdown: dict | None = None,
     headline_confidence: dict | None = None,
+    authorship_evidence_levels: dict | None = None,
     pdf_bytes: bytes | None = None,
     pdf_filename: str | None = None,
     settings,
@@ -312,6 +336,11 @@ def build_scan_completion_email(
     _hc_line = _headline_confidence_line(headline_confidence)
     if _hc_line:
         details.append(_hc_line)
+    # Advisory Authorship Evidence Level summary (Phase 0; fail-open, absent on
+    # older reports / flag off).
+    _ael_line = _evidence_level_line(authorship_evidence_levels)
+    if _ael_line:
+        details.append(_ael_line)
     sr = (submission_risk or {}).get("overall") or {}
     if sr.get("level") and sr["level"] != "unknown":
         line = f"Submission risk: {_SR_LEVEL_LABELS.get(sr['level'], sr['level'])}"
@@ -504,6 +533,7 @@ def send_scan_completion_email(
     policy_risk: dict | None = None,
     authorship_breakdown: dict | None = None,
     headline_confidence: dict | None = None,
+    authorship_evidence_levels: dict | None = None,
     pdf_bytes: bytes | None = None,
     settings,
 ) -> bool:
@@ -530,6 +560,7 @@ def send_scan_completion_email(
             policy_risk=policy_risk,
             authorship_breakdown=authorship_breakdown,
             headline_confidence=headline_confidence,
+            authorship_evidence_levels=authorship_evidence_levels,
             pdf_bytes=pdf_bytes,
             settings=settings,
         )

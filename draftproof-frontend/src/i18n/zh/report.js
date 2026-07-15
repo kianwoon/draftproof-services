@@ -765,6 +765,44 @@ export const report = {
     "riskLensNote": "各自独立",
     "verdictFramingNote": "检测结论——此等级是 DraftProof 基于校准检测器给出的 AI 风险判定。下方的构成拆分仅为展示性解读，不能覆盖该判定。"
   },
+  // 第 0 阶段作者归属证据等级面板（badge.authorship_evidence_levels，仅供参考/展示）。
+  // 需与 poc/report/render_panels.py 及 poc/report/authorship_evidence_levels.py 保持同步。
+  "evidenceLevels": {
+    "head": "作者归属证据等级",
+    "betaChip": "测试版 · 仅供参考",
+    "levelLine": "证据等级 {{level}}/5（本版本可评估范围：0–{{max}}）。这是对现有信号所能支持内容的证据性解读——它不会改变 AI 可能性评分，且第 3–5 级（上下文、外部佐证、创作过程溯源）在本版本中尚无法评估。",
+    "lenses": {
+      "ai_pattern": "AI 模式信号",
+      "grounding": "论据支撑",
+      "citation": "来源可追溯性",
+      "reasoning": "推理发展"
+    },
+    "bands": {
+      "low": "低",
+      "strong": "强",
+      "moderate": "中等",
+      "developing": "发展中",
+      "elevated": "偏高",
+      "high": "高",
+      "limited": "有限",
+      "notAssessed": "未评估"
+    },
+    "confidence": {
+      "high": "高置信度",
+      "moderate": "中等置信度",
+      "low": "低置信度"
+    },
+    "assessmentConfidence": "整体评估置信度：{{confidence}}。",
+    "coverage": "覆盖范围——生成模型时间窗口：{{generator}}；上下文：{{context}}",
+    "coverageUnavailable": "不可用",
+    "limitationsLabel": "局限性：",
+    "limitations": {
+      "no_assignment_context": "未提供作业要求/评分标准——未评估上下文支撑",
+      "short_paragraphs_low_confidence": "段落过短——部分维度以低置信度评估",
+      "outside_training_coverage": "生成模型溯源信息不可用——覆盖时间窗口未知",
+      "unverified_specifics_present": "存在未经核实的具体主张"
+    }
+  },
   "advancedSignals": {
     "summary": "高级信号"
   },

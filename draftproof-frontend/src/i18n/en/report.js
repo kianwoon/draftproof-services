@@ -782,6 +782,45 @@ export const report = {
     "riskLensNote": "independent",
     "verdictFramingNote": "Detection verdict — this tier is DraftProof's AI-risk assessment, driven by the calibrated detector. The composition breakdown below is a display interpretation and does not override it."
   },
+  // Phase-0 Authorship Evidence Level panel (badge.authorship_evidence_levels,
+  // advisory/display-only). KEEP IN SYNC with poc/report/render_panels.py
+  // render_authorship_evidence_levels and poc/report/authorship_evidence_levels.py.
+  "evidenceLevels": {
+    "head": "Authorship evidence level",
+    "betaChip": "Beta · advisory",
+    "levelLine": "Evidence level {{level}}/5 (assessable in this version: 0–{{max}}). An evidentiary read of what the existing signals support — it does not change the AI-likelihood score, and levels 3–5 (context, external corroboration, process provenance) are not assessable yet.",
+    "lenses": {
+      "ai_pattern": "AI-pattern signal",
+      "grounding": "Grounding",
+      "citation": "Source traceability",
+      "reasoning": "Reasoning development"
+    },
+    "bands": {
+      "low": "Low",
+      "strong": "Strong",
+      "moderate": "Moderate",
+      "developing": "Developing",
+      "elevated": "Elevated",
+      "high": "High",
+      "limited": "Limited",
+      "notAssessed": "Not assessed"
+    },
+    "confidence": {
+      "high": "High confidence",
+      "moderate": "Moderate confidence",
+      "low": "Low confidence"
+    },
+    "assessmentConfidence": "Overall assessment confidence: {{confidence}}.",
+    "coverage": "Coverage — generator window: {{generator}}; context: {{context}}",
+    "coverageUnavailable": "unavailable",
+    "limitationsLabel": "Limitations:",
+    "limitations": {
+      "no_assignment_context": "no assignment brief/rubric supplied — context grounding not assessed",
+      "short_paragraphs_low_confidence": "short paragraphs — some lenses assessed with low confidence",
+      "outside_training_coverage": "generator provenance unavailable — coverage window unknown",
+      "unverified_specifics_present": "unverified specific claims present"
+    }
+  },
   "advancedSignals": {
     "summary": "Advanced signals"
   },

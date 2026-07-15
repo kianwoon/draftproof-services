@@ -186,13 +186,93 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headl
   );
 }
 
+// ── Phase-0 Authorship Evidence Level panel (advisory, display-only) ──────
+// Re-presents EXISTING signals as Evidence Level N/5 + per-lens bands + banded
+// confidence + typed coverage + limitations. Additive/null-safe: renders null
+// when the badge carries no authorship_evidence_levels (flag off / older report).
+// Band/level CODES map to i18n keys (report.evidenceLevels.*) — KEEP IN SYNC
+// with poc/report/render_panels.py render_authorship_evidence_levels.
+const AEL_LENSES = ['ai_pattern', 'grounding', 'citation', 'reasoning'];
+// Map each lens's raw band/level code to a display band token + level class.
+const AEL_TIER_BAND = { green: 'low', clean: 'low', low: 'low', amber: 'moderate', orange: 'high', red: 'high', high: 'high' };
+const AEL_GROUNDING_BAND = { likely_human: 'strong', some_texture: 'moderate', moderate: 'moderate', strong: 'elevated', very_strong: 'elevated' };
+const AEL_CRITICAL_BAND = { strong_control: 'strong', acceptable_control: 'moderate', weak_control: 'developing', high_dependency: 'limited', very_high_dependency: 'limited' };
+const AEL_CITATION_LEVEL = { low: 'strong', medium: 'moderate', high: 'elevated' };
+// Display band token -> chip level class (reuse merged-axis is-* colouring).
+const AEL_BAND_CLASS = { low: 'low', strong: 'low', moderate: 'medium', developing: 'medium', elevated: 'high', high: 'high', limited: 'high' };
+
+function aelLensBand(lensId, lens) {
+  if (!lens || lens.available === false) return null;
+  if (lensId === 'ai_pattern') return AEL_TIER_BAND[String(lens.band || '').toLowerCase()] || null;
+  if (lensId === 'grounding') return AEL_GROUNDING_BAND[String(lens.band || '').toLowerCase()] || null;
+  if (lensId === 'citation') return AEL_CITATION_LEVEL[String(lens.level || '').toLowerCase()] || null;
+  return AEL_CRITICAL_BAND[String(lens.band || '').toLowerCase()] || null; // reasoning
+}
+
+function EvidenceLevelPanel({ t, ael }) {
+  if (!ael || typeof ael !== 'object' || !ael.lenses) return null;
+  const level = ael.level;
+  const maxLevel = ael.max_level_assessable != null ? ael.max_level_assessable : 2;
+  const coverage = Array.isArray(ael.coverage) ? ael.coverage : [];
+  const gw = coverage.find((c) => c && c.type === 'generator_window');
+  const ctx = coverage.find((c) => c && c.type === 'context_availability');
+  const limitations = Array.isArray(ael.limitations) ? ael.limitations : [];
+  return (
+    <div className="merged-lens merged-ael">
+      <p className="merged-lens-head">
+        {t('report.evidenceLevels.head')}{' '}
+        <span className="merged-beta-chip">{t('report.evidenceLevels.betaChip')}</span>
+      </p>
+      <p className="merged-verdict-lead">
+        {t('report.evidenceLevels.levelLine', { level: String(level), max: String(maxLevel) })}
+      </p>
+      <div className="merged-risk-axes merged-ael-axes">
+        {AEL_LENSES.map((lensId) => {
+          const lens = ael.lenses[lensId];
+          const band = aelLensBand(lensId, lens);
+          const cls = band ? (AEL_BAND_CLASS[band] || 'medium') : 'unknown';
+          const conf = lens && lens.assessment_confidence;
+          return (
+            <div className={`merged-axis is-${cls}`} key={lensId}>
+              <span>{t(`report.evidenceLevels.lenses.${lensId}`)}</span>
+              <strong>
+                {band ? t(`report.evidenceLevels.bands.${band}`) : t('report.evidenceLevels.bands.notAssessed')}
+                {conf ? ` · ${t(`report.evidenceLevels.confidence.${conf}`)}` : ''}
+              </strong>
+            </div>
+          );
+        })}
+      </div>
+      <p className="merged-lens-note">
+        {t('report.evidenceLevels.assessmentConfidence', {
+          confidence: t(`report.evidenceLevels.confidence.${ael.assessment_confidence || 'low'}`),
+        })}
+      </p>
+      {(gw || ctx) && (
+        <p className="merged-lens-note">
+          {t('report.evidenceLevels.coverage', {
+            generator: (gw && gw.value) || t('report.evidenceLevels.coverageUnavailable'),
+            context: (ctx && ctx.value) || '',
+          })}
+        </p>
+      )}
+      {limitations.length > 0 && (
+        <p className="merged-lens-note">
+          {t('report.evidenceLevels.limitationsLabel')}{' '}
+          {limitations.map((code) => t(`report.evidenceLevels.limitations.${code}`, { defaultValue: code })).join('; ')}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // `sections` lets a caller render only a slice of this real card (e.g. the landing
 // page's marketing preview splits the composition lens and the verdict+risk lens
 // across two tabs) instead of re-implementing the markup as a separate mockup.
 // Omitting `sections` (every Report.jsx call site) renders every section, unchanged.
-const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'deepScanParagraphs', 'scale', 'disclaimer'];
+const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'deepScanParagraphs', 'evidenceLevels', 'scale', 'disclaimer'];
 
-export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence, sections }) {
+export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence, evidenceLevels, sections }) {
   const hasBreakdown = !!breakdown;
   const hasSr = !!(sr && sr.overall && sr.overall.level);
   if (!hasBreakdown && !hasSr) return null;
@@ -340,6 +420,10 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
             })}
           </div>
         </div>
+      )}
+
+      {show('evidenceLevels') && evidenceLevels && (
+        <EvidenceLevelPanel t={t} ael={evidenceLevels} />
       )}
 
       {show('scale') && hasSr && hasScore && (

@@ -25,6 +25,33 @@ def _settings(**overrides):
     return SimpleNamespace(**defaults)
 
 
+def test_scan_email_includes_evidence_level_line():
+    payload = build_scan_completion_email(
+        recipient_email="u@example.test",
+        scan_id="scan-1",
+        tier="amber",
+        authorship_evidence_levels={
+            "level": 2, "max_level_assessable": 2, "assessment_confidence": "moderate",
+        },
+        pdf_bytes=b"pdf",
+        settings=_settings(),
+    )
+    assert "Authorship evidence level: 2/5" in payload["text"]
+    assert "moderate" in payload["text"]
+
+
+def test_scan_email_omits_evidence_line_when_absent():
+    payload = build_scan_completion_email(
+        recipient_email="u@example.test",
+        scan_id="scan-1",
+        tier="green",
+        authorship_evidence_levels=None,
+        pdf_bytes=b"pdf",
+        settings=_settings(),
+    )
+    assert "Authorship evidence level" not in payload["text"]
+
+
 def test_build_rewrite_completion_email_includes_final_text():
     payload = build_rewrite_completion_email(
         recipient_email="student@example.com",

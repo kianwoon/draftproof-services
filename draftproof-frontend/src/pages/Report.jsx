@@ -1997,6 +1997,7 @@ export default function Report() {
               authoritativeTier={heroBadge.tier || heroReport.tier}
               tierAuthority={(heroBadge && heroBadge.tier_authority) || null}
               headlineConfidence={(heroBadge && heroBadge.headline_confidence) || null}
+              evidenceLevels={(heroBadge && heroBadge.authorship_evidence_levels) || null}
             />
           }
         />
