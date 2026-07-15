@@ -13,12 +13,25 @@ stays pure (M1 fresh-interpreter purity test).
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 from . import claim_graph_enabled
 from . import entailment_enabled
 from . import schema
 from . import validators
+
+_FALSEY = {"0", "false", "no", "off", ""}
+
+
+def _source_resolution_enabled() -> bool:
+    """N2 source-resolution sub-switch (default ON within entailment).
+
+    Lets an operator run N1 citation-linking WITHOUT the N2 network resolver
+    (DRAFTPROOF_CLAIM_GRAPH_SOURCE_RESOLVE=0). Only ever consulted once
+    ``entailment_enabled()`` already gated us in."""
+    return os.environ.get(
+        "DRAFTPROOF_CLAIM_GRAPH_SOURCE_RESOLVE", "1").strip().lower() not in _FALSEY
 
 
 def build_claim_graph(
@@ -94,7 +107,25 @@ def build_claim_graph_extracted(
             from . import citations  # lazy — keeps build.py import-light
 
             evidence = citations.link_citations(text, container.get("claims") or [])
+            # N2 (Phase-2, Track A): resolve DOI/URL locators + retrieve source
+            # text, cached/fail-open/rate-capped. Attaches a ``resolution`` block
+            # to each node's ``detail`` and returns §C source-access coverage +
+            # limitations. Mints NO ``verified`` — verification_status untouched
+            # (that is N3/N4). Fully env-gated; disable with
+            # DRAFTPROOF_CLAIM_GRAPH_SOURCE_RESOLVE=0 to keep N1-only behaviour.
+            coverage = None
+            limitations: list = []
+            if _source_resolution_enabled():
+                try:
+                    from . import sources  # lazy — heavier (requests) import
+
+                    evidence, coverage, limitations = sources.resolve_sources(evidence)
+                except Exception:
+                    coverage, limitations = None, []
             container["evidence"] = [n.to_dict() for n in evidence]
+            if coverage is not None:
+                container["source_coverage"] = coverage
+                container["source_limitations"] = list(limitations)
         except Exception:
             container["evidence"] = []
 
