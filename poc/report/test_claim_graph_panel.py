@@ -95,6 +95,46 @@ def test_none_when_no_claims_no_evidence():
     assert compose_claim_graph_display({"claims": [], "evidence": [], "signals": []}) is None
 
 
+def test_llm_extracted_question_excluded_and_panel_hidden():
+    """Regression (live scan 01e7ebdf): a QUESTION node the extractor lifted from
+    the document's OWN rhetoric (references=None) must NOT surface as a grounding
+    prompt, and with no source checks the whole panel hides rather than showing a
+    thin empty shell."""
+    container = {
+        "claims": [
+            {"id": "c_001", "node_type": "CLAIM",
+             "text": "Real value is shifting toward judgment.",
+             "verification_status": "internally_supported"},
+            {"id": "q_001", "node_type": "QUESTION", "references": None,
+             "text": "Which brings up an uncomfortable question: what's the value of the corporate soldier?"},
+        ],
+        "evidence": [],
+        "signals": [{"signal": "interrogatability", "status": "advisory",
+                     "value": {"questions_emitted": 0}, "coverage": {"total_specifics": 3}}],
+    }
+    assert compose_claim_graph_display(container) is None
+
+
+def test_teacher_probe_question_shown_and_need_grounding_consistent():
+    """A system-generated teacher-probe (references set) shows, and need_grounding
+    equals the shown question count (no signal-vs-list drift)."""
+    container = {
+        "claims": [
+            {"id": "c_001", "node_type": "CLAIM", "text": "Roughly 2 million affected annually.",
+             "verification_status": "unverified"},
+            {"id": "q_001", "node_type": "QUESTION", "references": "c_001",
+             "text": "What is the source or basis for '2 million'?"},
+        ],
+        "evidence": [],
+        "signals": [{"signal": "interrogatability", "status": "advisory",
+                     "value": {"questions_emitted": 1}, "coverage": {"total_specifics": 1}}],
+    }
+    out = compose_claim_graph_display(container)
+    assert out is not None
+    assert out["questions"] == ["What is the source or basis for '2 million'?"]
+    assert out["summary"]["need_grounding"] == len(out["questions"]) == 1
+
+
 # ── Populated container -> pinned contract. ──
 
 def test_present_and_advisory():

@@ -129,7 +129,15 @@ def compose_claim_graph_display(claim_graph: Any) -> Optional[dict[str, Any]]:
 
         claims_by_id = {c.get("id"): c for c in claims if c.get("id")}
         claim_nodes = [c for c in claims if str(c.get("node_type") or "").upper() == "CLAIM"]
-        question_nodes = [c for c in claims if str(c.get("node_type") or "").upper() == "QUESTION"]
+        # Only SYSTEM-GENERATED teacher-probes count — they carry a ``references``
+        # link to the CLAIM they interrogate (signals.py). LLM-EXTRACTED QUESTION
+        # nodes (references=None) are the document's OWN rhetorical questions and
+        # must never surface as grounding prompts (they read as noise, e.g.
+        # "What's the value of the traditional corporate soldier?").
+        question_nodes = [
+            c for c in claims
+            if str(c.get("node_type") or "").upper() == "QUESTION" and c.get("references")
+        ]
 
         # ── Summary counts (§ derivations). ──
         sig = _interrog_signal(claim_graph)
@@ -144,17 +152,26 @@ def compose_claim_graph_display(claim_graph: Any) -> Optional[dict[str, Any]]:
             if str(c.get("verification_status") or "").strip().lower() == "verified"
         )
 
-        questions_emitted = sig_value.get("questions_emitted")
-        need_grounding = int(questions_emitted) if isinstance(questions_emitted, int) else len(question_nodes)
-
         # ── Source checks (evidence[] resolved/entailed). ──
         source_checks = _source_checks(claim_graph, claims_by_id)
 
-        # ── Teacher-probe questions. ──
+        # ── Teacher-probe questions (system-generated only, see above). ──
         questions = [
             _trim(q.get("text"), 240) for q in question_nodes
             if str(q.get("text") or "").strip()
         ][:_QUESTIONS_CAP]
+
+        # need_grounding is the SHOWN teacher-probe count — derive it from the same
+        # filtered set so the metric and the list can never disagree (the 0-vs-1
+        # inconsistency this panel had against the raw signal's questions_emitted).
+        need_grounding = len(questions)
+
+        # Hide the whole panel when there is genuinely nothing to ground: no cited
+        # source was checked AND no teacher-probe fired. On uncited opinion prose the
+        # source-grounding lens has nothing specific to add — an empty shell reads as
+        # broken. The Phase-0 authorship-evidence panel still carries the general read.
+        if not source_checks and not questions:
+            return None
 
         # ── Coverage channels + limitations (pass-through). ──
         cov = claim_graph.get("source_coverage")
