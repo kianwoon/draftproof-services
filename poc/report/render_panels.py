@@ -483,24 +483,9 @@ def render_authorship_evidence_levels(report_data: dict) -> str:
             f'<td>{_statchip(label, kind)}{conf_suffix}</td></tr>'
         )
 
-    # Coverage + limitations lines (§C).
-    cov_parts = []
-    for c in (ael.get("coverage") or []):
-        if not isinstance(c, dict):
-            continue
-        if c.get("type") == "generator_window":
-            _gw = str(c.get("value") or "unavailable")
-            if c.get("model"):
-                _gw += f" (model: {c['model']})"
-            cov_parts.append(f"generator window: {escape(_gw)}")
-        elif c.get("type") == "context_availability":
-            cov_parts.append(f"context: {escape(str(c.get('value') or ''))}")
-    lim_parts = [
-        _AEL_LIMITATION_LABEL.get(code, code)
-        for code in (ael.get("limitations") or []) if isinstance(code, str)
-    ]
-    overall_conf = _AEL_CONF_LABEL.get(str(ael.get("assessment_confidence") or "").lower(), "—")
-
+    # (Owner 2026-07-15: the overall assessment-confidence / coverage / limitations
+    # §C lines were dropped from the display as unnecessary noise. The data stays in
+    # the badge JSON; only these three rendered lines are removed — web + PDF in sync.)
     out = [
         '<div class="authorship-evidence-levels">',
         '<p class="dp-callout-title">Authorship evidence level '
@@ -513,15 +498,7 @@ def render_authorship_evidence_levels(report_data: dict) -> str:
         '<table class="dp-ael-table"><tbody>',
         "".join(rows),
         "</tbody></table>",
-        f'<p class="dp-hero-sub">Assessment confidence: <strong>{escape(overall_conf)}</strong></p>',
     ]
-    if cov_parts:
-        out.append(f'<p class="dp-hero-sub">Coverage: {escape("; ".join(cov_parts))}</p>')
-    if lim_parts:
-        out.append(
-            '<p class="dp-hero-sub">Limitations: '
-            + escape("; ".join(lim_parts)) + "</p>"
-        )
     out.append("</div>")
     return "\n".join(p for p in out if p)
 

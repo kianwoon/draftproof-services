@@ -2091,6 +2091,21 @@ button.fix-first-item:focus-visible {
 .merged-axis.is-medium { background: #fef3c7; color: #b45309; }
 .merged-axis.is-high, .merged-axis.is-critical { background: #fee2e2; color: #b91c1c; }
 
+/* Claim-graph "Source grounding" panel (web) — match the 12px muted report
+   typography; the merged-cg-* classes had no CSS, so they fell back to browser
+   defaults and read as oversized/off. (The PDF panel uses its own dp-cg-* table
+   classes in poc/report/render_panels.py — separate styling path.) */
+.merged-cg-checks { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 0; }
+.merged-cg-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; padding: 6px 9px; border-radius: 6px; background: #f3f4f6; color: #6b7280; }
+.merged-cg-check.is-low { background: #dcfce7; color: #15803d; }
+.merged-cg-check.is-high { background: #fee2e2; color: #b91c1c; }
+.merged-cg-check-status { flex: 0 0 auto; font-weight: 600; white-space: nowrap; }
+.merged-cg-check-body { flex: 1 1 auto; color: #374151; line-height: 1.5; }
+.merged-cg-check-locator { display: block; font-size: 11px; color: #9ca3af; font-style: normal; margin-top: 2px; }
+.merged-cg-questions { margin: 6px 0 0; padding-left: 18px; }
+.merged-cg-questions li { font-size: 12px; color: #374151; line-height: 1.5; margin: 0 0 4px; }
+.merged-cg-footer { margin-top: 8px; }
+
 .merged-scale { border-top: 1px solid #f3f4f6; padding-top: 10px; margin-bottom: 4px; }
 .merged-scale > summary { font-size: 12px; color: #6b7280; cursor: pointer; }
 .merged-scale-table { width: 100%; font-size: 12px; margin-top: 10px; border-collapse: collapse; }

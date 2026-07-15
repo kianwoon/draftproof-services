@@ -213,10 +213,6 @@ function EvidenceLevelPanel({ t, ael }) {
   if (!ael || typeof ael !== 'object' || !ael.lenses) return null;
   const level = ael.level;
   const maxLevel = ael.max_level_assessable != null ? ael.max_level_assessable : 2;
-  const coverage = Array.isArray(ael.coverage) ? ael.coverage : [];
-  const gw = coverage.find((c) => c && c.type === 'generator_window');
-  const ctx = coverage.find((c) => c && c.type === 'context_availability');
-  const limitations = Array.isArray(ael.limitations) ? ael.limitations : [];
   return (
     <div className="merged-lens merged-ael">
       <p className="merged-lens-head">
@@ -243,27 +239,6 @@ function EvidenceLevelPanel({ t, ael }) {
           );
         })}
       </div>
-      <p className="merged-lens-note">
-        {t('report.evidenceLevels.assessmentConfidence', {
-          confidence: t(`report.evidenceLevels.confidence.${ael.assessment_confidence || 'low'}`),
-        })}
-      </p>
-      {(gw || ctx) && (
-        <p className="merged-lens-note">
-          {t('report.evidenceLevels.coverage', {
-            generator: (gw && gw.value)
-              ? (gw.model ? `${gw.value} (model: ${gw.model})` : gw.value)
-              : t('report.evidenceLevels.coverageUnavailable'),
-            context: (ctx && ctx.value) || '',
-          })}
-        </p>
-      )}
-      {limitations.length > 0 && (
-        <p className="merged-lens-note">
-          {t('report.evidenceLevels.limitationsLabel')}{' '}
-          {limitations.map((code) => t(`report.evidenceLevels.limitations.${code}`, { defaultValue: code })).join('; ')}
-        </p>
-      )}
     </div>
   );
 }
