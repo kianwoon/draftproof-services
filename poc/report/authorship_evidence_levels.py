@@ -84,24 +84,32 @@ def _generator_window() -> dict[str, Any]:
     2. else the committed weights.json deep_scan_calibration provenance date.
     3. else honest null + note (fail honest — never fabricate "July 2026").
     """
-    ckpt = os.environ.get("DRAFTPROOF_MODAL_CHECKPOINT")
-    if ckpt and str(ckpt).strip():
-        return {"type": "generator_window", "value": str(ckpt).strip(),
-                "source": "modal_checkpoint_env"}
+    # The WINDOW is always the provenance DATE (the user-meaningful "detector
+    # definitions current through <month>" claim); the checkpoint tag rides
+    # along as `model` — an env tag alone is an internal slug, not a window
+    # (observed live 2026-07-15: prod displayed "draftproof/finetune-v1-gpt55"
+    # where a date belonged).
+    ckpt = (os.environ.get("DRAFTPROOF_MODAL_CHECKPOINT") or "").strip() or None
+    window = None
     try:
-        import json
         import pathlib
         wpath = pathlib.Path(__file__).resolve().parent.parent / "detect_v7" / "weights.json"
         blob = wpath.read_text(encoding="utf-8")
         dates = re.findall(r"20\d\d-\d\d-\d\d", blob)
         if dates:
             latest = max(dates)  # ISO dates sort lexicographically
-            ym = latest[:7].replace("-", "_")
-            return {"type": "generator_window", "value": f"through_{ym}",
-                    "source": "weights_provenance"}
+            window = f"through {latest[:7]}"
     except Exception:
         pass
-    return {"type": "generator_window", "value": None, "note": "provenance unavailable"}
+    out: dict[str, Any] = {"type": "generator_window", "value": window,
+                           "source": "weights_provenance" if window else None}
+    if ckpt:
+        out["model"] = ckpt
+        if not window:
+            out["source"] = "modal_checkpoint_env"
+    if not window and not ckpt:
+        out["note"] = "provenance unavailable"
+    return out
 
 
 def _ai_pattern_lens(badge: dict) -> Optional[dict[str, Any]]:

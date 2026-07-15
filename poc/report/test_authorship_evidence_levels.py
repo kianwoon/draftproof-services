@@ -145,8 +145,11 @@ def test_generator_window_derived_from_env_checkpoint(monkeypatch=None):
     try:
         out = compute_evidence_level(_fused_badge(), {})
         gw = [c for c in out["coverage"] if c["type"] == "generator_window"][0]
-        assert gw["value"] is not None
-        assert "finetune-v1" in str(gw["value"])
+        # The WINDOW is the provenance DATE (user-meaningful coverage claim);
+        # the env checkpoint tag rides along as `model` — 2026-07-15 live fix:
+        # the slug was displayed where a date belonged.
+        assert gw["value"] is not None and str(gw["value"]).startswith("through ")
+        assert gw.get("model") == "finetune-v1"
     finally:
         del os.environ["DRAFTPROOF_MODAL_CHECKPOINT"]
 

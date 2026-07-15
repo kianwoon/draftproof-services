@@ -489,7 +489,10 @@ def render_authorship_evidence_levels(report_data: dict) -> str:
         if not isinstance(c, dict):
             continue
         if c.get("type") == "generator_window":
-            cov_parts.append(f"generator window: {escape(str(c.get('value') or 'unavailable'))}")
+            _gw = str(c.get("value") or "unavailable")
+            if c.get("model"):
+                _gw += f" (model: {c['model']})"
+            cov_parts.append(f"generator window: {escape(_gw)}")
         elif c.get("type") == "context_availability":
             cov_parts.append(f"context: {escape(str(c.get('value') or ''))}")
     lim_parts = [

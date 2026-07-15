@@ -251,7 +251,9 @@ function EvidenceLevelPanel({ t, ael }) {
       {(gw || ctx) && (
         <p className="merged-lens-note">
           {t('report.evidenceLevels.coverage', {
-            generator: (gw && gw.value) || t('report.evidenceLevels.coverageUnavailable'),
+            generator: (gw && gw.value)
+              ? (gw.model ? `${gw.value} (model: ${gw.model})` : gw.value)
+              : t('report.evidenceLevels.coverageUnavailable'),
             context: (ctx && ctx.value) || '',
           })}
         </p>
