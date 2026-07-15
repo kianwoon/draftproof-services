@@ -3482,6 +3482,36 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "(additive, non-fatal)."
         )
 
+    # Phase-1 Claim-Graph attach (EXPERIMENTAL, plumbing only — M1). Behind
+    # DRAFTPROOF_CLAIM_GRAPH (default OFF): when ON, attach an empty-but-valid
+    # cg-1 container under the existing authorship_evidence object so M2 has a
+    # socket. Same post-sync seam / fail-open discipline as the annotations
+    # above (annotate-don't-suppress; never fail a scan on the experimental
+    # graph). Deliberately NOT added to worker/app/rewrite_scan_compaction.py's
+    # keep-list — a populated graph (up to MAX_CLAIMS/MAX_EDGES) is large and the
+    # top-level authorship_evidence object is already dropped from compacted
+    # rewrite scan copies (see that module's top-level keep-list). See the plan
+    # size-cap amendment (docs/plans/phase1_claim_graph_execution_plan.md §1).
+    try:
+        from claim_graph.build import maybe_build_claim_graph  # noqa: E402
+        from detect.document_structure import (  # noqa: E402
+            structured_sentence_segments as _cg_segments,
+        )
+
+        _claim_graph = maybe_build_claim_graph(
+            report.original_text or "",
+            _cg_segments(report.original_text or ""),
+        )
+        if _claim_graph:
+            _authorship = result.get("authorship_evidence")
+            if isinstance(_authorship, dict):
+                _authorship["claim_graph"] = _claim_graph
+    except Exception:
+        logger.exception(
+            "report.report: claim_graph attach failed; omitting "
+            "(experimental, non-fatal)."
+        )
+
     result["scan_time_seconds"] = report.scan_time_seconds
     if report.generated_at:
         result["generated_at"] = report.generated_at

@@ -87,9 +87,23 @@ contradicts, inconsistent_with, depends_on, explains, causes, observed_in, suppo
   nodes with the most edges, (3) then by document order. Dropped-node ids are recorded in
   `truncated_dropped_ids[]` and `truncated=true`. Signals are computed on the FULL graph *before*
   eviction, so truncation never changes a signal value (only the persisted node list).
-- **Compaction keep-list:** add `authorship_evidence` (already survives if Phase-0 added it) — verify
-  the whole `authorship_evidence` subtree, including `claim_graph`, is retained through
-  `SCAN_BADGE_KEYS`; if the keep-list is key-shallow, add an explicit nested-retain test (§7).
+- **Compaction keep-list:** ~~add `authorship_evidence` … retained through `SCAN_BADGE_KEYS`~~
+  **AMENDED (M1, 2026-07-15).** `SCAN_BADGE_KEYS` filters `ai_risk_badge`, but the graph attaches at
+  the **top-level** `authorship_evidence.claim_graph` (not on the badge — Phase-0's
+  `authorship_evidence_levels` is the badge key, a different object). That top-level object is already
+  DROPPED by `compact_rewrite_scan_summary`'s top-level keep-list. **Decision: keep the claim-graph
+  OUT of compacted rewrite scan copies** — a populated graph is large (see measured sizes) and every
+  rewrite stores a before + after scan, so retaining it would ×2 the bloat on each rewrite artifact.
+  The primary R2 scan report keeps the full graph. `test_rewrite_scan_compaction` asserts the
+  exclusion; the exclusion is documented in `worker/app/rewrite_scan_compaction.py`.
+
+**Measured sizes (M1, 2026-07-15 — `json.dumps(...).encode()` on the `cg-1` schema):**
+- Empty container: **200 bytes** (negligible; this is all M1 ever attaches).
+- Synthetic worst case at caps (120 claims w/ realistic text+spans, 300 edges): **79,333 bytes
+  (~77.5 KB)**.
+- Reference bound: `worker/app/rewrite_debug.py::MAX_REWRITE_JSON_BYTES` default **1,500,000**
+  (min 250,000). Worst case ≈ **5.2%** of that bound — the graph fits the primary report comfortably,
+  but ~77 KB ×2 per rewrite is why it is excluded from the compacted rewrite copies above.
 
 ---
 

@@ -42,6 +42,14 @@ SCAN_BADGE_KEYS = (
     # scan badge; without it here the compaction strips it before storage and the
     # rewrite's before/after scans lose the evidence-level panel on every surface.
     "authorship_evidence_levels",
+    # NOTE (Phase-1 claim-graph, M1): the claim-graph is deliberately NOT kept
+    # here. It attaches at the TOP-LEVEL authorship_evidence object
+    # (authorship_evidence.claim_graph), not on ai_risk_badge — and that
+    # top-level object is already dropped by compact_rewrite_scan_summary's
+    # top-level keep-list. A populated graph reaches MAX_CLAIMS(120)/
+    # MAX_EDGES(300) and would bloat every stored before/after rewrite scan, so
+    # excluding it from compacted rewrite copies is intentional (plan §1
+    # size-cap amendment). test_rewrite_scan_compaction asserts the exclusion.
 )
 
 TRANSFORMATION_KEYS = (

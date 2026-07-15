@@ -27,6 +27,21 @@ def test_external_detector_estimate_is_in_keep_list():
     assert "external_detector_estimate" in SCAN_BADGE_KEYS
 
 
+def test_compaction_drops_top_level_claim_graph():
+    # Phase-1 claim-graph (M1) attaches at top-level authorship_evidence.claim_graph.
+    # A populated graph is large (~77 KB at MAX_CLAIMS/MAX_EDGES) and must NOT bloat
+    # the stored before/after rewrite scans — the exclusion is deliberate (plan §1).
+    scan = {
+        "ai_risk_badge": {"ai_likelihood_score": 10.0, "tier": "GREEN"},
+        "authorship_evidence": {
+            "claim_graph": {"schema_version": "cg-1", "claims": [{"id": "c_001"}]},
+        },
+    }
+    out = compact_rewrite_scan_summary(scan)
+    assert "authorship_evidence" not in out
+    assert "claim_graph" not in SCAN_BADGE_KEYS
+
+
 def test_compaction_keeps_core_badge_fields():
     scan = {
         "ai_risk_badge": {
