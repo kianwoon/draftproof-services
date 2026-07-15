@@ -114,3 +114,31 @@ def test_v7_keys_locked_in_contract():
     for key in ("tier_authority", "tier_authority_status", "authorship_breakdown",
                 "ai_signal_deberta", "signal_source"):
         assert key in SCAN_BADGE_KEYS, key
+
+
+def test_bounded_payload_keeps_verdict_reframe_fields():
+    """PROD GAP 2026-07-15 (rewrite 13df56d7): oversized rewrite payloads are
+    compacted via a summary KEY WHITELIST — the verdict-reframe fields
+    (verdict_label / gap_resolution / ai_likelihood_note, added d020fafc) were
+    not on it, so the stored rewrite.json silently lost the new verdict and
+    every surface rendered legacy. Additive fields MUST be added to the
+    compaction keep-list (project rule: additive composers reach ALL surfaces,
+    including the storage compactor)."""
+    from app.rewrite_debug import _bounded_rewrite_json_payload
+
+    payload = {
+        "rewrite_id": "r1",
+        "summary": {
+            "verdict_label": "gaps_partially_resolved",
+            "gap_resolution": {"findings_resolved": 3, "anchors_added": 5},
+            "ai_likelihood_note": "make it yours",
+            "outcome": "partial_candidate_not_strict_safe",
+            "padding": "x" * 100,
+        },
+        "final_text": "t",
+    }
+    out = _bounded_rewrite_json_payload(payload, max_bytes=200)  # force compaction
+    s = out["summary"]
+    assert s.get("verdict_label") == "gaps_partially_resolved"
+    assert s.get("gap_resolution") == {"findings_resolved": 3, "anchors_added": 5}
+    assert s.get("ai_likelihood_note") == "make it yours"

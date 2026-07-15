@@ -228,6 +228,13 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
     compact_summary_keys = (
         "rewrite_pipeline_version",
         "rewrite_engine_mode",
+        # Verdict-reframe fields (d020fafc, 2026-07-14) — small scalars/dicts;
+        # dropping them silently reverts every surface to the legacy score-delta
+        # verdict (observed live on rewrite 13df56d7 whose payload tripped the
+        # size cap). Additive summary fields MUST be added here.
+        "verdict_label",
+        "gap_resolution",
+        "ai_likelihood_note",
         "outcome",
         "public_status",
         "public_candidate_warning",
