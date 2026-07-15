@@ -2027,7 +2027,10 @@ button.paragraph-severity-seg {
    Authorship-evidence-level panel now frames the "Read full document" section,
    sitting directly above the underlined document it summarizes. The lifted panel
    keeps its own .merged-ael styling; this wrapper only spaces it as a header. */
-.submitted-evidence-summary { margin-bottom: 1rem; }
+/* Inset the shifted evidence summary to match the section head's 1.15rem padding —
+   the card body itself has no padding, so without this the full-width colored
+   dimension bars bleed to the card's left/right edges. */
+.submitted-evidence-summary { padding: 1rem 1.15rem 0; margin-bottom: 1rem; }
 .submitted-evidence-summary .merged-ael { margin: 0; }
 
 .submitted-issue-swatch {
