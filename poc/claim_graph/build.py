@@ -103,6 +103,80 @@ def _run_entailment(evidence: list, claims: list) -> None:
             resolution["entailment"] = by_claim
 
 
+def _attach_entailment_evidence(text: str, claim_dicts: list) -> tuple:
+    """N1→N2→N3 attach block: link citations → resolve sources → entail.
+
+    Returns ``(evidence_nodes, coverage, limitations)``. ``evidence_nodes`` are
+    the node objects (NOT ``to_dict``'d) so N4 can read each node's
+    ``detail['resolution']['entailment']`` verdict map for promotion. Preserves
+    every existing fail-open + sub-switch (``_source_resolution_enabled`` /
+    ``_entailment_scoring_enabled``) semantic; mints NO ``verification_status``.
+    """
+    from . import citations  # lazy — keeps build.py import-light
+
+    evidence = citations.link_citations(text, claim_dicts or [])
+    coverage = None
+    limitations: list = []
+    if _source_resolution_enabled():
+        try:
+            from . import sources  # lazy — heavier (requests) import
+
+            evidence, coverage, limitations = sources.resolve_sources(
+                evidence, deps=_resolver_deps())
+            if _entailment_scoring_enabled():
+                try:
+                    _run_entailment(evidence, claim_dicts or [])
+                except Exception:
+                    pass  # fail-open: never fail the build on N3
+        except Exception:
+            coverage, limitations = None, []
+    return evidence, coverage, limitations
+
+
+def _promote_verification_states(claims: list, evidence_nodes: list) -> None:
+    """N4 wire-back: promote ``claim.verification_status`` from the N3 verdicts.
+
+    Precedence (plan §3 verdict asymmetry, §I):
+      * ``contradicted`` ALWAYS wins (the only negative state — surface the flag).
+      * ``verified`` promotes a claim UNLESS it is already ``contradicted`` (an
+        internal contradiction from edges, or a contradicting source): never
+        downgrade — keep ``contradicted`` and append a limitations note instead of
+        silently overwriting.
+      * ``unverified`` leaves the status untouched (``unverified ≠ fabricated``).
+
+    Deterministic; mutates ClaimNode objects in place. Only ever reached under
+    ``entailment_enabled()`` (where ``verified`` is a legal state, N0)."""
+    from . import entailment  # lazy — canonical verdict status strings (no hardcode)
+
+    by_id = {c.id: c for c in claims}
+    for node in evidence_nodes or []:
+        detail = getattr(node, "detail", None)
+        if not isinstance(detail, dict):
+            continue
+        resolution = detail.get("resolution")
+        if not isinstance(resolution, dict):
+            continue
+        verdicts = resolution.get("entailment")
+        if not isinstance(verdicts, dict):
+            continue
+        for cid, verdict in verdicts.items():
+            claim = by_id.get(str(cid))
+            if claim is None or not isinstance(verdict, dict):
+                continue
+            status = verdict.get("status")
+            if status == entailment.STATUS_CONTRADICTED:
+                claim.verification_status = entailment.STATUS_CONTRADICTED
+            elif status == entailment.STATUS_VERIFIED:
+                if claim.verification_status == entailment.STATUS_CONTRADICTED:
+                    note = ("entailment verified vs internal contradiction: kept "
+                            "contradicted (N4 — contradicted always wins)")
+                    if note not in claim.limitations:
+                        claim.limitations.append(note)
+                else:
+                    claim.verification_status = entailment.STATUS_VERIFIED
+            # entailment.STATUS_UNVERIFIED / anything else → leave status as-is.
+
+
 def build_claim_graph(
     text: str,
     segments: list[dict[str, Any]],
@@ -165,48 +239,38 @@ def build_claim_graph_extracted(
         "claims": proposals.get("claims") or [],
         "edges": list(proposals.get("edges") or []) + list(cross_edges),
     }
-    # M3: signals computed on the FULL validated graph, before eviction.
-    container = validators.validate_graph(merged, segments, compute_signals=True, text=text)
-
-    # N1 (Phase-2, Track A): deterministic citation → claim linking. ONLY when
-    # DRAFTPROOF_ENTAILMENT is on — otherwise evidence stays [] and the graph is
-    # byte-identical to Phase-1. Fail-open: never fails the build.
-    if entailment_enabled():
+    if not entailment_enabled():
+        # Flag OFF: VERBATIM pre-N4 single-call path. Signals see the Phase-1
+        # statuses; specificity credits ALL specifics — byte-identical to Phase-1.
+        # M3: signals computed on the FULL validated graph, before eviction.
+        container = validators.validate_graph(
+            merged, segments, compute_signals=True, text=text)
+    else:
+        # Flag ON: split so N4 can promote verification_status from entailment
+        # verdicts BEFORE signals run — a verified specific is credited and never
+        # emitted as a QUESTION (no q_NNN churn). Everything fail-open: any error
+        # falls back to the pre-N4 single-call container.
         try:
-            from . import citations  # lazy — keeps build.py import-light
-
-            evidence = citations.link_citations(text, container.get("claims") or [])
-            # N2 (Phase-2, Track A): resolve DOI/URL locators + retrieve source
-            # text, cached/fail-open/rate-capped. Attaches a ``resolution`` block
-            # to each node's ``detail`` and returns §C source-access coverage +
-            # limitations. Mints NO ``verified`` — verification_status untouched
-            # (that is N3/N4). Fully env-gated; disable with
-            # DRAFTPROOF_CLAIM_GRAPH_SOURCE_RESOLVE=0 to keep N1-only behaviour.
-            coverage = None
-            limitations: list = []
-            if _source_resolution_enabled():
-                try:
-                    from . import sources  # lazy — heavier (requests) import
-
-                    evidence, coverage, limitations = sources.resolve_sources(
-                        evidence, deps=_resolver_deps())
-                    # N3 (Phase-2, Track A): entail each RESOLVED source against
-                    # its linked claim(s) and ATTACH the verdict to the node's
-                    # resolution block. Mints NO verification_status (that is N4).
-                    # Sub-switch DRAFTPROOF_CLAIM_GRAPH_ENTAIL=0 keeps N1+N2 only.
-                    if _entailment_scoring_enabled():
-                        try:
-                            _run_entailment(evidence, container.get("claims") or [])
-                        except Exception:
-                            pass  # fail-open: never fail the build on N3
-                except Exception:
-                    coverage, limitations = None, []
-            container["evidence"] = [n.to_dict() for n in evidence]
+            claims, edges = validators._validate_core(merged, segments)
+            claim_dicts = [c.to_dict() for c in claims]
+            # N1→N2→N3: link citations, resolve sources, entail (attach verdicts).
+            evidence_nodes, coverage, limitations = _attach_entailment_evidence(
+                text, claim_dicts)
+            # N4: promote verification_status from the attached verdicts, THEN run
+            # signals verified-only (the M4 rec (f)1 gaming fix, plan [G3]).
+            _promote_verification_states(claims, evidence_nodes)
+            container = validators.finalize_container(
+                claims, edges, compute_signals=True, text=text,
+                specificity_verified_only=True)
+            container["evidence"] = [n.to_dict() for n in evidence_nodes]
             if coverage is not None:
                 container["source_coverage"] = coverage
                 container["source_limitations"] = list(limitations)
         except Exception:
-            container["evidence"] = []
+            # Fail-open: never fail the build — fall back to a valid container.
+            container = validators.validate_graph(
+                merged, segments, compute_signals=True, text=text)
+            container.setdefault("evidence", [])
 
     extraction_stats = dict(stats)
     # M3 QUESTION nodes (carry ``references``) are system-generated, not extracted

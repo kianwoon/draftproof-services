@@ -401,32 +401,44 @@ def enforce_caps(
 
 
 # ── Top-level orchestration ─────────────────────────────────────────────────
-def validate_graph(
+def _validate_core(
     proposals: Optional[dict[str, Any]],
     segments: list[dict[str, Any]],
-    cap_claims: Optional[int] = None,
-    cap_edges: Optional[int] = None,
-    compute_signals: bool = False,
-    text: str = "",
-    embedder: Any = "__resolve__",
-) -> dict[str, Any]:
-    """Validate a proposal bundle into the ``cg-1`` container.
+) -> tuple[list[ClaimNode], list[Edge]]:
+    """Deterministic core: validate claims + edges + internal verification states.
 
-    ``proposals`` is ``{"claims": [...], "edges": [...]}`` (LLM output in M2);
-    ``None``/empty yields the empty-but-valid container (M1 default).
-
-    ``compute_signals`` (M3): compute the three EXPERIMENTAL signals on the FULL
-    validated graph *before* eviction (plan §1 — truncation never changes a signal
-    value). Emitted QUESTION nodes join the graph (subject to the same caps).
-    Default ``False`` keeps the M1/M2 path pure + byte-identical (signals=[])."""
+    Returns the accepted ``ClaimNode``/``Edge`` objects PRE-signals, PRE-eviction
+    — the reusable seam N4 needs so it can promote ``verification_status`` from
+    entailment verdicts BEFORE signals run (verified-only specificity credit),
+    without re-feeding validated claims as raw proposals. Behaviour-preserving:
+    identical to the head of the old ``validate_graph``."""
     proposals = proposals or {}
-    cap_claims = cap_claims if cap_claims is not None else max_claims()
-    cap_edges = cap_edges if cap_edges is not None else max_edges()
-
     sentence_index = build_sentence_index(segments)
     claims = validate_claims(proposals.get("claims") or [], sentence_index)
     edges = validate_edges(proposals.get("edges") or [], claims)
     apply_verification_states(claims, edges)
+    return claims, edges
+
+
+def finalize_container(
+    claims: list[ClaimNode],
+    edges: list[Edge],
+    *,
+    compute_signals: bool = False,
+    text: str = "",
+    embedder: Any = "__resolve__",
+    cap_claims: Optional[int] = None,
+    cap_edges: Optional[int] = None,
+    specificity_verified_only: bool = False,
+) -> dict[str, Any]:
+    """Signals + q_NNN assignment + eviction + container build (old tail).
+
+    Behaviour-preserving: with the defaults this is byte-identical to the old
+    ``validate_graph`` tail. ``specificity_verified_only`` (N4) is threaded to the
+    interrogatability signal so a verified-aware caller can credit ONLY verified
+    specifics; it defaults ``False`` so every existing caller is unchanged."""
+    cap_claims = cap_claims if cap_claims is not None else max_claims()
+    cap_edges = cap_edges if cap_edges is not None else max_edges()
 
     # Signals (M3) computed HERE, on the full graph, BEFORE eviction.
     signal_objects: list[dict[str, Any]] = []
@@ -434,7 +446,8 @@ def validate_graph(
         from . import signals as _signals  # lazy — keeps validators import-light
 
         signal_objects, question_nodes = _signals.compute_signals(
-            claims, edges, text=text, embedder=embedder
+            claims, edges, text=text, embedder=embedder,
+            specificity_verified_only=specificity_verified_only,
         )
         # Assign deterministic ids to system-generated QUESTION nodes and append
         # them so they persist alongside the claims they interrogate.
@@ -453,6 +466,35 @@ def validate_graph(
     )
 
 
+def validate_graph(
+    proposals: Optional[dict[str, Any]],
+    segments: list[dict[str, Any]],
+    cap_claims: Optional[int] = None,
+    cap_edges: Optional[int] = None,
+    compute_signals: bool = False,
+    text: str = "",
+    embedder: Any = "__resolve__",
+) -> dict[str, Any]:
+    """Validate a proposal bundle into the ``cg-1`` container.
+
+    ``proposals`` is ``{"claims": [...], "edges": [...]}`` (LLM output in M2);
+    ``None``/empty yields the empty-but-valid container (M1 default).
+
+    ``compute_signals`` (M3): compute the three EXPERIMENTAL signals on the FULL
+    validated graph *before* eviction (plan §1 — truncation never changes a signal
+    value). Emitted QUESTION nodes join the graph (subject to the same caps).
+    Default ``False`` keeps the M1/M2 path pure + byte-identical (signals=[]).
+
+    Thin wrapper over ``_validate_core`` + ``finalize_container`` — byte-identical
+    to the pre-N4 single-call behaviour for every existing caller/signature."""
+    claims, edges = _validate_core(proposals, segments)
+    return finalize_container(
+        claims, edges,
+        compute_signals=compute_signals, text=text, embedder=embedder,
+        cap_claims=cap_claims, cap_edges=cap_edges,
+    )
+
+
 __all__ = [
     "max_claims",
     "max_edges",
@@ -461,5 +503,7 @@ __all__ = [
     "validate_edges",
     "apply_verification_states",
     "enforce_caps",
+    "_validate_core",
+    "finalize_container",
     "validate_graph",
 ]

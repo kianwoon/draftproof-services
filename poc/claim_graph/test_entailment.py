@@ -408,16 +408,23 @@ def test_build_entailment_on_attaches_result(monkeypatch, tmp_path):
     assert scorer.calls, "scorer must have been called on the resolved source"
 
 
-def test_build_entailment_does_not_change_verification_status(monkeypatch, tmp_path):
-    """The N3/N4 boundary: N3 must NOT flip any claim to verified/contradicted."""
+def test_build_entailment_subswitch_off_does_not_change_verification_status(
+        monkeypatch, tmp_path):
+    """N3 sub-switch OFF (N1+N2 only) attaches NO verdict, so N4 promotes nothing.
+
+    (Pre-N4 this asserted N3 never flips status; N4 now DOES promote from a
+    verdict — see ``test_build_n4_promotes_*``. The surviving boundary is that
+    with the entailment engine disabled there is no verdict to promote from, so
+    verification_status stays at its Phase-1 value.)"""
     monkeypatch.setenv(ENTAILMENT_KILL_SWITCH_ENV, "1")
     monkeypatch.setenv(KILL_SWITCH_ENV, "1")
+    monkeypatch.setenv("DRAFTPROOF_CLAIM_GRAPH_ENTAIL", "0")  # N3 off
     _isolate_cache(monkeypatch, tmp_path)
     from claim_graph import extract, sources as sources_mod
     from claim_graph import build as build_mod
     extract.clear_cache()
 
-    scorer = _FakeScorer(_probs(0.99, 0.005, 0.005))  # would-be "verified"
+    scorer = _FakeScorer(_probs(0.99, 0.005, 0.005))  # would-be "verified" — never called
     monkeypatch.setattr(build_mod, "_resolver_deps",
                         lambda: sources_mod.ResolverDeps(http_get=_resolved_http()))
     monkeypatch.setattr(build_mod, "_entailment_scorer", lambda: scorer)
@@ -453,3 +460,130 @@ def test_build_only_resolved_sources_scored(monkeypatch, tmp_path):
     segs = [_seg(text, "s001", "p001", 0)]
     build_mod.build_claim_graph_extracted(text, segs, _FakeGateway([_proposals()]))
     assert scorer.calls == []  # unresolved source never scored
+
+
+# ── N4: verdict → verification_status promotion + the gaming fix ─────────────
+def _interrog(container):
+    for s in container.get("signals", []) or []:
+        if s.get("signal") == "interrogatability":
+            return s
+    return None
+
+
+def _claim_nodes(container):
+    return [c for c in container.get("claims", []) if c.get("node_type") == "CLAIM"]
+
+
+def _build_on(monkeypatch, tmp_path, scorer, http=None):
+    """Run the full N1–N4 build with entailment ON and mocked resolver+scorer."""
+    monkeypatch.setenv(ENTAILMENT_KILL_SWITCH_ENV, "1")
+    monkeypatch.setenv(KILL_SWITCH_ENV, "1")
+    _isolate_cache(monkeypatch, tmp_path)
+    from claim_graph import extract, sources as sources_mod
+    from claim_graph import build as build_mod
+    extract.clear_cache()
+    monkeypatch.setattr(build_mod, "_resolver_deps",
+                        lambda: sources_mod.ResolverDeps(http_get=http or _resolved_http()))
+    monkeypatch.setattr(build_mod, "_entailment_scorer", lambda: scorer)
+    text = _text_with_doi()
+    segs = [_seg(text, "s001", "p001", 0)]
+    return build_mod.build_claim_graph_extracted(text, segs, _FakeGateway([_proposals()]))
+
+
+def test_build_n4_promotes_verified(monkeypatch, tmp_path):
+    """A resolved DOI whose source ENTAILS the claim → verification_status verified."""
+    container = _build_on(monkeypatch, tmp_path, _FakeScorer(_probs(0.99, 0.005, 0.005)))
+    claims = _claim_nodes(container)
+    assert claims and any(c["verification_status"] == "verified" for c in claims)
+
+
+def test_build_n4_promotes_contradicted(monkeypatch, tmp_path):
+    """A resolved DOI whose source CONTRADICTS the claim → verification_status contradicted."""
+    container = _build_on(monkeypatch, tmp_path, _FakeScorer(_probs(0.01, 0.0, 0.99)))
+    claims = _claim_nodes(container)
+    assert claims and any(c["verification_status"] == "contradicted" for c in claims)
+
+
+def test_build_n4_unverified_verdict_leaves_status(monkeypatch, tmp_path):
+    """A gray-zone verdict (neither threshold fires) → claim stays unverified."""
+    container = _build_on(monkeypatch, tmp_path, _FakeScorer(_probs(0.5, 0.5, 0.0)))
+    for c in _claim_nodes(container):
+        assert c["verification_status"] not in ("verified", "contradicted")
+
+
+def test_promote_precedence_verify_vs_internal_contradiction():
+    """Unit: a claim already ``contradicted`` (internal, from edges) is NEVER
+    downgraded by a ``verified`` verdict — contradicted wins + a flag note is
+    appended (surface the conflict, do not silently overwrite, §I)."""
+    from types import SimpleNamespace
+    from claim_graph import build as build_mod, entailment
+    from claim_graph.schema import ClaimNode
+
+    contradicted = ClaimNode(id="c_001", node_type="CLAIM", text="x",
+                             verification_status="contradicted")
+    ok = ClaimNode(id="c_002", node_type="CLAIM", text="y",
+                   verification_status="unverified")
+    node = SimpleNamespace(detail={"resolution": {"entailment": {
+        "c_001": {"status": entailment.STATUS_VERIFIED},
+        "c_002": {"status": entailment.STATUS_VERIFIED},
+    }}})
+    build_mod._promote_verification_states([contradicted, ok], [node])
+    # conflict: stays contradicted, gains a note
+    assert contradicted.verification_status == "contradicted"
+    assert any("contradicted always wins" in n for n in contradicted.limitations)
+    # clean verified promotion on the non-conflicting claim
+    assert ok.verification_status == "verified"
+
+
+def test_promote_contradicted_overrides_verified_verdict():
+    """Unit: contradicted verdict always wins over a verified verdict, any order."""
+    from types import SimpleNamespace
+    from claim_graph import build as build_mod, entailment
+    from claim_graph.schema import ClaimNode
+
+    c = ClaimNode(id="c_001", node_type="CLAIM", text="x", verification_status="unverified")
+    node = SimpleNamespace(detail={"resolution": {"entailment": {
+        "c_001": {"status": entailment.STATUS_VERIFIED}}}})
+    node2 = SimpleNamespace(detail={"resolution": {"entailment": {
+        "c_001": {"status": entailment.STATUS_CONTRADICTED}}}})
+    build_mod._promote_verification_states([c], [node, node2])
+    assert c.verification_status == "contradicted"
+
+
+def test_build_n4_gaming_fix_credit_differs_by_verification(monkeypatch, tmp_path):
+    """THE GAMING FIX (M4 rec (f)1, plan [G3]): identical specifics earn
+    specificity credit ONLY when the cited source verifies them. Verified →
+    credit > 0 and NO question; unverified → 0 credit + a teacher-probe question."""
+    verified = _build_on(monkeypatch, tmp_path, _FakeScorer(_probs(0.99, 0.005, 0.005)))
+    unverified = _build_on(monkeypatch, tmp_path, _FakeScorer(_probs(0.5, 0.5, 0.0)))
+
+    v_sig, u_sig = _interrog(verified), _interrog(unverified)
+    v_credit = v_sig["components"]["specificity_presence"]
+    u_credit = u_sig["components"]["specificity_presence"]
+    # Credit differs BY VERIFICATION — the headline assertion.
+    assert v_credit > u_credit
+    assert u_credit == 0.0
+    # verified specific emits no question; unverified specific does.
+    assert v_sig["value"]["questions_emitted"] == 0
+    assert u_sig["value"]["questions_emitted"] >= 1
+    # verified-only mode is recorded on both (entailment ON path).
+    assert v_sig.get("specificity_verified_only") is True
+    assert u_sig.get("specificity_verified_only") is True
+
+
+def test_build_n4_fail_open_scorer_none(monkeypatch, tmp_path):
+    """Entailment endpoint unavailable (scorer None) → build succeeds, nothing is
+    verified, claims stay unverified, verified-only specificity credit is 0."""
+    container = _build_on(monkeypatch, tmp_path, None)  # _entailment_scorer → None
+    claims = _claim_nodes(container)
+    assert claims  # build did not fail
+    assert all(c["verification_status"] != "verified" for c in claims)
+    assert _interrog(container)["components"]["specificity_presence"] == 0.0
+
+
+def test_build_n4_determinism(monkeypatch, tmp_path):
+    """Two identical N1–N4 builds → byte-identical containers."""
+    import json
+    a = _build_on(monkeypatch, tmp_path, _FakeScorer(_probs(0.99, 0.005, 0.005)))
+    b = _build_on(monkeypatch, tmp_path, _FakeScorer(_probs(0.99, 0.005, 0.005)))
+    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)

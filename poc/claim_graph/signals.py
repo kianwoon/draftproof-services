@@ -48,6 +48,9 @@ _MAX_QUESTIONS = 50
 _CAUSAL_EDGE_TYPES = ("depends_on", "explains", "causes")
 _SUPPORTED_STATE = "internally_supported"
 _UNVERIFIED_STATES = ("unverified", "unverifiable")
+# N4: the ONLY state that earns a specificity CREDIT when the verified-only gate
+# is on (plan §3 verdict asymmetry — external ownership credit is verified-only).
+_VERIFIED_STATE = "verified"
 
 _META_BASE = {
     "status": "experimental",
@@ -129,7 +132,8 @@ def _claims_only(claims: list[ClaimNode]) -> list[ClaimNode]:
 
 # ── 4a. Interrogatability (deterministic, graph-structure-only) ──────────────
 def compute_interrogatability(
-    claims: list[ClaimNode], edges: list[Edge]
+    claims: list[ClaimNode], edges: list[Edge],
+    *, specificity_verified_only: bool = False,
 ) -> tuple[dict[str, Any], list[ClaimNode]]:
     """Return ``(signal, question_nodes)``.
 
@@ -143,16 +147,28 @@ def compute_interrogatability(
     unverified/unverifiable CLAIM emits a teacher-probe QUESTION referencing that
     claim — an AUDIT surface, never a credit. Value carries the composite plus
     the ``unverified_specific_rate``.
+
+    ``specificity_verified_only`` (N4, plan [G3] + M4 rec (f)1 — the gaming fix):
+      * ``False`` (default, Phase-1/M3 parity): ``specificity_presence`` credits
+        ALL specifics — byte-identical to the pre-N4 signal.
+      * ``True`` (entailment ON): credit ONLY specifics on ``verified`` claims, so
+        an unentailed/fabricated-source specific earns NOTHING. QUESTION emission
+        and ``unverified_specific_rate`` are UNCHANGED in both modes (still driven
+        by ``_UNVERIFIED_STATES``) — only the credit numerator moves.
     """
     cnodes = _claims_only(claims)
     n = len(cnodes)
     questions: list[ClaimNode] = []
 
     total_specifics = 0
+    credited_specifics = 0
     unverified_specifics = 0
     for c in cnodes:
         specs = extract_specifics(c.text)
         total_specifics += len(specs)
+        # Credit numerator: ALL specifics by default; verified-only when gated.
+        if not specificity_verified_only or c.verification_status == _VERIFIED_STATE:
+            credited_specifics += len(specs)
         if c.verification_status in _UNVERIFIED_STATES:
             unverified_specifics += len(specs)
             for sp in specs:
@@ -179,7 +195,7 @@ def compute_interrogatability(
     else:
         components = {
             # provisional normalisers
-            "specificity_presence": min(1.0, total_specifics / (n * 2.0)),
+            "specificity_presence": min(1.0, credited_specifics / (n * 2.0)),
             "causal_depth": min(1.0, causal_edges / float(n)),
             "contextual_anchoring": anchored / float(n),
             "evidence_traceability": traceable / float(n),
@@ -188,6 +204,18 @@ def compute_interrogatability(
     components = {k: round(v, 4) for k, v in components.items()}
     unverified_specific_rate = round(
         unverified_specifics / total_specifics, 4) if total_specifics else 0.0
+
+    limitations = ["high interrogatability of an UNVERIFIED specific is an audit "
+                   "surface (questions), never an ownership credit (§A)",
+                   "specific detection is a provisional heuristic, not NER"]
+    extra: dict[str, Any] = {}
+    # Record the credit mode ONLY when gated ON — keeps the default (OFF) signal
+    # byte-identical to pre-N4 for the parity contract, while giving N6 a
+    # structured marker of the verified-only credit realisation ([G3]).
+    if specificity_verified_only:
+        extra["specificity_verified_only"] = True
+        limitations.append("specificity credit is VERIFIED-ONLY (N4 gaming fix, "
+                           "M4 rec (f)1): only entailed specifics earn credit")
 
     sig = _meta(
         "interrogatability",
@@ -200,9 +228,8 @@ def compute_interrogatability(
         coverage={"claims_considered": n, "total_specifics": total_specifics},
         provisional_thresholds={"low": _INTERROG_LOW, "high": _INTERROG_HIGH,
                                 "note": "uncalibrated; Phase-4 §B"},
-        limitations=["high interrogatability of an UNVERIFIED specific is an audit "
-                     "surface (questions), never an ownership credit (§A)",
-                     "specific detection is a provisional heuristic, not NER"],
+        limitations=limitations,
+        **extra,
     )
     return sig, questions
 
@@ -346,6 +373,8 @@ def compute_signals(
     edges: list[Edge],
     text: str = "",
     embedder: Optional[Any] = "__resolve__",
+    *,
+    specificity_verified_only: bool = False,
 ) -> tuple[list[dict[str, Any]], list[ClaimNode]]:
     """Compute all three signals + QUESTION nodes on the FULL graph.
 
@@ -353,13 +382,18 @@ def compute_signals(
     object with ``value=None`` + an error note and never drops the others or the
     graph. Pass ``embedder`` explicitly (tests) or leave the sentinel to resolve
     the shared MiniLM embedder lazily (``None`` when unavailable → substitutability
-    fails open). Deterministic given the embedder."""
+    fails open). Deterministic given the embedder.
+
+    ``specificity_verified_only`` (N4) is forwarded to interrogatability so the
+    verified-aware caller (build.py's entailment-ON path) credits only verified
+    specifics; default ``False`` preserves the pre-N4 signal exactly."""
     signals: list[dict[str, Any]] = []
     questions: list[ClaimNode] = []
 
     # interrogatability (+ questions)
     try:
-        sig, qs = compute_interrogatability(claims, edges)
+        sig, qs = compute_interrogatability(
+            claims, edges, specificity_verified_only=specificity_verified_only)
         signals.append(sig)
         questions = qs
     except Exception as exc:

@@ -265,3 +265,96 @@ def test_question_nodes_never_evict_real_claims(monkeypatch):
     # any dropped nodes under the cap must have been QUESTION nodes only
     qs = [c for c in kept if c.get("node_type") == "QUESTION"]
     assert all(q.get("references") for q in qs)
+
+
+# ── N4: verified-only specificity credit (M4 rec (f)1 gaming fix) ─────────────
+_RICH = "The 2019 Stanford trial cut cost by 35% in Boston."  # 4 specifics
+
+
+def test_interrogatability_verified_only_credits_only_verified():
+    """specificity_verified_only=True: a VERIFIED claim's specifics credit; the
+    SAME specifics on an UNVERIFIED claim earn ZERO credit (the gaming fix)."""
+    vsig, vq = signals.compute_interrogatability(
+        [_claim("c_001", _RICH, status="verified")], [],
+        specificity_verified_only=True)
+    usig, uq = signals.compute_interrogatability(
+        [_claim("c_001", _RICH, status="unverified")], [],
+        specificity_verified_only=True)
+    # Credit DIFFERS by verification: verified > 0, unverified == 0.
+    assert vsig["components"]["specificity_presence"] > 0.0
+    assert usig["components"]["specificity_presence"] == 0.0
+    # Audit surface unchanged: total_specifics identical; unverified still probes.
+    assert vsig["coverage"]["total_specifics"] == usig["coverage"]["total_specifics"] > 0
+    assert vq == [], "verified specifics must emit NO questions"
+    assert uq, "unverified specifics still emit teacher-probe questions"
+
+
+def test_interrogatability_verified_only_off_credits_all_specifics():
+    """Default (OFF): credit counts ALL specifics regardless of status — the
+    Phase-1/M3 numerator, byte-identical. No mode marker leaks into the signal."""
+    sig, _ = signals.compute_interrogatability(
+        [_claim("c_001", _RICH, status="unverified")], [])
+    assert sig["components"]["specificity_presence"] == 1.0  # 4 specifics / (1*2)
+    assert "specificity_verified_only" not in sig
+
+
+def test_verified_only_mode_recorded_only_when_on():
+    on, _ = signals.compute_interrogatability(
+        [_claim("c_001", _RICH, status="verified")], [],
+        specificity_verified_only=True)
+    off, _ = signals.compute_interrogatability(
+        [_claim("c_001", _RICH, status="verified")], [])
+    assert on.get("specificity_verified_only") is True
+    assert "specificity_verified_only" not in off
+    assert any("VERIFIED-ONLY" in lim for lim in on["limitations"])
+
+
+# Frozen pre-N4 snapshot (captured from the pre-refactor validate_graph with
+# compute_signals=True, embedder=None). The validators _validate_core/
+# finalize_container split + the specificity_verified_only param default (False)
+# must reproduce this BYTE-FOR-BYTE with entailment OFF — the critical parity
+# contract Fable flagged (if the verified-only formula ever ran unconditionally,
+# nothing would be verified and every specificity_presence would collapse to 0).
+_PRE_N4_BASELINE = '{"claims": [{"assessment_confidence": "low", "claim_type": "factual", "evidence_level": 0, "id": "c_001", "limitations": [], "node_type": "CLAIM", "origins": ["external_source"], "primary_origin": "external_source", "references": null, "source": {"char_end": 50, "char_start": 0, "paragraph_id": "p001", "sentence_id": "s001"}, "text": "The 2019 Stanford trial cut cost by 35% in Boston.", "verification_paths": [], "verification_status": "unverified"}, {"assessment_confidence": "low", "claim_type": "factual", "evidence_level": 0, "id": "c_002", "limitations": [], "node_type": "CLAIM", "origins": [], "primary_origin": null, "references": null, "source": {"char_end": 110, "char_start": 53, "paragraph_id": "p001", "sentence_id": "s002"}, "text": "This is important and things generally matter a lot here.", "verification_paths": [], "verification_status": "unverified"}, {"assessment_confidence": "low", "claim_type": null, "evidence_level": 0, "id": "q_001", "limitations": [], "node_type": "QUESTION", "origins": [], "primary_origin": null, "references": "c_001", "source": null, "text": "What is the source or basis for \\"2019\\"?", "verification_paths": [], "verification_status": "unverified"}, {"assessment_confidence": "low", "claim_type": null, "evidence_level": 0, "id": "q_002", "limitations": [], "node_type": "QUESTION", "origins": [], "primary_origin": null, "references": "c_001", "source": null, "text": "What is the source or basis for \\"Stanford\\"?", "verification_paths": [], "verification_status": "unverified"}, {"assessment_confidence": "low", "claim_type": null, "evidence_level": 0, "id": "q_003", "limitations": [], "node_type": "QUESTION", "origins": [], "primary_origin": null, "references": "c_001", "source": null, "text": "What is the source or basis for \\"35%\\"?", "verification_paths": [], "verification_status": "unverified"}, {"assessment_confidence": "low", "claim_type": null, "evidence_level": 0, "id": "q_004", "limitations": [], "node_type": "QUESTION", "origins": [], "primary_origin": null, "references": "c_001", "source": null, "text": "What is the source or basis for \\"Boston\\"?", "verification_paths": [], "verification_status": "unverified"}], "edges": [], "evidence": [], "kill_switch": "DRAFTPROOF_CLAIM_GRAPH", "schema_version": "cg-1", "signals": [{"band": "moderate", "calibration_version": null, "components": {"causal_depth": 0.0, "contextual_anchoring": 0.5, "evidence_traceability": 0.0, "specificity_presence": 1.0}, "coverage": {"claims_considered": 2, "total_specifics": 4}, "fairness_gate_passed": null, "limitations": ["high interrogatability of an UNVERIFIED specific is an audit surface (questions), never an ownership credit (\\u00a7A)", "specific detection is a provisional heuristic, not NER"], "provisional_thresholds": {"high": 0.66, "low": 0.33, "note": "uncalibrated; Phase-4 \\u00a7B"}, "reconciles_with": ["citation", "grounding_diagnosis"], "scoring_enabled": false, "signal": "interrogatability", "status": "experimental", "value": {"composite": 0.375, "questions_emitted": 4, "unverified_specific_rate": 1.0}}, {"band": null, "calibration_version": null, "coverage": {"claims_considered": 2, "claims_embedded": 0}, "fairness_gate_passed": null, "limitations": ["embedding model unavailable"], "provisional_thresholds": {"high": 0.9, "low": 0.8, "note": "uncalibrated; Phase-4 \\u00a7B"}, "reconciles_with": ["generic_assertion_risk"], "scoring_enabled": false, "signal": "substitutability", "status": "experimental", "value": null}, {"calibration_version": null, "coverage": {"claims_considered": 2, "total_labels": 1}, "fairness_gate_passed": null, "limitations": ["origin is descriptive audit metadata, never a standalone credit; personal_observation is NEUTRAL (\\u00a7I)"], "provisional_thresholds": {"note": "uncalibrated; Phase-4 \\u00a7B", "unsupported_heavy": 0.5}, "reconciles_with": ["authorship_evidence", "critical_thinking"], "scoring_enabled": false, "signal": "origin_map", "status": "experimental", "value": {"distribution": {"external_source": 1.0}, "primary_origin": "external_source", "unsupported_assertion_heavy": false, "unsupported_assertion_rate": 0.5}}], "status": "experimental", "truncated": false, "truncated_dropped_ids": []}'
+
+
+def _parity_props_segs():
+    segs = [
+        {"sentence_id": "s001", "paragraph_id": "p001", "start_char": 0, "end_char": 52,
+         "sentence": "The 2019 Stanford trial cut cost by 35% in Boston."},
+        {"sentence_id": "s002", "paragraph_id": "p001", "start_char": 53, "end_char": 110,
+         "sentence": "This is important and things generally matter a lot here."},
+    ]
+    props = {"claims": [
+        {"sentence_id": "s001", "quote": "The 2019 Stanford trial cut cost by 35% in Boston.",
+         "node_type": "CLAIM", "claim_type": "factual",
+         "origins": ["external_source"], "primary_origin": "external_source"},
+        {"sentence_id": "s002", "quote": "This is important and things generally matter a lot here.",
+         "node_type": "CLAIM", "claim_type": "factual", "origins": [], "primary_origin": None},
+    ], "edges": []}
+    return props, segs
+
+
+def test_validate_graph_off_parity_byte_identical():
+    """CRITICAL PARITY: the validators refactor + default param reproduce the
+    frozen pre-N4 container byte-for-byte (entailment OFF path)."""
+    import json
+    from claim_graph import validators
+    props, segs = _parity_props_segs()
+    out = validators.validate_graph(props, segs, compute_signals=True,
+                                    text="doc", embedder=None)
+    assert json.dumps(out, sort_keys=True) == _PRE_N4_BASELINE
+
+
+def test_finalize_container_matches_validate_graph():
+    """The _validate_core + finalize_container split equals the one-shot
+    validate_graph (behaviour-preserving refactor)."""
+    import json
+    from claim_graph import validators
+    props, segs = _parity_props_segs()
+    one = validators.validate_graph(props, segs, compute_signals=True,
+                                    text="doc", embedder=None)
+    claims, edges = validators._validate_core(props, segs)
+    split = validators.finalize_container(claims, edges, compute_signals=True,
+                                          text="doc", embedder=None)
+    assert json.dumps(split, sort_keys=True) == json.dumps(one, sort_keys=True)
