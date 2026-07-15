@@ -20,6 +20,12 @@ import os
 # reader can see which switch governs the graph without importing this package.
 KILL_SWITCH_ENV = "DRAFTPROOF_CLAIM_GRAPH"
 
+# Phase-2 (Track A) entailment gate — INDEPENDENT of the Phase-1 kill-switch
+# above. It only unlocks the ``verified`` verification state in the schema (plan
+# §5 N0/N1); the resolver/retrieval/entailment engine arrive in N2–N4. Default
+# OFF so the Phase-1 report stays byte-identical until entailment ships.
+ENTAILMENT_KILL_SWITCH_ENV = "DRAFTPROOF_ENTAILMENT"
+
 _FALSEY = {"0", "false", "no", "off", ""}
 
 
@@ -33,4 +39,20 @@ def claim_graph_enabled() -> bool:
     return os.environ.get(KILL_SWITCH_ENV, "0").strip().lower() not in _FALSEY
 
 
-__all__ = ["KILL_SWITCH_ENV", "claim_graph_enabled"]
+def entailment_enabled() -> bool:
+    """Return whether Phase-2 entailment (Track A) is enabled.
+
+    Default OFF. Same falsey-set + style as ``claim_graph_enabled`` — the only
+    behavioural difference downstream is that the validator PERMITS a ``verified``
+    verification state when this is on (plan §5 N0). ``corroborated`` stays
+    forbidden this phase regardless (kickoff decision 3).
+    """
+    return os.environ.get(ENTAILMENT_KILL_SWITCH_ENV, "0").strip().lower() not in _FALSEY
+
+
+__all__ = [
+    "KILL_SWITCH_ENV",
+    "ENTAILMENT_KILL_SWITCH_ENV",
+    "claim_graph_enabled",
+    "entailment_enabled",
+]

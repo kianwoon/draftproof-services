@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from . import claim_graph_enabled
+from . import entailment_enabled
 from . import schema
 from . import validators
 
@@ -84,6 +85,18 @@ def build_claim_graph_extracted(
     }
     # M3: signals computed on the FULL validated graph, before eviction.
     container = validators.validate_graph(merged, segments, compute_signals=True, text=text)
+
+    # N1 (Phase-2, Track A): deterministic citation → claim linking. ONLY when
+    # DRAFTPROOF_ENTAILMENT is on — otherwise evidence stays [] and the graph is
+    # byte-identical to Phase-1. Fail-open: never fails the build.
+    if entailment_enabled():
+        try:
+            from . import citations  # lazy — keeps build.py import-light
+
+            evidence = citations.link_citations(text, container.get("claims") or [])
+            container["evidence"] = [n.to_dict() for n in evidence]
+        except Exception:
+            container["evidence"] = []
 
     extraction_stats = dict(stats)
     # M3 QUESTION nodes (carry ``references``) are system-generated, not extracted

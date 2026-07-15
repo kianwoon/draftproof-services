@@ -58,6 +58,24 @@ def max_edges() -> int:
     return _int_env("DRAFTPROOF_CLAIM_GRAPH_MAX_EDGES", _DEFAULT_MAX_EDGES)
 
 
+def _phase_state_policy() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return ``(forbidden_states, reachable_states)`` for THIS validation run.
+
+    Phase-conditional (plan §5 N0), resolved at validation time so a mid-process
+    flag flip is honoured deterministically:
+      - entailment OFF → Phase-1 invariant, byte-identical: ``verified`` and
+        ``corroborated`` are both forbidden; reachable = PHASE1_REACHABLE_STATES.
+      - entailment ON  → ``verified`` becomes legal (permitted, not produced —
+        N1 never mints it; that is N4); ``corroborated`` stays forbidden
+        (kickoff decision 3).
+    """
+    from . import entailment_enabled  # lazy — keeps validators import-light
+
+    if entailment_enabled():
+        return schema.PHASE2_FORBIDDEN_STATES, schema.PHASE1_REACHABLE_STATES + ("verified",)
+    return schema.PHASE1_FORBIDDEN_STATES, schema.PHASE1_REACHABLE_STATES
+
+
 # ── Sentence index ──────────────────────────────────────────────────────────
 def build_sentence_index(segments: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Map ``sentence_id`` → span/text, mapping the codebase's ``start_char``/
@@ -116,17 +134,18 @@ def validate_claims(
       {sentence_id, quote, node_type, claim_type, origins, primary_origin,
        verification_status?}
     """
+    forbidden_states, reachable_states = _phase_state_policy()
     accepted: list[ClaimNode] = []
     for proposal in proposed_claims or []:
         node_type = _valid_node_type(proposal.get("node_type"))
         if node_type is None:  # rule 6: purity — unknown type rejected
             continue
 
-        # rule 3: forbidden verification states rejected outright.
+        # rule 3: forbidden verification states rejected outright (phase-conditional).
         status = proposal.get("verification_status")
-        if status in schema.PHASE1_FORBIDDEN_STATES:
+        if status in forbidden_states:
             continue
-        if status not in schema.PHASE1_REACHABLE_STATES:
+        if status not in reachable_states:
             status = "unverified"
 
         source: Optional[dict[str, Any]] = None

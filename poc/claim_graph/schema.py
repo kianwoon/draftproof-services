@@ -67,6 +67,11 @@ PHASE1_REACHABLE_STATES = (
 )
 # Rejected on sight in Phase 1 (§1 verification reality).
 PHASE1_FORBIDDEN_STATES = ("verified", "corroborated")
+# Phase-2 (Track A, DRAFTPROOF_ENTAILMENT on): the entailment engine unlocks
+# ``verified`` (plan §5 N0/N1), but ``corroborated`` stays forbidden this phase
+# (kickoff decision 3 — fewer thresholds to calibrate). The validator selects
+# PHASE1_ vs PHASE2_ at validation time based on the entailment flag.
+PHASE2_FORBIDDEN_STATES = ("corroborated",)
 
 ORIGIN_TAXONOMY = (
     "external_source",
@@ -127,9 +132,17 @@ class EvidenceNode:
     id: str
     kind: str
     claim_ids: list = field(default_factory=list)
+    # Optional locator payload (N1 citation linking): marker text, locator_type,
+    # doi/url, offset. Backward-compatible — defaults ``None`` and is OMITTED from
+    # ``to_dict`` when unset, so pre-N1 callers/serialisations are unaffected.
+    detail: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "kind": self.kind, "claim_ids": list(self.claim_ids)}
+        out: dict[str, Any] = {
+            "id": self.id, "kind": self.kind, "claim_ids": list(self.claim_ids)}
+        if self.detail is not None:
+            out["detail"] = dict(self.detail)
+        return out
 
 
 @dataclass
@@ -190,6 +203,7 @@ __all__ = [
     "VERIFICATION_STATES",
     "PHASE1_REACHABLE_STATES",
     "PHASE1_FORBIDDEN_STATES",
+    "PHASE2_FORBIDDEN_STATES",
     "ORIGIN_TAXONOMY",
     "ASSESSMENT_CONFIDENCE",
     "ClaimNode",
