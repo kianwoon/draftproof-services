@@ -221,3 +221,45 @@ def test_maybe_build_disabled_ignores_gateway(monkeypatch):
     gw = FakeGateway([json.dumps({"claims": []})])
     assert maybe_build_claim_graph("doc", _segments(), gateway=gw) == {}
     assert gw.calls == []  # never touched
+
+
+def test_claim_ids_stable_across_double_validation_with_rejection():
+    """Pins the id-stability invariant behind build_claim_graph_extracted's
+    phase-3 re-validation (M2 review finding, 2026-07-15): reconciler edges
+    reference c_NNN ids assigned in phase 1 over the ACCEPTED (post-rejection)
+    ordering; phase 3 re-validates the RAW proposals, so its acceptance set and
+    enumeration must be identical or edges silently re-target the wrong claim.
+    Scenario: 3 raw claims, the MIDDLE one rejected (hallucinated span), and an
+    edge referencing c_002 — which must resolve to the THIRD raw claim (second
+    accepted) after BOTH validation passes."""
+    from claim_graph import validators
+
+    segs = [
+        {"sentence_id": "s001", "paragraph_id": "p001", "start_char": 0,
+         "end_char": 24, "sentence": "First factual sentence A."},
+        {"sentence_id": "s002", "paragraph_id": "p001", "start_char": 30,
+         "end_char": 55, "sentence": "Second factual sentence B."},
+        {"sentence_id": "s003", "paragraph_id": "p002", "start_char": 60,
+         "end_char": 84, "sentence": "Third factual sentence C."},
+    ]
+    raw_claims = [
+        _claim_json("s001", "First factual sentence A."),
+        _claim_json("s002", "THIS QUOTE DOES NOT EXIST"),  # rejected: span_not_found
+        _claim_json("s003", "Third factual sentence C."),
+    ]
+    proposals = {"claims": list(raw_claims), "edges": []}
+    first = validators.validate_graph(dict(proposals), segs)
+    assert [c["text"] for c in first["claims"]] == [
+        "First factual sentence A.", "Third factual sentence C."]
+    assert [c["id"] for c in first["claims"]] == ["c_001", "c_002"]
+
+    # phase-3 style: same raw claims + a cross-batch edge referencing phase-1 ids
+    merged = {"claims": list(raw_claims),
+              "edges": [{"type": "depends_on", "src": "c_002", "dst": "c_001"}]}
+    second = validators.validate_graph(merged, segs)
+    ids = {c["id"]: c["text"] for c in second["claims"]}
+    assert ids == {"c_001": "First factual sentence A.",
+                   "c_002": "Third factual sentence C."}
+    edges = second.get("edges") or []
+    assert any(e["src"] == "c_002" and e["dst"] == "c_001" and e["type"] == "depends_on"
+               for e in edges), f"edge lost or re-targeted: {edges}"
