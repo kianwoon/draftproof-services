@@ -85,6 +85,51 @@ def _completed_ids(out_path: str) -> set[str]:
     return done
 
 
+def _entailment_summary(container: dict[str, Any], claims: list) -> dict[str, Any]:
+    """N6: capture the N2/N3/N4 verdict data for the §B calibration report.
+
+    Reads the FLAG-ON container's ``evidence`` (N2 resolution + N3 attached
+    entailment verdicts) and the N4-promoted ``verification_status`` on the real
+    CLAIM nodes. Empty/quiet when entailment was OFF (no ``evidence``)."""
+    real = [c for c in claims if c.get("node_type") == "CLAIM" and not c.get("references")]
+    vcounts: dict[str, int] = {}
+    for c in real:
+        st = c.get("verification_status") or "unverified"
+        vcounts[st] = vcounts.get(st, 0) + 1
+
+    res_statuses: list[str] = []
+    ent_scores: list[float] = []
+    con_scores: list[float] = []
+    verdict_statuses: list[str] = []
+    for node in container.get("evidence") or []:
+        detail = node.get("detail") if isinstance(node, dict) else None
+        resolution = detail.get("resolution") if isinstance(detail, dict) else None
+        if not isinstance(resolution, dict):
+            continue
+        res_statuses.append(str(resolution.get("status")))
+        verdicts = resolution.get("entailment")
+        if isinstance(verdicts, dict):
+            for v in verdicts.values():
+                if not isinstance(v, dict):
+                    continue
+                verdict_statuses.append(str(v.get("status")))
+                ent_scores.append(float(v.get("entailment_score") or 0.0))
+                con_scores.append(float(v.get("contradiction_score") or 0.0))
+    return {
+        "verification_counts": vcounts,
+        "n_verified": vcounts.get("verified", 0),
+        "n_contradicted": vcounts.get("contradicted", 0),
+        "verified_fired": vcounts.get("verified", 0) > 0,
+        "contradicted_fired": vcounts.get("contradicted", 0) > 0,
+        "resolution_statuses": res_statuses,
+        "verdict_statuses": verdict_statuses,
+        "max_entailment_score": round(max(ent_scores), 4) if ent_scores else None,
+        "max_contradiction_score": round(max(con_scores), 4) if con_scores else None,
+        "entailment_scores": [round(x, 4) for x in ent_scores],
+        "contradiction_scores": [round(x, 4) for x in con_scores],
+    }
+
+
 def build_row(doc: dict[str, Any], text: str, gateway: Any) -> dict[str, Any]:
     from poc.detect.document_structure import structured_sentence_segments
     from poc.detect.layer3_scoring import estimate_generic_assertion_risk
@@ -105,7 +150,10 @@ def build_row(doc: dict[str, Any], text: str, gateway: Any) -> dict[str, Any]:
     real_claims = [c for c in claims if c.get("node_type") == "CLAIM" and not c.get("references")]
     return {
         "doc_id": doc["doc_id"], "group": doc["group"], "source": doc.get("source"),
+        "case_type": doc.get("case_type"),  # N6 real-citation slice: entailed|misattributed
         "words": doc.get("words"),
+        # N6: N2/N3/N4 verdict capture (entailment ON) for the §B report.
+        "entailment": _entailment_summary(container, claims),
         "interrogatability": {
             "composite": (interro.get("value") or {}).get("composite"),
             "band": interro.get("band"),
@@ -135,7 +183,13 @@ def build_row(doc: dict[str, Any], text: str, gateway: Any) -> dict[str, Any]:
 
 
 def run(manifest_path: str = _MANIFEST, out_path: str = _DEFAULT_OUT,
-        limit: Optional[int] = None) -> dict[str, Any]:
+        limit: Optional[int] = None, groups: Optional[set] = None,
+        max_docs: int = MAX_DOCS) -> dict[str, Any]:
+    """Run the M2/M3(/N2-N4) claim graph over a manifest → resume-safe JSONL rows.
+
+    ``groups`` optionally restricts to a subset (e.g. ``{"G"}`` for the gaming-only
+    N6 re-run). ``max_docs`` caps the manifest size guard. Entailment ON/OFF is
+    governed by ``DRAFTPROOF_ENTAILMENT`` in the environment (N6 runs it ON)."""
     _load_env_file()
     _tune_budget_env()
     from poc.claim_graph.extract import resolve_gateway
@@ -144,8 +198,10 @@ def run(manifest_path: str = _MANIFEST, out_path: str = _DEFAULT_OUT,
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
     docs = manifest["docs"]
-    if len(docs) > MAX_DOCS:
-        raise RuntimeError("manifest has %d docs > MAX_DOCS %d" % (len(docs), MAX_DOCS))
+    if groups is not None:
+        docs = [d for d in docs if d.get("group") in groups]
+    if len(docs) > max_docs:
+        raise RuntimeError("manifest has %d docs > max_docs %d" % (len(docs), max_docs))
 
     gateway = resolve_gateway()
     if gateway is None:
@@ -189,5 +245,16 @@ def run(manifest_path: str = _MANIFEST, out_path: str = _DEFAULT_OUT,
 
 
 if __name__ == "__main__":
-    lim = int(sys.argv[1]) if len(sys.argv) > 1 else None
-    run(limit=lim)
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Claim-graph eval harness (M4/N6).")
+    ap.add_argument("--manifest", default=_MANIFEST)
+    ap.add_argument("--out", default=_DEFAULT_OUT)
+    ap.add_argument("--groups", default=None,
+                    help="comma-separated group filter, e.g. 'G' or 'R'")
+    ap.add_argument("--max-docs", type=int, default=MAX_DOCS)
+    ap.add_argument("--limit", type=int, default=None)
+    args = ap.parse_args()
+    grp = set(g.strip() for g in args.groups.split(",")) if args.groups else None
+    run(manifest_path=args.manifest, out_path=args.out, limit=args.limit,
+        groups=grp, max_docs=args.max_docs)

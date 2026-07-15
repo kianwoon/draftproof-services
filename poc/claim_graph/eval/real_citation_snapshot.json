@@ -1,0 +1,101 @@
+{
+  "records": {
+    "10.1038/s41598-018-32470-7": {
+      "container_title": "Scientific Reports",
+      "http_status": 200,
+      "locator": "10.1038/s41598-018-32470-7",
+      "locator_type": "doi",
+      "provider": "crossref",
+      "published": "2018-9-19",
+      "retrieved_via": "doi_crossref",
+      "source_text": "Abstract It is proposed that emissions of volatile sulfur compounds by coral reefs contribute to the formation of a biologically-derived feedback on sea surface temperature (SST) through the formation of marine biogenic aerosol (MBA). The direction and strength of this feedback remains uncertain and constitutes a fundamental constraint on predicting the ability of corals to cope with future ocean warming. We investigate the effects of elevated SST and irradiance on satellite-derived fine-mode aerosol optical depth (AOD) throughout the Great Barrier Reef, Australia (GBR) over an 18-year time period. AOD is positively correlated with SST and irradiance and increases two-fold during spring and summer with high frequency variability. As the influence of non-biogenic and distant aerosol sources are found to be negligible, the results support recent findings that the 2,300 km stretch of coral reefs can be a substantial source of biogenic aerosol and thus, influence local ocean albedo. Importantly however, a tipping point in the coral stress response is identified, whereby thermal stress reaches a point that exceeds the capacity of corals to influence local atmospheric properties. Beyond this point, corals may become more susceptible to permanent damage with increasing stress, with potential implications for mass coral bleaching events.",
+      "status": "resolved",
+      "title": "Effects of ocean warming and coral bleaching on aerosol emissions in the Great Barrier Reef, Australia"
+    },
+    "10.1111/jsr.12972": {
+      "container_title": "Journal of Sleep Research",
+      "http_status": 200,
+      "locator": "10.1111/jsr.12972",
+      "locator_type": "doi",
+      "provider": "crossref",
+      "published": "2019-12-16",
+      "retrieved_via": "doi_crossref",
+      "source_text": "Abstract The general consensus is that sleep promotes neuronal recovery and plasticity, whereas sleep deprivation (SD) impairs brain function, including cognitive processes. Indeed, a wealth of data has shown a negative impact of SD on learning and memory processes, particularly those that involve the hippocampus. The mechanisms underlying these negative effects of sleep loss are only partly understood, but a reoccurring question is whether they are in part caused by stress hormones that may be released during SD. The purpose of the present study is therefore to examine the role of glucocorticoid stress hormones in SD‐induced memory impairment. Male C57BL/6J mice were trained in an object‐location memory paradigm, followed by 6 hr of SD by mild stimulation. At the beginning of the SD mice were injected with the corticosterone synthesis inhibitor metyrapone. Memory was tested 24 hr after training. Blood samples taken in a separate group of mice showed that SD resulted in a mild but significant increase in plasma corticosterone levels, which was prevented by metyrapone. However, the SD‐induced impairment in object‐location memory was not prevented by metyrapone treatment. This indicates that glucocorticoids play no role in causing the memory impairments seen after a short period of SD.",
+      "status": "resolved",
+      "title": "Sleep deprivation‐induced impairment of memory consolidation is not mediated by glucocorticoid stress hormones"
+    },
+    "10.1177/19433654251377005": {
+      "container_title": "Respiratory Care",
+      "http_status": 200,
+      "locator": "10.1177/19433654251377005",
+      "locator_type": "doi",
+      "provider": "crossref",
+      "published": "2025-12-24",
+      "retrieved_via": "doi_crossref",
+      "source_text": "Wildfires have become increasingly frequent and severe, releasing large amounts of fine particulate matter (PM 2.5 ) and toxic gases that pose serious threats to respiratory health. This review summarizes current clinical evidence on the respiratory effects of wildfire smoke exposure, focusing on both short-term effects—such as respiratory symptoms, infections, and increased emergency department visits—and long-term consequences, including declines in pulmonary function and elevated mortality. The review highlights vulnerable populations—including pregnant individuals, infants, children, older adults, individuals with asthma or COPD, and firefighters, who experience disproportionate risks. It also compares the toxicity of wildfire-derived PM 2.5 to other pollution sources and identifies differences in clinical impact. Evidence-based protective strategies are discussed, including respiratory protection, behavioral interventions, and health care provider preparedness. Finally, the review identifies gaps in the current literature and emphasizes the need for longitudinal studies to evaluate chronic outcomes and improve public health responses to future wildfire events.",
+      "status": "resolved",
+      "title": "Effects of Wildfire Smoke Inhalation on Respiratory Health"
+    },
+    "10.1177/2048004017749015": {
+      "container_title": "JRSM Cardiovascular Disease",
+      "http_status": 200,
+      "locator": "10.1177/2048004017749015",
+      "locator_type": "doi",
+      "provider": "crossref",
+      "published": "2018-1",
+      "retrieved_via": "doi_crossref",
+      "source_text": "Objective We aimed to estimate the level of physical activity undertaken by health care professionals and the proportion that achieved a daily target of 10,000 steps. Design This was a prospective cohort study. Setting Participants were recruited in Wellington Regional Hospital, a tertiary hospital in New Zealand. Participants Neurology, Cardiology, and Endocrinology staff were invited to participate. Main outcome measures Pedometer-measured step counts were recorded over seven days and the proportion that achieved a daily target of 10,000 steps was calculated. Results We included 50 staff in the study. The mean daily step count was 10,620 (standard deviation = 3141) with a median daily step count of 10,606 (interquartile range = 7791–12,469). Sixty-five per cent of the staff achieved 10,000 steps per day. Conclusion This cohort was more active compared to other pedometer-based studies in health care professionals. The daily target of 10,000 steps per day was achieved at a higher proportion than reported in international studies and the general New Zealand.",
+      "status": "resolved",
+      "title": "Are physical activity levels of health care professionals consistent with activity guidelines? A prospective cohort study in New Zealand"
+    },
+    "10.1371/journal.pone.0342730": {
+      "container_title": "PLOS One",
+      "http_status": 200,
+      "locator": "10.1371/journal.pone.0342730",
+      "locator_type": "doi",
+      "provider": "crossref",
+      "published": "2026-3-17",
+      "retrieved_via": "doi_crossref",
+      "source_text": "This study examines peer effects among employees working fully remotely. We use panel data from a company that has operated with an entirely remote workforce since its inception and leverage as-if random assignment of new hires to teams as a quasi-natural experiment. We find no evidence that the average productivity of a worker’s teammates affects that worker’s own productivity. However, when team members are highly experienced, the productivity of employees on those teams increases by about 12.2%. In particular, employees with the shortest tenure see an increase in productivity of approximately 26.2%. Furthermore, this effect appears unrelated to the volume of communication within the team, suggesting that experienced teammates can have a positive influence even with minimal interaction, possibly through more efficient, targeted communication.",
+      "status": "resolved",
+      "title": "Experienced teammates increase productivity in remote work: Evidence from a full remote work company in Japan"
+    },
+    "10.3354/meps14458": {
+      "container_title": "Marine Ecology Progress Series",
+      "http_status": 200,
+      "locator": "10.3354/meps14458",
+      "locator_type": "doi",
+      "provider": "crossref",
+      "published": "2023-12-7",
+      "retrieved_via": "doi_crossref",
+      "source_text": "Microplastic contamination is documented in marine organisms, but little is known about bioaccumulation or biomagnification of microplastics, especially in tissues external to the gastro-intestinal (GI) tract. The objective of this work was to explore microplastic contamination in GI tracts and other tissues (abdomen and tail in crustaceans; mantle in cephalopods; fillets in fishes) of species at different trophic levels sampled in a deep-sea food web in Monterey Bay, CA, USA. The species included are tuna crab Pleuroncodes planipes , market squid Doryteuthis opalescens , northern lampfish Stenobrachius leucopsarus , chub mackerel Scomber japonicus , California halibut Paralichthys californicus , and Chinook salmon Oncorhynchus tshawytscha . After chemical digestion, microplastics in GI tracts were quantified and identified to material type using μ-Raman spectroscopy and in other tissues using pyrolysis-GC/MS. The concentrations of microplastics in GI tracts were significantly different among species, and microplastic contamination was dominated by microfibers. The concentrations of microplastics (mainly polyethylene and polyvinyl chloride) in other tissues also varied among species. A significant positive correlation between body size and plastic concentration in other tissues was observed for halibut only, suggesting bioaccumulation may not be ubiquitous. The trophic magnification factor for microplastics beyond the GI tract was &lt;1, suggesting that biomagnification is not occurring in tissues. However, we did observe evidence for biomagnification of microplastics in the GI tracts. Future studies are needed to better understand these patterns and the mechanisms for translocation, bioaccumulation, and biomagnification of microplastics in aquatic organisms.",
+      "status": "resolved",
+      "title": "Little evidence for bioaccumulation or biomagnification of microplastics in a deep-sea food web"
+    },
+    "10.3389/fpubh.2023.1292154": {
+      "container_title": "Frontiers in Public Health",
+      "http_status": 200,
+      "locator": "10.3389/fpubh.2023.1292154",
+      "locator_type": "doi",
+      "provider": "crossref",
+      "published": "2024-1-16",
+      "retrieved_via": "doi_crossref",
+      "source_text": "Urban green spaces offer numerous benefits, and their role in supporting mental health, particularly during global crises such as the COVID-19 pandemic, is of growing interest to researchers and policymakers. This study explored the relationship between urban green space visitation and mental health well-being during the COVID-19 pandemic in Bangkok, Thailand. This cross-sectional study, conducted in Bangkok during the COVID-19 lockdown, used a telephone survey of 579 respondents. A logistic regression model was employed to examine the association between urban green space visitation and the WHO-5 mental health well-being score, considering various factors such as socioeconomic variables, healthy behaviors, and COVID-19-related experiences. The findings revealed a significant association between urban green space visitation during the lockdown and higher mental health well-being. Socioeconomic variables and healthy behaviors of respondents were also notably linked to higher WHO-5 mental health well-being scores. These findings collectively indicate that urban greenspace visitation serves as a crucial determinant of mental health and well-being, especially during the COVID-19 pandemic.",
+      "status": "resolved",
+      "title": "Urban green space visitation and mental health wellbeing during COVID-19 in Bangkok, Thailand"
+    },
+    "10.47310/iarjcr.2025.v05i02.002": {
+      "container_title": "IAR Journal of Clinical Research",
+      "http_status": 200,
+      "locator": "10.47310/iarjcr.2025.v05i02.002",
+      "locator_type": "doi",
+      "provider": "crossref",
+      "published": "2025-8-25",
+      "retrieved_via": "doi_crossref",
+      "source_text": "Background: Chronic suppurative otitis media (CSOM) is a persistent inflammatory condition of the middle ear, frequently affecting children in low- and middle-income regions. Emerging evidence highlights the role of vitamin D in modulating immune function and reducing susceptibility to recurrent infections. This study aimed to assess the association between serum 25-hydroxyvitamin D [25(OH)D] levels, white blood cell (WBC) count, neutrophil-to-lymphocyte ratio (NLR), and clinical severity in children with CSOM. Methods: A case-control study was conducted from March to June 2025 across private ENT clinics in Kirkuk, Iraq. The study included 100 children aged 2–12 years, divided equally into CSOM cases and healthy controls. Diagnosis was confirmed by ENT specialists based on clinical and otoscopic findings. Serum 25(OH)D levels were measured using ELISA. Inflammatory markers including WBC count and NLR were assessed via complete blood count. Demographic, environmental, and clinical data were collected through structured interviews. Statistical analyses were performed using SPSS v25. Results: Vitamin D deficiency (&lt;20 ng/mL) was significantly more frequent in CSOM patients (64.0%) compared to controls (28.0%) (p &lt; 0.001). Mean serum 25(OH)D levels were significantly lower in the CSOM group (18.2 ± 6.1 ng/mL) than in controls (29.4 ± 7.2 ng/mL). CSOM patients exhibited higher WBC (9.3 ± 2.1 vs. 6.8 ± 1.9 ×10³/µL), lower lymphocyte counts (2.1 ± 0.6 vs. 2.7 ± 0.7 ×10³/µL), and elevated NLR (2.95 ± 0.84 vs. 1.26 ± 0.56) (all p &lt; 0.001). A strong inverse correlation was observed between vitamin D levels and NLR in CSOM children (r = –0.61, p &lt; 0.001). Multivariate analysis identified vitamin D deficiency (OR: 3.45), low sunlight exposure (OR: 4.12), and elevated NLR (OR: 3.89) as significant predictors for CSOM. Conclusion: Children with CSOM demonstrated significantly lower vitamin D levels and elevated inflammatory markers compared to healthy controls. These findings suggest that vitamin D deficiency contributes to immune dysregulation and may increase the risk and severity of CSOM. Routine screening and correction of hypovitaminosis D could serve as an adjunctive strategy in managing pediatric CSOM.",
+      "status": "resolved",
+      "title": "Relationship between vitamin D levels and immune function in pediatric patients with chronic otitis media"
+    }
+  },
+  "schema": "claim_graph_source_snapshot_v1"
+}

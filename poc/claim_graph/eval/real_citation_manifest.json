@@ -1,0 +1,243 @@
+{
+  "manifest_version": "cg-n6-realcite-1",
+  "groups": {
+    "R": {
+      "label": "real_citation_slice",
+      "source": "crossref_metadata (has-abstract:true)",
+      "note": "entailed = claim lifted verbatim from cited paper's own abstract; misattributed = real DOI, off-source claim"
+    }
+  },
+  "counts": {
+    "R": 15,
+    "entailed": 8,
+    "misattributed": 7
+  },
+  "snapshot": "poc/claim_graph/eval/real_citation_snapshot.json",
+  "docs": [
+    {
+      "group": "R",
+      "doc_id": "RC_00",
+      "label": "real_citation_entailed",
+      "case_type": "entailed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.1177/2048004017749015",
+      "claim_source_doi": "10.1177/2048004017749015",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_00.json",
+      "words": 26,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_00.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_01",
+      "label": "real_citation_entailed",
+      "case_type": "entailed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.1111/jsr.12972",
+      "claim_source_doi": "10.1111/jsr.12972",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_01.json",
+      "words": 30,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_01.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_02",
+      "label": "real_citation_entailed",
+      "case_type": "entailed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.1038/s41598-018-32470-7",
+      "claim_source_doi": "10.1038/s41598-018-32470-7",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_02.json",
+      "words": 30,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_02.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_03",
+      "label": "real_citation_entailed",
+      "case_type": "entailed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.3354/meps14458",
+      "claim_source_doi": "10.3354/meps14458",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_03.json",
+      "words": 26,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_03.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_04",
+      "label": "real_citation_entailed",
+      "case_type": "entailed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.47310/iarjcr.2025.v05i02.002",
+      "claim_source_doi": "10.47310/iarjcr.2025.v05i02.002",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_04.json",
+      "words": 24,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_04.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_05",
+      "label": "real_citation_entailed",
+      "case_type": "entailed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.3389/fpubh.2023.1292154",
+      "claim_source_doi": "10.3389/fpubh.2023.1292154",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_05.json",
+      "words": 20,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_05.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_06",
+      "label": "real_citation_entailed",
+      "case_type": "entailed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.1177/19433654251377005",
+      "claim_source_doi": "10.1177/19433654251377005",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_06.json",
+      "words": 29,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_06.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_07",
+      "label": "real_citation_entailed",
+      "case_type": "entailed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.1371/journal.pone.0342730",
+      "claim_source_doi": "10.1371/journal.pone.0342730",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_07.json",
+      "words": 17,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_07.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_08",
+      "label": "real_citation_misattributed",
+      "case_type": "misattributed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.1111/jsr.12972",
+      "claim_source_doi": "10.1123/japa.2016-0012",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_08.json",
+      "words": 21,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_08.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_09",
+      "label": "real_citation_misattributed",
+      "case_type": "misattributed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.1038/s41598-018-32470-7",
+      "claim_source_doi": "10.1101/lm.48803",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_09.json",
+      "words": 33,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_09.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_10",
+      "label": "real_citation_misattributed",
+      "case_type": "misattributed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.3354/meps14458",
+      "claim_source_doi": "10.31893/jabb.21004",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_10.json",
+      "words": 33,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_10.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_11",
+      "label": "real_citation_misattributed",
+      "case_type": "misattributed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.47310/iarjcr.2025.v05i02.002",
+      "claim_source_doi": "10.3354/meps13846",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_11.json",
+      "words": 39,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_11.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_12",
+      "label": "real_citation_misattributed",
+      "case_type": "misattributed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.3389/fpubh.2023.1292154",
+      "claim_source_doi": "10.36721/pjps.2025.38.5.reg.14379.1",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_12.json",
+      "words": 27,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_12.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_13",
+      "label": "real_citation_misattributed",
+      "case_type": "misattributed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.1177/19433654251377005",
+      "claim_source_doi": "10.3390/ijerph16050789",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_13.json",
+      "words": 25,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_13.json"
+      }
+    },
+    {
+      "group": "R",
+      "doc_id": "RC_14",
+      "label": "real_citation_misattributed",
+      "case_type": "misattributed",
+      "source": "crossref_metadata",
+      "cite_doi": "10.1371/journal.pone.0342730",
+      "claim_source_doi": "10.1542/peds.2020-027128",
+      "path": "poc/claim_graph/eval/real_citation_cases/RC_14.json",
+      "words": 26,
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/real_citation_cases/RC_14.json"
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "case_id": "RC_07",
+  "case_type": "entailed",
+  "authorship": "eval_fixture_real_crossref",
+  "synthetic_adversarial": false,
+  "source": "crossref_metadata",
+  "cite_doi": "10.1371/journal.pone.0342730",
+  "claim_source_doi": "10.1371/journal.pone.0342730",
+  "claim_source_title": "Experienced teammates increase productivity in remote work: Evidence from a full remote work company in Japan",
+  "cite_title": "Experienced teammates increase productivity in remote work: Evidence from a full remote work company in Japan",
+  "claim": "In particular, employees with the shortest tenure see an increase in productivity of approximately 26.2%.",
+  "words": 17,
+  "text": "In particular, employees with the shortest tenure see an increase in productivity of approximately 26.2%. (DOI: 10.1371/journal.pone.0342730)",
+  "note": "entailed: cite_doi == claim_source_doi (claim lifted from that paper's own abstract). misattributed: cite_doi is a DIFFERENT real paper; the claim is NOT its finding."
+}

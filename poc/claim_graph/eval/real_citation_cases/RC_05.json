@@ -1,0 +1,15 @@
+{
+  "case_id": "RC_05",
+  "case_type": "entailed",
+  "authorship": "eval_fixture_real_crossref",
+  "synthetic_adversarial": false,
+  "source": "crossref_metadata",
+  "cite_doi": "10.3389/fpubh.2023.1292154",
+  "claim_source_doi": "10.3389/fpubh.2023.1292154",
+  "claim_source_title": "Urban green space visitation and mental health wellbeing during COVID-19 in Bangkok, Thailand",
+  "cite_title": "Urban green space visitation and mental health wellbeing during COVID-19 in Bangkok, Thailand",
+  "claim": "Socioeconomic variables and healthy behaviors of respondents were also notably linked to higher WHO-5 mental health well-being scores.",
+  "words": 20,
+  "text": "Socioeconomic variables and healthy behaviors of respondents were also notably linked to higher WHO-5 mental health well-being scores. (DOI: 10.3389/fpubh.2023.1292154)",
+  "note": "entailed: cite_doi == claim_source_doi (claim lifted from that paper's own abstract). misattributed: cite_doi is a DIFFERENT real paper; the claim is NOT its finding."
+}

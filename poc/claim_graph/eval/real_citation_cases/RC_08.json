@@ -1,0 +1,15 @@
+{
+  "case_id": "RC_08",
+  "case_type": "misattributed",
+  "authorship": "eval_fixture_real_crossref",
+  "synthetic_adversarial": true,
+  "source": "crossref_metadata",
+  "cite_doi": "10.1111/jsr.12972",
+  "claim_source_doi": "10.1123/japa.2016-0012",
+  "claim_source_title": "Physical Activity and Cardiovascular Disease Among Older Adults: The Case of Race and Ethnicity",
+  "cite_title": "Sleep deprivation‐induced impairment of memory consolidation is not mediated by glucocorticoid stress hormones",
+  "claim": "We used pooled data from the 2003–2004 and 2005–2006 waves of the National Health and Nutritional Examination Survey (NHANES).",
+  "words": 21,
+  "text": "We used pooled data from the 2003–2004 and 2005–2006 waves of the National Health and Nutritional Examination Survey (NHANES). (DOI: 10.1111/jsr.12972)",
+  "note": "entailed: cite_doi == claim_source_doi (claim lifted from that paper's own abstract). misattributed: cite_doi is a DIFFERENT real paper; the claim is NOT its finding."
+}

@@ -1,0 +1,15 @@
+{
+  "case_id": "RC_04",
+  "case_type": "entailed",
+  "authorship": "eval_fixture_real_crossref",
+  "synthetic_adversarial": false,
+  "source": "crossref_metadata",
+  "cite_doi": "10.47310/iarjcr.2025.v05i02.002",
+  "claim_source_doi": "10.47310/iarjcr.2025.v05i02.002",
+  "claim_source_title": "Relationship between vitamin D levels and immune function in pediatric patients with chronic otitis media",
+  "cite_title": "Relationship between vitamin D levels and immune function in pediatric patients with chronic otitis media",
+  "claim": "Mean serum 25(OH)D levels were significantly lower in the CSOM group (18.2 ± 6.1 ng/mL) than in controls (29.4 ± 7.2 ng/mL).",
+  "words": 24,
+  "text": "Mean serum 25(OH)D levels were significantly lower in the CSOM group (18.2 ± 6.1 ng/mL) than in controls (29.4 ± 7.2 ng/mL). (DOI: 10.47310/iarjcr.2025.v05i02.002)",
+  "note": "entailed: cite_doi == claim_source_doi (claim lifted from that paper's own abstract). misattributed: cite_doi is a DIFFERENT real paper; the claim is NOT its finding."
+}

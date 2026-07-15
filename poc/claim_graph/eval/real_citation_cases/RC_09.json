@@ -1,0 +1,15 @@
+{
+  "case_id": "RC_09",
+  "case_type": "misattributed",
+  "authorship": "eval_fixture_real_crossref",
+  "synthetic_adversarial": true,
+  "source": "crossref_metadata",
+  "cite_doi": "10.1038/s41598-018-32470-7",
+  "claim_source_doi": "10.1101/lm.48803",
+  "claim_source_title": "Sleep Deprivation Selectively Impairs Memory Consolidation for Contextual Fear Conditioning",
+  "cite_title": "Effects of ocean warming and coral bleaching on aerosol emissions in the Great Barrier Reef, Australia",
+  "claim": "We found that sleep deprivation from 0–5 h after training for this task impaired memory consolidation for contextual fear conditioning whereas sleep deprivation from 5–10 h after training had no effect.",
+  "words": 33,
+  "text": "We found that sleep deprivation from 0–5 h after training for this task impaired memory consolidation for contextual fear conditioning whereas sleep deprivation from 5–10 h after training had no effect. (DOI: 10.1038/s41598-018-32470-7)",
+  "note": "entailed: cite_doi == claim_source_doi (claim lifted from that paper's own abstract). misattributed: cite_doi is a DIFFERENT real paper; the claim is NOT its finding."
+}

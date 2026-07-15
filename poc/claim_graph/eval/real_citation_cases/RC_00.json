@@ -1,0 +1,15 @@
+{
+  "case_id": "RC_00",
+  "case_type": "entailed",
+  "authorship": "eval_fixture_real_crossref",
+  "synthetic_adversarial": false,
+  "source": "crossref_metadata",
+  "cite_doi": "10.1177/2048004017749015",
+  "claim_source_doi": "10.1177/2048004017749015",
+  "claim_source_title": "Are physical activity levels of health care professionals consistent with activity guidelines? A prospective cohort study in New Zealand",
+  "cite_title": "Are physical activity levels of health care professionals consistent with activity guidelines? A prospective cohort study in New Zealand",
+  "claim": "The daily target of 10,000 steps per day was achieved at a higher proportion than reported in international studies and the general New Zealand.",
+  "words": 26,
+  "text": "The daily target of 10,000 steps per day was achieved at a higher proportion than reported in international studies and the general New Zealand. (DOI: 10.1177/2048004017749015)",
+  "note": "entailed: cite_doi == claim_source_doi (claim lifted from that paper's own abstract). misattributed: cite_doi is a DIFFERENT real paper; the claim is NOT its finding."
+}

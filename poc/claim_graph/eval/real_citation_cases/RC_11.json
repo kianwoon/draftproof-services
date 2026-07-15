@@ -1,0 +1,15 @@
+{
+  "case_id": "RC_11",
+  "case_type": "misattributed",
+  "authorship": "eval_fixture_real_crossref",
+  "synthetic_adversarial": true,
+  "source": "crossref_metadata",
+  "cite_doi": "10.47310/iarjcr.2025.v05i02.002",
+  "claim_source_doi": "10.3354/meps13846",
+  "claim_source_title": "Prevalence of microplastics and anthropogenic debris within a deep-sea food web",
+  "cite_title": "Relationship between vitamin D levels and immune function in pediatric patients with chronic otitis media",
+  "claim": "Samples were collected using remotely operated vehicles and oblique midwater trawls, and gut contents of all individuals examined (n = 157) were analyzed for microplastic abundance and other anthropogenic particles greater than 100 µm using stereo microscopy.",
+  "words": 39,
+  "text": "Samples were collected using remotely operated vehicles and oblique midwater trawls, and gut contents of all individuals examined (n = 157) were analyzed for microplastic abundance and other anthropogenic particles greater than 100 µm using stereo microscopy. (DOI: 10.47310/iarjcr.2025.v05i02.002)",
+  "note": "entailed: cite_doi == claim_source_doi (claim lifted from that paper's own abstract). misattributed: cite_doi is a DIFFERENT real paper; the claim is NOT its finding."
+}

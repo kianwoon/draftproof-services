@@ -50,6 +50,24 @@ def _resolver_deps():
     return None
 
 
+def _resolver_snapshot():
+    """N2 frozen-snapshot seam (N6 eval determinism, plan §4/risk R4).
+
+    When ``DRAFTPROOF_CLAIM_GRAPH_SOURCE_SNAPSHOT`` points at a snapshot fixture,
+    load it so ``resolve_sources`` replays the frozen Crossref/URL records WITHOUT
+    touching the network (``sources.py`` docstring: "the N6 eval harness replays
+    WITHOUT touching the network"). Unset (production/default) → ``None`` → live
+    resolution. Fail-open: any load error degrades to ``None`` (live)."""
+    path = os.environ.get("DRAFTPROOF_CLAIM_GRAPH_SOURCE_SNAPSHOT", "").strip()
+    if not path:
+        return None
+    try:
+        from . import sources  # lazy — heavier (requests) import
+        return sources.SourceSnapshot(path=path)
+    except Exception:
+        return None
+
+
 def _entailment_scorer():
     """N3 scorer seam (patch point for tests). Returns the env-driven Modal
     scorer; fail-opens to ``unverified`` when the endpoint is unconfigured."""
@@ -122,7 +140,7 @@ def _attach_entailment_evidence(text: str, claim_dicts: list) -> tuple:
             from . import sources  # lazy — heavier (requests) import
 
             evidence, coverage, limitations = sources.resolve_sources(
-                evidence, deps=_resolver_deps())
+                evidence, deps=_resolver_deps(), snapshot=_resolver_snapshot())
             if _entailment_scoring_enabled():
                 try:
                     _run_entailment(evidence, claim_dicts or [])
