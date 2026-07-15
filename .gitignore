@@ -45,6 +45,9 @@ poc/calibration/retune/staging/
 # V7 re-tune persistent deep-scan cache (local scored-numbers artifact; no essay text stored)
 poc/calibration/retune/cache/
 
+# Phase-2 claim-graph source-retrieval runtime cache (Crossref/URL fetch records; local, regenerable)
+poc/.cache/claim_graph/
+
 # V7 fused-gate run progress log (resumable-run artifact from v7_fused_gate_run.py; regenerated per run)
 poc/calibration/v7_fused_gate_progress.jsonl
 
