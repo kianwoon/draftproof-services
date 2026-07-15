@@ -1,11 +1,26 @@
 # Phase 2 — Claim–Source Entailment + Context Grounding (execution scope)
 
-Status: **DRAFT for owner review** (2026-07-15). Governing architecture:
+Status: **APPROVED — kickoff decisions locked** (2026-07-15). Governing architecture:
 `docs/plans/credible_authorship_assessment_v2.md` (§A, §4.1, §4.3, §B, §C, §D, §E, §H, §I).
 Predecessor: `docs/plans/phase1_claim_graph_execution_plan.md` (Phase 1 CLOSED, M1–M5).
 Motivating data: `docs/plans/phase1_m4_calibration_report.md`.
 
 Guide review (Fable, 2026-07-15) folded in — the four corrections are called out inline as **[G1]–[G4]**.
+
+### Kickoff decisions (owner, 2026-07-15) — LOCKED
+
+1. **§E1 assignment-brief upload → DEFER** (Track A only in Phase 2). Owner delegated the call to a
+   Fable strategic read; verdict: defer, not decline. **Decisive reason:** granting `verified`/Level-3
+   on "claim matches the brief" repeats the *exact* M4 coherence-not-truth failure at a **higher**
+   credit tier, before Track A's real truth-grounding path is calibrated — and brief-match is
+   near-universal (everyone writes to the rubric), so it adds coverage, not separation. A fabricated
+   statistic that is on-brief would score `verified`; that inverts §A's headline invariant. **Not
+   declined** because the salvageable reframe survives: context-traceability re-scoped to a **NEUTRAL
+   audit state (not `verified`)**, or gated *behind* entailment-style verification, may ship in a later
+   phase. Revisit after Track A calibrates. → N5 collapses to a doc-only degrade note.
+2. **Entailment model → NLI cross-encoder on Modal** (not LLM-judge). See [G1].
+3. **`corroborated` state → FORBIDDEN this phase.** Keep only `verified`/`unverified`/`contradicted`.
+   Fewer thresholds to calibrate; revisit corroboration when the data warrants.
 
 ---
 
@@ -39,15 +54,15 @@ Phase 2 splits into two tracks so the owner-gated half never blocks the public-s
 | Track | Deliverable | Product decision? | Kill-switch |
 |---|---|---|---|
 | **A — External entailment (§4.1)** | citation → resolve → retrieve → **claim–source entailment** → `verified`/`contradicted`/`unverified`. Uses PUBLIC sources only. | **None** — build now. | `DRAFTPROOF_ENTAILMENT` |
-| **B — Context grounding (§4.3)** | claim → traces to uploaded assignment brief / rubric → `verified` (context, Evidence Level 3). | **YES — §E1 owner sign-off required** (assignment-brief upload). | `DRAFTPROOF_CONTEXT_GROUNDING` |
+| **B — Context grounding (§4.3)** | claim → traces to uploaded assignment brief / rubric. | **DEFERRED** (see kickoff decision 1). | `DRAFTPROOF_CONTEXT_GROUNDING` |
 
-**[G2] Sequencing decision: both, not either.** Track A is fully independent and is the primary
-Phase-2 deliverable. Track B is **scoped but not built** until the §E1 decision lands. To stop it
-being a late surprise, the **§E1 owner request is raised at plan-approval (N0), with a decision
-deadline**, not deferred to N5. If §E1 is declined, N5 collapses to a near-zero-cost task: document
-that §4.3 degrades to topic-self-consistency and ship nothing new. §4.3 must NOT be conflated with the
-standing **single-copy HARD NO** (owner reiterated ×3) — a brief/rubric is task context, not a second
-copy of the student's work — but it is still an upload demand and owner-owned.
+**[G2] Sequencing: Track A only this phase; Track B deferred.** Track A is fully independent and is
+the sole build deliverable of Phase 2. **Track B is scoped-not-built** — the §E1 decision landed as
+*defer* (kickoff decision 1), so N5 collapses to documenting the topic-self-consistency degrade. When
+Track B is revisited (post-Track-A calibration), its re-scope is already recorded: context-traceability
+grants a **NEUTRAL audit state, not `verified`** — "on-brief ≠ true", so it must never mint external
+credit. §4.3 was never conflated with the standing **single-copy HARD NO** (a brief is task context,
+not a second copy) — but it remains an upload demand and stays owner-owned.
 
 Both tracks stay **Tier-2** (§D): premium, only when citations/context are present, reusing the
 existing paid deep-scan async+cache plumbing (`poc/detect_v7/modal_client.py`). **Never on every scan.**
@@ -119,12 +134,12 @@ hypothesis (triage/decomposition), but it **NEVER grants `verified`**. Only the 
 
 | N | Deliverable | Network / LLM? | Ships as |
 |---|---|---|---|
-| **N0** | Plan approval + **raise §E1 owner request with a decision deadline** + phase-conditional CI guard replacing `PHASE1_FORBIDDEN_STATES` (verified/corroborated legal only when `DRAFTPROOF_ENTAILMENT` on). | No | governance |
-| **N1** | Schema unlock (verified/corroborated behind the flag) + **deterministic citation→claim linking** (which claim cites which reference). No network. | No | plumbing |
+| **N0** | Phase-conditional CI guard replacing `PHASE1_FORBIDDEN_STATES`: **`verified` legal only when `DRAFTPROOF_ENTAILMENT` on; `corroborated` stays forbidden this phase** (kickoff decision 3). (§E1 already resolved → no owner request needed.) | No | governance |
+| **N1** | Schema unlock (`verified` behind the flag; **NOT `corroborated`**) + **deterministic citation→claim linking** (which claim cites which reference). No network. | No | plumbing |
 | **N2** | DOI/Crossref/URL resolver + source retrieval (Tavily). Cached, fail-open, rate-capped. **Snapshot retrieved sources** for eval determinism. §C `source_access` coverage + `paywalled` limitation codes. | Network | EXPERIMENTAL |
 | **N3** | **Entailment engine** (NLI cross-encoder on Modal) with the §3 asymmetric thresholds. The load-bearing component. | Model | EXPERIMENTAL |
-| **N4** | Wire verdicts → `verification_status`; **re-run interrogatability VERIFIED-ONLY (M4 rec (f)1)** — the gaming fix realised; origin-map corroboration; **define who grants `corroborated` (multi-independent-source rule) or explicitly forbid it this phase**. | — | EXPERIMENTAL |
-| **N5** | §4.3 context grounding — **CONDITIONAL on §E1**. If declined: document the topic-self-consistency degrade, build nothing. | LLM (if built) | EXPERIMENTAL / doc-only |
+| **N4** | Wire verdicts → `verification_status`; **re-run interrogatability VERIFIED-ONLY (M4 rec (f)1)** — the gaming fix realised; origin-map external-source corroboration (single-source only; **`corroborated` state forbidden** per kickoff decision 3). | — | EXPERIMENTAL |
+| **N5** | §4.3 context grounding — **DEFERRED** (kickoff decision 1). Doc-only: record the topic-self-consistency degrade + the NEUTRAL-audit-state re-scope for a later phase. Build nothing. | No | doc-only |
 | **N6** | Re-run the M4 eval harness on a **new real-citation eval slice** (see §6) + gaming set + §B calibration report → ADVISORY-promotion proposal. | — | eval + proposal |
 
 **[G4] Scope realism:** with Modal hosting + calibration this sits at the **top of the 3–4 wk**
@@ -158,14 +173,16 @@ measurement, never single runs.
 
 ---
 
-## 7. Owner decisions required before kickoff
+## 7. Owner decisions — RESOLVED (2026-07-15)
 
-1. **§E1 — assignment-brief / rubric upload for Track B (§4.3).** Approve, decline, or defer? Track A
-   proceeds regardless; this only gates N5. (Distinct from the single-copy HARD NO.)
-2. **Confirm the entailment model direction** (NLI cross-encoder on Modal) vs. any preference to start
-   LLM-judge-only for a cheaper spike (not recommended — see [G1]).
-3. **`corroborated` state** — do we build the multi-independent-source path in N4, or forbid it this
-   phase and keep only `verified`/`unverified`/`contradicted`?
+All three kickoff decisions are locked (see "Kickoff decisions" at the top):
+
+1. **§E1 assignment-brief upload → DEFER.** Track A only; N5 doc-only. Salvage reframe (NEUTRAL audit
+   state, not `verified`) recorded for a later phase.
+2. **Entailment model → NLI cross-encoder on Modal.** LLM may normalise hypotheses; never grants `verified`.
+3. **`corroborated` state → FORBIDDEN this phase.** Only `verified`/`unverified`/`contradicted`.
+
+No decisions block N0/N1 kickoff.
 
 ---
 
