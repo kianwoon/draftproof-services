@@ -1,0 +1,9 @@
+{
+  "calibration_version": null,
+  "status": "provisional",
+  "note": "provisional; calibrated in N6 against the real-citation eval slice; contradicted_threshold intentionally > verified_threshold per docs/plans/phase2_entailment_grounding_scope.md §3 (a false contradicted on genuine work is the §B2 fairness harm — the gray zone must fall to unverified, NEVER to contradicted)",
+  "verified_threshold": 0.65,
+  "contradicted_threshold": 0.8,
+  "max_passages": 12,
+  "min_passage_chars": 24
+}

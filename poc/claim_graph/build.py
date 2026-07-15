@@ -34,6 +34,75 @@ def _source_resolution_enabled() -> bool:
         "DRAFTPROOF_CLAIM_GRAPH_SOURCE_RESOLVE", "1").strip().lower() not in _FALSEY
 
 
+def _entailment_scoring_enabled() -> bool:
+    """N3 entailment sub-switch (default ON within entailment).
+
+    Lets an operator run N1+N2 (link + resolve) WITHOUT the N3 entailment engine
+    (DRAFTPROOF_CLAIM_GRAPH_ENTAIL=0). Only consulted once ``entailment_enabled()``
+    already gated us in AND source resolution ran."""
+    return os.environ.get(
+        "DRAFTPROOF_CLAIM_GRAPH_ENTAIL", "1").strip().lower() not in _FALSEY
+
+
+def _resolver_deps():
+    """N2 network seam (patch point for tests). ``None`` → sources uses its own
+    ``requests``-backed default."""
+    return None
+
+
+def _entailment_scorer():
+    """N3 scorer seam (patch point for tests). Returns the env-driven Modal
+    scorer; fail-opens to ``unverified`` when the endpoint is unconfigured."""
+    from . import entailment  # lazy — keeps build.py import-light
+    return entailment.default_scorer()
+
+
+def _run_entailment(evidence: list, claims: list) -> None:
+    """N3: for each RESOLVED external-citation evidence node, entail its linked
+    claim(s) against the retrieved source and ATTACH the verdict into
+    ``detail['resolution']['entailment']`` (keyed by claim id). Fail-open.
+
+    N3 COMPUTES + ATTACHES only — it does NOT set ``verification_status``; that
+    wire-back is N4. Scored ONLY on ``resolved`` records (they carry
+    ``source_text``); paywalled/unresolved/error are skipped and stay unverified.
+    """
+    from . import entailment  # lazy — keeps build.py import-light
+    from . import sources as _sources
+
+    claim_text_by_id = {
+        str(c.get("id")): str(c.get("text") or "")
+        for c in (claims or []) if c.get("id")
+    }
+    thresholds = entailment.load_thresholds()
+    scorer = _entailment_scorer()
+
+    for node in evidence or []:
+        detail = getattr(node, "detail", None)
+        if not isinstance(detail, dict):
+            continue
+        resolution = detail.get("resolution")
+        if not isinstance(resolution, dict):
+            continue
+        if resolution.get("status") != _sources.STATUS_RESOLVED:
+            continue  # only resolved sources carry retrievable source_text
+        source_text = resolution.get("source_text")
+        if not source_text:
+            continue
+        claim_ids = list(getattr(node, "claim_ids", None) or [])
+        if not claim_ids:
+            continue  # no hypothesis to test against
+        by_claim: dict[str, Any] = {}
+        for cid in claim_ids:
+            cid = str(cid)
+            claim_text = claim_text_by_id.get(cid)
+            if not claim_text:
+                continue
+            by_claim[cid] = entailment.entail_claim(
+                claim_text, source_text, scorer, thresholds=thresholds)
+        if by_claim:
+            resolution["entailment"] = by_claim
+
+
 def build_claim_graph(
     text: str,
     segments: list[dict[str, Any]],
@@ -119,7 +188,17 @@ def build_claim_graph_extracted(
                 try:
                     from . import sources  # lazy — heavier (requests) import
 
-                    evidence, coverage, limitations = sources.resolve_sources(evidence)
+                    evidence, coverage, limitations = sources.resolve_sources(
+                        evidence, deps=_resolver_deps())
+                    # N3 (Phase-2, Track A): entail each RESOLVED source against
+                    # its linked claim(s) and ATTACH the verdict to the node's
+                    # resolution block. Mints NO verification_status (that is N4).
+                    # Sub-switch DRAFTPROOF_CLAIM_GRAPH_ENTAIL=0 keeps N1+N2 only.
+                    if _entailment_scoring_enabled():
+                        try:
+                            _run_entailment(evidence, container.get("claims") or [])
+                        except Exception:
+                            pass  # fail-open: never fail the build on N3
                 except Exception:
                     coverage, limitations = None, []
             container["evidence"] = [n.to_dict() for n in evidence]
