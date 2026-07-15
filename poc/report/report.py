@@ -3438,6 +3438,29 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "(additive, non-fatal)."
         )
 
+    # Phase-0 Authorship Evidence Level annotation (additive, ADVISORY, display
+    # only — docs/plans/credible_authorship_assessment_v2.md §H/§10/§C/§B).
+    # Recasts EXISTING signals (badge tier, grounding_diagnosis, submission_risk
+    # citation axis, critical_thinking) into Evidence Levels 0-2 + banded
+    # confidence/coverage. NEVER touches tier/ai_likelihood_score/gates
+    # (lifecycle.scoring_enabled hard-False). Same post-sync seam as
+    # headline_confidence so the ai_signal_deberta tile is final. Kill-switch
+    # DRAFTPROOF_AUTHORSHIP_EVIDENCE_LEVELS (default ON; "0"/"false" -> field
+    # absent, byte-identical). Fail-open: an annotator must never break a build.
+    try:
+        from report.authorship_evidence_levels import (  # noqa: E402
+            compute_evidence_level, evidence_levels_enabled,
+        )
+        if evidence_levels_enabled():
+            _evidence_levels = compute_evidence_level(result.get("ai_risk_badge"), result)
+            if _evidence_levels is not None and isinstance(result.get("ai_risk_badge"), dict):
+                result["ai_risk_badge"]["authorship_evidence_levels"] = _evidence_levels
+    except Exception:
+        logger.exception(
+            "report.report: authorship_evidence_levels annotation failed; "
+            "omitting (additive, non-fatal)."
+        )
+
     # Deep-scan flag-mass lift for the external flag-risk lens (additive,
     # annotate-not-suppress). Same post-sync seam as headline_confidence: the
     # ai_signal_deberta tile must be the FINAL (deep-scan-synced) one. Lifts

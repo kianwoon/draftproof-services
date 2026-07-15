@@ -37,6 +37,11 @@ SCAN_BADGE_KEYS = (
     "authorship_breakdown",
     "ai_signal_deberta",
     "signal_source",
+    # Phase-0 Authorship Evidence Level annotation (advisory, display-only —
+    # poc/report/authorship_evidence_levels.py). Additive composer output on the
+    # scan badge; without it here the compaction strips it before storage and the
+    # rewrite's before/after scans lose the evidence-level panel on every surface.
+    "authorship_evidence_levels",
 )
 
 TRANSFORMATION_KEYS = (

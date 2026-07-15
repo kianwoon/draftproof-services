@@ -11,7 +11,35 @@ import os
 import subprocess
 import sys
 
-from report.authorship_evidence_levels import compute_evidence_level
+from report.authorship_evidence_levels import (
+    compute_evidence_level,
+    evidence_levels_enabled,
+)
+
+
+# ── Kill-switch (default ON; "0"/"false" reverts byte-identically) ─────────
+
+def test_kill_switch_default_on():
+    os.environ.pop("DRAFTPROOF_AUTHORSHIP_EVIDENCE_LEVELS", None)
+    assert evidence_levels_enabled() is True
+
+
+def test_kill_switch_off_values():
+    for val in ("0", "false", "FALSE", "off", "no"):
+        os.environ["DRAFTPROOF_AUTHORSHIP_EVIDENCE_LEVELS"] = val
+        try:
+            assert evidence_levels_enabled() is False, val
+        finally:
+            del os.environ["DRAFTPROOF_AUTHORSHIP_EVIDENCE_LEVELS"]
+
+
+def test_kill_switch_on_values():
+    for val in ("1", "true", "on", "yes"):
+        os.environ["DRAFTPROOF_AUTHORSHIP_EVIDENCE_LEVELS"] = val
+        try:
+            assert evidence_levels_enabled() is True, val
+        finally:
+            del os.environ["DRAFTPROOF_AUTHORSHIP_EVIDENCE_LEVELS"]
 
 
 def _fused_badge(**overrides):

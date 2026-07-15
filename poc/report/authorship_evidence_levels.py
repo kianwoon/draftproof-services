@@ -37,6 +37,16 @@ from typing import Any, Optional
 
 MAX_LEVEL_ASSESSABLE = 2  # honest Phase-0 cap: no claim graph -> no Levels 3-5.
 
+# Kill-switch env var (default ON — owner ordered Phase-0 start). "0"/"false"/
+# "no"/"off" reverts byte-identically (field absent on every surface).
+KILL_SWITCH_ENV = "DRAFTPROOF_AUTHORSHIP_EVIDENCE_LEVELS"
+_OFF_VALUES = {"0", "false", "no", "off"}
+
+
+def evidence_levels_enabled() -> bool:
+    """True unless DRAFTPROOF_AUTHORSHIP_EVIDENCE_LEVELS is explicitly off."""
+    return str(os.environ.get(KILL_SWITCH_ENV, "1")).strip().lower() not in _OFF_VALUES
+
 # ── grounding band (poc/detect/grounding_diagnosis.py::_band) — this is an
 # AI-STYLE grounding-GAP band, higher = weaker grounding.
 _GROUNDING_BANDS = {"likely_human", "some_texture", "moderate", "strong", "very_strong"}

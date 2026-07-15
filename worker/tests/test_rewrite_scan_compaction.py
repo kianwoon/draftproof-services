@@ -73,6 +73,22 @@ def test_policy_composer_fields_in_keep_list():
     for key in ("policy_risk", "submission_risk", "grounding_diagnosis", "critical_thinking_control"):
         assert key in SCAN_BADGE_KEYS
 
+
+def test_compaction_retains_authorship_evidence_levels():
+    # Phase-0 advisory Evidence Level annotation is an additive scan-badge output;
+    # it must survive compaction so the rewrite before/after scans keep the panel.
+    scan = {
+        "ai_risk_badge": {
+            "ai_likelihood_score": 35.0,
+            "tier": "amber",
+            "authorship_evidence_levels": {"level": 2, "max_level_assessable": 2,
+                                           "lifecycle": {"status": "advisory"}},
+        }
+    }
+    badge = compact_rewrite_scan_summary(scan)["ai_risk_badge"]
+    assert badge["authorship_evidence_levels"]["level"] == 2
+    assert "authorship_evidence_levels" in SCAN_BADGE_KEYS
+
 def test_compaction_retains_v7_fused_evidence():
     # Regression (rewrite 9a29e56a, 2026-07-07): the rewrite's before/after scans stored
     # only the bare ai_likelihood_score — the number WAS V7-fused, but tier_authority &
