@@ -214,3 +214,36 @@ def test_integration_extraction_attaches_experimental_signals(monkeypatch):
     names = {s["signal"] for s in graph["signals"]}
     assert names == {"interrogatability", "substitutability", "origin_map"}
     assert all(s["status"] == "experimental" for s in graph["signals"])
+
+
+def test_question_nodes_never_evict_real_claims(monkeypatch):
+    """M3 review gap (2026-07-15): QUESTION nodes are appended during signal
+    computation; under cap pressure they must be evicted FIRST and never push
+    a real CLAIM out. Build a container at exactly the claim cap with every
+    claim unverified+specific (max QUESTION emission), then assert all CLAIM
+    nodes survive and only QUESTION nodes were dropped."""
+    import json
+    from claim_graph import validators
+
+    monkeypatch.setenv("DRAFTPROOF_CLAIM_GRAPH_MAX_CLAIMS", "4")
+    sents = []
+    claims = []
+    for i in range(1, 5):  # exactly at cap
+        text = f"On day {i} the measured value was {i * 7} units exactly."
+        sents.append({"sentence_id": f"s{i:03d}", "paragraph_id": "p001",
+                      "start_char": (i - 1) * 60, "end_char": (i - 1) * 60 + len(text),
+                      "sentence": text})
+        claims.append({"sentence_id": f"s{i:03d}", "quote": text, "node_type": "CLAIM",
+                       "claim_type": "personal observation",
+                       "verification_status": "unverified",
+                       "origins": ["personal_observation"],
+                       "primary_origin": "personal_observation"})
+    out = validators.validate_graph({"claims": claims, "edges": []}, sents,
+                                    compute_signals=True, text=" ".join(s["sentence"] for s in sents),
+                                    embedder=None)
+    kept = out.get("claims") or []
+    real = [c for c in kept if c.get("node_type") == "CLAIM"]
+    assert len(real) == 4, f"a real claim was evicted: {json.dumps([c.get('id') for c in kept])}"
+    # any dropped nodes under the cap must have been QUESTION nodes only
+    qs = [c for c in kept if c.get("node_type") == "QUESTION"]
+    assert all(q.get("references") for q in qs)
