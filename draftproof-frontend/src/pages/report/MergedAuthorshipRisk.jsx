@@ -209,6 +209,19 @@ function aelLensBand(lensId, lens) {
   return AEL_CRITICAL_BAND[String(lens.band || '').toLowerCase()] || null; // reasoning
 }
 
+// Anchor headline/fix are emitted by the server composer with an i18n `code` +
+// interpolation `params` (rendered via t() for en/zh) AND a ready English
+// string (server fallback). The `example` is verbatim user text — NEVER
+// translated. See poc/report/authorship_evidence_levels.py (_attach_anchors).
+function aelAnchorText(t, code, params, fallback, keyspace) {
+  if (code) {
+    const key = `report.evidenceLevels.${keyspace}.${code}`;
+    const s = t(key, params || {});
+    if (s && s !== key) return s;
+  }
+  return fallback || '';
+}
+
 function EvidenceLevelPanel({ t, ael }) {
   if (!ael || typeof ael !== 'object' || !ael.lenses) return null;
   const level = ael.level;
@@ -228,13 +241,31 @@ function EvidenceLevelPanel({ t, ael }) {
           const band = aelLensBand(lensId, lens);
           const cls = band ? (AEL_BAND_CLASS[band] || 'medium') : 'unknown';
           const conf = lens && lens.assessment_confidence;
+          const anchor = lens && lens.anchor;
+          const headline = anchor
+            ? aelAnchorText(t, anchor.headline_code, anchor.params, anchor.headline, 'anchors')
+            : null;
+          const fix = anchor && anchor.fix
+            ? aelAnchorText(t, anchor.fix_code, null, anchor.fix, 'anchorFix')
+            : null;
           return (
-            <div className={`merged-axis is-${cls}`} key={lensId}>
-              <span>{t(`report.evidenceLevels.lenses.${lensId}`)}</span>
-              <strong>
-                {band ? t(`report.evidenceLevels.bands.${band}`) : t('report.evidenceLevels.bands.notAssessed')}
-                {conf ? ` · ${t(`report.evidenceLevels.confidence.${conf}`)}` : ''}
-              </strong>
+            <div className="merged-ael-lens" key={lensId}>
+              <div className={`merged-axis is-${cls}`}>
+                <span>{t(`report.evidenceLevels.lenses.${lensId}`)}</span>
+                <strong>
+                  {band ? t(`report.evidenceLevels.bands.${band}`) : t('report.evidenceLevels.bands.notAssessed')}
+                  {conf ? ` · ${t(`report.evidenceLevels.confidence.${conf}`)}` : ''}
+                </strong>
+              </div>
+              {anchor && (headline || anchor.example || fix) ? (
+                <div className="merged-ael-anchor">
+                  {headline ? <p className="merged-ael-anchor-head">{headline}</p> : null}
+                  {anchor.example ? (
+                    <p className="merged-ael-anchor-eg">{`“${anchor.example}”`}</p>
+                  ) : null}
+                  {fix ? <p className="merged-ael-anchor-fix">{fix}</p> : null}
+                </div>
+              ) : null}
             </div>
           );
         })}

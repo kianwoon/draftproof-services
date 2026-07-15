@@ -2091,6 +2091,18 @@ button.fix-first-item:focus-visible {
 .merged-axis.is-medium { background: #fef3c7; color: #b45309; }
 .merged-axis.is-high, .merged-axis.is-critical { background: #fee2e2; color: #b91c1c; }
 
+/* Authorship-evidence-level lens ANCHOR (web) — the specific finding + a real
+   flagged sentence + a fix direction under each band. Match the 12px muted
+   report typography (the panel previously shipped with unstyled classes that
+   read oversized/off — proper CSS this time). PDF uses its own dp-ael-anchor-*
+   classes in poc/report/render_panels.py — separate styling path. */
+.merged-ael-axes { gap: 10px; }
+.merged-ael-lens { display: flex; flex-direction: column; gap: 4px; }
+.merged-ael-anchor { padding: 0 2px 0 9px; }
+.merged-ael-anchor-head { font-size: 12px; color: #374151; line-height: 1.5; margin: 0; }
+.merged-ael-anchor-eg { font-size: 12px; color: #6b7280; font-style: italic; line-height: 1.5; margin: 2px 0 0; }
+.merged-ael-anchor-fix { font-size: 12px; color: #9ca3af; line-height: 1.5; margin: 2px 0 0; }
+
 /* Claim-graph "Source grounding" panel (web) — match the 12px muted report
    typography; the merged-cg-* classes had no CSS, so they fell back to browser
    defaults and read as oversized/off. (The PDF panel uses its own dp-cg-* table

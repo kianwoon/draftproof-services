@@ -810,6 +810,19 @@ export const report = {
       "moderate": "Moderate confidence",
       "low": "Low confidence"
     },
+    "anchors": {
+      "aiFlagged": "Reads as AI-generated — {{flagged}} of {{total}} sentences",
+      "aiNone": "No sentences flagged as AI-generated",
+      "groundingWeak": "Weak grounding — claims without concrete anchors",
+      "citationNone": "No sources cited — claims rest on assertion",
+      "citationSome": "{{count}} in-text citation(s) present",
+      "reasoningJumps": "Reasoning jumps — the argument shifts topic between sentences"
+    },
+    "anchorFix": {
+      "groundingFix": "Name a specific example, source, or moment.",
+      "citationFix": "Cite a source for each factual claim.",
+      "reasoningFix": "Tighten transitions so each point builds on the last."
+    },
     "assessmentConfidence": "Overall assessment confidence: {{confidence}}.",
     "coverage": "Coverage — generator window: {{generator}}; context: {{context}}",
     "coverageUnavailable": "unavailable",

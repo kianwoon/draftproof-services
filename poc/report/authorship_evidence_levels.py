@@ -61,6 +61,160 @@ _STATISTICAL_SOURCES = {"v7_fused", "deberta_authoritative", "perplexity_layer3"
 
 _CONF_ORDER = {"low": 0, "moderate": 1, "high": 2}
 
+# ── Specific per-lens ANCHOR derivation (display enrichment) ────────────────
+# Each lens carries an OPTIONAL `anchor` object that makes the generic band
+# actionable by surfacing REAL report data:
+#   {headline, headline_code, params, example, fix, fix_code, count}
+# NO FABRICATION: every `example` is a verbatim (only end-trimmed) sentence that
+# already exists in the input report; every count is derived from real segments;
+# no sentence/number/finding is ever invented. `headline`/`fix` are English
+# strings (the Python PDF renderer consumes them directly + they are the web
+# fallback); `headline_code`/`fix_code` + `params` let the web render via t()
+# for en+zh. When a lens has no specific driver in the data -> anchor omitted
+# (panel shows just the band, honestly). Fail-open: any error -> anchor skipped.
+#
+# finding -> lens mapping table (explicit, documented — never guessed):
+#   ai_pattern -> highlight_segments where highlight.enabled is True
+#                 (the same flag the report already paints red); strongest =
+#                 highest primary_signal.score.
+#   grounding  -> findings.* with category "ai_generation" & title
+#                 "low_specificity" (poc/detect specificity signal); example =
+#                 its evidence.example_sentences[0].
+#   citation   -> report_fields["citation"].in_text_count (poc/detect citation).
+#   reasoning  -> findings.* with category "semantic_shape" & title
+#                 "semantic_drift"; example = its evidence string.
+_MAX_EXAMPLE_CHARS = 140
+
+
+def _trim_example(text: Any) -> Optional[str]:
+    """End-trim a real sentence to <=_MAX_EXAMPLE_CHARS for display. NEVER alters
+    internal characters (so the result stays a verbatim substring of the input,
+    which the no-fabrication test asserts). Trailing ellipsis marks truncation."""
+    if not isinstance(text, str):
+        return None
+    t = text.strip()
+    if not t:
+        return None
+    if len(t) > _MAX_EXAMPLE_CHARS:
+        t = t[:_MAX_EXAMPLE_CHARS].rstrip() + "…"
+    return t
+
+
+def _find_finding(report_fields: dict, *, category: str, title: str) -> Optional[dict]:
+    """First finding matching category+title across severity buckets, or None."""
+    findings = report_fields.get("findings")
+    if not isinstance(findings, dict):
+        return None
+    for sev in ("critical", "high", "medium", "low"):
+        for it in findings.get(sev) or []:
+            if isinstance(it, dict) and it.get("category") == category and it.get("title") == title:
+                return it
+    return None
+
+
+def _ai_pattern_anchor(report_fields: dict) -> Optional[dict[str, Any]]:
+    segs = report_fields.get("highlight_segments")
+    if not isinstance(segs, list) or not segs:
+        return None
+    total = len(segs)
+    flagged = [
+        s for s in segs
+        if isinstance(s, dict) and isinstance(s.get("highlight"), dict)
+        and s["highlight"].get("enabled") is True
+    ]
+    n = len(flagged)
+    if n == 0:
+        return {"headline": "No sentences flagged as AI-generated",
+                "headline_code": "aiNone", "params": {"total": total},
+                "example": None, "fix": None, "fix_code": None,
+                "count": {"flagged": 0, "total": total}}
+
+    def _score(s: dict) -> float:
+        ps = s.get("primary_signal")
+        if isinstance(ps, dict) and isinstance(ps.get("score"), (int, float)):
+            return float(ps["score"])
+        return 0.0
+
+    strongest = max(flagged, key=_score)
+    return {"headline": f"Reads as AI-generated — {n} of {total} sentences",
+            "headline_code": "aiFlagged", "params": {"flagged": n, "total": total},
+            "example": _trim_example(strongest.get("text")),
+            "fix": None, "fix_code": None,
+            "count": {"flagged": n, "total": total}}
+
+
+def _grounding_anchor(report_fields: dict) -> Optional[dict[str, Any]]:
+    f = _find_finding(report_fields, category="ai_generation", title="low_specificity")
+    if not isinstance(f, dict):
+        return None
+    example = None
+    ev = f.get("evidence")
+    if isinstance(ev, dict):
+        for cand in ev.get("example_sentences") or []:
+            example = _trim_example(cand)
+            if example:
+                break
+    return {"headline": "Weak grounding — claims without concrete anchors",
+            "headline_code": "groundingWeak", "params": {},
+            "example": example,
+            "fix": "Name a specific example, source, or moment.",
+            "fix_code": "groundingFix", "count": None}
+
+
+def _citation_anchor(report_fields: dict) -> Optional[dict[str, Any]]:
+    cit = report_fields.get("citation")
+    if not isinstance(cit, dict):
+        return None
+    itc = cit.get("in_text_count")
+    if not isinstance(itc, int) or isinstance(itc, bool):
+        return None
+    if itc == 0:
+        return {"headline": "No sources cited — claims rest on assertion",
+                "headline_code": "citationNone", "params": {},
+                "example": None,
+                "fix": "Cite a source for each factual claim.",
+                "fix_code": "citationFix", "count": None}
+    return {"headline": f"{itc} in-text citation(s) present",
+            "headline_code": "citationSome", "params": {"count": itc},
+            "example": None, "fix": None, "fix_code": None, "count": None}
+
+
+def _reasoning_anchor(report_fields: dict) -> Optional[dict[str, Any]]:
+    f = _find_finding(report_fields, category="semantic_shape", title="semantic_drift")
+    if not isinstance(f, dict):
+        return None
+    ev = f.get("evidence")
+    return {"headline": "Reasoning jumps — the argument shifts topic between sentences",
+            "headline_code": "reasoningJumps", "params": {},
+            "example": _trim_example(ev if isinstance(ev, str) else None),
+            "fix": "Tighten transitions so each point builds on the last.",
+            "fix_code": "reasoningFix", "count": None}
+
+
+_ANCHOR_BUILDERS = {
+    "ai_pattern": _ai_pattern_anchor,
+    "grounding": _grounding_anchor,
+    "citation": _citation_anchor,
+    "reasoning": _reasoning_anchor,
+}
+
+
+def _attach_anchors(lenses: dict, report_fields: Optional[dict]) -> None:
+    """Attach a specific `anchor` to each assessable lens from REAL report data.
+    Fail-open per lens: any malformation -> anchor skipped (never raised)."""
+    if not isinstance(report_fields, dict):
+        return
+    for name, builder in _ANCHOR_BUILDERS.items():
+        lens = lenses.get(name)
+        if not isinstance(lens, dict) or lens.get("available") is False:
+            continue  # only annotate an assessable lens.
+        try:
+            anchor = builder(report_fields)
+        except Exception:
+            anchor = None
+        if isinstance(anchor, dict):
+            lens["anchor"] = anchor
+
 
 def _band_from(order: int) -> str:
     for k, v in _CONF_ORDER.items():
@@ -211,6 +365,13 @@ def compute_evidence_level(
         except Exception:
             lens = None
         lenses[name] = lens if isinstance(lens, dict) else {"available": False}
+
+    # ── Specific per-lens anchors from REAL report data (display enrichment;
+    #    no fabrication, fail-open — never affects level/score below). ──
+    try:
+        _attach_anchors(lenses, report_fields)
+    except Exception:
+        pass
 
     # ── Level mapping (§10) from EXISTING banded values only. ──
     # Level 1 = statistical indication present (ai_pattern lens assessable, i.e.

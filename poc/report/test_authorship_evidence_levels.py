@@ -194,6 +194,130 @@ def test_fail_open_on_malformed_lens_fields():
     assert out["level"] >= 1
 
 
+# ── Specific per-lens anchors (display enrichment, NO FABRICATION) ─────────
+
+def _real_report_fields():
+    """A /tmp/dp_r2b.json-shaped subset: real flagged highlight_segments + the
+    three driver findings the anchors read from."""
+    return {
+        "highlight_segments": [
+            {"sentence_id": "u_s001", "text": "SOPs can now be turned into workflows.",
+             "highlight": {"enabled": False}, "primary_signal": None},
+            {"sentence_id": "s001",
+             "text": 'And once that happens, "years of experience" becomes a pretty weak metric.',
+             "highlight": {"enabled": True, "label": "High-confidence AI signal"},
+             "primary_signal": {"score": 100}},
+            {"sentence_id": "s002",
+             "text": "Someone might have 20 years under their belt, but in reality it repeats.",
+             "highlight": {"enabled": True}, "primary_signal": {"score": 90}},
+        ],
+        "findings": {
+            "critical": [], "high": [
+                {"category": "semantic_shape", "title": "semantic_drift",
+                 "evidence": "SOPs can now be turned into workflows. Experience can be turned into skills.",
+                 "detail": "Some adjacent sentence jumps show semantic drift. Score: 82%."},
+            ],
+            "medium": [
+                {"category": "ai_generation", "title": "low_specificity",
+                 "evidence": {"type": "document_level",
+                              "example_sentences": [
+                                  "Make sure only a handful of people know how to handle the edge cases.",
+                                  "That stuff is getting codified, automated, or straight-up handled by AI."]}},
+            ],
+            "low": [],
+        },
+        "citation": {"in_text_count": 0, "bib_entry_count": 0},
+    }
+
+
+def test_ai_pattern_anchor_counts_and_strongest_example():
+    out = compute_evidence_level(_fused_badge(), _real_report_fields())
+    a = out["lenses"]["ai_pattern"]["anchor"]
+    assert a["count"] == {"flagged": 2, "total": 3}
+    assert a["headline"] == "Reads as AI-generated — 2 of 3 sentences"
+    # strongest = highest primary_signal.score (s001 @ 100).
+    assert a["example"] == 'And once that happens, "years of experience" becomes a pretty weak metric.'
+
+
+def test_grounding_anchor_from_low_specificity_finding():
+    out = compute_evidence_level(_fused_badge(), _real_report_fields())
+    a = out["lenses"]["grounding"]["anchor"]
+    assert "grounding" in a["headline"].lower()
+    assert a["example"] == "Make sure only a handful of people know how to handle the edge cases."
+    assert a["fix"]
+
+
+def test_citation_anchor_reports_no_sources():
+    out = compute_evidence_level(_fused_badge(), _real_report_fields())
+    a = out["lenses"]["citation"]["anchor"]
+    assert "No sources cited" in a["headline"]
+    assert a["fix"]
+
+
+def test_reasoning_anchor_from_semantic_drift_finding():
+    out = compute_evidence_level(_fused_badge(), _real_report_fields())
+    a = out["lenses"]["reasoning"]["anchor"]
+    assert "jump" in a["headline"].lower()
+    assert a["example"].startswith("SOPs can now be turned into workflows.")
+    assert a["fix"]
+
+
+def test_no_fabrication_every_example_is_a_substring_of_input():
+    """The whole point: an anchor example must be VERBATIM report data, never
+    invented. Collect every candidate sentence in the input and assert each
+    rendered example (minus a truncation ellipsis) is a substring of one."""
+    rf = _real_report_fields()
+    corpus = [s["text"] for s in rf["highlight_segments"]]
+    for sev in rf["findings"].values():
+        for it in sev:
+            ev = it.get("evidence")
+            if isinstance(ev, str):
+                corpus.append(ev)
+            elif isinstance(ev, dict):
+                corpus.extend(ev.get("example_sentences") or [])
+    out = compute_evidence_level(_fused_badge(), rf)
+    seen_example = False
+    for lens in out["lenses"].values():
+        a = lens.get("anchor") if isinstance(lens, dict) else None
+        ex = a.get("example") if isinstance(a, dict) else None
+        if not ex:
+            continue
+        seen_example = True
+        probe = ex[:-1] if ex.endswith("…") else ex  # drop truncation marker
+        assert any(probe in c for c in corpus), f"fabricated example: {ex!r}"
+    assert seen_example, "fixture should exercise at least one example"
+
+
+def test_example_is_end_trimmed_to_max_chars():
+    rf = _real_report_fields()
+    long = "x" * 400 + " tail-should-be-cut"
+    rf["findings"]["high"][0]["evidence"] = long
+    out = compute_evidence_level(_fused_badge(), rf)
+    ex = out["lenses"]["reasoning"]["anchor"]["example"]
+    assert len(ex) <= 141 and ex.endswith("…")  # 140 + ellipsis
+    assert long.startswith(ex[:-1])  # verbatim prefix, nothing invented
+
+
+def test_anchors_absent_when_no_report_data_falls_back_to_band_only():
+    """Older reports / absent data -> no anchor key on any lens; panel renders as
+    before (band only). Report never breaks."""
+    out = compute_evidence_level(_fused_badge(), {})
+    for lens in out["lenses"].values():
+        assert "anchor" not in lens
+    # And a wholly empty report_fields is fine too.
+    out2 = compute_evidence_level(_fused_badge(), None)
+    for lens in out2["lenses"].values():
+        assert "anchor" not in lens
+
+
+def test_anchor_derivation_never_raises_on_malformed_data():
+    bad = {"highlight_segments": "nope", "findings": 12, "citation": []}
+    out = compute_evidence_level(_fused_badge(), bad)
+    assert out is not None
+    for lens in out["lenses"].values():
+        assert "anchor" not in lens
+
+
 # ── Circular import guard (report/* must not import rewrite_v6/*) ───────────
 
 def test_no_circular_import_under_worker_import_order():

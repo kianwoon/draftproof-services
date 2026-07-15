@@ -792,6 +792,19 @@ export const report = {
       "moderate": "中等置信度",
       "low": "低置信度"
     },
+    "anchors": {
+      "aiFlagged": "读起来像 AI 生成——{{total}} 句中有 {{flagged}} 句",
+      "aiNone": "没有句子被标记为 AI 生成",
+      "groundingWeak": "论据支撑薄弱——主张缺乏具体依据",
+      "citationNone": "未引用任何来源——主张仅凭断言",
+      "citationSome": "文中含 {{count}} 处引用",
+      "reasoningJumps": "推理跳跃——论点在句子之间发生话题转移"
+    },
+    "anchorFix": {
+      "groundingFix": "请指出具体的例子、来源或时刻。",
+      "citationFix": "为每一项事实主张引用来源。",
+      "reasoningFix": "收紧过渡，使每个论点都承接上文。"
+    },
     "assessmentConfidence": "整体评估置信度：{{confidence}}。",
     "coverage": "覆盖范围——生成模型时间窗口：{{generator}}；上下文：{{context}}",
     "coverageUnavailable": "不可用",

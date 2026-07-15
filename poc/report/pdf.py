@@ -354,6 +354,27 @@ img[src^="https://img.shields.io"] { height: 18px; }
     font-size: 9.5pt;
     line-height: 1.5;
 }
+/* Authorship-evidence-level lens ANCHOR (PDF) — the specific finding + a real
+   flagged sentence + a fix direction under each band. Mirrors the web
+   .merged-ael-anchor-* rules (KEEP-IN-SYNC with 06-report-overview.css); muted
+   9pt to sit quietly under the band chip. */
+.dp-ael-anchor {
+    margin: 3pt 0 4pt;
+    line-height: 1.5;
+}
+.dp-ael-anchor-head {
+    color: #374151;
+    font-size: 9pt;
+}
+.dp-ael-anchor-eg {
+    color: #6b7280;
+    font-size: 9pt;
+    font-style: italic;
+}
+.dp-ael-anchor-fix {
+    color: #9ca3af;
+    font-size: 9pt;
+}
 .dp-chip-strip {
     margin-top: 10pt;
 }

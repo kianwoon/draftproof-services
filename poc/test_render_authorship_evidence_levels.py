@@ -33,12 +33,38 @@ def test_renders_level_and_lens_rows():
     assert "Reasoning development" in html
 
 
-def test_renders_coverage_and_limitations():
+def test_coverage_and_limitations_lines_removed():
+    # Owner 2026-07-15: the §C assessment-confidence / coverage / limitations
+    # lines were dropped from the rendered panel as noise (data stays in the
+    # badge JSON). This asserts they stay OUT — web + PDF in sync.
     html = render_authorship_evidence_levels({"ai_risk_badge": {"authorship_evidence_levels": _AEL}})
-    assert "through_2026_07" in html
-    assert "assignment_brief_absent" in html
-    assert "Limitations" in html
+    assert "through_2026_07" not in html
+    assert "assignment_brief_absent" not in html
+    assert "Limitations" not in html
+    # The advisory beta chip stays.
     assert "advisory" in html.lower()
+
+
+def test_renders_lens_anchor_detail():
+    ael = dict(_AEL, lenses={
+        "ai_pattern": {"band": "amber", "assessment_confidence": "high",
+                       "anchor": {"headline": "Reads as AI-generated — 11 of 26 sentences",
+                                  "example": 'And once that happens, "years of experience" becomes weak.',
+                                  "fix": None}},
+        "grounding": {"band": "moderate", "assessment_confidence": "high",
+                      "anchor": {"headline": "Weak grounding — claims without concrete anchors",
+                                 "example": "Make sure only a handful of people know the edge cases.",
+                                 "fix": "Name a specific example, source, or moment."}},
+        "citation": {"level": "high", "assessment_confidence": "moderate"},
+        "reasoning": {"band": "acceptable_control", "assessment_confidence": "moderate"},
+    })
+    html = render_authorship_evidence_levels({"ai_risk_badge": {"authorship_evidence_levels": ael}})
+    assert "Reads as AI-generated — 11 of 26 sentences" in html
+    assert "years of experience" in html  # verbatim flagged sentence surfaced
+    assert "Name a specific example" in html  # fix direction surfaced
+    assert "dp-ael-anchor" in html
+    # A lens with no anchor still renders (no crash, band chip only).
+    assert "Source traceability" in html
 
 
 def test_empty_when_field_absent():

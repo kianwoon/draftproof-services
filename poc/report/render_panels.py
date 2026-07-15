@@ -478,9 +478,28 @@ def render_authorship_evidence_levels(report_data: dict) -> str:
                 label, kind = _AEL_CRITICAL_BAND.get(str(lens.get("band") or "").lower(), ("—", "info"))
             conf = _AEL_CONF_LABEL.get(str(lens.get("assessment_confidence") or "").lower(), "")
         conf_suffix = f' <span class="dp-hero-sub">({conf} confidence)</span>' if conf else ""
+        # Specific anchor (real finding + verbatim flagged sentence + fix) under
+        # the band — mirrors the web merged-ael-anchor block. Server composer
+        # (poc/report/authorship_evidence_levels.py) is the single source; the
+        # English headline/fix strings are consumed directly here (no t() in PDF).
+        anchor_html = ""
+        anchor = lens.get("anchor") if isinstance(lens, dict) else None
+        if isinstance(anchor, dict):
+            parts = []
+            headline = anchor.get("headline")
+            if headline:
+                parts.append(f'<div class="dp-ael-anchor-head">{escape(str(headline))}</div>')
+            example = anchor.get("example")
+            if example:
+                parts.append(f'<div class="dp-ael-anchor-eg">“{escape(str(example))}”</div>')
+            fix = anchor.get("fix")
+            if fix:
+                parts.append(f'<div class="dp-ael-anchor-fix">{escape(str(fix))}</div>')
+            if parts:
+                anchor_html = '<div class="dp-ael-anchor">' + "".join(parts) + "</div>"
         rows.append(
             f'<tr><td>{escape(_AEL_LENS_LABELS[lens_id])}</td>'
-            f'<td>{_statchip(label, kind)}{conf_suffix}</td></tr>'
+            f'<td>{_statchip(label, kind)}{conf_suffix}{anchor_html}</td></tr>'
         )
 
     # (Owner 2026-07-15: the overall assessment-confidence / coverage / limitations
