@@ -35,7 +35,15 @@ PROMPT_VERSION = "cg-extract-1"
 
 # Batch discipline (plan §D/§5): 3-5 paragraphs/call, ~5-10 calls/doc.
 _DEFAULT_PARAS_PER_BATCH = 4
+# Secondary cap: a single paragraph can hold many sentences, and the JSON output
+# per sentence is verbose — an oversized batch overflows the model's completion
+# budget and the response is truncated (unparseable). Flush a batch once it
+# reaches this many sentences, so output stays within max_tokens.
+_DEFAULT_MAX_SENTENCES_PER_BATCH = 10
 _DEFAULT_MAX_RETRIES = 5  # Stage-3 targeted retries (only parse-failed batches).
+# Generous completion budget — the structured claim list is long; too small a cap
+# truncates the JSON. Env-tunable for cost control.
+_DEFAULT_MAX_TOKENS = 8000
 
 _CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 _DEFAULT_MODEL = "openai/gpt-oss-120b"
@@ -142,12 +150,20 @@ def _int_env(name: str, default: int) -> int:
 
 
 def paragraph_batches(
-    segments: list[dict[str, Any]], paras_per_batch: Optional[int] = None
+    segments: list[dict[str, Any]],
+    paras_per_batch: Optional[int] = None,
+    max_sentences: Optional[int] = None,
 ) -> list[list[dict[str, Any]]]:
-    """Group segments by ``paragraph_id`` (document order), chunk into batches of
-    N paragraphs. Sentences within a paragraph stay together in one batch."""
+    """Group segments by ``paragraph_id`` (document order), accumulate whole
+    paragraphs into a batch, flushing when either ``paras_per_batch`` paragraphs
+    OR ``max_sentences`` sentences have accumulated. Sentences within a paragraph
+    are never split across batches (a single oversized paragraph still forms its
+    own batch)."""
     per = paras_per_batch or _int_env(
         "DRAFTPROOF_CLAIM_GRAPH_PARAS_PER_BATCH", _DEFAULT_PARAS_PER_BATCH
+    )
+    max_sent = max_sentences or _int_env(
+        "DRAFTPROOF_CLAIM_GRAPH_MAX_SENTENCES_PER_BATCH", _DEFAULT_MAX_SENTENCES_PER_BATCH
     )
     order: list[str] = []
     groups: dict[str, list[dict[str, Any]]] = {}
@@ -157,13 +173,21 @@ def paragraph_batches(
             groups[pid] = []
             order.append(pid)
         groups[pid].append(seg)
+
     batches: list[list[dict[str, Any]]] = []
-    for i in range(0, len(order), per):
-        rows: list[dict[str, Any]] = []
-        for pid in order[i : i + per]:
-            rows.extend(groups[pid])
-        if rows:
-            batches.append(rows)
+    current: list[dict[str, Any]] = []
+    current_paras = 0
+    for pid in order:
+        para_rows = groups[pid]
+        if current and (
+            current_paras >= per or (current_paras >= 1 and len(current) + len(para_rows) > max_sent)
+        ):
+            batches.append(current)
+            current, current_paras = [], 0
+        current.extend(para_rows)
+        current_paras += 1
+    if current:
+        batches.append(current)
     return batches
 
 
@@ -202,9 +226,18 @@ def parse_json(content: str) -> Optional[dict[str, Any]]:
     return None
 
 
+def _max_tokens() -> int:
+    return _int_env("DRAFTPROOF_CLAIM_GRAPH_MAX_TOKENS", _DEFAULT_MAX_TOKENS)
+
+
 def _call_batch(gateway: Any, batch: list[dict[str, Any]], response_format) -> Optional[dict[str, Any]]:
     prompt = _build_batch_prompt(batch)
-    resp = gateway.chat(prompt, system=_SYSTEM_PROMPT, response_format=response_format)
+    resp = gateway.chat(
+        prompt,
+        system=_SYSTEM_PROMPT,
+        response_format=response_format,
+        max_tokens=_max_tokens(),
+    )
     return parse_json(str(getattr(resp, "content", "") or ""))
 
 

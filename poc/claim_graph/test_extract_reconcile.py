@@ -26,7 +26,7 @@ class FakeGateway:
         self.model = model
         self.calls = []
 
-    def chat(self, prompt, system=None, response_format=None):
+    def chat(self, prompt, system=None, response_format=None, **kwargs):
         self.calls.append(prompt)
         item = self.responses.pop(0) if self.responses else "{}"
         if isinstance(item, Exception):

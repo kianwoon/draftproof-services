@@ -103,7 +103,12 @@ def reconcile(
     for _ in range(cap):
         stats["reconcile_calls"] += 1
         try:
-            resp = gateway.chat(prompt, system=_SYSTEM_PROMPT, response_format={"type": "json_object"})
+            resp = gateway.chat(
+                prompt,
+                system=_SYSTEM_PROMPT,
+                response_format={"type": "json_object"},
+                max_tokens=_int_env("DRAFTPROOF_CLAIM_GRAPH_MAX_TOKENS", 8000),
+            )
             edges = _parse_edges(str(getattr(resp, "content", "") or ""))
         except Exception:
             edges = None
