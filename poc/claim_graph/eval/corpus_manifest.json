@@ -1,0 +1,808 @@
+{
+  "manifest_version": "cg-m4-1",
+  "groups": {
+    "H": {
+      "label": "human_student_persuade",
+      "presumed": "experiential/grounded",
+      "source": "realbenpope/PERSUADE_manageable",
+      "note": "texts local-only, referenced by essay_id"
+    },
+    "A": {
+      "label": "ai_generic",
+      "presumed": "thin/generic",
+      "source": "ai_gpt_5_6_user_*"
+    },
+    "G": {
+      "label": "gaming_fabricated_specifics",
+      "presumed": "§I adversarial: fabricated specifics/fake studies/synthetic revisions",
+      "source": "gpt-oss gateway (synthetic)"
+    }
+  },
+  "counts": {
+    "H": 25,
+    "A": 20,
+    "G": 15
+  },
+  "docs": [
+    {
+      "group": "H",
+      "doc_id": "H_00",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "423A1CA112E2",
+      "words": 379,
+      "sha256": "e687b87cbf4b6b972217d1818b77ee0d1a8a13beae5e6634ee1aa811303d8e01",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "423A1CA112E2"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_01",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "BC75783F96E3",
+      "words": 366,
+      "sha256": "90df86a83b08afacb677152c4ae8a8058e11ba0d3b27a7d16e4628a9bc460ff3",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "BC75783F96E3"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_02",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "74C8BC7417DE",
+      "words": 178,
+      "sha256": "8ed44326770631953d210653b3a4d2c2ed47d28db3f041cf45050c5a0312aaca",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "74C8BC7417DE"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_03",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "A8445CABFECE",
+      "words": 212,
+      "sha256": "f130a10fb992ee7582c4acaacb302eab2eb56d261c872c999ec6a4bcc3d4d87b",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "A8445CABFECE"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_04",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "6B4F7A0165B9",
+      "words": 332,
+      "sha256": "095c202641637fa236013ca878a7359a322816cb75488a37ef99a7723a0258be",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "6B4F7A0165B9"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_05",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "97C1CFD04E4B",
+      "words": 492,
+      "sha256": "860c9202320c14c846ba251fbf9d52a6f53d82a6cd43ea7fb6ddae7aea6d720e",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "97C1CFD04E4B"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_06",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "2CE1FE38D0E7",
+      "words": 604,
+      "sha256": "4e5c27c64f02557989b9fab3aa9fea4753c0f7042ea63598d223e155a088ca11",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "2CE1FE38D0E7"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_07",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "30A8FB981469",
+      "words": 469,
+      "sha256": "cc83a5fc2cda685d1d15b4535e9023864ff20d4173c81d6f5c1937359ebcaa24",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "30A8FB981469"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_08",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "E05C7F5C1156",
+      "words": 592,
+      "sha256": "0936546d27c6fdcdfcd1b72e701b25c1623cac67f32184a03daeb14b32af778f",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "E05C7F5C1156"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_09",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "50B3435E475B",
+      "words": 353,
+      "sha256": "4e3d62fb73dc736175b3b6329e0192087207ace4d6de079849be298487ebe53a",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "50B3435E475B"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_10",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "595801A6D808",
+      "words": 209,
+      "sha256": "2505875f57630f798744d56996de9f742ec897b6ea472e4b73889e0569947793",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "595801A6D808"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_11",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "2E0A63554A2C",
+      "words": 336,
+      "sha256": "70940b0a436f323b937fc8be052a19c714202f59a778260ad072c803dd3069e4",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "2E0A63554A2C"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_12",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "EF6A87BE6D9F",
+      "words": 257,
+      "sha256": "7b5d02b75921e93c670b30cbe91ff23d0c38aa12ee27f41af23d52fcc71f5a2a",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "EF6A87BE6D9F"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_13",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "DBF7EB6A9E02",
+      "words": 525,
+      "sha256": "0f4580dcd3790b21f9018efe5d83d75a2af0b52ba1ca1d33a30ef7d9b22a622a",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "DBF7EB6A9E02"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_14",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "810B70E80E1D",
+      "words": 438,
+      "sha256": "2f4f5cc12253be7148b41eda65f428ab347cfabf432cb2e470c164e4fc38f09b",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "810B70E80E1D"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_15",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "CE98789F502B",
+      "words": 532,
+      "sha256": "1dc3d41b59d73c09ccc2ef0df66ac111d0f1a12f4c32f956bd30958b8d202d7e",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "CE98789F502B"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_16",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "4FD61EB5AA60",
+      "words": 410,
+      "sha256": "8c842ac08a016aef532eeca6469d9e2c5e1f803837eacd50849136c2eb2ace75",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "4FD61EB5AA60"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_17",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "84D2807D35C7",
+      "words": 272,
+      "sha256": "af4c0846d19552cb0a3714c0313ffb139816456fc4bf5d2be39f93fcc7fa0f64",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "84D2807D35C7"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_18",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "DAF93C36D655",
+      "words": 267,
+      "sha256": "dd5f3d392836a41824b8354a5bc6849d85273e1538a90a86621fa386a1f3c5e1",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "DAF93C36D655"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_19",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "A97DE0D49AEA",
+      "words": 362,
+      "sha256": "5bb3d67b5ec23f837e2bbf0b5e0cca8ebe62733f38214fe2e66b669d7ebb3bd6",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "A97DE0D49AEA"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_20",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "30E68BC17525",
+      "words": 461,
+      "sha256": "df985d5b02d57287d96c422a423a762f2221ed6cfc25c39bf65878f0489a648d",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "30E68BC17525"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_21",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "48D3F4243F0F",
+      "words": 395,
+      "sha256": "6ab89cda0e53c20de1d06437624bbf613e094329284e6fd83d4d0046b6f49097",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "48D3F4243F0F"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_22",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "0B2E6B68B571",
+      "words": 221,
+      "sha256": "53c159d915c164dd7e4d691a57e93fd5ecde6d221fc2e5575cad63ac811f7cd1",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "0B2E6B68B571"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_23",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "AC594194F01C",
+      "words": 202,
+      "sha256": "90bf247590083313aae8490a91d75a8bc41fbe87657dbadf5909ea9433780efc",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "AC594194F01C"
+      }
+    },
+    {
+      "group": "H",
+      "doc_id": "H_24",
+      "label": "human_student_persuade",
+      "source": "realbenpope/PERSUADE_manageable",
+      "essay_id": "45A33DB5C7F7",
+      "words": 508,
+      "sha256": "10647995cd340ac092a8479cdc725c0adbcfe1e10552eeeac3cceb1eacac2e70",
+      "text_ref": {
+        "kind": "persuade_cache",
+        "key": "45A33DB5C7F7"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_00",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_01.json",
+      "words": 279,
+      "sha256": "990638f682c55e7a6abe0f61f5928c63f7818d7bd1ae118d71454c573f92340e",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_01.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_01",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_02.json",
+      "words": 287,
+      "sha256": "19c421cab55620f58537f6297f23a1aee917feec93310c3c324107e51bc7b91f",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_02.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_02",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_03.json",
+      "words": 283,
+      "sha256": "8d8bf0465fbd5686b8056f1054717d1e134a9eef2ed712e08fd2e167567d8611",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_03.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_03",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_04.json",
+      "words": 266,
+      "sha256": "f3c2d19546e48c43f7bf2216bf7a13ccdb49a94cde6f9a432d024ec7f6469e94",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_04.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_04",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_05.json",
+      "words": 291,
+      "sha256": "ece5eb4bf7055783679ef077e0925d68638dcc70faaa953962fa50c11c0540da",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_05.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_05",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_06.json",
+      "words": 281,
+      "sha256": "5c48357bb8376526dcef101848a4c21f4bac04cd5101633a19f149a8b9ca6061",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_06.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_06",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_07.json",
+      "words": 277,
+      "sha256": "a206fadb0a0299a5c30cc9f4215926e28a025467fc31b698fcca3d82ba2899e9",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_07.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_07",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_08.json",
+      "words": 278,
+      "sha256": "9d6240b54b5142dec7ae9f19c519274233a03c33c39865a1b24edb277362917a",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_08.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_08",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_09.json",
+      "words": 266,
+      "sha256": "5f2ee9684d81f9fb7f295b3ef03c8d6af76301ef4ffade19dac0ae28881858f8",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_09.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_09",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_10.json",
+      "words": 282,
+      "sha256": "92c4f3b45070c4c7982a86d5e32371c757692a4e0c3cacbde4cd5db3784d0eab",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_10.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_10",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_11.json",
+      "words": 315,
+      "sha256": "e0bb634ac1ea143209e5c31ac7ccd9bcb08a55a6202732ae950cf7673f8437e5",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_11.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_11",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_12.json",
+      "words": 309,
+      "sha256": "acbde0dbf0b53e59b09516222d68dd42e6acc58e14d0ce5c045d28f9bcccb4ed",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_12.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_12",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_13.json",
+      "words": 305,
+      "sha256": "e9e7b3cbd6120c5763d2dc5e414238647dd4863459ce072dd0903b3420c3f073",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_13.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_13",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_14.json",
+      "words": 314,
+      "sha256": "cd547bd154cbfb209d3c21c969aace78f562db133ac347d0a0cba1f2de3ce222",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_14.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_14",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_15.json",
+      "words": 290,
+      "sha256": "06d13f6bd4ee9a40a32912a43bc2d0081a14bae889d693262f038230e7f7a35a",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_15.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_15",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_16.json",
+      "words": 290,
+      "sha256": "b52ed9c0fe13eb9825489bc86e36823eba9d2ae00d8f35ddba16feeb2d8c7095",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_16.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_16",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_17.json",
+      "words": 283,
+      "sha256": "b1635e79e2f6ef338f16967b2e8bb9b97ad9b387e0661554c361d0676d88605d",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_17.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_17",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_18.json",
+      "words": 284,
+      "sha256": "96acb6ceb4688177d9dbe0b74c7c4ffaa60b0885b0ab9c6d262500323c035376",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_18.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_18",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_19.json",
+      "words": 272,
+      "sha256": "7b0d6a1608b43658611501ae447ee888c14af34660e951f624a63740abc6942d",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_19.json"
+      }
+    },
+    {
+      "group": "A",
+      "doc_id": "A_19",
+      "label": "ai_generic",
+      "source": "openai/gpt-5.6",
+      "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_20.json",
+      "words": 279,
+      "sha256": "2b4de24e31355db92039cf11d570a1cf201807da2ed3373d800eb5224e7aec11",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/calibration/authorship_cases/ai_gpt_5_6_user_20.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_00",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_00.json",
+      "words": 315,
+      "sha256": "983b50d07d4283d01affb0f864136b78afc06d3f698a647a24c126cb8740c3dd",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_00.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_01",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_01.json",
+      "words": 321,
+      "sha256": "b6f5e581a6bccad97171b0782ab7457bf03512fb041cffcbd1a9ebb332eba0e8",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_01.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_02",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_02.json",
+      "words": 301,
+      "sha256": "ac4fc3569780cc2d7bc14e000ff68334c698e1baac19906486679125e9c29d9a",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_02.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_03",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_03.json",
+      "words": 295,
+      "sha256": "0a7049f714810f7373d3cc8f0e63dd3e95cc744252e2e321deccfc879102c7c6",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_03.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_04",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_04.json",
+      "words": 286,
+      "sha256": "7bbbd648dd8e85698683f4dc0f78101c200b6b401e477551e299cefa51e19f81",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_04.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_05",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_05.json",
+      "words": 317,
+      "sha256": "061e37bad01d494499c51a0cf01ab21cb41e70ddb77bce57b0a59a50b88fba80",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_05.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_06",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_06.json",
+      "words": 314,
+      "sha256": "96d0cac4ad90184485ebd8d1859d48ce92a0f42f1f78ff68e7f311d05f0d46b0",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_06.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_07",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_07.json",
+      "words": 299,
+      "sha256": "2cc55bcddb22a62c330d5c6b7bfd09b52e37ab64ed6685fd02edf10c9ef00401",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_07.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_08",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_08.json",
+      "words": 323,
+      "sha256": "5c9496c902e59f003eee38874d3bea9e1ad3fed8760c773a536342adf65c0d93",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_08.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_09",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_09.json",
+      "words": 298,
+      "sha256": "950f91301e1f007d6ce93ecf4267aa2c0ae7f225a207afb1dc7cdbb4c12054cb",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_09.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_10",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_10.json",
+      "words": 309,
+      "sha256": "48917498f897fa88bd58e14c9d111614275c813fcc5fbe961dbff4421dbe6aad",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_10.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_11",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_11.json",
+      "words": 305,
+      "sha256": "ea580989a1355b357d636e3820b26281ef9dae2837670304ff51b3d2b5e074f8",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_11.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_12",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_12.json",
+      "words": 272,
+      "sha256": "e1583fea15ce51b934d15c3685b8c05330a40e02f5b537830f4cef5e6dd0bf51",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_12.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_13",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_13.json",
+      "words": 312,
+      "sha256": "ca7e8062163e98a8959a294fdafcff2be0417b554742a37cee61aca3e5e57c8c",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_13.json"
+      }
+    },
+    {
+      "group": "G",
+      "doc_id": "G_14",
+      "label": "gaming_fabricated_specifics",
+      "source": "gpt-oss:gaming-synthetic (gpt-oss-120b)",
+      "path": "poc/claim_graph/eval/gaming_cases/G_14.json",
+      "words": 280,
+      "sha256": "02af41ca5c9c53446499cc20f1068cf290942146682a076360261c8a41730ada",
+      "text_ref": {
+        "kind": "case_json",
+        "path": "poc/claim_graph/eval/gaming_cases/G_14.json"
+      }
+    }
+  ]
+}
