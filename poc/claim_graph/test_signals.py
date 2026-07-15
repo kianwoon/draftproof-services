@@ -163,6 +163,24 @@ def test_compute_signals_all_three_present_with_lifecycle():
         assert s["fairness_gate_passed"] is None
 
 
+def test_scoring_promotion_ci_guard():
+    """§B CI guard (M5): scoring_enabled ⇒ fairness_gate_passed and calibration_version.
+
+    M5 owner decision 2026-07-15: NO signal promoted (M4 report — gaming set scores
+    highest interrogatability; Phase-1 internally_supported = coherence, not truth).
+    A signal may only flip scoring_enabled together with a real calibration_version
+    and a passed fairness gate; flipping the flag alone must fail here.
+    """
+    assert signals._META_BASE["scoring_enabled"] is False
+    claims = [_claim("c_001", "The 2019 trial cut cost by 35%.", origins=["external_source"])]
+    sigs, _ = signals.compute_signals(claims, [], text="doc", embedder=_FakeEmbedder())
+    assert sigs, "signals missing — guard has nothing to check"
+    for s in sigs:
+        if s.get("scoring_enabled"):
+            assert s.get("fairness_gate_passed") is True, f"{s['signal']}: scoring without fairness gate"
+            assert s.get("calibration_version"), f"{s['signal']}: scoring without calibration_version"
+
+
 def test_per_signal_fail_open_isolation():
     class _Boom:
         available = True

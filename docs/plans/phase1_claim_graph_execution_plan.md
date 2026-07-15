@@ -256,6 +256,26 @@ round-trips).
 No milestone flips a signal to SCORING; that is Phase 3+ and double-gated (owner sign-off + CI guard
 asserting `scoring_enabled ⇒ fairness_gate_passed && calibration_version`).
 
+### M5 decision record (2026-07-15 — owner: "Proceed" on the keep-EXPERIMENTAL recommendation)
+
+**Decision: NO signal is promoted to ADVISORY. All three remain EXPERIMENTAL, audit-only,
+`DRAFTPROOF_CLAIM_GRAPH` default OFF.** Basis: M4 calibration report
+(`docs/plans/phase1_m4_calibration_report.md`, commit 12c61ee7):
+
+- Interrogatability fails the §I adversarial test — the fabricated-specifics gaming set scored
+  *highest* (mean 0.725, 86.7% "high") vs human 0.515 / AI-generic 0.464. Advisory exposure would
+  reward fabrication, inverting the headline invariant.
+- The parked specificity-weighting question is settled by data: verification-weighting does NOT fix
+  the gaming failure (86.7% → 86.7%) because Phase-1 `internally_supported` measures coherence, not
+  truth. **No formula change; the fix is Phase-2 entailment.**
+- Fairness analog clean: 0.00 false-thin rate on genuine human essays, both variants.
+- Substitutability does not separate groups; `generic_assertion_risk` separates better (r=0.552).
+- Origin map: sane audit metadata only.
+
+The §B CI guard test ships with this record (`poc/claim_graph/test_signals.py::test_scoring_promotion_ci_guard`).
+Re-run the M4 harness (`poc/claim_graph/eval/run_eval.py`) after Phase-2 entailment before any
+promotion proposal is re-raised. **Phase 1 is hereby CLOSED (M1–M5 complete).**
+
 ---
 
 ## 7. Test plan
