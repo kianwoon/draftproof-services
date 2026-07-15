@@ -67,8 +67,9 @@ def test_valid_json_extraction_accepts_and_maps_offsets(monkeypatch):
                        "edges": []})
     gw = FakeGateway([body])
     graph = build_claim_graph_extracted("doc", _segments(), gw)
-    assert len(graph["claims"]) == 1
-    src = graph["claims"][0]["source"]
+    claim_nodes = [c for c in graph["claims"] if c["node_type"] == "CLAIM"]
+    assert len(claim_nodes) == 1  # M3 may also append QUESTION nodes
+    src = claim_nodes[0]["source"]
     assert src["char_start"] == len("The intervention ")
     assert src["sentence_id"] == "s001"
     assert graph["extraction_stats"]["proposed"] == 1
@@ -82,7 +83,7 @@ def test_malformed_json_triggers_retry(monkeypatch):
     good = json.dumps({"claims": [_claim_json("s001", "reduced processing time by 35%")]})
     gw = FakeGateway(["}{ not json at all", good])  # first parse fails, retry OK
     graph = build_claim_graph_extracted("doc", _segments(), gw)
-    assert len(graph["claims"]) == 1
+    assert len([c for c in graph["claims"] if c["node_type"] == "CLAIM"]) == 1
     assert graph["extraction_stats"]["parse_failures"] == 1
     assert graph["extraction_stats"]["retries"] == 1
     assert len(gw.calls) == 2
@@ -212,7 +213,7 @@ def test_maybe_build_uses_injected_gateway_when_enabled(monkeypatch):
     body = json.dumps({"claims": [_claim_json("s001", "reduced processing time by 35%")]})
     gw = FakeGateway([body])
     graph = maybe_build_claim_graph("doc", _segments(), gateway=gw)
-    assert len(graph["claims"]) == 1
+    assert len([c for c in graph["claims"] if c["node_type"] == "CLAIM"]) == 1
     assert graph["lifecycle"]["status"] == "extracted"
 
 
