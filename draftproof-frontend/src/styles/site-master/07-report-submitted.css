@@ -1305,6 +1305,61 @@
   gap: .5rem;
 }
 
+.submitted-affected-meta-left {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  min-width: 0;
+}
+
+/* Severity badge (revision workspace: affected list + detail) on the brand --sev
+   scale. Scoped selectors out-specify the generic ".submitted-affected-item span". */
+.submitted-affected-item .submitted-sev-badge,
+.submitted-editor-detail .submitted-sev-badge {
+  display: inline-block;
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: .62rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+.submitted-affected-item .submitted-sev-badge.is-high,
+.submitted-affected-item .submitted-sev-badge.is-critical,
+.submitted-editor-detail .submitted-sev-badge.is-high,
+.submitted-editor-detail .submitted-sev-badge.is-critical { background: var(--sev-crit-bg); color: var(--sev-crit); }
+.submitted-affected-item .submitted-sev-badge.is-moderate,
+.submitted-affected-item .submitted-sev-badge.is-medium,
+.submitted-editor-detail .submitted-sev-badge.is-moderate,
+.submitted-editor-detail .submitted-sev-badge.is-medium { background: var(--sev-med-bg); color: var(--sev-med); }
+.submitted-affected-item .submitted-sev-badge.is-low,
+.submitted-editor-detail .submitted-sev-badge.is-low { background: var(--sev-low-bg); color: var(--sev-low); }
+
+/* "N flagged sentences" count — override the generic uppercase-span rule in the list. */
+.submitted-affected-item .submitted-affected-count {
+  font-size: .72rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+}
+.submitted-affected-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex-wrap: wrap;
+  margin: 6px 0 14px;
+}
+.submitted-affected-detail-meta .submitted-affected-count {
+  font-size: .78rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+.submitted-editor-flagged { margin-bottom: 14px; }
+.submitted-editor-flagged > .submitted-panel-kicker { display: block; margin-bottom: 8px; }
+
 .submitted-affected-item.is-edited {
   border-color: #2d695a;
   background: #f1faf6;

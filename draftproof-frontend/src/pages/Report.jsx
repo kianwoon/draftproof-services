@@ -2310,7 +2310,14 @@ export default function Report() {
                           }}
                         >
                           <span className="submitted-affected-meta">
-                            <span>{paragraph.sentence_id}</span>
+                            <span className="submitted-affected-meta-left">
+                              <span>{paragraph.sentence_id}</span>
+                              {signal.tier && (
+                                <span className={`submitted-sev-badge is-${signal.tier}`}>
+                                  {t(`report.severities.${signal.tier}`, { defaultValue: signal.tier })}
+                                </span>
+                              )}
+                            </span>
                             {isEdited && (
                               <span
                                 className="submitted-affected-check"
@@ -2323,6 +2330,11 @@ export default function Report() {
                             )}
                           </span>
                           <strong>{signalLabel(signal.key, signal.label, t)}</strong>
+                          {paragraph.flaggedSentences?.length > 0 && (
+                            <span className="submitted-affected-count">
+                              {t('report.submitted.paragraphSignals', { count: paragraph.flaggedSentences.length })}
+                            </span>
+                          )}
                           <em>{paragraph.text}</em>
                         </button>
                       );
@@ -2334,17 +2346,53 @@ export default function Report() {
                       <>
                         <span className="submitted-panel-kicker">{selectedParagraph.sentence_id}</span>
                         <h3>{signalLabel(selectedParagraph.primarySignal.key, selectedParagraph.primarySignal.label, t)}</h3>
-                        <div className="submitted-editor-sentence">
-                          <span>{t('report.submitted.editor.affectedParagraph')}</span>
-                          <p>{selectedParagraph.text}</p>
-                        </div>
+                        {(selectedParagraph.primarySignal.tier || selectedParagraph.flaggedSentences?.length > 0) && (
+                          <div className="submitted-affected-detail-meta">
+                            {selectedParagraph.primarySignal.tier && (
+                              <span className={`submitted-sev-badge is-${selectedParagraph.primarySignal.tier}`}>
+                                {t(`report.severities.${selectedParagraph.primarySignal.tier}`, { defaultValue: selectedParagraph.primarySignal.tier })}
+                              </span>
+                            )}
+                            {selectedParagraph.flaggedSentences?.length > 0 && (
+                              <span className="submitted-affected-count">
+                                {t('report.submitted.paragraphSignals', { count: selectedParagraph.flaggedSentences.length })}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {/* Lead with the specific flagged sentences + fixes (mirrors the
+                            "Flagged paragraphs" cards) rather than re-dumping the whole
+                            paragraph — the full text is already editable on the left.
+                            Falls back to the paragraph text when a signal has no
+                            per-sentence flagged evidence. */}
+                        {selectedParagraph.flaggedSentences?.length > 0 ? (
+                          <div className="submitted-editor-flagged">
+                            <span className="submitted-panel-kicker">{t('report.submitted.flaggedSentences')}</span>
+                            <ul className="deberta-evidence-list">
+                              {selectedParagraph.flaggedSentences.map((sent) => (
+                                <li key={sent.sentence_id}>
+                                  {sent.tier && (
+                                    <span className={`deberta-evidence-tier is-${sent.tier}`}>
+                                      {t(`report.severities.${sent.tier}`, { defaultValue: sent.tier })}
+                                    </span>
+                                  )}
+                                  <span className="deberta-evidence-text">{sent.text}</span>
+                                  {sent.suggestion && (
+                                    <span className="deberta-evidence-suggestion">{sent.suggestion}</span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : (
+                          <div className="submitted-editor-sentence">
+                            <span>{t('report.submitted.editor.affectedParagraph')}</span>
+                            <p>{selectedParagraph.text}</p>
+                          </div>
+                        )}
                         {renderSubmittedSignalGauge()}
                         <div className="submitted-panel-meta">
                           <span>{selectedParagraphDraftStatus}</span>
-                          <span>{t('report.submitted.paragraphSignals', { count: selectedParagraph.signalCount || selectedParagraph.signals.length })}</span>
-                          {selectedParagraph.primarySignal.tier && (
-                            <span>{t('report.submitted.priority', { value: t(`report.severities.${selectedParagraph.primarySignal.tier}`, { defaultValue: selectedParagraph.primarySignal.tier }) })}</span>
-                          )}
                         </div>
                         <div className="submitted-editor-signal">
                           <span>{t('report.submitted.editor.signal')}</span>
