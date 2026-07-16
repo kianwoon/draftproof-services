@@ -1992,34 +1992,35 @@ button.paragraph-severity-seg {
    clearly visible on every document, no heavy background wash. Severity graduates by
    red shade + weight (80-89 < 90-98 < >=99). A thin red underline rides along as a
    non-colour cue so the flag is not colour-only (accessibility). */
-/* Softened 2026-07-16 (modern report pass): the red-FONT flag (owner decision
-   2026-07-04) is kept as the visible cue but at lighter weight + the calmer brand
-   red (--sev-crit) so a heavily-flagged document no longer reads as a wall of bold
-   red. Severity still graduates by weight + underline. A fuller de-bold (tint-only,
-   leaning on the underline layer) is pending owner sign-off. */
+/* Fuller de-bold 2026-07-16 (owner-approved, superseding the 2026-07-04 red-FONT
+   decision): flagged sentences now read as NORMAL body text — the flag is carried
+   by a colored UNDERLINE, not colored/bold font. A heavily-flagged document stays
+   fully readable instead of a wall of red. The red underline is always on the
+   heatmap span itself (SignalHighlights.jsx:113), so AI sentences keep their cue
+   even on older reports with no issue-tag underline layer. Accessibility: the
+   underline is a non-colour cue paired with colour. */
 .submitted-sentence-highlight.is-severity-medium,
 .submitted-sentence-highlight.is-severity-high,
 .submitted-sentence-highlight.is-severity-critical {
   background: transparent;
-  color: var(--sev-crit);
-  font-weight: 500;
-  border-bottom: 1px solid color-mix(in srgb, var(--sev-crit) 40%, transparent);
+  color: inherit;
+  font-weight: inherit;
+  border-bottom: 2px solid color-mix(in srgb, var(--sev-crit) 52%, transparent);
 }
 .submitted-sentence-highlight.is-severity-high {
-  border-bottom-color: color-mix(in srgb, var(--sev-crit) 52%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--sev-crit) 62%, transparent);
 }
 .submitted-sentence-highlight.is-severity-critical {
-  font-weight: 600;
-  border-bottom: 1.5px solid var(--sev-crit);
+  border-bottom: 2px solid var(--sev-crit);
 }
 /* VERDICT-GATED review candidate (2026-07-09): a >=0.999 sentence inside a document whose
    calibrated verdict reads clean. Muted amber + DOTTED underline (a tentative, non-red cue) —
    surfaced for review, deliberately NOT a red AI verdict. See report.py::_gate_heatmap_bands. */
 .submitted-sentence-highlight.is-severity-review {
   background: transparent;
-  color: var(--sev-med);
-  font-weight: 500;
-  border-bottom: 1px dotted color-mix(in srgb, var(--sev-med) 60%, transparent);
+  color: inherit;
+  font-weight: inherit;
+  border-bottom: 1.5px dotted color-mix(in srgb, var(--sev-med) 70%, transparent);
 }
 
 /* ── Per-sentence ISSUE-TAG underline layer (2026-07-16, owner-approved) ──────
