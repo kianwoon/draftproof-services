@@ -12,6 +12,7 @@ export const scan = {
   "placeholder": "Paste your document text here...",
   "word_one": "{{count}} word",
   "word_other": "{{count}} words",
+  "lengthHint": "For a reliable result, aim for {{count}}+ words — shorter drafts may return a low-confidence read with no verdict.",
   "tokensRequired_one": "{{count}} credit required",
   "tokensRequired_other": "{{count}} credits required",
   "start": "Start scan",

@@ -12,6 +12,11 @@ import { countWords, paidScanTokens } from '../utils/scanBilling';
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
 const START_SCAN_TIMEOUT_MS = 20000;
+// Guidance floor shown under the live word count. Matches the detector's
+// "good coverage" tier (poc/detect/transformation.py: 350 words + 12 sentences
+// → 0.75 coverage). Below this a scan can still run, but the deep-scan signal
+// may fall under its reliability floor and return a low-confidence, no-verdict read.
+const RECOMMENDED_WORDS = 350;
 
 export default function Scan() {
   const { t } = useTranslation();
@@ -290,6 +295,11 @@ export default function Scan() {
                 <strong>{t('scan.tokensRequired', { count: tokensRequired })}</strong>
               )}
             </div>
+            {wordCount > 0 && wordCount < RECOMMENDED_WORDS && (
+              <p className="scan-length-hint" role="status">
+                {t('scan.lengthHint', { count: RECOMMENDED_WORDS })}
+              </p>
+            )}
 
             <button type="submit" className="btn btn-primary" disabled={busy}>
               {busy ? (status || t('scan.scanning')) : t('scan.start')}

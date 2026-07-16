@@ -461,6 +461,18 @@
   font-weight: 500;
 }
 
+/* Live length warning — shown while the draft is under RECOMMENDED_WORDS (350).
+   Amber brand-severity token; annotates, never blocks (scan still runs). */
+.scan-length-hint {
+  margin: 6px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--sev-med-bg);
+  color: var(--sev-med);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .scan-form .btn-primary {
   width: fit-content;
 }

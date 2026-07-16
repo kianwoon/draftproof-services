@@ -12,6 +12,7 @@ export const scan = {
   "placeholder": "在此粘贴你的文档文本...",
   "word_one": "{{count}} 词",
   "word_other": "{{count}} 词",
+  "lengthHint": "为获得可靠结果，建议至少 {{count}} 词——过短的文稿可能只能给出低置信度结果，无法给出判定。",
   "tokensRequired_one": "需要 {{count}} 个积分",
   "tokensRequired_other": "需要 {{count}} 个积分",
   "start": "开始扫描",
