@@ -2144,16 +2144,36 @@ button.fix-first-item:focus-visible {
    report typography (the panel previously shipped with unstyled classes that
    read oversized/off — proper CSS this time). PDF uses its own dp-ael-anchor-*
    classes in poc/report/render_panels.py — separate styling path. */
-.merged-ael-axes { gap: 10px; }
-.merged-ael-lens { display: flex; flex-direction: column; gap: 4px; }
+/* Each evidence lens is a CARD (2026-07-16, owner asked for more visual weight):
+   a subtly severity-tinted header (dimension + underline-swatch + a status pill)
+   over a finding block (what it reads as, a flagged quote, a fix cue). */
+.merged-ael-axes { display: flex; flex-direction: column; gap: 12px; }
+.merged-ael-lens { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; }
+/* Header carries a 3px colored top-accent per dimension (red/amber/purple, matching
+   the underline swatch), clipped to the card radius by the card's overflow:hidden. */
+.merged-ael-lens .merged-axis { border: 0; border-top: 3px solid var(--muted); border-radius: 0; background: var(--surface-soft); padding: 12px 14px 11px; }
+.merged-ael-lens:has(.submitted-issue-swatch.is-red) .merged-axis { border-top-color: #dc2626; }
+.merged-ael-lens:has(.submitted-issue-swatch.is-amber) .merged-axis { border-top-color: #f59e0b; }
+.merged-ael-lens:has(.submitted-issue-swatch.is-purple) .merged-axis { border-top-color: #7c3aed; }
+.merged-ael-lens:has(.merged-ael-anchor) .merged-axis { border-bottom: 1px solid var(--line); }
+.merged-ael-lens .merged-axis.is-low { background: color-mix(in srgb, var(--sev-low-bg) 70%, #fff); }
+.merged-ael-lens .merged-axis.is-medium { background: color-mix(in srgb, var(--sev-med-bg) 64%, #fff); }
+.merged-ael-lens .merged-axis.is-high, .merged-ael-lens .merged-axis.is-critical { background: color-mix(in srgb, var(--sev-crit-bg) 64%, #fff); }
+/* Band + confidence read as a FILLED status pill in the severity colour. */
+.merged-ael-lens .merged-axis > strong { padding: 3px 11px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); font-size: 12px; font-weight: 500; }
+.merged-ael-lens .merged-axis.is-low > strong { background: var(--sev-low-bg); border-color: color-mix(in srgb, var(--sev-low) 22%, transparent); }
+.merged-ael-lens .merged-axis.is-medium > strong { background: var(--sev-med-bg); border-color: color-mix(in srgb, var(--sev-med) 22%, transparent); }
+.merged-ael-lens .merged-axis.is-high > strong, .merged-ael-lens .merged-axis.is-critical > strong { background: var(--sev-crit-bg); border-color: color-mix(in srgb, var(--sev-crit) 22%, transparent); }
+.merged-ael-lens .merged-axis > strong::before { display: none; }
 /* Dimension label + its underline-colour swatch (red/amber/purple), so the
    evidence-summary rows double as the underline KEY for the document below.
    The swatch itself is the shared .submitted-issue-swatch (07-report-submitted.css). */
-.merged-ael-lens-name { display: inline-flex; align-items: center; gap: 7px; }
-.merged-ael-anchor { padding: 0 2px 0 9px; }
-.merged-ael-anchor-head { font-size: 12.5px; color: var(--ink); line-height: 1.5; margin: 0; }
-.merged-ael-anchor-eg { font-size: 12.5px; color: var(--muted); font-style: italic; line-height: 1.5; margin: 2px 0 0; }
-.merged-ael-anchor-fix { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 2px 0 0; }
+.merged-ael-lens-name { display: inline-flex; align-items: center; gap: 8px; color: var(--navy-900); font-weight: 500; }
+.merged-ael-anchor { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.merged-ael-anchor-head { font-size: 12.5px; color: var(--ink); font-weight: 500; line-height: 1.5; margin: 0; }
+.merged-ael-anchor-eg { font-size: 12.5px; color: var(--muted); font-style: italic; line-height: 1.5; margin: 0; padding-left: 11px; border-left: 2px solid var(--line); }
+.merged-ael-anchor-fix { font-size: 12.5px; color: var(--green-700); font-weight: 500; line-height: 1.5; margin: 0; display: flex; gap: 6px; }
+.merged-ael-anchor-fix::before { content: "→"; flex: 0 0 auto; }
 
 /* Claim-graph "Source grounding" panel (web) — match the 12px muted report
    typography; the merged-cg-* classes had no CSS, so they fell back to browser
