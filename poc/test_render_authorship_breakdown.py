@@ -72,22 +72,22 @@ def test_merged_render_shows_ai_likelihood_once():
     assert html.count("DraftProof AI-likelihood") == 1
 
 
-def test_merged_render_shows_owner_mandated_framing_labels():
-    # Owner-mandated framing (2026-07-08): the verdict headline is labeled the
-    # AI-risk AUTHORITY, and the composition bars are labeled a display
-    # INTERPRETATION. KEEP-IN-SYNC with MergedAuthorshipRisk.jsx's
-    # .merged-verdict-framing paragraph + report.merged.compositionLensNote.
+def test_merged_render_drops_verdict_framing_keeps_composition():
+    # Verdict redesign (owner 2026-07-16): the internal meta-framing line
+    # ("this tier is the AI-risk assessment … does not override it") was DROPPED
+    # from the verdict block as non-student-facing noise, on BOTH web
+    # (MergedAuthorshipRisk.jsx) and this scan PDF. The composition "How the
+    # writing reads" bars are unchanged and still render.
     from report.render_panels import render_merged_authorship_risk
     report = _make_report_with_breakdown_and_sr()
     data = {"document_context": {"word_count": 400}, "overall_tier_reason": ""}
     html = render_merged_authorship_risk(report, data)
-    assert "dp-verdict-framing" in html
-    assert "AI-risk assessment" in html
-    assert "does not override it" in html
+    # Meta-framing line is gone.
+    assert "dp-verdict-framing" not in html
+    assert "does not override it" not in html
+    # The composition breakdown section is untouched.
     assert "How the writing reads" in html
     assert "interpretive breakdown of writing character" in html
-    # The framing line must appear before the composition bars in document order.
-    assert html.index("dp-verdict-framing") < html.index("dp-abd-bars")
 
 
 def test_mixed_signals_caveat_renders_when_presentation_set():

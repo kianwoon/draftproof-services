@@ -181,6 +181,43 @@ _ACB_TIER_TO_BAND = {"green": "low", "amber": "moderate", "orange": "high", "red
 _ACB_DEEP_SCAN_BAND_LABELS = {"amber": "Amber", "orange": "Orange", "red": "Red"}
 
 
+# allow-hardcode: presentation markup/labels for the "How this score is built" mini-bars
+# (owner redesign 2026-07-16) — mirrors MergedAuthorshipRisk.jsx's ScoreBar. Percentages
+# come from the badge's own tier_authority fields, never invented. KEEP-IN-SYNC:
+# draftproof-frontend .merged-scorebar-* CSS + report.merged.scoreBuild i18n.
+def _score_build_bar(label: str, pct: int, kind: str, marker=None) -> str:
+    w = max(0, min(100, pct))
+    marker_html = ""
+    if isinstance(marker, (int, float)):
+        m = max(0, min(100, marker))
+        marker_html = f'<span class="dp-sb-marker" style="left:{m}%"></span>'
+    return (
+        '<div class="dp-sb-row">'
+        '<span class="dp-sb-head-line">'
+        f'<span class="dp-sb-label">{escape(label)}</span>'
+        f'<span class="dp-sb-val">{round(pct)}%</span></span>'
+        f'<span class="dp-sb-track"><span class="dp-sb-fill dp-sb-fill--{kind}" '
+        f'style="width:{w}%"></span>{marker_html}</span>'
+        '</div>'
+    )
+
+
+def _score_build_bars_html(*, fused: int, composite: int, deep_scan_pct: int,
+                           tier: str, flag_line=None) -> str:
+    """Composite / deep-scan / fused mini-bars + flag-line marker on the fused bar.
+    Replaces the old "Behind this score: composite …" prose."""
+    tier_kind = tier if tier in ("green", "amber", "orange", "red") else "muted"
+    cap = (f'<p class="dp-sb-cap">| marks the {round(flag_line)}% flag line</p>'
+           if isinstance(flag_line, (int, float)) else "")
+    return (
+        '<div class="dp-sb"><p class="dp-sb-head">How this score is built</p>'
+        + _score_build_bar("Composite", composite, "muted")
+        + _score_build_bar("Deep-scan", deep_scan_pct, "muted")
+        + _score_build_bar("Fused", fused, tier_kind, marker=flag_line)
+        + cap + "</div>"
+    )
+
+
 # allow-hardcode: HTML markup/CSS class names + human-reviewed presentation copy for the
 # PDF authorship panel below (headline + bars) — not a scoring/matching oracle over document
 # text; band labels/cutoffs are read from the badge's own fields, never invented here.
@@ -192,17 +229,23 @@ def _authorship_headline_html(badge: dict, breakdown: dict) -> str:
         fused_score = tier_authority["fused_score"]
         composite = tier_authority.get("composite_score")
         deep_scan_pct = round((tier_authority.get("proportion") or 0) * 100)
+        flag_line = tier_authority.get("flag_line")
         band_chip = ""
         if authoritative_tier in _ACB_TIER_TO_BAND:
             band = _ACB_TIER_TO_BAND[authoritative_tier]
             band_chip = _statchip(_ACB_FUSED_BAND_LABELS.get(band, band), _level_kind(band))
-        evidence = ""
+        # Mini-bars replace the old "Behind this score…" prose (owner redesign 2026-07-16).
+        # Only render when composite exists; else the fused value in the headline stands alone.
+        bars = ""
         if isinstance(composite, (int, float)):
-            evidence = (f"Behind this score: composite detector {round(composite)}%, "
-                        f"deep-scan detector {deep_scan_pct}% (sentence-level). See the DraftProof scale above.")
+            bars = _score_build_bars_html(
+                fused=round(fused_score), composite=round(composite),
+                deep_scan_pct=deep_scan_pct, tier=authoritative_tier,
+                flag_line=flag_line if isinstance(flag_line, (int, float)) else None,
+            )
         return ('<div class="dp-hero"><p class="dp-hero-read">DraftProof AI-likelihood '
                 f'<b>{round(fused_score)}%</b> {band_chip}</p>'
-                + (f'<p class="dp-hero-sub">{escape(evidence)}</p>' if evidence else "") + "</div>")
+                + bars + "</div>")
     deep_scan = breakdown.get("deep_scan") or {}
     band = deep_scan.get("band")
     if band and band in ("insufficient", "amber", "orange", "red"):
@@ -901,18 +944,16 @@ def render_merged_authorship_risk(report, data) -> str:
     lead = render_scan_lead(report, data, suppress_ai_likelihood=bool(breakdown))
     if not breakdown:
         return (caution_html + lead) if lead else lead
-    # Owner-mandated framing: the verdict headline above is the AI-risk AUTHORITY;
-    # the composition bars below are a display INTERPRETATION. KEEP-IN-SYNC:
-    # draftproof-frontend/src/pages/report/MergedAuthorshipRisk.jsx's
-    # .merged-verdict-framing paragraph + report.merged.compositionLensNote.
-    verdict_framing = f'<p class="dp-hero-sub dp-verdict-framing">{escape(_VERDICT_FRAMING_TEXT)}</p>'
+    # Owner redesign 2026-07-16: the meta-framing line (verdict = AI-risk authority vs
+    # composition = interpretation) is DROPPED from the scan verdict block — it was
+    # internal, not student-facing. The composition subhead below still labels the bars.
+    # (The rewrite-comparison PDF still shows _VERDICT_FRAMING_TEXT — see render_rewrite.py.)
     composition_subhead = f'<p class="dp-cmp-subhead">{escape(_COMPOSITION_SUBHEAD_TEXT)}</p>'
     header = ('<div class="authorship-breakdown">'
               '<p class="dp-callout-title">Authorship &amp; submission risk '
               '<span class="dp-statchip dp-statchip--info">Beta</span></p>'
               + _authorship_headline_html(badge, breakdown)
               + caution_html
-              + verdict_framing
               + composition_subhead
               + _authorship_bars_html(breakdown)
               + _deep_scan_paragraphs_html(breakdown)

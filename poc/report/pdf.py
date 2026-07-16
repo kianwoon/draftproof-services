@@ -473,6 +473,26 @@ img[src^="https://img.shields.io"] { height: 18px; }
     color: #6b7280;
 }
 
+/* ── "How this score is built" mini-bars (owner redesign 2026-07-16) — composite /
+   deep-scan / fused, with a flag-line marker on the fused bar. Mirrors the web's
+   .merged-scorebar-* ; reuses the verdict tier hexes, no new colour. Two-row layout
+   (head line, then full-width track) — a flex:1 track collapses in WeasyPrint. ── */
+.dp-sb { margin: 8pt 0 2pt; }
+.dp-sb-head { margin: 0 0 5pt; font-size: 8.5pt; font-weight: 700; color: #374151; }
+.dp-sb-row { display: block; margin-bottom: 5pt; }
+.dp-sb-head-line { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3pt; }
+.dp-sb-label { font-size: 8.5pt; font-weight: 700; color: #243b53; }
+.dp-sb-val { font-size: 8pt; font-weight: 700; color: #334155; }
+.dp-sb-track { display: block; position: relative; width: 100%; height: 6pt; border-radius: 3pt; background: #f3f4f6; overflow: hidden; }
+.dp-sb-fill { display: block; height: 100%; border-radius: 3pt; background: #9ca3af; }
+.dp-sb-fill--muted { background: #9ca3af; }
+.dp-sb-fill--green { background: #16a34a; }
+.dp-sb-fill--amber { background: #d97706; }
+.dp-sb-fill--orange { background: #ea580c; }
+.dp-sb-fill--red { background: #dc2626; }
+.dp-sb-marker { position: absolute; top: 0; bottom: 0; width: 1.5pt; margin-left: -0.75pt; background: #111827; }
+.dp-sb-cap { margin: 2pt 0 0; font-size: 7.5pt; color: #9ca3af; }
+
 /* ── KPI stat row ── */
 .dp-kpi-row {
     display: flex;

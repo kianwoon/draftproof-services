@@ -789,7 +789,21 @@ export const report = {
     "threeWayExplainer": "Paraphrased and generated writing read the same from a single document — DraftProof reports them as one AI-transformed share rather than guessing.",
     "riskLens": "Where the risk sits",
     "riskLensNote": "independent",
-    "verdictFramingNote": "Detection verdict — this tier is DraftProof's AI-risk assessment, driven by the calibrated detector. The composition breakdown below is a display interpretation and does not override it."
+    "verdictFramingNote": "Detection verdict — this tier is DraftProof's AI-risk assessment, driven by the calibrated detector. The composition breakdown below is a display interpretation and does not override it.",
+    // "How this score is built" mini-bars (owner redesign 2026-07-16) — replaces the
+    // fusedHeadline.evidence prose. KEEP-IN-SYNC: poc/report/render_panels.py mini-bars.
+    "scoreBuild": {
+      "head": "How this score is built",
+      "composite": "Composite",
+      "deepScan": "Deep-scan",
+      "fused": "Fused",
+      "flagLineCaption": "| marks the {{flagLine}}% flag line"
+    },
+    // Two condensed, always-visible caveat lines (replace the old long paragraph).
+    "caveats": {
+      "headsUp": "A heads-up, not a verdict — detectors over-flag fluent writing. Not a Turnitin score; don't compare it to their 20% line.",
+      "declaration": "Declaration, course policy, and group contribution aren't in the text — only you can declare those."
+    }
   },
   // Phase-0 Authorship Evidence Level panel (badge.authorship_evidence_levels,
   // advisory/display-only). KEEP IN SYNC with poc/report/render_panels.py

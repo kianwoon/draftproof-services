@@ -97,14 +97,38 @@ function headlineConfidenceNote(t, headlineConfidence) {
   return t('report.aiLikelihood.headlineConfidence.frame', { clauses: clauses.join('; ') });
 }
 
+// One "How this score is built" mini-bar: label + thin track (fill width = pct) +
+// value, with an optional vertical flag-line marker (used on the Fused bar). `kind`
+// is the tier code (green/amber/orange/red) or 'muted' — reuses the verdict palette.
+function ScoreBar({ label, pct, kind, marker }) {
+  const w = Math.max(0, Math.min(100, pct));
+  const m = typeof marker === 'number' && Number.isFinite(marker)
+    ? Math.max(0, Math.min(100, marker))
+    : null;
+  return (
+    <div className="merged-scorebar-row">
+      <span className="merged-scorebar-label">{label}</span>
+      <div className="merged-scorebar-track">
+        <div className={`merged-scorebar-fill is-${kind || 'muted'}`} style={{ width: `${w}%` }} />
+        {m != null && <span className="merged-scorebar-marker" style={{ left: `${m}%` }} aria-hidden="true" />}
+      </div>
+      <span className="merged-scorebar-val">{Math.round(pct)}%</span>
+    </div>
+  );
+}
+
 // The ONE headline. Fused score (verdict) when tier_authority present, else the
-// deep-scan-only estimate. The ownership lead + flag-line note ride alongside.
+// deep-scan-only estimate. VISUAL layout (owner redesign 2026-07-16): score hero →
+// "How this score is built" mini-bars → action callout → two always-visible caveat
+// lines. Same data as before, ~1/3 the words, nothing collapsed. The meta-framing
+// line + the "detail is in the breakdown below" nav hint are intentionally DROPPED.
 function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence }) {
   const hasAuthoritativeTier = KNOWN_AUTHORITATIVE_TIERS.includes(authoritativeTier);
   const level = sr && sr.overall ? sr.overall.level : null;
 
   let valueEl = null;
   let chipEl = null;
+  let miniBars = null;
   let evidenceEl = null;
 
   if (tierAuthority && typeof tierAuthority.fused_score === 'number') {
@@ -117,14 +141,37 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headl
         </span>
       );
     }
+    // Mini-bars replace the old "Behind this score: composite …, deep-scan …" prose.
+    // They only render when the composite number exists; otherwise the fused value in
+    // the hero above stands alone (graceful fallback — no empty bars).
     if (typeof tierAuthority.composite_score === 'number') {
-      evidenceEl = (
-        <p className="merged-verdict-evidence">
-          {t('report.authorshipBreakdown.fusedHeadline.evidence', {
-            composite: Math.round(tierAuthority.composite_score),
-            deepScan: Math.round((tierAuthority.proportion || 0) * 100),
-          })}
-        </p>
+      const flagLine = typeof sr?._flagLine === 'number' ? sr._flagLine : null;
+      const fusedKind = hasAuthoritativeTier ? authoritativeTier : null;
+      miniBars = (
+        <div className="merged-scorebuild">
+          <p className="merged-scorebuild-head">{t('report.merged.scoreBuild.head')}</p>
+          <ScoreBar
+            label={t('report.merged.scoreBuild.composite')}
+            pct={Math.round(tierAuthority.composite_score)}
+            kind="muted"
+          />
+          <ScoreBar
+            label={t('report.merged.scoreBuild.deepScan')}
+            pct={Math.round((tierAuthority.proportion || 0) * 100)}
+            kind="muted"
+          />
+          <ScoreBar
+            label={t('report.merged.scoreBuild.fused')}
+            pct={Math.round(tierAuthority.fused_score)}
+            kind={fusedKind}
+            marker={flagLine}
+          />
+          {flagLine != null && (
+            <p className="merged-scorebuild-cap">
+              {t('report.merged.scoreBuild.flagLineCaption', { flagLine: Math.round(flagLine) })}
+            </p>
+          )}
+        </div>
       );
     }
   } else if (breakdown && breakdown.deep_scan && KNOWN_DEEP_SCAN_BANDS.includes(breakdown.deep_scan.band)) {
@@ -147,6 +194,8 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headl
         </span>
       );
     }
+    // Deep-scan-only path has no composite/fused to chart, so it keeps a single
+    // one-line caption instead of the mini-bars.
     evidenceEl = <p className="merged-verdict-evidence">{t('report.authorshipBreakdown.deepScan.notTurnitin')}</p>;
   }
 
@@ -154,18 +203,6 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headl
   const ownershipLead = level
     ? t(`report.submissionRisk.ownershipLead.${level}`, { defaultValue: '' })
     : '';
-  const textPattern = (sr && sr.axes && sr.axes.text_pattern) || {};
-  const hasScore = typeof textPattern.display_score === 'number';
-  const flagNote = hasScore
-    ? t(
-        sr._fused && sr._flagLine != null
-          ? 'report.submissionRisk.compactNoteFusedAnchored'
-          : sr._fused
-            ? 'report.submissionRisk.compactNoteFused'
-            : 'report.submissionRisk.compactNote',
-        { score: Math.round(textPattern.display_score), flagLine: sr._flagLine },
-      )
-    : (sr ? t('report.submissionRisk.note') : '');
 
   return (
     <div className={`merged-verdict${level ? ` is-${level}` : ''}`}>
@@ -174,14 +211,23 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headl
         {valueEl}
         {chipEl}
       </div>
-      {/* Owner-mandated framing: this tier is the AI-risk AUTHORITY, distinct from the
-          composition breakdown below (which is a display interpretation). Verbatim
-          copy KEPT IN SYNC with poc/report/render_panels.py render_merged_authorship_risk. */}
-      <p className="merged-verdict-framing">{t('report.merged.verdictFramingNote')}</p>
-      {cautionNote && <p className="merged-comp-caveat merged-verdict-caution">{cautionNote}</p>}
-      {ownershipLead && <p className="merged-verdict-lead">{ownershipLead}</p>}
+      {miniBars}
       {evidenceEl}
-      {flagNote && <p className="merged-verdict-note">{flagNote}</p>}
+      {cautionNote && <p className="merged-comp-caveat merged-verdict-caution">{cautionNote}</p>}
+      {/* Action callout: the ownership lead in a highlighted (warning-tint) box. */}
+      {ownershipLead && (
+        <div className={`merged-verdict-action${level ? ` is-${level}` : ''}`}>{ownershipLead}</div>
+      )}
+      {/* Two always-visible caveat lines (condensed from the old long paragraph). No
+          collapse/expander — they stay visible text. */}
+      <p className="merged-verdict-caveat">
+        <span className="merged-verdict-caveat-ico" aria-hidden="true">ⓘ</span>
+        <span>{t('report.merged.caveats.headsUp')}</span>
+      </p>
+      <p className="merged-verdict-caveat">
+        <span className="merged-verdict-caveat-ico" aria-hidden="true">✎</span>
+        <span>{t('report.merged.caveats.declaration')}</span>
+      </p>
     </div>
   );
 }

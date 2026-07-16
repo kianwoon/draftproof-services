@@ -772,7 +772,20 @@ export const report = {
     "threeWayExplainer": "改写与生成的写作在单一文档中的信号表现相同——DraftProof 将两者合并为一项「AI 改写/生成」占比，而非勉强区分。",
     "riskLens": "风险所在",
     "riskLensNote": "各自独立",
-    "verdictFramingNote": "检测结论——此等级是 DraftProof 基于校准检测器给出的 AI 风险判定。下方的构成拆分仅为展示性解读，不能覆盖该判定。"
+    "verdictFramingNote": "检测结论——此等级是 DraftProof 基于校准检测器给出的 AI 风险判定。下方的构成拆分仅为展示性解读，不能覆盖该判定。",
+    // 「此分数如何构成」迷你条形图（2026-07-16 改版）——取代 fusedHeadline.evidence 段落说明。
+    "scoreBuild": {
+      "head": "此分数如何构成",
+      "composite": "综合",
+      "deepScan": "深度扫描",
+      "fused": "融合",
+      "flagLineCaption": "| 标示 {{flagLine}}% 的标记线"
+    },
+    // 两行始终可见的精简说明（取代原先的长段落）。
+    "caveats": {
+      "headsUp": "这是提示，而非定论——检测器会过度标记流畅文字。这不是 Turnitin 分数，请勿与其 20% 线比较。",
+      "declaration": "AI 使用声明、课程政策和小组分工都不在文本中——只有你才能声明。"
+    }
   },
   // 第 0 阶段作者归属证据等级面板（badge.authorship_evidence_levels，仅供参考/展示）。
   // 需与 poc/report/render_panels.py 及 poc/report/authorship_evidence_levels.py 保持同步。

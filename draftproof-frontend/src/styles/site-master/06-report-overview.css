@@ -2059,9 +2059,34 @@ button.fix-first-item:focus-visible {
 .merged-verdict-chip.is-insufficient { background: #f3f4f6; color: #6b7280; }
 .merged-verdict-lead { font-size: 14px; color: #111827; margin: 8px 0 0; }
 .merged-verdict-evidence, .merged-verdict-note { font-size: 12px; color: #6b7280; margin: 6px 0 0; line-height: 1.5; }
-/* Owner-mandated framing: verdict = AI-risk authority (vs composition = interpretation
-   below). KEEP-IN-SYNC: poc/report/render_panels.py render_merged_authorship_risk CSS. */
-.merged-verdict-framing { font-size: 11px; font-weight: 600; letter-spacing: .01em; color: #4338ca; margin: 6px 0 0; line-height: 1.4; }
+
+/* "How this score is built" mini-bars (owner redesign 2026-07-16): composite /
+   deep-scan / fused thin bars with a flag-line marker on the fused bar. Reuses the
+   verdict tier hexes so no new colour is introduced. KEEP-IN-SYNC: poc/report/pdf.py
+   .dp-sb-* + poc/report/render_panels.py _authorship_headline_html. */
+.merged-scorebuild { margin: 12px 0 2px; }
+.merged-scorebuild-head { font-size: 12px; font-weight: 600; color: #374151; margin: 0 0 8px; }
+.merged-scorebar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.merged-scorebar-label { flex: 0 0 68px; font-size: 11px; color: #6b7280; }
+.merged-scorebar-track { position: relative; flex: 1 1 auto; height: 7px; background: #f3f4f6; border-radius: 4px; }
+.merged-scorebar-fill { height: 100%; border-radius: 4px; background: #9ca3af; }
+.merged-scorebar-fill.is-muted { background: #9ca3af; }
+.merged-scorebar-fill.is-green { background: #16a34a; }
+.merged-scorebar-fill.is-amber { background: #d97706; }
+.merged-scorebar-fill.is-orange { background: #ea580c; }
+.merged-scorebar-fill.is-red { background: #dc2626; }
+.merged-scorebar-marker { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: #111827; border-radius: 1px; }
+.merged-scorebar-val { flex: 0 0 40px; text-align: right; font-size: 11px; font-weight: 600; color: #374151; }
+.merged-scorebuild-cap { font-size: 11px; color: #9ca3af; margin: 3px 0 0 76px; }
+
+/* Action callout: the ownership lead in a highlighted box. Warning tint for
+   medium/high; positive (green) tint when the level is low. */
+.merged-verdict-action { margin: 12px 0 0; padding: 9px 12px; border-radius: 8px; font-size: 14px; font-weight: 600; background: #fffbeb; color: #b45309; border-left: 3px solid #f59e0b; }
+.merged-verdict-action.is-low { background: #ecfdf5; color: #15803d; border-left-color: #16a34a; }
+
+/* Two always-visible caveat lines (condensed from the old long paragraph). */
+.merged-verdict-caveat { display: flex; gap: 7px; align-items: flex-start; font-size: 12px; color: #6b7280; margin: 8px 0 0; line-height: 1.45; }
+.merged-verdict-caveat-ico { flex: 0 0 auto; color: #9ca3af; font-size: 12px; line-height: 1.45; }
 
 .merged-lenses { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 18px; }
 @media (max-width: 640px) { .merged-lenses { grid-template-columns: 1fr; } }
