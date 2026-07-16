@@ -122,7 +122,7 @@ function ScoreBar({ label, pct, kind, marker }) {
 // "How this score is built" mini-bars → action callout → two always-visible caveat
 // lines. Same data as before, ~1/3 the words, nothing collapsed. The meta-framing
 // line + the "detail is in the breakdown below" nav hint are intentionally DROPPED.
-function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence }) {
+function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence, hideVerdictChip }) {
   const hasAuthoritativeTier = KNOWN_AUTHORITATIVE_TIERS.includes(authoritativeTier);
   const level = sr && sr.overall ? sr.overall.level : null;
 
@@ -134,7 +134,11 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headl
   if (tierAuthority && typeof tierAuthority.fused_score === 'number') {
     const band = hasAuthoritativeTier ? TIER_TO_BAND[authoritativeTier] : null;
     valueEl = <strong className="merged-verdict-value">{Math.round(tierAuthority.fused_score)}%</strong>;
-    if (band) {
+    // The tier band chip beside the number is suppressed when the caller already
+    // shows the tier elsewhere (main report hero's "RISK TIER" block) — it would
+    // otherwise duplicate the same word. Kept where the card stands alone (rewrite
+    // before/after columns), where this chip is the column's only tier label.
+    if (band && !hideVerdictChip) {
       chipEl = (
         <span className={`merged-verdict-chip is-${authoritativeTier}`}>
           {t(`report.authorshipBreakdown.fusedHeadline.bands.${band}`)}
@@ -433,7 +437,7 @@ function ClaimGraphPanel({ t, cg }) {
 // This card no longer double-renders it.
 const ALL_SECTIONS = ['header', 'verdict', 'composition', 'riskAxes', 'deepScanParagraphs', 'claimGraph', 'scale', 'disclaimer'];
 
-export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence, claimGraphDisplay, sections }) {
+export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTier, tierAuthority, headlineConfidence, claimGraphDisplay, sections, hideVerdictChip }) {
   const hasBreakdown = !!breakdown;
   const hasSr = !!(sr && sr.overall && sr.overall.level);
   if (!hasBreakdown && !hasSr) return null;
@@ -475,6 +479,7 @@ export default function MergedAuthorshipRisk({ t, breakdown, sr, authoritativeTi
           authoritativeTier={authoritativeTier}
           tierAuthority={tierAuthority}
           headlineConfidence={headlineConfidence}
+          hideVerdictChip={hideVerdictChip}
         />
       )}
 
