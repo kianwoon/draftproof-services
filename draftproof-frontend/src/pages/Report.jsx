@@ -925,7 +925,6 @@ export default function Report() {
     ? buildTrackedDiff(submittedBaselineText, submittedDraftText)
     : [];
   const affectedParagraphs = highlightedParagraphs;
-  const originalAffectedRanges = buildOriginalSegmentRanges(originalSubmittedText, affectedParagraphs);
   const selectedParagraphDraftStatus = selectedParagraph?.text && submittedDraftText.includes(selectedParagraph.text)
     ? t('report.submitted.editor.paragraphUnchanged')
     : t('report.submitted.editor.paragraphEdited');
@@ -1383,55 +1382,6 @@ export default function Report() {
     }
   };
 
-  const reportSummaryBar = (
-    <div className="report-summary-bar">
-      <div className="report-stat report-risk-stat" style={{ background: tier.bg }}>
-        <span className="report-risk-icon" style={{ color: tier.color }} aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d={tier.icon} />
-            <circle cx="12" cy="12" r="10" />
-          </svg>
-        </span>
-        <span className="report-risk-copy">
-          <span className="report-risk-value" style={{ color: tier.color }}>{t(`report.tiers.${report.tier}`, { defaultValue: tier.label })}</span>
-          <span className="report-stat-label">{t('report.summary.riskTier')}</span>
-        </span>
-      </div>
-      <div className="report-stat">
-        <span className="report-stat-value">{issues.length}</span>
-        <span className="report-stat-label">{t('report.summary.totalFindings')}</span>
-      </div>
-      {authorshipRatingLabel && (
-        <div className="report-stat">
-          <span className="report-stat-value" style={{ color: authorshipTone.color }} title={authorshipRatingFullLabel || authorshipRatingLabel}>
-            {authorshipRatingLabel}
-          </span>
-          <span className="report-stat-label">{t('report.summary.authorshipRating')}</span>
-        </div>
-      )}
-      {rawAuthorshipSignal != null && (
-        <div className="report-stat">
-          <span className="report-stat-value" style={{ color: tier.color }}>{formatMetricPercent(calibratedReportAiScore(rawAuthorshipSignal), 0)}</span>
-          <span className="report-stat-label">{t('report.summary.rawAiSignal')}</span>
-        </div>
-      )}
-      {writingScore != null && (
-        <div className="report-stat">
-          <span className="report-stat-value" style={{ color: '#6366f1' }}>{formatMetricPercent(writingScore, 0)}</span>
-          <span className="report-stat-label">{t('report.summary.writingScore')}</span>
-        </div>
-      )}
-      {Object.entries(issueCounts).filter(([, v]) => v > 0).map(([sev, count]) => {
-        const sc = SEVERITY_CONFIG[sev];
-        return (
-          <div key={sev} className="report-stat">
-            <span className="report-stat-value" style={{ color: sc.color }}>{count}</span>
-            <span className="report-stat-label">{t(`report.severities.${sev}`, { defaultValue: sc.label })}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
 
   const renderAiLikelihoodHeadline = (variantBadge) => {
     const bands = aiLikelihoodBands(variantBadge);
@@ -1734,135 +1684,6 @@ export default function Report() {
     focusScoreProfileTab(nextTabId);
   };
 
-  const scoreProfileSection = scoreProfileGroups.length > 0 ? (
-    <section className="score-profile-section" aria-label={t('report.scoreProfile.sectionLabel')}>
-      <div className="score-profile-head">
-        <div>
-          <span className="score-profile-kicker">{t('report.scoreProfile.kicker')}</span>
-          <h2>{hasRewriteSignalComparison ? t('report.scoreProfile.title') : t('report.scoreProfile.titleOriginal')}</h2>
-          <p>{scoreProfileSummaryText}</p>
-        </div>
-        <div className="score-profile-stat">
-          <strong>{scoreProfilePairs.length}</strong>
-          <span>{t('report.scoreProfile.trackedSignals')}</span>
-        </div>
-      </div>
-      <div
-        className="score-profile-summary-grid"
-        role="tablist"
-        aria-label={t('report.scoreProfile.sectionLabel')}
-      >
-        {scoreProfileSummaryGroups.map((group) => {
-          const isActive = group.id === currentActiveTab;
-          return (
-            <button
-              key={group.id}
-              type="button"
-              role="tab"
-              id={`score-profile-tab-${group.id}`}
-              aria-selected={isActive}
-              aria-controls={`score-profile-panel-${group.id}`}
-              tabIndex={isActive ? 0 : -1}
-              onClick={() => setActiveProfileTab(group.id)}
-              onKeyDown={(event) => handleScoreProfileTabKeyDown(event, group.id)}
-              className={`score-profile-summary-card is-${group.id}${isActive ? ' is-active' : ''}`}
-            >
-              <span>{group.label}</span>
-              <strong>{group.topSignal?.label || t('report.scoreProfile.noSignal')}</strong>
-              <p>{group.description || t('report.scoreProfile.groupFallback')}</p>
-              <div className="score-profile-summary-meta">
-                {group.topValue != null && (
-                  <em
-                    className="score-profile-leading"
-                    style={{ '--sev-color': group.topSeverity?.color || '#94a3b8' }}
-                  >
-                    {t('report.scoreProfile.leadingSignal', { value: Math.round(group.topValue) })}
-                  </em>
-                )}
-                {group.topDirection && (
-                  <em className="score-profile-direction">
-                    {t(group.topDirection === 'higher'
-                      ? 'report.scoreProfile.directionHigher'
-                      : 'report.scoreProfile.directionLower')}
-                  </em>
-                )}
-                {hasRewriteSignalComparison && (
-                  <em>{t('report.scoreProfile.improvedSignals', { count: group.improvedCount })}</em>
-                )}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      {activeGroup && (
-        <div
-          className="score-profile-focused-detail"
-          key={activeGroup.id}
-          id={`score-profile-panel-${activeGroup.id}`}
-          role="tabpanel"
-          tabIndex={0}
-          aria-labelledby={`score-profile-tab-${activeGroup.id}`}
-        >
-          <section className={`score-profile-group is-${activeGroup.id}`}>
-            <div className="score-profile-group-head">
-              <div>
-                <h3>{activeGroup.label}</h3>
-              </div>
-              <span>{t('report.transformation.signals', { count: activeGroup.signals.length })}</span>
-            </div>
-            <div className="score-profile-bars">
-              {activeGroup.signals.map((pair) => {
-                const originalSignal = pair.original ? translatedSignal(pair.original, t) : null;
-                const rewrittenSignal = pair.rewritten ? translatedSignal(pair.rewritten, t) : null;
-                const currentSignal = hasRewriteSignalComparison ? (rewrittenSignal || originalSignal) : originalSignal;
-                const improvement = getTransformationSignalImprovement(pair.rewritten, pair.original);
-                // Colour by severity (resolved via the signal's polarity), not by
-                // signal identity — so hue means "how concerning", matching the
-                // "lower/higher is better" captions. Length still carries magnitude.
-                const signalColor = transformationSignalSeverity(pair.key, currentSignal?.value).color;
-                return (
-                  <div key={pair.key} className="score-profile-row">
-                     <div className="score-profile-row-head">
-                       <span title={currentSignal?.description || pair.description}>{currentSignal?.label || pair.label}</span>
-                       <strong>{currentSignal?.value != null ? formatMetricPercent(currentSignal.value, 0) : t('report.transformation.notPresent')}</strong>
-                     </div>
-                     <div className="score-profile-track" aria-hidden="true">
-                       {originalSignal?.value != null && hasRewriteSignalComparison && (
-                         <i className="score-profile-fill is-original" style={{ width: `${originalSignal.value}%` }} />
-                       )}
-                       {currentSignal?.value != null && (
-                         <i
-                           className="score-profile-fill is-current"
-                           style={{ width: `${currentSignal.value}%`, '--score-profile-color': signalColor }}
-                         />
-                       )}
-                     </div>
-                     <div className="score-profile-row-foot">
-                       {hasRewriteSignalComparison && originalSignal?.value != null && rewrittenSignal?.value != null ? (
-                         <span>{t('report.scoreProfile.originalToRewritten', {
-                           original: Math.round(originalSignal.value),
-                           rewritten: Math.round(rewrittenSignal.value),
-                         })}</span>
-                       ) : (
-                         <span>{currentSignal?.description}</span>
-                       )}
-                       {improvement && (
-                         <em>{t('report.transformation.improvedFromTo', {
-                           from: Math.round(improvement.from),
-                           to: Math.round(improvement.to),
-                         })}</em>
-                       )}
-                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        </div>
-      )}
-    </section>
-  ) : null;
 
   const rewriteOutcome = rewriteResultSummary?.outcome || '';
   const rewriteOutcomeText = rewriteOutcome
