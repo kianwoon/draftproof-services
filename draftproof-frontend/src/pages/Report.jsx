@@ -1,3 +1,9 @@
+// max-file-lines-guard: allow — Core scan-report page. Reduced 2442 → ~1900 (dead-code
+// removal + safe component extractions into pages/report/*: TransformationScorecard,
+// RewriteCompletionBand, SubmittedSignalGauge; helpers split into reportTransformation/
+// reportAuthorship). The remaining <1500 reduction is the return-JSX / editor-modal
+// surgery, deliberately deferred: it needs live app-render verification, not just the
+// build gate. Owner-approved exception (2026-07-16). Re-evaluate if this grows further.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
