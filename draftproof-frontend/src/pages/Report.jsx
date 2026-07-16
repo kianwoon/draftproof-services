@@ -120,7 +120,6 @@ export default function Report() {
   const [rewriteElapsedSeconds, setRewriteElapsedSeconds] = useState(0);
   const [selectedParagraphId, setSelectedParagraphId] = useState(null);
   const [lockedParagraphId, setLockedParagraphId] = useState(null);
-  const [activeProfileTab, setActiveProfileTab] = useState(null);
   const [submittedEditorOpen, setSubmittedEditorOpen] = useState(false);
   const [submittedEditorClosing, setSubmittedEditorClosing] = useState(false);
   const [submittedDraftText, setSubmittedDraftText] = useState('');
@@ -309,10 +308,6 @@ export default function Report() {
 
     return true;
   }, [closeRewriteEventSource, pollRewriteStatus, showReviewOnlyRewriteNotice, syncRewriteJob, t]);
-
-  useEffect(() => {
-    setActiveProfileTab(null);
-  }, [id]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -750,7 +745,6 @@ export default function Report() {
   const rewrittenTopkPatternScore = clampPercent(rewrittenBadge.ai_components?.topk_pattern_raw ?? rewrittenBadge.ai_components?.topk_pattern);
   const rewrittenTopkCalibratedRisk = clampPercent(rewrittenBadge.ai_components?.topk_calibrated_risk);
   const rewrittenDocumentContext = getScanDocumentContext(rewrittenScan);
-  const rawAuthorshipSignal = aiScore;
   const storedAuthorshipRating = badge.authorship_rating || deriveAuthorshipRatingFallback(
     aiScore,
     badge.tier || report.tier,
@@ -1619,71 +1613,6 @@ export default function Report() {
       ) : null}
     </section>
   ) : null;
-
-  const scoreProfilePairs = transformationSignals.length > 0
-    ? buildPairedTransformationSignals(
-      transformationSignals,
-      hasRewriteSignalComparison ? rewrittenTransformationSignals : []
-    )
-    : [];
-  const scoreProfileGroups = groupTransformationSignals(scoreProfilePairs).map((group) => translatedGroup(group, t));
-  const scoreProfileSummaryGroups = scoreProfileGroups.slice(0, 3).map((group) => {
-    const signalEntries = group.signals.map((pair) => {
-      const current = hasRewriteSignalComparison ? (pair.rewritten || pair.original) : pair.original;
-      const baseline = hasRewriteSignalComparison ? pair.original : null;
-      return {
-        pair,
-        current,
-        improvement: getTransformationSignalImprovement(current, baseline),
-      };
-    });
-    const improvedCount = signalEntries.filter((entry) => entry.improvement).length;
-    const topEntry = [...signalEntries].sort((a, b) => Number(b.current?.value || 0) - Number(a.current?.value || 0))[0];
-    const topKey = topEntry?.current?.key;
-    return {
-      ...group,
-      improvedCount,
-      topSignal: topEntry?.current ? translatedSignal(topEntry.current, t) : null,
-      topValue: topEntry?.current?.value,
-      topDirection: topKey ? transformationSignalDirection(topKey) : null,
-      topSeverity: topKey ? transformationSignalSeverity(topKey, topEntry?.current?.value) : null,
-    };
-  });
-  const scoreProfileSummaryText = hasRewriteSignalComparison
-    ? t('report.scoreProfile.summaryRewrite')
-    : transformationSummary?.summary || t('report.scoreProfile.summaryOriginal');
-  const scoreProfileTabIds = scoreProfileSummaryGroups.map((group) => group.id);
-  const currentActiveTab = scoreProfileTabIds.includes(activeProfileTab)
-    ? activeProfileTab
-    : scoreProfileTabIds[0];
-  const activeGroup = scoreProfileGroups.find((g) => g.id === currentActiveTab);
-  const focusScoreProfileTab = (tabId) => {
-    if (!tabId) return;
-    requestAnimationFrame(() => {
-      document.getElementById(`score-profile-tab-${tabId}`)?.focus();
-    });
-  };
-  const handleScoreProfileTabKeyDown = (event, groupId) => {
-    const currentIndex = scoreProfileTabIds.indexOf(groupId);
-    if (currentIndex < 0) return;
-
-    const lastIndex = scoreProfileTabIds.length - 1;
-    const nextByKey = {
-      ArrowRight: currentIndex === lastIndex ? 0 : currentIndex + 1,
-      ArrowDown: currentIndex === lastIndex ? 0 : currentIndex + 1,
-      ArrowLeft: currentIndex === 0 ? lastIndex : currentIndex - 1,
-      ArrowUp: currentIndex === 0 ? lastIndex : currentIndex - 1,
-      Home: 0,
-      End: lastIndex,
-    };
-    if (!(event.key in nextByKey)) return;
-
-    event.preventDefault();
-    const nextTabId = scoreProfileTabIds[nextByKey[event.key]];
-    setActiveProfileTab(nextTabId);
-    focusScoreProfileTab(nextTabId);
-  };
-
 
   const rewriteOutcome = rewriteResultSummary?.outcome || '';
   const rewriteOutcomeText = rewriteOutcome
