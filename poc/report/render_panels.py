@@ -233,7 +233,12 @@ def _authorship_headline_html(badge: dict, breakdown: dict) -> str:
         band_chip = ""
         if authoritative_tier in _ACB_TIER_TO_BAND:
             band = _ACB_TIER_TO_BAND[authoritative_tier]
-            band_chip = _statchip(_ACB_FUSED_BAND_LABELS.get(band, band), _level_kind(band))
+            # The commanding verdict chip carries the full 4-colour severity (mirrors
+            # the web is-green/amber/orange/red) rather than _level_kind's 3-way
+            # collapse (which shows Critical as amber). Local to this headline only.
+            _fused_kind = {"low": "good", "moderate": "warn", "high": "high", "critical": "crit"}
+            band_chip = _statchip(_ACB_FUSED_BAND_LABELS.get(band, band),
+                                  _fused_kind.get(band, _level_kind(band)))
         # Mini-bars replace the old "Behind this score…" prose (owner redesign 2026-07-16).
         # Only render when composite exists; else the fused value in the headline stands alone.
         bars = ""
@@ -463,21 +468,23 @@ _AEL_LENS_LABELS = {
     "reasoning": "Reasoning development",
 }
 # Grounding-gap band (higher = weaker grounding) -> plain word + chip colour.
+# Chip KIND aligned to the web AEL_BAND_CLASS colours (2026-07-16): low/strong→green,
+# moderate/developing→amber (warn), elevated/high/limited→red (crit). Labels unchanged.
 _AEL_GROUNDING_BAND = {
-    "likely_human": ("Strong", "good"), "some_texture": ("Moderate", "info"),
-    "moderate": ("Moderate", "info"), "strong": ("Elevated", "warn"),
-    "very_strong": ("Elevated", "warn"),
+    "likely_human": ("Strong", "good"), "some_texture": ("Moderate", "warn"),
+    "moderate": ("Moderate", "warn"), "strong": ("Elevated", "crit"),
+    "very_strong": ("Elevated", "crit"),
 }
 _AEL_CRITICAL_BAND = {
-    "strong_control": ("Strong", "good"), "acceptable_control": ("Moderate", "info"),
-    "weak_control": ("Developing", "info"), "high_dependency": ("Limited", "warn"),
-    "very_high_dependency": ("Limited", "warn"),
+    "strong_control": ("Strong", "good"), "acceptable_control": ("Moderate", "warn"),
+    "weak_control": ("Developing", "warn"), "high_dependency": ("Limited", "crit"),
+    "very_high_dependency": ("Limited", "crit"),
 }
-_AEL_CITATION_LEVEL = {"low": ("Strong", "good"), "medium": ("Moderate", "info"),
-                       "high": ("Elevated", "warn")}
+_AEL_CITATION_LEVEL = {"low": ("Strong", "good"), "medium": ("Moderate", "warn"),
+                       "high": ("Elevated", "crit")}
 _AEL_TIER_BAND = {"green": ("Low", "good"), "clean": ("Low", "good"), "low": ("Low", "good"),
-                  "amber": ("Elevated", "info"), "orange": ("High", "warn"),
-                  "red": ("High", "warn"), "high": ("High", "warn")}
+                  "amber": ("Elevated", "warn"), "orange": ("High", "crit"),
+                  "red": ("High", "crit"), "high": ("High", "crit")}
 _AEL_CONF_LABEL = {"high": "High", "moderate": "Moderate", "low": "Low"}
 _AEL_LIMITATION_LABEL = {
     "no_assignment_context": "No assignment brief/rubric supplied — context grounding not assessed",

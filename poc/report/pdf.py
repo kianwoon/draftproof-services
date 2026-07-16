@@ -17,18 +17,28 @@ _CSS = """
     }
 }
 
-/* ── Design tokens (minimal — drive severity coding + masthead) ─── */
+/* ── Design tokens — brand-mapped (KEEP-IN-SYNC with the web foundation
+   00-foundation.css + the --sev-* severity scale; WeasyPrint has no color-mix,
+   so the tint values below are pre-resolved). ─── */
 :root {
-    --dp-ink: #0f172a;
-    --dp-muted: #64748b;
-    --dp-line: #e2e8f0;
-    --dp-bg-soft: #f8fafc;
-    --dp-critical: #dc2626;
-    --dp-high: #ea580c;
-    --dp-medium: #b45309;
-    --dp-low: #0f766e;
-    --dp-human: #16a34a;
-    --dp-ai: #c2410c;
+    --dp-ink: #0D1B2A;        /* navy-950 */
+    --dp-muted: #7A8694;      /* brand muted */
+    --dp-line: #E4E2DD;       /* brand hairline (rgba(13,27,42,.10) on white) */
+    --dp-bg-soft: #F4F2EE;    /* surface-soft */
+    --dp-critical: #B3261E;   /* --sev-crit */
+    --dp-high: #C2410C;       /* --sev-high */
+    --dp-medium: #B45309;     /* --sev-med */
+    --dp-low: #0F6E56;        /* --sev-low */
+    --dp-human: #2F8C61;      /* brand green-600 */
+    --dp-ai: #C2410C;
+    /* Severity tint backgrounds (pre-resolved sev-*-bg mixed toward white). */
+    --dp-crit-bg: #FCF0EE;
+    --dp-high-bg: #FBEADF;
+    --dp-med-bg: #FCF5E9;
+    --dp-low-bg: #EEF7F3;
+    --dp-neutral: #5F5E5A;
+    --dp-neutral-bg: #F1F0EC;
+    --dp-serif: Georgia, "Times New Roman", "DejaVu Serif", serif;
 }
 
 body {
@@ -38,13 +48,13 @@ body {
     color: #222;
 }
 
-h1 { font-size: 18pt; color: #1a1a2e; border-bottom: 2px solid #e0e0e0; padding-bottom: 4pt; }
+h1 { font-family: var(--dp-serif); font-size: 18pt; font-weight: 700; letter-spacing: -.01em; color: var(--dp-ink); border-bottom: 2px solid var(--dp-line); padding-bottom: 4pt; }
 /* break-after: avoid-page keeps a section heading with its first block — prevents an
    orphaned "## Rewritten Content" alone at the bottom of an otherwise-empty page when
    the following block starts on the next page. */
-h2 { font-size: 14pt; color: #333; border-bottom: 1px solid #eee; padding-bottom: 3pt;
+h2 { font-family: var(--dp-serif); font-size: 14pt; font-weight: 700; letter-spacing: -.01em; color: var(--dp-ink); border-bottom: 1px solid var(--dp-line); padding-bottom: 3pt;
      break-after: avoid-page; page-break-after: avoid; }
-h3 { font-size: 12pt; color: #444; break-after: avoid-page; page-break-after: avoid; }
+h3 { font-family: var(--dp-serif); font-size: 12pt; font-weight: 700; color: var(--dp-ink); break-after: avoid-page; page-break-after: avoid; }
 
 table {
     width: 100%;
@@ -323,7 +333,7 @@ img[src^="https://img.shields.io"] { height: 18px; }
 
 .dp-section-intro {
     margin: -2pt 0 9pt;
-    color: #475569;
+    color: var(--dp-muted);
     font-size: 9pt;
     line-height: 1.45;
 }
@@ -338,19 +348,27 @@ img[src^="https://img.shields.io"] { height: 18px; }
     background: #fff;
     page-break-inside: avoid;
 }
-.dp-hero--good { border-left-color: #16a34a; }
-.dp-hero--warn { border-left-color: #ea580c; }
-.dp-hero--info { border-left-color: #2563eb; }
+.dp-hero--good { border-left-color: var(--dp-human); }
+.dp-hero--warn { border-left-color: var(--dp-high); }
+.dp-hero--info { border-left-color: var(--dp-low); }
 .dp-hero-read {
     margin: 0;
     color: var(--dp-ink);
     font-size: 13pt;
-    font-weight: 800;
+    font-weight: 700;
     line-height: 1.3;
+}
+/* The fused score reads as a commanding serif number (mirrors the web hero). */
+.dp-hero-read b {
+    font-family: var(--dp-serif);
+    font-size: 26pt;
+    font-weight: 700;
+    letter-spacing: -.02em;
+    color: var(--dp-ink);
 }
 .dp-hero-sub {
     margin: 6pt 0 0;
-    color: #374151;
+    color: var(--dp-muted);
     font-size: 9.5pt;
     line-height: 1.5;
 }
@@ -363,18 +381,32 @@ img[src^="https://img.shields.io"] { height: 18px; }
     line-height: 1.5;
 }
 .dp-ael-anchor-head {
-    color: #374151;
+    color: var(--dp-ink);
     font-size: 9pt;
+    font-weight: 700;
 }
 .dp-ael-anchor-eg {
-    color: #6b7280;
+    margin-top: 2pt;
+    padding-left: 7pt;
+    border-left: 1.5pt solid var(--dp-line);
+    color: var(--dp-muted);
     font-size: 9pt;
     font-style: italic;
 }
 .dp-ael-anchor-fix {
-    color: #9ca3af;
+    margin-top: 2pt;
+    color: var(--dp-low);
     font-size: 9pt;
+    font-weight: 700;
 }
+.dp-ael-anchor-fix::before { content: "→ "; }
+/* AEL lens table — de-gridded into clean rows: dimension left (bold navy), band
+   chip + finding right, hairline separators. Mirrors the web card list without
+   WeasyPrint card overhead. */
+.dp-ael-table { margin: 8pt 0 0; }
+.dp-ael-table td { border: 0; border-bottom: 1px solid var(--dp-line); padding: 7pt 2pt; vertical-align: top; }
+.dp-ael-table tr:last-child td { border-bottom: 0; }
+.dp-ael-table td:first-child { width: 34%; font-weight: 700; color: var(--dp-ink); }
 .dp-chip-strip {
     margin-top: 10pt;
 }
@@ -382,7 +414,7 @@ img[src^="https://img.shields.io"] { height: 18px; }
    breakdown below it = a display interpretation). KEEP-IN-SYNC:
    draftproof-frontend/src/styles/site-master/06-report-overview.css .merged-verdict-framing. */
 .dp-verdict-framing {
-    color: #4338ca;
+    color: var(--dp-low);
     font-weight: 700;
 }
 .dp-statchip {
@@ -398,9 +430,11 @@ img[src^="https://img.shields.io"] { height: 18px; }
     letter-spacing: .07em;
     text-transform: uppercase;
 }
-.dp-statchip--good { color: #15803d; background: #ecfdf5; border-color: #a7f3d0; }
-.dp-statchip--info { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
-.dp-statchip--warn { color: #b45309; background: #fffbeb; border-color: #fde68a; }
+.dp-statchip--good { color: var(--dp-low); background: var(--dp-low-bg); }
+.dp-statchip--info { color: var(--dp-neutral); background: var(--dp-neutral-bg); }
+.dp-statchip--warn { color: var(--dp-medium); background: var(--dp-med-bg); }
+.dp-statchip--high { color: var(--dp-high); background: var(--dp-high-bg); }
+.dp-statchip--crit { color: var(--dp-critical); background: var(--dp-crit-bg); }
 
 /* ── Authorship clarity breakdown (4 category bars) — mirrors the web page's
    authorship-breakdown rows so the PDF is not just jammed label+share text. ── */
@@ -422,27 +456,27 @@ img[src^="https://img.shields.io"] { height: 18px; }
 .dp-abd-label {
     font-size: 8.5pt;
     font-weight: 700;
-    color: #243b53;
+    color: var(--dp-ink);
 }
 .dp-abd-bar-track {
     display: block;
     width: 100%;
     height: 6pt;
     border-radius: 3pt;
-    background: #f3f4f6;
+    background: var(--dp-bg-soft);
     overflow: hidden;
 }
 .dp-abd-bar-fill {
     display: block;
     height: 100%;
     border-radius: 3pt;
-    background: #16a34a;
+    background: var(--dp-human);
 }
 .dp-abd-band {
     white-space: nowrap;
     font-size: 8pt;
     font-weight: 700;
-    color: #334155;
+    color: var(--dp-muted);
 }
 .dp-abd-fill--student_owned { background: #1D9E75; }
 .dp-abd-fill--ai_assisted_polished { background: #888780; }
@@ -459,8 +493,8 @@ img[src^="https://img.shields.io"] { height: 18px; }
     margin: 0 0 6pt;
     padding: 4pt 7pt;
     border-radius: 4pt;
-    background: #fffbeb;
-    color: #b45309;
+    background: var(--dp-med-bg);
+    color: var(--dp-medium);
     font-size: 8pt;
     line-height: 1.4;
 }
@@ -469,8 +503,8 @@ img[src^="https://img.shields.io"] { height: 18px; }
    KEEP-IN-SYNC: draftproof-frontend/src/styles/site-master/06-report-overview.css
    .merged-comp-caveat--info. */
 .dp-abd-caveat--info {
-    background: #f3f4f6;
-    color: #6b7280;
+    background: var(--dp-bg-soft);
+    color: var(--dp-muted);
 }
 
 /* ── "How this score is built" mini-bars (owner redesign 2026-07-16) — composite /
@@ -478,20 +512,20 @@ img[src^="https://img.shields.io"] { height: 18px; }
    .merged-scorebar-* ; reuses the verdict tier hexes, no new colour. Two-row layout
    (head line, then full-width track) — a flex:1 track collapses in WeasyPrint. ── */
 .dp-sb { margin: 8pt 0 2pt; }
-.dp-sb-head { margin: 0 0 5pt; font-size: 8.5pt; font-weight: 700; color: #374151; }
+.dp-sb-head { margin: 0 0 5pt; font-size: 8.5pt; font-weight: 700; color: var(--dp-muted); }
 .dp-sb-row { display: block; margin-bottom: 5pt; }
 .dp-sb-head-line { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3pt; }
-.dp-sb-label { font-size: 8.5pt; font-weight: 700; color: #243b53; }
-.dp-sb-val { font-size: 8pt; font-weight: 700; color: #334155; }
-.dp-sb-track { display: block; position: relative; width: 100%; height: 6pt; border-radius: 3pt; background: #f3f4f6; overflow: hidden; }
-.dp-sb-fill { display: block; height: 100%; border-radius: 3pt; background: #9ca3af; }
-.dp-sb-fill--muted { background: #9ca3af; }
-.dp-sb-fill--green { background: #16a34a; }
-.dp-sb-fill--amber { background: #d97706; }
-.dp-sb-fill--orange { background: #ea580c; }
-.dp-sb-fill--red { background: #dc2626; }
-.dp-sb-marker { position: absolute; top: 0; bottom: 0; width: 1.5pt; margin-left: -0.75pt; background: #111827; }
-.dp-sb-cap { margin: 2pt 0 0; font-size: 7.5pt; color: #9ca3af; }
+.dp-sb-label { font-size: 8.5pt; font-weight: 700; color: var(--dp-ink); }
+.dp-sb-val { font-family: var(--dp-serif); font-size: 9pt; font-weight: 700; color: var(--dp-ink); }
+.dp-sb-track { display: block; position: relative; width: 100%; height: 6pt; border-radius: 3pt; background: var(--dp-bg-soft); overflow: hidden; }
+.dp-sb-fill { display: block; height: 100%; border-radius: 3pt; background: #B7BEC7; }
+.dp-sb-fill--muted { background: #B7BEC7; }
+.dp-sb-fill--green { background: var(--dp-low); }
+.dp-sb-fill--amber { background: var(--dp-medium); }
+.dp-sb-fill--orange { background: var(--dp-high); }
+.dp-sb-fill--red { background: var(--dp-critical); }
+.dp-sb-marker { position: absolute; top: 0; bottom: 0; width: 1.5pt; margin-left: -0.75pt; background: var(--dp-ink); }
+.dp-sb-cap { margin: 2pt 0 0; font-size: 7.5pt; color: var(--dp-muted); }
 
 /* ── KPI stat row ── */
 .dp-kpi-row {
@@ -576,16 +610,16 @@ img[src^="https://img.shields.io"] { height: 18px; }
     padding: 3.5pt 6pt;
     margin: 3pt 0;
     border-radius: 4pt;
-    background: #f3f4f6;
-    color: #6b7280;
+    background: var(--dp-bg-soft);
+    color: var(--dp-muted);
     break-inside: avoid;
 }
 .dp-cmp-axis-name { font-weight: 600; }
 .dp-cmp-axis-level { font-weight: 700; }
-.dp-cmp-axis--low { background: #dcfce7; color: #15803d; }
-.dp-cmp-axis--medium { background: #fef3c7; color: #b45309; }
+.dp-cmp-axis--low { background: var(--dp-low-bg); color: var(--dp-low); }
+.dp-cmp-axis--medium { background: var(--dp-med-bg); color: var(--dp-medium); }
 .dp-cmp-axis--high,
-.dp-cmp-axis--critical { background: #fee2e2; color: #b91c1c; }
+.dp-cmp-axis--critical { background: var(--dp-crit-bg); color: var(--dp-critical); }
 .dp-cmp-kicker {
     margin: 0 0 3pt;
     color: var(--dp-muted);
@@ -625,12 +659,14 @@ img[src^="https://img.shields.io"] { height: 18px; }
     display: block;
     margin-bottom: 4pt;
     color: var(--dp-ink);
-    font-size: 10.5pt;
-    font-weight: 800;
+    font-family: var(--dp-serif);
+    font-size: 11.5pt;
+    font-weight: 700;
+    letter-spacing: -.01em;
 }
-.dp-callout p { margin: 4pt 0 0; color: #1f2937; font-size: 9pt; line-height: 1.5; }
+.dp-callout p { margin: 4pt 0 0; color: var(--dp-ink); font-size: 9pt; line-height: 1.5; }
 .dp-callout ol, .dp-callout ul { margin: 4pt 0 0 15pt; padding: 0; }
-.dp-callout li { margin: 4pt 0; color: #1f2937; font-size: 9pt; line-height: 1.45; }
+.dp-callout li { margin: 4pt 0; color: var(--dp-ink); font-size: 9pt; line-height: 1.45; }
 
 /* ── Policy row-cards ── */
 .dp-policy-head {
