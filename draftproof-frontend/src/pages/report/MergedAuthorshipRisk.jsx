@@ -206,12 +206,16 @@ function VerdictBand({ t, breakdown, sr, authoritativeTier, tierAuthority, headl
 
   return (
     <div className={`merged-verdict${level ? ` is-${level}` : ''}`}>
-      <div className="merged-verdict-headline">
-        <span className="merged-verdict-kicker">{t('report.authorshipBreakdown.fusedHeadline.label')}</span>
-        {valueEl}
-        {chipEl}
+      <div className="merged-verdict-hero">
+        <div className="merged-verdict-headline">
+          <span className="merged-verdict-kicker">{t('report.authorshipBreakdown.fusedHeadline.label')}</span>
+          <div className="merged-verdict-value-row">
+            {valueEl}
+            {chipEl}
+          </div>
+        </div>
+        {miniBars}
       </div>
-      {miniBars}
       {evidenceEl}
       {cautionNote && <p className="merged-comp-caveat merged-verdict-caution">{cautionNote}</p>}
       {/* Action callout: the ownership lead in a highlighted (warning-tint) box. */}

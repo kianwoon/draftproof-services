@@ -34,6 +34,15 @@
   --green: var(--green-500);
   --green-dark: var(--green-700);
   --red: #E24B4A;
+  /* Report severity scale — brand-mapped, the single source for report chips,
+     meters, and axes (replaces the scattered Tailwind slate/emerald/amber hexes
+     the report CSS had drifted into). 4 tiers: low(green) / medium(amber) /
+     high(orange) / critical(red), plus a neutral. */
+  --sev-low: #0F6E56;      --sev-low-bg: #E7F4EE;
+  --sev-med: #B45309;      --sev-med-bg: #FBF0DD;
+  --sev-high: #C2410C;     --sev-high-bg: #FBEADF;
+  --sev-crit: #B3261E;     --sev-crit-bg: #FBE7E5;
+  --sev-neutral: #5F5E5A;  --sev-neutral-bg: #F1F0EC;
   --shadow-sm: 0 8px 22px rgba(13, 27, 42, 0.07);
   --shadow-md: 0 18px 46px rgba(13, 27, 42, 0.12);
   --radius-sm: 8px;
