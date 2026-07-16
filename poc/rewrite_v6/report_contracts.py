@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import contextlib
+import os
 from contextvars import ContextVar
 from dataclasses import replace
 from typing import Any
+
+
+def _flagged_sentences_enabled() -> bool:
+    """Kill switch for P1 (per-sentence grounding/reasoning targeting). Default ON; set
+    DRAFTPROOF_V6_FLAGGED_SENTENCES=0 to fall back to the pre-P1 prompt (byte-identical: no
+    ``flagged_sentences`` is attached, so the writer prompt is unchanged)."""
+    return os.environ.get("DRAFTPROOF_V6_FLAGGED_SENTENCES", "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
 
 from .plan import Plan
 
@@ -89,6 +99,41 @@ def extract_paragraph_diagnoses(report: dict[str, Any] | None) -> dict[str, dict
             }
             diagnoses[paragraph_id] = entry
         entry["critical_thinking_questions"] = questions
+
+    # Per-sentence grounding/reasoning targets (P1): the enhanced scan knows WHICH sentences are weak,
+    # not just which paragraphs. Attach them so the writer fixes the exact flagged sentences. A
+    # paragraph with ONLY flagged sentences (no prose diagnosis) still gets an entry so it is rewritten.
+    for paragraph_id, flagged in (
+        _paragraph_flagged_sentences(report).items() if _flagged_sentences_enabled() else ()
+    ):
+        entry = diagnoses.get(paragraph_id)
+        if entry is None:
+            entry = {
+                "main_issue": None,
+                "why_flagged": None,
+                "recommendation": None,
+                "rewrite_hint": None,
+                "predictable_phrases": phrases_by_paragraph.get(paragraph_id, []),
+            }
+            diagnoses[paragraph_id] = entry
+        entry["flagged_sentences"] = flagged
+
+    # Per-claim source-entailment targets (P2): claims the scan could NOT verify against their cited
+    # source. Attach so the writer qualifies/softens exactly those claims (never fabricates a fix).
+    for paragraph_id, unsupported in (
+        _paragraph_unsupported_claims(report).items() if _unsupported_claims_enabled() else ()
+    ):
+        entry = diagnoses.get(paragraph_id)
+        if entry is None:
+            entry = {
+                "main_issue": None,
+                "why_flagged": None,
+                "recommendation": None,
+                "rewrite_hint": None,
+                "predictable_phrases": phrases_by_paragraph.get(paragraph_id, []),
+            }
+            diagnoses[paragraph_id] = entry
+        entry["unsupported_claims"] = unsupported
     return diagnoses
 
 
@@ -195,6 +240,148 @@ def _paragraph_predictable_phrases(
             if phrase not in bucket:
                 bucket.append(phrase)
     return {pid: phrases[:per_paragraph_limit] for pid, phrases in by_paragraph.items() if phrases}
+
+
+# ── Per-sentence grounding/reasoning targets (P1) ──────────────────────────────
+# The enhanced scan tags individual sentences as weak-grounding or reasoning-jump. The display
+# composer (poc/report/sentence_issue_tags.py) is the authority; we read the SAME two trustworthy
+# finding titles here so the writer targets the exact sentences the user sees underlined, instead of
+# only a paragraph-wide category. KEEP IN SYNC with sentence_issue_tags._GROUNDING_TITLE /
+# _REASONING_TITLE (module-private there; duplicated deliberately rather than importing an underscore
+# name across packages). AI (red) tags are intentionally NOT relayed — predictable_phrases already
+# carries the predictability signal at higher fidelity.
+_FLAGGED_SENTENCE_ISSUE_BY_TITLE = {
+    "low_specificity": "grounding",
+    "semantic_drift": "reasoning",
+}
+_FLAGGED_SENTENCES_PER_PARAGRAPH = 3
+
+
+def _paragraph_flagged_sentences(report: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Group per-sentence grounding/reasoning findings by paragraph_id, for the writer to target.
+
+    Joins each trustworthy finding's ``sentence_id`` to its paragraph + verbatim sentence text via
+    ``highlight_segments`` (which carry sentence_id + paragraph_id + text together). A finding whose
+    sentence_id resolves to no segment, or a document-level tag with no sentence_id, is dropped — an
+    unanchored tag is never paragraph-guessed (precision-first). Capped per paragraph to bound prompt
+    growth. Returns {paragraph_id: [{text, issue, fix}]}."""
+    sid_index: dict[str, tuple[str, str]] = {}
+    for segment in report.get("highlight_segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        sid = str(segment.get("sentence_id") or "").strip()
+        paragraph_id = str(segment.get("paragraph_id") or "").strip()
+        text = " ".join(str(segment.get("text") or "").split())
+        if sid and paragraph_id and text and sid not in sid_index:
+            sid_index[sid] = (paragraph_id, text)
+
+    by_paragraph: dict[str, list[dict[str, Any]]] = {}
+    seen: set[tuple[str, str]] = set()
+    for finding in _all_findings(report):
+        issue = _FLAGGED_SENTENCE_ISSUE_BY_TITLE.get(str(finding.get("title") or "").strip())
+        if not issue:
+            continue
+        sid = str(finding.get("sentence_id") or "").strip()
+        if not sid or sid not in sid_index:
+            continue  # document-level or unanchored tag → never guessed onto a paragraph
+        paragraph_id, text = sid_index[sid]
+        if (paragraph_id, sid) in seen:
+            continue
+        seen.add((paragraph_id, sid))
+        bucket = by_paragraph.setdefault(paragraph_id, [])
+        if len(bucket) >= _FLAGGED_SENTENCES_PER_PARAGRAPH:
+            continue
+        row: dict[str, Any] = {"text": text, "issue": issue}
+        fix = " ".join(str(finding.get("recommendation") or "").split())
+        if fix:
+            row["fix"] = fix
+        bucket.append(row)
+    return {pid: rows for pid, rows in by_paragraph.items() if rows}
+
+
+# ── Per-claim source-entailment targets (P2) ───────────────────────────────────
+# The enhanced scan's claim graph checks specific claims against their cited source and records a
+# verdict (verified / contradicted / paywalled / unresolved) + entailment score. We relay the
+# NON-verified ones to the writer so it can qualify/attribute/soften exactly those claims — the direct
+# attack on citation_grounding_risk. Gated: the claim graph itself only exists under DRAFTPROOF_CLAIM_GRAPH,
+# so this is empty (byte-identical) in a normal report. We join UPSTREAM from the raw graph
+# (authorship_evidence.claim_graph), NOT the display panel — the panel is a pinned, capped, truncated
+# render contract and drops the paragraph_id we need.
+_UNSUPPORTED_CLAIMS_PER_PARAGRAPH = 2
+_UNSUPPORTED_VERDICT_WHY = {
+    "contradicted": "a cited source contradicts this claim — soften or correct it, or attribute the dispute",
+    "paywalled": "the cited source could not be checked (paywalled) — do not assert it as verified",
+    "unresolved": "this claim could not be verified against a source — qualify it or attribute it",
+}
+
+
+def _unsupported_claims_enabled() -> bool:
+    """Kill switch for P2 (per-claim source-entailment targeting). Default ON; set
+    DRAFTPROOF_V6_UNSUPPORTED_CLAIMS=0 to stop relaying claim-graph verdicts to the writer."""
+    return os.environ.get("DRAFTPROOF_V6_UNSUPPORTED_CLAIMS", "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+
+
+def _raw_claim_graph(report: dict[str, Any]) -> dict[str, Any] | None:
+    authorship = report.get("authorship_evidence")
+    graph = authorship.get("claim_graph") if isinstance(authorship, dict) else None
+    return graph if isinstance(graph, dict) else None
+
+
+def _paragraph_unsupported_claims(report: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Group NON-verified claim-source checks by the paragraph the claim came from.
+
+    Reuses the display composer's ``_row_status`` so rewrite's notion of a verdict is identical to the
+    panel the user sees. Keeps only ``contradicted`` / ``paywalled`` / ``unresolved`` (a ``verified``
+    claim needs no action). Joins to the paragraph via the raw claim's ``source.paragraph_id`` and
+    passes the UNtruncated claim text so the writer edits the right sentence. Returns
+    {paragraph_id: [{claim, verdict, why, entailment_score}]}. Empty when the graph is absent."""
+    graph = _raw_claim_graph(report)
+    if not graph:
+        return {}
+    try:
+        from report.claim_graph_panel import _row_status  # verdict-mapping authority (keep in sync)
+    except ImportError:  # pragma: no cover
+        from poc.report.claim_graph_panel import _row_status
+
+    claims_by_id = {c.get("id"): c for c in (graph.get("claims") or []) if isinstance(c, dict) and c.get("id")}
+    by_paragraph: dict[str, list[dict[str, Any]]] = {}
+    seen: set[tuple[str, str]] = set()
+    for ev in (graph.get("evidence") or []):
+        if not isinstance(ev, dict):
+            continue
+        resolution = ev.get("detail", {}).get("resolution") if isinstance(ev.get("detail"), dict) else None
+        if not isinstance(resolution, dict):
+            continue
+        entailment = resolution.get("entailment") if isinstance(resolution.get("entailment"), dict) else {}
+        for cid in sorted(c for c in (ev.get("claim_ids") or []) if isinstance(c, str)):
+            claim = claims_by_id.get(cid)
+            if not isinstance(claim, dict):
+                continue
+            source = claim.get("source") if isinstance(claim.get("source"), dict) else {}
+            paragraph_id = str(source.get("paragraph_id") or "").strip()
+            claim_text = " ".join(str(claim.get("text") or "").split())
+            if not paragraph_id or not claim_text:
+                continue
+            verdict = entailment.get(cid) if isinstance(entailment.get(cid), dict) else None
+            status = _row_status(resolution, verdict)
+            if status not in _UNSUPPORTED_VERDICT_WHY:  # skip "verified" (and any unknown)
+                continue
+            if (paragraph_id, cid) in seen:
+                continue
+            seen.add((paragraph_id, cid))
+            bucket = by_paragraph.setdefault(paragraph_id, [])
+            if len(bucket) >= _UNSUPPORTED_CLAIMS_PER_PARAGRAPH:
+                continue
+            row: dict[str, Any] = {"claim": claim_text, "verdict": status, "why": _UNSUPPORTED_VERDICT_WHY[status]}
+            if verdict is not None:
+                try:
+                    row["entailment_score"] = round(float(verdict.get("entailment_score")), 4)
+                except (TypeError, ValueError):
+                    pass
+            bucket.append(row)
+    return {pid: rows for pid, rows in by_paragraph.items() if rows}
 
 
 @contextlib.contextmanager

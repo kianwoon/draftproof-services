@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import sys
 from collections import Counter
@@ -31,9 +32,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from poc.rewrite_v6.llm_config import cerebras_model_name, deterministic_mode, using_cerebras_direct, writer_model
 from poc.rewrite_v6.production import run_rewrite_pipeline_v6
 
-REPORT = (
-    "test_output/production_rewrite_ad62c7f1_20260529/"
-    "reports__7f9eada9-e81a-4e4c-be2b-0308c7bc8b61__report.json"
+# The scan-report fixture fed as detect_json. Overridable via env so the harness is not pinned to a
+# single (and now absent) artifact. Bake a fresh one with `python poc/_bake_fixture_report.py`.
+REPORT = os.environ.get(
+    "DRAFTPROOF_BASELINE_REPORT",
+    "test_output/_fixture_scan_report.json",
 )
 OUT = "test_output/_measure_baseline"
 

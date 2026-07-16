@@ -231,59 +231,9 @@ def _apply_residual_fix(
     )
 
 
-_SYSTEM = (
-    "You produce a SUGGESTED rewrite of a flagged paragraph for the author to review and edit. The "
-    "author sees your changes in a before/after diff, so adding new content to fix the problem is "
-    "expected and encouraged -- that is the mitigation. Your goal: lower AI-detection risk by making "
-    "the writing specific, concrete, and human -- in the author's PLAIN, everyday voice, NOT an "
-    "elevated, over-polished, ornamented register (avoid sweeping moral generalisations, clichéd metaphors, and a "
-    "smooth balanced cadence) -- while staying in the same subject and tone as the source. Where the "
-    "paragraph is generic or lacks a concrete anchor, ADD grounding AS THE "
-    "AUTHOR WOULD -- you are the author's proxy. CHOOSE THE GROUNDING MODE THAT FITS HOW THE CLAIM "
-    "IS GROUNDED; do NOT default to first-person. Read each claim's basis, then ground it the fitting way:\n"
-    "- The author's OWN first-hand involvement (the draft signals they did / saw / built / taught it): "
-    "first-person observation -- 'In my own <setting>, I have repeatedly seen <the concrete particular> "
-    "...'. First-person is ONE strong mode; use it where it genuinely fits. But NEVER attach a "
-    "first-person frame ('in my work', 'a client of mine', 'I tracked', 'my own survey') to a claim the "
-    "author drew from headlines, reports, or common knowledge -- that invents experience they never had.\n"
-    "- A figure or claim from HEADLINES / reports / COMMON KNOWLEDGE: attribute and qualify the source "
-    "('widely reported that ...', 'the cited 3.3% figure suggests ...') and make the author's OWN "
-    "reasoning or analysis explicit -- do NOT restate it as personal experience.\n"
-    "- A general UNSOURCED assertion: ground it in a concrete mechanism, a condition (when / after / if), "
-    "a decision someone faces, or the consequence that follows.\n"
-    "- A prediction or opinion: surface the reasoning behind it, not a fabricated anecdote.\n"
-    "Put a CONCRETE particular INSIDE whichever mode you choose, drawn from the AUTHOR'S OWN subject and "
-    "context, NEVER a baked-in topic; a bare frame with no concrete particular is weak. The illustrative "
-    "specifics (hedged figures like 'about a third', example scenarios, attributed sources) show the shape "
-    "of a real anchor; flag EACH in author_review_items for the author to confirm or replace, and do NOT "
-    "present a SPECIFIC named real institution, real person, or an exact statistic as a verified fact. "
-    "Preserve the author's actual ARGUMENT and meaning -- do NOT flip a balanced 'not only X "
-    "but also Y' into 'Y over X', and do not drop the author's existing ideas. List what you added "
-    "in author_review_items so the author can confirm or replace it. "
-    'Return JSON only: {"rewrite": "...", "author_review_items": [{"added": "...", "why": "..."}]}.'
-)
-
-
-_DIVERSIFIED_SYSTEM = (
-    "You produce a SUGGESTED rewrite of a flagged paragraph for the author to review and edit. The "
-    "author sees your changes in a before/after diff. Your goal is to lower AI-detection risk by "
-    "making the writing specific, concrete, author-owned, and plain-spoken while preserving the "
-    "source argument. Ground each broad claim in the shape that fits ITS BASIS -- match the grounding to "
-    "how the author actually knows the claim. A claim the draft signals as FIRST-HAND (the author saw, "
-    "tried, taught, or managed it) may use first-person observation. A claim drawn from REPORTS, "
-    "HEADLINES, or COMMON KNOWLEDGE must instead ATTRIBUTE and qualify the source, make the author's own "
-    "reasoning explicit, or use a condition / consequence / actor frame -- NEVER invent first-hand "
-    "experience the author never had. Route diversity means changing the shape of that grounding beat -- "
-    "observed process, local constraint, decision moment, source use, actor interaction, condition "
-    "trigger, or risk consequence -- not replacing it with detached examples. First-person observation "
-    "is ONE mode, valid only when the draft genuinely signals first-hand involvement; for reported or "
-    "formal prose, use local actor / source / condition / risk framing without forcing first person. "
-    "Figures or scale details are optional support inside an author-proxy beat; they must not "
-    "be the paragraph spine. List added scenarios, observations, bridge wording, or figures in "
-    "author_review_items. Do not present a specific named real institution, real person, citation, "
-    "external fact, or exact statistic as verified unless it already appears in the source. "
-    'Return JSON only: {"rewrite": "...", "author_review_items": [{"added": "...", "why": "..."}]}.'
-)
+# System prompts live in direct_prompts.py (extracted to keep this file under the 1500-LOC limit).
+# Aliased to the historic private names so every existing reference keeps working unchanged.
+from .direct_prompts import DIVERSIFIED_SYSTEM as _DIVERSIFIED_SYSTEM, SYSTEM as _SYSTEM, apply_scan_target_instructions
 
 
 def _prompt(
@@ -446,6 +396,10 @@ def _prompt(
             "what the author actually wrote, make the existing reasoning explicit, and leave the "
             "gap honestly thin for the author to fill with their own evidence."
         )
+    # Per-sentence grounding/reasoning targets (P1) + per-claim source-entailment targets (P2): point
+    # the writer at the EXACT sentences/claims the enhanced scan flagged. Logic lives in direct_prompts
+    # to keep this file lean; fabrication-safe (qualify/attribute, never invent).
+    apply_scan_target_instructions(payload, diagnosis)
     return "Return JSON only.\n" + json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -881,6 +835,12 @@ def run_direct_rewrite_all(
         full_doc_rewritten,
         pass_trace=list(full_doc_rewritten.pass_trace) + selector_trace,
     )
+    # P3 finding-aware verification (telemetry): re-scan the final draft and record how many of the
+    # grounding/reasoning issues the scan flagged are now GONE -- a noise-robust measure of whether the
+    # targeted fixes landed (final_risk alone is too high-variance). Never re-loops or mutates text; on
+    # any failure the document is unchanged. Logic lives in finding_verification (scan fn injected).
+    from .finding_verification import apply_finding_verification
+    full_doc_rewritten = apply_finding_verification(full_doc_rewritten, scan, _document_scan_report)
     # NOTE: bracket-grounding runs as the TRUE last stage in production.py on the final text
     # (after highlight_topk_repair + markdown strip), so it is NOT applied here in the mid-pipeline.
     return _apply_showcase(full_doc_rewritten, gateway, cancellation_check=cancellation_check)
