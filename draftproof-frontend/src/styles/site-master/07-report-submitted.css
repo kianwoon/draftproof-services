@@ -1,10 +1,10 @@
 /* Submitted content signal map */
 .submitted-content-review {
   margin: 0 0 2.25rem;
-  border: 1px solid #d8e1ea;
+  border: 1px solid var(--line);
   border-radius: 16px;
-  background: rgba(255, 255, 255, .94);
-  box-shadow: 0 16px 34px rgba(15, 23, 42, .07);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
   overflow: clip; /* clip = visual clipping only, does NOT trap sticky children */
 }
 
@@ -14,24 +14,26 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 1.1rem 1.15rem;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--line);
 }
 
 .submitted-content-kicker,
 .submitted-panel-kicker {
   display: block;
-  color: #64748b;
+  color: var(--muted);
   font-size: .72rem;
-  font-weight: 850;
-  letter-spacing: .08em;
+  font-weight: 600;
+  letter-spacing: .06em;
   text-transform: uppercase;
 }
 
 .submitted-content-head h2 {
   margin: .25rem 0 0;
   color: var(--navy-950);
-  font-size: 1.25rem;
-  font-weight: 850;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -.01em;
 }
 
 .submitted-content-count {
@@ -1835,10 +1837,10 @@
 }
 
 .paragraph-severity-caption {
-  color: #64748b;
+  color: var(--muted);
   font-size: .72rem;
-  font-weight: 700;
-  letter-spacing: .02em;
+  font-weight: 600;
+  letter-spacing: .05em;
   text-transform: uppercase;
 }
 
@@ -1846,10 +1848,10 @@
   display: flex;
   width: 100%;
   height: 16px;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
-  background: #f1f5f9;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .06);
+  background: var(--surface-soft);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .paragraph-severity-seg {
@@ -1888,7 +1890,7 @@ button.paragraph-severity-seg {
   display: flex;
   align-items: center;
   gap: .5rem;
-  color: #94a3b8;
+  color: var(--muted);
   font-size: .68rem;
   font-weight: 600;
 }
@@ -1896,8 +1898,8 @@ button.paragraph-severity-seg {
 .paragraph-severity-gradient {
   flex: 1 1 auto;
   height: 6px;
-  border-radius: 3px;
-  background: linear-gradient(90deg, #e2e8f0 0%, #f59e0b 55%, #dc2626 100%);
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--sev-low) 0%, var(--sev-med) 50%, var(--sev-crit) 100%);
 }
 
 /* ── Signal highlights: tabs ─────────────────────────────────────── */
@@ -1990,31 +1992,34 @@ button.paragraph-severity-seg {
    clearly visible on every document, no heavy background wash. Severity graduates by
    red shade + weight (80-89 < 90-98 < >=99). A thin red underline rides along as a
    non-colour cue so the flag is not colour-only (accessibility). */
+/* Softened 2026-07-16 (modern report pass): the red-FONT flag (owner decision
+   2026-07-04) is kept as the visible cue but at lighter weight + the calmer brand
+   red (--sev-crit) so a heavily-flagged document no longer reads as a wall of bold
+   red. Severity still graduates by weight + underline. A fuller de-bold (tint-only,
+   leaning on the underline layer) is pending owner sign-off. */
 .submitted-sentence-highlight.is-severity-medium,
 .submitted-sentence-highlight.is-severity-high,
 .submitted-sentence-highlight.is-severity-critical {
   background: transparent;
-  color: #dc2626;
-  font-weight: 600;
-  border-bottom: 1px solid color-mix(in srgb, #dc2626 45%, transparent);
+  color: var(--sev-crit);
+  font-weight: 500;
+  border-bottom: 1px solid color-mix(in srgb, var(--sev-crit) 40%, transparent);
 }
 .submitted-sentence-highlight.is-severity-high {
-  color: #c81e1e;
-  border-bottom-color: color-mix(in srgb, #c81e1e 55%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--sev-crit) 52%, transparent);
 }
 .submitted-sentence-highlight.is-severity-critical {
-  color: #991b1b;
-  font-weight: 700;
-  border-bottom: 1.5px solid #991b1b;
+  font-weight: 600;
+  border-bottom: 1.5px solid var(--sev-crit);
 }
 /* VERDICT-GATED review candidate (2026-07-09): a >=0.999 sentence inside a document whose
    calibrated verdict reads clean. Muted amber + DOTTED underline (a tentative, non-red cue) —
    surfaced for review, deliberately NOT a red AI verdict. See report.py::_gate_heatmap_bands. */
 .submitted-sentence-highlight.is-severity-review {
   background: transparent;
-  color: #b07d1a;
+  color: var(--sev-med);
   font-weight: 500;
-  border-bottom: 1px dotted color-mix(in srgb, #c99a3b 65%, transparent);
+  border-bottom: 1px dotted color-mix(in srgb, var(--sev-med) 60%, transparent);
 }
 
 /* ── Per-sentence ISSUE-TAG underline layer (2026-07-16, owner-approved) ──────
