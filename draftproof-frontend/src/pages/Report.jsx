@@ -864,7 +864,7 @@ export default function Report() {
   const normalizedReport = { ...report, issues };
   const submittedContent = buildSubmittedContentModel(normalizedReport);
   // Per-paragraph severity heatmap bar (finding-tier-weighted density, proportional width).
-  const paragraphSeverityBar = buildParagraphSeverityBar(submittedContent.paragraphs);
+  const paragraphSeverityBar = buildParagraphSeverityBar(submittedContent.paragraphs, submittedContent.sentenceIssueTags);
   const selectedParagraph = (
     submittedContent.paragraphs.find((paragraph) => paragraph.id === selectedParagraphId) ||
     submittedContent.paragraphs.find((paragraph) => paragraph.signals.length > 0) ||

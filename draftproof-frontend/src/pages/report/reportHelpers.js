@@ -1393,11 +1393,17 @@ const PARAGRAPH_SEVERITY_TIER_RANK = { critical: 4, high: 3, medium: 2, low: 1, 
 // Severity = tier-weighted finding density per paragraph (weight / length), normalised across the doc.
 // Width is proportional to each paragraph's share of the document length. Pure derivation from existing
 // scan data (findings tier via signal.tier) -- no new backend computation, works on existing reports.
-function buildParagraphSeverityBar(paragraphs) {
+function buildParagraphSeverityBar(paragraphs, sentenceIssueTags = null) {
   if (!Array.isArray(paragraphs) || paragraphs.length === 0) return null;
   // Per-SENTENCE segments (not per-paragraph) so the bar shows graduated color across the whole
   // document — matching the "Read full document" heatmap. Each sentence = one colored segment,
-  // width proportional to its text length, color from its DeBERTa score (green/amber/orange/red).
+  // width proportional to its text length. Colour reflects ALL findings, not just AI:
+  //   red = reads as AI (high DeBERTa band / 'ai' issue tag),
+  //   amber = a non-AI finding (grounding / reasoning / review candidate),
+  //   green = clean. This is the same information the underlines carry, so the bar
+  //   agrees with the document instead of being AI-only. Issue tags come from
+  //   submittedContent.sentenceIssueTags (poc/report/sentence_issue_tags.py).
+  const tagsBySid = new Map(Object.entries((sentenceIssueTags && sentenceIssueTags.sentences) || {}));
   const rows = [];
   paragraphs.forEach((paragraph) => {
     (paragraph.segments || []).forEach((segment) => {
@@ -1407,8 +1413,12 @@ function buildParagraphSeverityBar(paragraphs) {
       // here (falls back to the gated topTier color). Single source: the band decides, not the raw
       // score, which stays 100 on muted sentences. See report.py::_gate_heatmap_bands.
       const debBand = deberta ? String(deberta.title || '').replace('deberta_', '') : '';
+      const sid = segment.sentence_id || segment.id;
+      const tags = tagsBySid.get(String(sid)) || [];
+      const hasAiTag = tags.some((tg) => tg && tg.type === 'ai');
+      const hasOtherTag = tags.some((tg) => tg && tg.type !== 'ai');
       rows.push({
-        id: segment.sentence_id || segment.id || rows.length,
+        id: sid || rows.length,
         paragraphId: paragraph.id,
         length: Math.max(1, (segment.text || '').length),
         findingCount: (segment.signals || []).length,
@@ -1417,6 +1427,10 @@ function buildParagraphSeverityBar(paragraphs) {
         // (is-severity-review), NOT fall through to the 'low' tier green. Without this flag the bar
         // disagreed with the "Read full document" heatmap: amber sentence -> green bar segment.
         reviewBand: debBand === 'review',
+        // Non-AI findings (grounding amber / reasoning purple underlines) → amber on the severity
+        // bar so a grounding-only sentence reads as a finding, not clean green.
+        hasAiTag,
+        hasOtherTag,
         topTier: deberta ? (deberta.tier || '') : '',
       });
     });
@@ -1430,6 +1444,8 @@ function buildParagraphSeverityBar(paragraphs) {
     topTier: row.topTier,
     maxDebertaScore: row.maxDebertaScore,
     reviewBand: row.reviewBand,
+    hasAiTag: row.hasAiTag,
+    hasOtherTag: row.hasOtherTag,
     widthPct: (row.length / totalLength) * 100,
     intensity: 1,
   }));

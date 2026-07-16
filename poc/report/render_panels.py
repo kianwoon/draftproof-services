@@ -1255,10 +1255,23 @@ def render_signal_highlights_intro(data: dict) -> str:
         return ""
     all_segs = [s for _, segs in groups for s in segs]
     total_len = sum(max(1, len(str(s.get("text") or ""))) for s in all_segs) or 1
+    # Colour reflects ALL findings (mirrors the web bar + "Read full document"): AI
+    # (verdict-gated high band) → red; a non-AI issue tag (grounding / reasoning) →
+    # amber; clean → green. Without the amber branch a grounding-only sentence read as
+    # clean green and the density bar disagreed with the underlines below.
+    tag_map = _issue_tags_by_sid(data)
+    amber = _ISSUE_COLOR_HEX.get("amber", "#f59e0b")
     blocks = []
     for s in all_segs:
         width = max(0.4, len(str(s.get("text") or "")) / total_len * 100)
-        color = _gated_color_of(s) or _DENSITY_CLEAN_COLOR
+        ai_color = _gated_color_of(s)
+        if ai_color:
+            color = ai_color
+        elif any((tg.get("type") != "ai")
+                 for tg in (tag_map.get(str(s.get("sentence_id") or "")) or [])):
+            color = amber
+        else:
+            color = _DENSITY_CLEAN_COLOR
         blocks.append(
             f'<span style="display:inline-block;height:10px;width:{width:.2f}%;'
             f'background:{color};border-right:1px solid #fff"></span>'

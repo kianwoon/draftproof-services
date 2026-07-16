@@ -23,17 +23,20 @@ export default function ParagraphSeverityBar({ bar, selectedId = null, onSelect 
         aria-label={t('report.severityBar.ariaLabel', { count: bar.length })}
       >
         {bar.map((segment) => {
-          const clean = segment.findingCount === 0;
-          // A verdict-gated 'review' candidate renders the SAME muted amber as the full-document
-          // underline (.is-severity-review), so the bar agrees with "Read full document". It must
-          // win BEFORE the tier fallback, which would otherwise paint it 'low'-tier green.
-          const REVIEW_COLOR = '#c99a3b';
-          // Prefer DeBERTa severity color (matches the full-document heatmap scale) when a
-          // DeBERTa score is present; fall back to the tier color for non-DeBERTa reports.
+          // Colour reflects ALL findings so the bar agrees with "Read full document":
+          //   AI (high DeBERTa band or an 'ai' issue tag) → red; a non-AI finding (grounding /
+          //   reasoning issue tag) or a muted 'review' candidate → amber; clean → green.
+          const AI_RED = '#dc2626';
+          const OTHER_AMBER = '#f59e0b';   // grounding / reasoning finding (issue-tag amber)
+          const REVIEW_COLOR = '#c99a3b';  // muted 'review' candidate (green-doc saturation)
           const debertaColor = debertaSeverityColor(segment.maxDebertaScore || 0);
-          const tierColor = segment.reviewBand
-            ? REVIEW_COLOR
-            : (debertaColor || SEVERITY_CONFIG[segment.topTier]?.color || '#94a3b8');
+          const isAi = Boolean(debertaColor) || segment.hasAiTag;
+          const clean = !isAi && !segment.reviewBand && !segment.hasOtherTag && segment.findingCount === 0;
+          let tierColor;
+          if (isAi) tierColor = debertaColor || AI_RED;
+          else if (segment.reviewBand) tierColor = REVIEW_COLOR;
+          else if (segment.hasOtherTag) tierColor = OTHER_AMBER;
+          else tierColor = SEVERITY_CONFIG[segment.topTier]?.color || '#94a3b8';
           // Density -> opacity: faint at low concentration, solid at the doc's densest paragraph.
           const opacity = clean ? 1 : 0.35 + 0.65 * Math.min(1, Math.max(0, segment.intensity));
           const tierLabel = segment.topTier
@@ -48,7 +51,7 @@ export default function ParagraphSeverityBar({ bar, selectedId = null, onSelect 
               })
             : t('report.severityBar.tooltip', {
                 index: segment.index,
-                count: segment.findingCount,
+                count: Math.max(segment.findingCount, 1),
                 tier: tierLabel,
               });
           const className = `paragraph-severity-seg${(selectedId === segment.id || selectedId === segment.paragraphId) ? ' is-selected' : ''}`;
