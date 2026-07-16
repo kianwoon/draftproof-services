@@ -2005,22 +2005,23 @@ button.paragraph-severity-seg {
   background: transparent;
   color: inherit;
   font-weight: inherit;
-  border-bottom: 2px solid color-mix(in srgb, var(--sev-crit) 52%, transparent);
-}
-.submitted-sentence-highlight.is-severity-high {
-  border-bottom-color: color-mix(in srgb, var(--sev-crit) 62%, transparent);
+  /* The AI flag is a VIVID red underline — same #dc2626 as the issue-tag key
+     (.submitted-issue-swatch.is-red / ISSUE_COLOR_HEX / the PDF), NOT the muted
+     brand --sev-crit, so red/amber/purple are clearly tellable apart while the
+     text itself stays de-bolded and readable. */
+  border-bottom: 2.5px solid #dc2626;
 }
 .submitted-sentence-highlight.is-severity-critical {
-  border-bottom: 2px solid var(--sev-crit);
+  border-bottom-width: 2.5px;
 }
 /* VERDICT-GATED review candidate (2026-07-09): a >=0.999 sentence inside a document whose
-   calibrated verdict reads clean. Muted amber + DOTTED underline (a tentative, non-red cue) —
+   calibrated verdict reads clean. Amber + DOTTED underline (a tentative, non-red cue) —
    surfaced for review, deliberately NOT a red AI verdict. See report.py::_gate_heatmap_bands. */
 .submitted-sentence-highlight.is-severity-review {
   background: transparent;
   color: inherit;
   font-weight: inherit;
-  border-bottom: 1.5px dotted color-mix(in srgb, var(--sev-med) 70%, transparent);
+  border-bottom: 2px dotted #f59e0b;
 }
 
 /* ── Per-sentence ISSUE-TAG underline layer (2026-07-16, owner-approved) ──────
