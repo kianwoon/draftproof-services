@@ -130,13 +130,16 @@ export default function SignalHighlights({
                 // beneath the sentence (layered background gradients, so 2+ issues each
                 // show their own colored line — nothing hidden) and attach a popover
                 // listing every issue on this sentence with its one-line fix.
+                // Stack the extra underlines at 2.5px thickness / 4px steps so they
+                // match the AI red border (2.5px) and each colour reads as a clearly
+                // separated line — double/triple-finding sentences stay legible.
                 const markStyle = {
                   backgroundImage: extraTags
                     .map((tg) => `linear-gradient(${ISSUE_COLOR_HEX[tg.color]}, ${ISSUE_COLOR_HEX[tg.color]})`).join(', '),
-                  backgroundSize: extraTags.map(() => '100% 2px').join(', '),
-                  backgroundPosition: extraTags.map((_, idx) => `0 calc(100% - ${idx * 3}px)`).join(', '),
+                  backgroundSize: extraTags.map(() => '100% 2.5px').join(', '),
+                  backgroundPosition: extraTags.map((_, idx) => `0 calc(100% - ${idx * 4}px)`).join(', '),
                   backgroundRepeat: 'no-repeat',
-                  paddingBottom: `${extraTags.length * 3 + 2}px`,
+                  paddingBottom: `${extraTags.length * 4 + 3}px`,
                 };
                 const titleText = tags.map((tg) => `${issueLabel(tg.label_code)} — ${issueFix(tg)}`).join('\n');
                 return (

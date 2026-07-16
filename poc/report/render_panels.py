@@ -1312,10 +1312,14 @@ def render_highlighted_document(data: dict, original_text: str) -> str:
                     if c:
                         colors.append(c)
                 if colors:
-                    style = f"border-bottom:2px solid {colors[0]};padding-bottom:2px;"
+                    # 2.5px lines / 4px steps, matching the web stack (SignalHighlights.jsx)
+                    # so double/triple-finding sentences read as clearly separated colours;
+                    # padding-bottom reserves room so stacked lines never hit the next line.
+                    pad = (len(colors) - 1) * 4 + 3
+                    style = f"border-bottom:2.5px solid {colors[0]};padding-bottom:{pad}px;"
                     if len(colors) > 1:  # stack the rest as offset underlines
                         shadow = ",".join(
-                            f"0 {3 * i}px 0 0 {c}" for i, c in enumerate(colors[1:], 1)
+                            f"0 {4 * i}px 0 0 {c}" for i, c in enumerate(colors[1:], 1)
                         )
                         style += f"box-shadow:{shadow};"
                     parts.append(f'<span style="{style}">{text}</span>')
