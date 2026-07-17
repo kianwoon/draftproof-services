@@ -8,6 +8,7 @@ import Footer from './components/Footer';
 import FeedbackWidget from './components/FeedbackWidget';
 import Seo from './components/Seo';
 import ProtectedRoute from './components/ProtectedRoute';
+import ChunkErrorBoundary from './components/ChunkErrorBoundary';
 import Landing from './pages/Landing';
 import SignIn from './pages/SignIn';
 import AuthCallback from './pages/AuthCallback';
@@ -95,7 +96,7 @@ function ScrollToRouteTop() {
 
 export default function App() {
   const { pathname } = useLocation();
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const hideFooter = pathname === '/' || pathname === '/zh';
 
   useEffect(() => {
@@ -115,6 +116,16 @@ export default function App() {
         <AnnouncementBanner />
         <ScrollToRouteTop />
         <main className="app-main">
+          <ChunkErrorBoundary
+            fallback={(
+              <div className="app-route-loading" role="alert">
+                <p>{t('common.loadError', 'Something went wrong loading this page.')}</p>
+                <button type="button" onClick={() => window.location.reload()}>
+                  {t('common.reload', 'Reload')}
+                </button>
+              </div>
+            )}
+          >
           <Suspense fallback={<div className="app-route-loading" aria-busy="true" />}>
           <Routes>
             <Route path="/" element={<HomeRedirect />} />
@@ -172,6 +183,7 @@ export default function App() {
             <Route path="*" element={<NotFound />} />
           </Routes>
           </Suspense>
+          </ChunkErrorBoundary>
         </main>
         {!hideFooter && <Footer />}
         <FeedbackWidget />

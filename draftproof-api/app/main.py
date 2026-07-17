@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 from app.routes import documents, scans, reports, rewrites, auth, payments, translate, feedback, keys, ext
 from app.models.db import init_db, async_session
 from app.config import COOKIE_SECURE, SECRET_KEY, FRONTEND_URL
@@ -80,6 +81,24 @@ def _friendly_message(status_code: int) -> str:
     }.get(status_code, "An unexpected error occurred.")
 
 
+# SSE progress streams end in "/events" and must never be gzip-buffered (see below).
+_SSE_PATH_SUFFIX = "/events"
+
+
+class ConditionalGZipMiddleware:
+    """Gzip every HTTP response except the long-lived SSE "/events" streams."""
+
+    def __init__(self, app: ASGIApp, minimum_size: int = 1024) -> None:
+        self._plain = app
+        self._gzip = GZipMiddleware(app, minimum_size=minimum_size)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and not scope["path"].endswith(_SSE_PATH_SUFFIX):
+            await self._gzip(scope, receive, send)
+        else:
+            await self._plain(scope, receive, send)
+
+
 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 # Support multiple origins (e.g. draftproof.app + www.draftproof.app)
 allowed_origins = [o.strip() for o in frontend_url.split(",") if o.strip()]
@@ -103,7 +122,12 @@ app.add_middleware(
 # Compress large responses at the origin. The report payload is the big one (~450 KB JSON
 # after trimming); gzip takes it to ~50-70 KB on the origin->edge hop and guarantees
 # compression even if the CDN doesn't. minimum_size skips tiny responses (health, errors).
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+#
+# BUT: the SSE progress streams (/api/scans/{id}/events, /api/rewrites/{id}/events) emit
+# small text/event-stream chunks once per second. Starlette's GZipMiddleware buffers the
+# gzip stream with no per-chunk flush, so wrapping them would batch/delay live progress.
+# So compress everything EXCEPT the SSE "/events" routes.
+app.add_middleware(ConditionalGZipMiddleware, minimum_size=1024)
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
