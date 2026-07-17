@@ -14,7 +14,7 @@ This file is written as an AI-agent skill. Load it before changing site ticker a
 - Do not hardcode production URLs, message copy, dates, or IDs inside script logic.
 - Preserve the existing announcement data contract unless there is a clear product reason to change it.
 - Validate input before writing files. Empty text is only allowed when intentionally clearing the ticker.
-- Keep `NewsTicker.jsx` unchanged unless the announcement object shape or display contract must change.
+- Keep `AnnouncementBanner.jsx` unchanged unless the announcement object shape or display contract must change.
 - Preserve unrelated worktree changes. This repo may already be dirty.
 
 ## Current Ticker Architecture
@@ -28,8 +28,11 @@ draftproof-frontend/src/announcements.js
 Consumer:
 
 ```text
-draftproof-frontend/src/components/NewsTicker.jsx
+draftproof-frontend/src/components/AnnouncementBanner.jsx
 ```
+
+The band is a single static feature under the header — only the FIRST array
+item renders (not a scroller).
 
 Localized ticker labels:
 
@@ -43,13 +46,17 @@ Announcement object shape:
 ```js
 {
   id: 'short-stable-slug',
-  date: 'May 2026',       // optional
-  text: 'Ticker message',
-  url: 'https://...'      // optional
+  badge: 'Turnitin',          // optional — source label in the chip
+  date: 'May 2026',           // optional — date shown after the badge
+  headline: 'Bold lead-in',   // optional — shown before the supporting line
+  text: 'Supporting line',    // required
+  emphasis: 'word',           // optional — one word inside text to italicise
+  pills: ['Topic A', 'Topic B'], // optional — row of topic chips
+  url: 'https://...'          // optional — shows the "Read update" link
 }
 ```
 
-An empty `announcements` array hides the ticker.
+An empty `announcements` array hides the band.
 
 ## Intended Local Script Contract
 
@@ -63,24 +70,33 @@ Expected npm helper:
 
 ```bash
 cd draftproof-frontend
-npm run update:ticker -- --text "Message copy" --date "Jun 2026" --url "https://example.com"
+npm run update:ticker -- \
+  --headline "Lead-in" --text "Supporting line" \
+  --badge "Turnitin" --date "Jun 2026" --emphasis "before" \
+  --pill "Topic A" --pill "Topic B" \
+  --url "https://example.com"
 ```
 
 Expected script behavior:
 
-- `--text "..."` replaces the ticker with one active announcement.
-- `--date "..."` optionally adds the date chip.
-- `--url "..."` optionally makes the announcement clickable and shows the existing localized read-more cue.
-- `--id "..."` optionally sets a stable custom ID.
+- `--text "..."` sets the supporting line (required unless `--clear`).
+- `--headline "..."` optionally adds the bold lead-in before the text.
+- `--badge "..."` optionally sets the source label in the chip.
+- `--date "..."` optionally adds the date chip (shown after the badge).
+- `--emphasis "..."` optionally italicises one word; must appear in `--text`.
+- `--pill "..."` optionally adds a topic pill; repeat the flag for several.
+- `--url "..."` optionally shows the localized "Read update" link.
+- `--id "..."` optionally sets a stable custom ID (else auto-slugged from badge/date/text).
 - `--dry-run` prints the generated `announcements.js` content without writing.
-- `--clear` writes an empty announcement array to hide the ticker.
+- `--clear` writes an empty announcement array to hide the band.
 
 ## Validation Rules
 
 - Reject empty `--text` unless `--clear` is used.
-- Reject `--clear` combined with `--text`, `--date`, `--url`, or `--id`.
+- Reject `--clear` combined with any content flag (`--text`, `--headline`, `--badge`, `--date`, `--emphasis`, `--pill`, `--url`, `--id`).
+- Reject `--emphasis` when the word does not appear in `--text` (the band would ignore it).
 - Accept only `http:` and `https:` URLs.
-- Generate IDs from provided text/date only when `--id` is absent.
+- Generate IDs from provided badge/date/text only when `--id` is absent.
 - Escape generated JS values with structured serialization such as `JSON.stringify`.
 - Write deterministic output so diffs are reviewable.
 
