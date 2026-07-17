@@ -26,7 +26,7 @@ _AEL = {
 
 def test_renders_level_and_lens_rows():
     html = render_authorship_evidence_levels({"ai_risk_badge": {"authorship_evidence_levels": _AEL}})
-    assert "2/5" in html
+    assert "Level <strong>2 of 5</strong>" in html
     assert "AI-pattern signal" in html
     assert "Grounding" in html
     assert "Source traceability" in html

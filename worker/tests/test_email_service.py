@@ -36,7 +36,7 @@ def test_scan_email_includes_evidence_level_line():
         pdf_bytes=b"pdf",
         settings=_settings(),
     )
-    assert "Authorship evidence level: 2/5" in payload["text"]
+    assert "current visible evidence supports Level 2 of 5" in payload["text"]
     assert "moderate" in payload["text"]
 
 

@@ -288,7 +288,6 @@ function aelAnchorText(t, code, params, fallback, keyspace) {
 export function EvidenceLevelPanel({ t, ael }) {
   if (!ael || typeof ael !== 'object' || !ael.lenses) return null;
   const level = ael.level;
-  const maxLevel = ael.max_level_assessable != null ? ael.max_level_assessable : 2;
   return (
     <div className="merged-lens merged-ael">
       <p className="merged-lens-head">
@@ -296,7 +295,7 @@ export function EvidenceLevelPanel({ t, ael }) {
         <span className="merged-beta-chip">{t('report.evidenceLevels.betaChip')}</span>
       </p>
       <p className="merged-verdict-lead">
-        {t('report.evidenceLevels.levelLine', { level: String(level), max: String(maxLevel) })}
+        {t('report.evidenceLevels.levelLine', { level: String(level) })}
       </p>
       <div className="merged-risk-axes merged-ael-axes">
         {AEL_LENSES.map((lensId) => {

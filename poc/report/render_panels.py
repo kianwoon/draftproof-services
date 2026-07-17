@@ -508,7 +508,6 @@ def render_authorship_evidence_levels(report_data: dict) -> str:
         return ""
 
     level = ael.get("level")
-    max_level = ael.get("max_level_assessable", 2)
     lenses = ael.get("lenses") or {}
 
     rows = []
@@ -559,11 +558,10 @@ def render_authorship_evidence_levels(report_data: dict) -> str:
         '<div class="authorship-evidence-levels">',
         '<p class="dp-callout-title">Authorship evidence level '
         '<span class="dp-statchip dp-statchip--info">Beta · advisory</span></p>',
-        f'<p class="dp-hero-sub">Evidence level <strong>{escape(str(level))}/5</strong> '
-        f'(assessable in this version: 0–{escape(str(max_level))}). An evidentiary read of '
-        'what the existing signals can support — it does not change the AI-likelihood score '
-        'and levels 3–5 (context, external corroboration, process provenance) are not '
-        'assessable yet.</p>',
+        '<p class="dp-hero-sub">Text analysis alone cannot determine authorship. '
+        f'Current visible evidence supports Level <strong>{escape(str(level))} of 5</strong>. '
+        'Additional drafts, sources, revision history and explanation are required for a '
+        'stronger authorship assessment.</p>',
         '<table class="dp-ael-table"><tbody>',
         "".join(rows),
         "</tbody></table>",

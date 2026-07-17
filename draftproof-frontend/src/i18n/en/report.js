@@ -811,7 +811,7 @@ export const report = {
   "evidenceLevels": {
     "head": "Authorship evidence level",
     "betaChip": "Beta · advisory",
-    "levelLine": "Evidence level {{level}}/5 (assessable in this version: 0–{{max}}). An evidentiary read of what the existing signals support — it does not change the AI-likelihood score, and levels 3–5 (context, external corroboration, process provenance) are not assessable yet.",
+    "levelLine": "Text analysis alone cannot determine authorship. Current visible evidence supports Level {{level}} of 5. Additional drafts, sources, revision history and explanation are required for a stronger authorship assessment.",
     "lenses": {
       "ai_pattern": "AI-pattern signal",
       "grounding": "Grounding",

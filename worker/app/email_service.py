@@ -151,12 +151,17 @@ def _evidence_level_line(ael: dict | None) -> str | None:
         if not isinstance(ael, dict) or ael.get("level") is None:
             return None
         level = ael.get("level")
-        max_level = ael.get("max_level_assessable", 2)
         conf = _EVIDENCE_CONF_LABELS.get(str(ael.get("assessment_confidence") or "").lower())
-        line = f"Authorship evidence level: {level}/5 (assessable this version: 0-{max_level})"
+        line = (
+            "Authorship evidence level: text analysis alone cannot determine authorship; "
+            f"current visible evidence supports Level {level} of 5"
+        )
         if conf:
             line += f" — assessment confidence {conf}"
-        line += ". Advisory read of existing signals; does not change the AI-likelihood score."
+        line += (
+            ". Additional drafts, sources, revision history and explanation are required "
+            "for a stronger authorship assessment."
+        )
         return line
     except Exception:
         return None
