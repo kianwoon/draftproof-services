@@ -26,15 +26,7 @@ export const announcements = [
     id: "turnitin-integrity-insights-2026",
     badge: "Turnitin",
     date: "Jul 2026",
-    headline: "Turnitin’s latest Learning Integrity Insights Report",
-    text: "finds students lean on AI most while drafting, and educators — now leading AI policy — want visibility and control over how it’s used. DraftProof surfaces those same authorship and AI-use signals before you submit.",
-    emphasis: "drafting",
-    pills: [
-      "Drafting-stage AI use",
-      "Educator-led AI policy",
-      "Authorship visibility",
-      "Transparency signals",
-    ],
-    url: "https://www.turnitin.com/press/us-higher-education-students-outsourcing-writing-to-ai-at-twice-the-rate-of-uk-australian-peers",
+    text: "Turnitin today released its latest Learning Integrity Insights Report revealing a gap in how students use AI for writing and a clear shift toward educators taking ownership of how AI is used in their classrooms and lecture halls.",
+    url: "https://www.turnitin.com/media-center/",
   },
 ];
