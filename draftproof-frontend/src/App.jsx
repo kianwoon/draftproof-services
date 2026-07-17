@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -11,10 +11,6 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Landing from './pages/Landing';
 import SignIn from './pages/SignIn';
 import AuthCallback from './pages/AuthCallback';
-import Scan from './pages/Scan';
-import Report from './pages/Report';
-import Rewrite from './pages/Rewrite';
-import Reports from './pages/Reports';
 import Pricing from './pages/Pricing';
 import FAQ from './pages/FAQ';
 import Why from './pages/Why';
@@ -29,10 +25,18 @@ import Security from './pages/Security';
 import EssayChecker from './pages/EssayChecker';
 import SeoLandingPage from './pages/SeoLandingPage';
 import NotFound from './pages/NotFound';
-import BuyTokens from './pages/BuyTokens';
-import PurchaseHistory from './pages/PurchaseHistory';
-import ApiKeys from './pages/ApiKeys';
 import { getLocaleFromPathname, isLocalizablePublicPath } from './localeRouting';
+
+// Private, authenticated app pages — never prerendered for SEO (excluded from
+// PRERENDER_PATHS; see PRIVATE_PREFIXES in seoMetadata.js), so code-splitting them keeps
+// the heavy Report/Rewrite/Scan bundles out of the first-load path without touching SSR.
+const Scan = lazy(() => import('./pages/Scan'));
+const Report = lazy(() => import('./pages/Report'));
+const Rewrite = lazy(() => import('./pages/Rewrite'));
+const Reports = lazy(() => import('./pages/Reports'));
+const BuyTokens = lazy(() => import('./pages/BuyTokens'));
+const PurchaseHistory = lazy(() => import('./pages/PurchaseHistory'));
+const ApiKeys = lazy(() => import('./pages/ApiKeys'));
 
 function HomeRedirect() {
   const { user, loading } = useAuth();
@@ -111,6 +115,7 @@ export default function App() {
         <AnnouncementBanner />
         <ScrollToRouteTop />
         <main className="app-main">
+          <Suspense fallback={<div className="app-route-loading" aria-busy="true" />}>
           <Routes>
             <Route path="/" element={<HomeRedirect />} />
             <Route path="/zh" element={<HomeRedirect />} />
@@ -166,6 +171,7 @@ export default function App() {
             <Route path="/rewrite/:rewriteId" element={<ProtectedRoute><Rewrite /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </Suspense>
         </main>
         {!hideFooter && <Footer />}
         <FeedbackWidget />

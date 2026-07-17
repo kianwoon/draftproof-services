@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.exceptions import RequestValidationError
@@ -99,6 +100,10 @@ app.add_middleware(
     # its API key cross-origin; the web SPA still uses cookies.
     allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
+# Compress large responses at the origin. The report payload is the big one (~450 KB JSON
+# after trimming); gzip takes it to ~50-70 KB on the origin->edge hop and guarantees
+# compression even if the CDN doesn't. minimum_size skips tiny responses (health, errors).
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
