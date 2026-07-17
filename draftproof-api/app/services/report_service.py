@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 
 import boto3
@@ -54,6 +55,35 @@ def _fetch_optional_report_json_sync(r2_key: str) -> dict | None:
         return _fetch_report_json_sync(r2_key)
     except Exception:
         return None
+
+
+# Rewrite-pipeline scaffolding the report PAGE never reads (verified zero frontend refs).
+# The worker reads rewrite inputs straight from R2, so trimming them from the API response is
+# payload-only — measured ~330 KB (~30%) off a 1.16 MB report, dominated by the 186 KB
+# scan_intelligence.mitigation_inputs. Kill switch: DRAFTPROOF_REPORT_PAYLOAD_TRIM=0.
+_REPORT_TRIM_ENABLED = os.getenv("DRAFTPROOF_REPORT_PAYLOAD_TRIM", "1") == "1"
+_TRIM_TOP_LEVEL_KEYS = frozenset({
+    "rewrite_edit_briefs",
+    "ai_mitigation",
+    "repair_units_v2",
+    "rewrite_constraints",
+    "generation_handoff",
+})
+_TRIM_SCAN_INTELLIGENCE_KEYS = frozenset({
+    "mitigation_inputs",
+})
+
+
+def _strip_rewrite_only_fields(results_json: dict | None) -> None:
+    """Drop rewrite-only fields from the report-page response, in place."""
+    if not _REPORT_TRIM_ENABLED or not isinstance(results_json, dict):
+        return
+    for key in _TRIM_TOP_LEVEL_KEYS:
+        results_json.pop(key, None)
+    intel = results_json.get("scan_intelligence")
+    if isinstance(intel, dict):
+        for key in _TRIM_SCAN_INTELLIGENCE_KEYS:
+            intel.pop(key, None)
 
 
 def _flatten_findings(results_json: dict) -> list[dict]:
@@ -148,31 +178,42 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
 
         results_json = None
         issues = []
+        report_md_url = None
+        report_pdf_url = None
 
-        # Fetch JSON directly from R2 (avoids stale presigned URLs)
-        r2_key = f"reports/{report_id}/report.json"
+        # Fetch report JSON + paragraph explanations + fresh download presigns concurrently.
+        # These are independent R2 round-trips; serializing them was the dominant read latency
+        # (a single report.json read alone measured ~700 ms). Presigns avoid stale URLs.
         if _r2:
-            try:
-                results_json = await asyncio.to_thread(_fetch_report_json_sync, r2_key)
-                paragraph_explanations = await asyncio.to_thread(
+            async def _load_report_json():
+                try:
+                    return await asyncio.to_thread(
+                        _fetch_report_json_sync, f"reports/{report_id}/report.json"
+                    )
+                except Exception as e:
+                    logger.warning("Failed to fetch report JSON from R2 for %s: %s", report_id, e)
+                    return None
+
+            async def _presign_or_none(key: str):
+                try:
+                    return await asyncio.to_thread(_presign_sync, key)
+                except Exception:
+                    return None
+
+            results_json, paragraph_explanations, report_md_url, report_pdf_url = await asyncio.gather(
+                _load_report_json(),
+                asyncio.to_thread(
                     _fetch_optional_report_json_sync,
                     f"reports/{report_id}/paragraph_explanations.json",
-                )
+                ),
+                _presign_or_none(f"reports/{report_id}/report.md"),
+                _presign_or_none(f"reports/{report_id}/report.pdf"),
+            )
+
+            if results_json is not None:
                 if paragraph_explanations:
                     results_json["paragraph_explanations"] = paragraph_explanations
                 issues = _flatten_findings(results_json)
-            except Exception as e:
-                logger.warning("Failed to fetch report JSON from R2 for %s: %s", report_id, e)
-
-        # Generate fresh presigned URLs for downloads
-        report_md_url = None
-        report_pdf_url = None
-        if _r2:
-            try:
-                report_md_url = await asyncio.to_thread(_presign_sync, f"reports/{report_id}/report.md")
-                report_pdf_url = await asyncio.to_thread(_presign_sync, f"reports/{report_id}/report.pdf")
-            except Exception:
-                pass
 
         # Extract AI risk badge from results_json for display alignment
         ai_score = None
@@ -216,6 +257,10 @@ async def get_report(report_id: str, user_id: str | None = None) -> dict | None:
                 "created_at": rw_job.created_at.isoformat() if rw_job.created_at else None,
                 "completed_at": rw_job.completed_at.isoformat() if rw_job.completed_at else None,
             }
+
+        # Trim rewrite-only scaffolding from the page payload (after all internal uses above,
+        # e.g. has_rewriteable_findings / dashboard, which read the full results_json).
+        _strip_rewrite_only_fields(results_json)
 
         return {
             "id": str(job.id),
