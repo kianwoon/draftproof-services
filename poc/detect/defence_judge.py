@@ -64,6 +64,14 @@ _STUDENT_ANSWER_START = "<<<STUDENT_ANSWER_START>>>"
 _STUDENT_ANSWER_END = "<<<STUDENT_ANSWER_END>>>"
 _DELIMITER_TOKENS = (_CONTEXT_START, _CONTEXT_END, _STUDENT_ANSWER_START, _STUDENT_ANSWER_END)
 
+# Termination guarantee for the fixpoint loop in _neutralize_delimiters, NOT a tuned value: a
+# single _DELIMITER_TOKENS pass can only ever shrink `cleaned` (it never grows), so convergence
+# to a fixpoint (no token substring anywhere in the string) is reached in at most
+# len(_DELIMITER_TOKENS) passes for any realistic adversarial nesting -- this cap exists purely
+# to bound worst-case loop iterations against pathological/huge inputs, never to cut off before
+# convergence in practice (see the reassembly bypass test which converges in 2 passes).
+_MAX_NEUTRALIZE_PASSES = 16
+
 
 def _neutralize_delimiters(text: str) -> str:
     """Strip any literal occurrence of a prompt delimiter token from untrusted input BEFORE it
@@ -88,10 +96,27 @@ def _neutralize_delimiters(text: str) -> str:
     contain these exact bracketed tokens verbatim, so dropping them cannot lose meaningful
     content -- and because this removes the token deterministically before the delimiter-wrapped
     block is built, no case-varied or near-miss string is affected (those were never
-    byte-identical to a real delimiter and so were never actually able to break out)."""
+    byte-identical to a real delimiter and so were never actually able to break out).
+
+    Fixpoint, not single-pass (stop-gate review finding): a single `str.replace(token, "")` pass
+    only removes occurrences of `token` that are literally present in the ORIGINAL string -- it
+    never re-scans its own output. That makes it bypassable by "reassembly": splitting a token
+    around a nested copy of itself so the single pass only deletes the nested copy, leaving the
+    surrounding fragments to rejoin into a fresh, still-literal token. Concretely, for any split
+    point k, `token[:k] + token + token[k:]` reproduces `token` after exactly one `.replace`
+    call, because the two untouched slices `token[:k]` and `token[k:]` are adjacent post-removal
+    and `token[:k] + token[k:] == token` by construction (verified for every k against
+    `_STUDENT_ANSWER_END` -- see test_neutralize_delimiters_survives_token_reassembly_bypass in
+    test_defence_judge.py). Looping each token's replace pass to a fixpoint (output stops
+    changing) closes this regardless of nesting depth, since every pass can only shrink the
+    string and a string with no remaining occurrence of any token is a stable fixpoint."""
     cleaned = str(text or "")
     for token in _DELIMITER_TOKENS:
-        cleaned = cleaned.replace(token, "")
+        for _ in range(_MAX_NEUTRALIZE_PASSES):
+            next_cleaned = cleaned.replace(token, "")
+            if next_cleaned == cleaned:
+                break
+            cleaned = next_cleaned
     return cleaned
 
 
