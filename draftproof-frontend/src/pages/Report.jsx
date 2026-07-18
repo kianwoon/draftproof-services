@@ -24,6 +24,7 @@ import CriticalThinkingControl from './report/CriticalThinkingControl';
 import ReportHero from './report/ReportHero';
 import TransformationScorecard from './report/TransformationScorecard';
 import MergedAuthorshipRisk, { TIER_TO_BAND } from './report/MergedAuthorshipRisk';
+import ConsistencyRisk from './report/ConsistencyRisk';
 import PolicyRiskView from './report/PolicyRiskView';
 import RewriteCompletionBand from './report/RewriteCompletionBand';
 import SubmittedSignalGauge from './report/SubmittedSignalGauge';
@@ -876,6 +877,12 @@ export default function Report() {
 
   // The API nests the scan report under results_json (only ai_risk_badge etc. are hoisted to top level).
   const authorshipEvidence = report?.results_json?.authorship_evidence || report?.authorship_evidence || null;
+  // Stylometric-consistency "Writing-style outliers" panel data (poc/report/
+  // consistency_panel.py's compose_consistency_display — a TOP-LEVEL report
+  // key, unlike claim_graph_display which nests under authorship_evidence).
+  // null when DRAFTPROOF_CONSISTENCY is off / no paragraph was flagged / older
+  // report — ConsistencyRisk renders nothing in that case.
+  const consistencyDisplay = report?.results_json?.consistency_display || report?.consistency_display || null;
 
   const selectAndScrollParagraph = (paragraphId) => {
     setSelectedParagraphId(paragraphId);
@@ -1443,6 +1450,13 @@ export default function Report() {
             />
           }
         />
+        {/* Stylometric-consistency "Writing-style outliers" panel (advisory,
+            informational-only — Phase 1, poc/detect/consistency.py). Renders
+            nothing when consistencyDisplay is null (flag off / no paragraph
+            flagged / older report). Standalone (not nested in
+            MergedAuthorshipRisk like the claim-graph panel) since this signal
+            is independent of the authorship/tier badge. */}
+        <ConsistencyRisk display={consistencyDisplay} />
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>
             <div className="scan-progress" role="status" aria-live="polite">

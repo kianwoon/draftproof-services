@@ -2192,6 +2192,25 @@ button.fix-first-item:focus-visible {
 .merged-cg-questions li { font-size: 12.5px; color: var(--ink); line-height: 1.5; margin: 0 0 4px; }
 .merged-cg-footer { margin-top: 8px; }
 
+/* Stylometric-consistency "Writing-style outliers" panel (web) — KEEP-IN-SYNC
+   with draftproof-frontend/src/pages/report/ConsistencyRisk.jsx (the .consistency-risk-*
+   class names) and poc/report/render_panels.py's render_consistency_panel
+   (the PDF panel; it inlines its own styles since the PDF has no access to
+   this CSS bundle — see that function's KEEP-IN-SYNC comment). Standalone
+   panel, not nested inside .merged-lens like the claim-graph block above. */
+.consistency-risk-panel { border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 16px 0; background: var(--surface); }
+.consistency-risk-title { font-size: 13px; font-weight: 600; color: var(--navy-900); margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+.consistency-risk-pill { font-size: 11px; font-weight: 500; color: var(--muted); background: var(--sev-neutral-bg, var(--surface)); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; }
+.consistency-risk-sub { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0 0 8px; }
+.consistency-risk-rows { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.consistency-risk-row { padding: 10px 12px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); }
+.consistency-risk-row-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.consistency-risk-badge { font-size: 12px; font-weight: 600; color: var(--sev-neutral); }
+.consistency-risk-score { font-size: 11.5px; color: var(--muted); }
+.consistency-risk-excerpt { font-size: 12.5px; color: var(--ink); line-height: 1.5; margin: 0 0 4px; }
+.consistency-risk-features { font-size: 11.5px; color: var(--muted); margin: 0; }
+.consistency-risk-footer { font-size: 11.5px; color: var(--muted); margin: 8px 0 0; }
+
 .merged-scale { border-top: 1px solid var(--line); padding-top: 12px; margin-bottom: 4px; }
 .merged-scale > summary { font-size: 12.5px; color: var(--muted); cursor: pointer; }
 .merged-scale-table { width: 100%; font-size: 12.5px; margin-top: 10px; border-collapse: collapse; }
