@@ -2240,3 +2240,30 @@ button.fix-first-item:focus-visible {
 .merged-dsp-label { min-width: 90px; color: var(--navy-900); font-weight: 600; }
 .merged-dsp-value { font-family: Georgia, "Times New Roman", serif; font-weight: 700; color: var(--navy-950); min-width: 38px; text-align: right; }
 .merged-dsp-detail { flex: 1 1 240px; color: var(--muted); }
+
+/* Defence-readiness check (web) — KEEP-IN-SYNC note not applicable (no PDF panel for this
+   one; it is an interactive, authenticated-only feature). See
+   draftproof-frontend/src/components/DefenceCheck.jsx for the .defence-check-* class names.
+   Level tones are readiness-direction (high = good/green), deliberately NOT the --sev-*
+   risk-severity tokens used elsewhere on this page (there, high = bad). */
+.defence-check-section { border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 16px 0; background: var(--surface); }
+.defence-check-head { margin-bottom: 12px; }
+.defence-check-kicker { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.defence-check-head h2 { font-size: 16px; margin: 4px 0; color: var(--navy-900); }
+.defence-check-head p { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0; }
+.defence-check-body { display: flex; flex-direction: column; gap: 14px; }
+.defence-check-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.defence-check-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.defence-check-dimension { font-size: 11px; font-weight: 600; color: var(--sev-neutral); background: var(--sev-neutral-bg); border-radius: 999px; padding: 2px 9px; }
+.defence-check-quote { font-size: 12px; color: var(--muted); font-style: italic; }
+.defence-check-question { font-size: 13.5px; color: var(--ink); font-weight: 600; margin: 4px 0 8px; }
+.defence-check-textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; }
+.defence-check-textarea:disabled { background: var(--sev-neutral-bg); color: var(--muted); }
+.defence-check-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.defence-check-attempt { font-size: 11.5px; color: var(--muted); }
+.defence-check-error { font-size: 12.5px; color: var(--sev-crit); margin: 8px 0 0; }
+.defence-check-note { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; }
+.defence-check-result { margin-top: 10px; }
+.defence-check-axes { display: flex; flex-direction: column; gap: 6px; }
+.defence-check-axis-chip { font-size: 12px; line-height: 1.5; padding: 6px 10px; border-radius: 8px; }
+.defence-check-axis-rationale { color: inherit; opacity: 0.85; }

@@ -21,6 +21,7 @@ import RewriteNoticeDialog from './report/RewriteNoticeDialog';
 import SignalHighlights from './report/SignalHighlights';
 import FixFirstChecklist from './report/FixFirstChecklist';
 import CriticalThinkingControl from './report/CriticalThinkingControl';
+import DefenceCheck from '../components/DefenceCheck';
 import ReportHero from './report/ReportHero';
 import TransformationScorecard from './report/TransformationScorecard';
 import MergedAuthorshipRisk, { TIER_TO_BAND } from './report/MergedAuthorshipRisk';
@@ -883,6 +884,13 @@ export default function Report() {
   // null when DRAFTPROOF_CONSISTENCY is off / no paragraph was flagged / older
   // report — ConsistencyRisk renders nothing in that case.
   const consistencyDisplay = report?.results_json?.consistency_display || report?.consistency_display || null;
+  // Defence-readiness check (Task 8): reuse the SAME question array the read-only
+  // CriticalThinkingControl panel below already reads from badge.critical_thinking_control
+  // — one source of truth, no separate fetch/derivation. DefenceCheck itself renders
+  // nothing when this is empty or when the backing GET 404s (DRAFTPROOF_DEFENCE_CHECK off).
+  const defenceQuestions = Array.isArray(badge?.critical_thinking_control?.questions)
+    ? badge.critical_thinking_control.questions
+    : [];
 
   const selectAndScrollParagraph = (paragraphId) => {
     setSelectedParagraphId(paragraphId);
@@ -1577,6 +1585,10 @@ export default function Report() {
             Thinking is the one V7-native, actionable, non-redundant panel, so it's
             promoted to a visible section here rather than buried in a drawer. */}
         <CriticalThinkingControl badge={badge} t={t} />
+        {/* Interactive counterpart to the read-only panel above: student answers a
+            flagged question, an LLM judge scores it. Renders nothing when the
+            DRAFTPROOF_DEFENCE_CHECK flag is off or there are no questions. */}
+        <DefenceCheck scanId={id} questions={defenceQuestions} t={t} />
         {submittedEditorOpen && (
           <div className={`submitted-editor-backdrop${submittedEditorClosing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-label={t('report.submitted.editor.title')}>
             <div className="submitted-editor-sheet">

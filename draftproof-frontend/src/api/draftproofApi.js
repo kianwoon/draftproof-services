@@ -78,6 +78,12 @@ export const deleteScan = (scanId) => api.delete(`/scans/${scanId}`);
 // Reports
 export const getReport = (reportId, opts = {}) => api.get(`/reports/${reportId}`, opts);
 
+// Defence-readiness (Task 8): mounted at /api/scans/{scan_id}/defence... (routes/defence.py).
+// Both 404 when DRAFTPROOF_DEFENCE_CHECK is off — callers treat that as "render nothing".
+export const submitDefenceAnswer = (scanId, { question_index, answer_text }) =>
+  api.post(`/scans/${scanId}/defence/answers`, { question_index, answer_text });
+export const getDefence = (scanId) => api.get(`/scans/${scanId}/defence`);
+
 // Translation (ESL writing aid in the submitted-content editor)
 export const translateText = (text, { source = 'auto', target = 'en' } = {}) =>
   api.post('/translate', { text, source, target });
