@@ -233,22 +233,30 @@ export default function DefenceCheck({ scanId, questions, t }) {
       const capReached = status === 409;
       // 400 is shared by several distinct validation failures on this route (see the module
       // docstring + isAnswerTooLongError above) — only claim "too long" when the server's own
-      // `errors` array actually pins it to answer_text's max_length. Any other 400 falls through
-      // to the server's actual `detail`/`errors[].msg` text via extractErrorMessage's fallback,
-      // instead of a guessed label that could be wrong for a different validation failure.
+      // `errors` array actually pins it to answer_text's max_length. This MUST be checked, and
+      // its message used, BEFORE calling extractErrorMessage: the server's 400 response always
+      // includes a generic `detail: "Invalid request."` string (module docstring lines 24-26),
+      // which extractErrorMessage returns unconditionally as soon as it sees a non-empty
+      // `detail` string — so passing the length-specific text in as extractErrorMessage's
+      // `fallback` param (as this used to do) made it dead code; the fallback is only ever
+      // reached when `detail` is absent, which never happens on this route's 400s. Any other
+      // 400/error still falls through to the server's actual `detail`/`errors[].msg` text via
+      // extractErrorMessage, instead of a guessed label that could be wrong for a different
+      // validation failure.
       const lengthInvalid = status === 400 && isAnswerTooLongError(err);
+      const message = lengthInvalid
+        ? `Your answer is too long (max ${DEFENCE_MAX_ANSWER_CHARS.toLocaleString()} characters). Please shorten it and try again.`
+        : extractErrorMessage(
+            err,
+            capReached
+              ? 'You have reached the maximum number of attempts for this question.'
+              : 'Could not submit your answer. Please try again.'
+          );
       setSubmitState((s) => ({
         ...s,
         [questionIndex]: {
           status: 'error',
-          error: extractErrorMessage(
-            err,
-            capReached
-              ? 'You have reached the maximum number of attempts for this question.'
-              : lengthInvalid
-                ? `Your answer is too long (max ${DEFENCE_MAX_ANSWER_CHARS.toLocaleString()} characters). Please shorten it and try again.`
-                : 'Could not submit your answer. Please try again.'
-          ),
+          error: message,
         },
       }));
     }
