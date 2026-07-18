@@ -195,6 +195,27 @@ class RewriteJob(Base):
     completed_at = Column(DateTime(timezone=True))
 
 
+class DefenceResponse(Base):
+    __tablename__ = "defence_responses"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scan_id = Column(UUID(as_uuid=True), ForeignKey("scan_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    question_index = Column(Integer, nullable=False)
+    dimension = Column(Text)
+    question = Column(Text, nullable=False)
+    anchor_quote = Column(Text)
+    answer_text = Column(Text, nullable=False)
+    attempt = Column(Integer, nullable=False, default=1)
+    # pending (created, not yet judged) / judged (judgment populated) / failed
+    # (judge_defence_answer returned None or judging errored).
+    status = Column(Text, nullable=False, default="pending")
+    judgment = Column(JSONB)
+    judge_model = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    judged_at = Column(DateTime(timezone=True))
+
+
 class ApiKey(Base):
     __tablename__ = "api_keys"
 
