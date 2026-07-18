@@ -20,7 +20,15 @@
 //     -> 404 flag off / scan not found or not owned
 //     -> 409 attempt-cap exceeded (NOT 429 — corrected in Task 6 review; this is a
 //        permanent per-question count cap, not a time-windowed rate limit)
-//     -> 422 answer-length validation failure (Pydantic max_length)
+//     -> 400 Pydantic validation failure (answer-length max_length, question_index shape, ...)
+//        OR a plain "Invalid question_index" business-rule 400 — draftproof-api/app/main.py's
+//        RequestValidationError handler returns 400 (not FastAPI's default 422) with
+//        {detail: "Invalid request.", errors: [{loc, msg, type}, ...]} for every Pydantic
+//        failure, so 400 is NOT specific to "answer too long" — see extractErrorMessage below,
+//        which only shows a length-specific message when the `errors` array actually pins the
+//        failure to `answer_text` with type "string_too_long"; every other 400 shows the
+//        server's own detail/msg text rather than a guessed label (final-review Finding 1: an
+//        earlier version of this file special-cased status 422, which the backend never sends).
 //   GET /api/scans/{scanId}/defence
 //     -> 200 {responses: [...], readiness: {dimension: {level, score, question_index, attempt}}}
 //     -> 404 flag off
@@ -48,6 +56,14 @@ import { getDefence, submitDefenceAnswer } from '../api/draftproofApi';
 const DEFENCE_POLL_INTERVAL_MS = 4000;
 const DEFENCE_POLL_MAX_ATTEMPTS = 30; // ~2 minutes before we stop and tell the user to check back later
 
+// MUST match draftproof-api/app/config.py's DRAFTPROOF_DEFENCE_MAX_ANSWER_CHARS default (2000).
+// That env var is server-only (not exposed to the frontend build), so this is a mirrored literal,
+// not a shared source of truth — it only bounds the <textarea> client-side to cut down on
+// over-length submits before they round-trip to the server; the server's own Pydantic
+// max_length is still the authoritative cap enforced in submitDefenceAnswer's 400 response
+// (final-review Finding 1). If the backend value changes, update this constant to match.
+const DEFENCE_MAX_ANSWER_CHARS = 2000;
+
 const LEVEL_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 // Readiness-direction tones (high = good/green), distinct from the document's risk-severity
 // --sev-* tokens (high = bad there). Mirrors the FUSED_TIER_TONES pattern already used
@@ -64,12 +80,33 @@ const AXIS_LABELS = {
   source_awareness: 'Source awareness',
 };
 
+// True when the RequestValidationError `errors` array (draftproof-api/app/main.py's
+// validation_exception_handler shape: [{loc, msg, type}, ...]) pins the failure specifically to
+// `answer_text` being too long — i.e. Pydantic's Field(max_length=...) on DefenceAnswerIn, NOT
+// the sibling `question_index` constraint or any other 400. Checking BOTH `type` and `loc` (not
+// status code alone) is what makes this reliable: status 400 is shared by every validation
+// failure on this route (see the module docstring above), so status alone can't disambiguate.
+function isAnswerTooLongError(err) {
+  const errors = err?.response?.data?.errors;
+  if (!Array.isArray(errors)) return false;
+  return errors.some((row) => {
+    if (!row || typeof row !== 'object') return false;
+    const loc = Array.isArray(row.loc) ? row.loc : [];
+    return row.type === 'string_too_long' && loc.includes('answer_text');
+  });
+}
+
 function extractErrorMessage(err, fallback) {
   const detail = err?.response?.data?.detail;
   if (typeof detail === 'string' && detail.trim()) return detail;
   if (Array.isArray(detail) && detail.length) {
     // FastAPI/Pydantic validation-error shape: [{loc, msg, type}, ...]
     const first = detail.find((row) => row && typeof row.msg === 'string');
+    if (first) return first.msg;
+  }
+  const errors = err?.response?.data?.errors;
+  if (Array.isArray(errors) && errors.length) {
+    const first = errors.find((row) => row && typeof row.msg === 'string');
     if (first) return first.msg;
   }
   return fallback;
@@ -194,7 +231,12 @@ export default function DefenceCheck({ scanId, questions, t }) {
     } catch (err) {
       const status = err?.response?.status;
       const capReached = status === 409;
-      const lengthInvalid = status === 422;
+      // 400 is shared by several distinct validation failures on this route (see the module
+      // docstring + isAnswerTooLongError above) — only claim "too long" when the server's own
+      // `errors` array actually pins it to answer_text's max_length. Any other 400 falls through
+      // to the server's actual `detail`/`errors[].msg` text via extractErrorMessage's fallback,
+      // instead of a guessed label that could be wrong for a different validation failure.
+      const lengthInvalid = status === 400 && isAnswerTooLongError(err);
       setSubmitState((s) => ({
         ...s,
         [questionIndex]: {
@@ -204,7 +246,7 @@ export default function DefenceCheck({ scanId, questions, t }) {
             capReached
               ? 'You have reached the maximum number of attempts for this question.'
               : lengthInvalid
-                ? 'Your answer is too long. Please shorten it and try again.'
+                ? `Your answer is too long (max ${DEFENCE_MAX_ANSWER_CHARS.toLocaleString()} characters). Please shorten it and try again.`
                 : 'Could not submit your answer. Please try again.'
           ),
         },
@@ -249,6 +291,7 @@ export default function DefenceCheck({ scanId, questions, t }) {
                 value={drafts[i] ?? ''}
                 onChange={(e) => setDrafts((d) => ({ ...d, [i]: e.target.value }))}
                 disabled={isPending}
+                maxLength={DEFENCE_MAX_ANSWER_CHARS}
                 aria-label="Your answer"
               />
 
