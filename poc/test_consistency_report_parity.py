@@ -28,9 +28,10 @@ from __future__ import annotations
 import dataclasses
 import json
 
-from detect.consistency import CONSISTENCY_KILL_SWITCH_ENV
+from detect.consistency import CONSISTENCY_KILL_SWITCH_ENV, ConsistencyDetector
 from detect.profiles import resolve_profile
 from detect.run import DetectionRunner
+from detect.test_consistency import _document_with_shifted_paragraph
 
 _TEXT = (
     "The committee reviewed the proposal carefully before reaching a decision. "
@@ -118,3 +119,25 @@ def test_consistency_detector_instantiated_when_on_positive_control(monkeypatch)
 
     assert _InstantiationSpy.call_count == 1
     assert any(isinstance(d, _InstantiationSpy) for d in detectors)
+
+
+def test_overall_risk_stays_zero_after_postprocessing_with_findings():
+    # Regression test for a gap found while tracing run_all's post-processing loop
+    # (poc/detect/run.py): PostProcessor._recompute_risk (poc/detect/postprocess.py)
+    # blends overall_risk with a risk_level-derived floor for ANY non-empty findings
+    # list, which would otherwise silently give the "informational only" consistency
+    # scanner nonzero weight once post-processing runs. Uses the custom-detectors
+    # constructor path (bypasses _build_detectors/the kill switch entirely, and
+    # avoids loading the heavy default GPT-2/embedding detectors) so this isolates
+    # run_all's post-processing behavior specifically.
+    report = DetectionRunner(detectors=[ConsistencyDetector()]).run_all(
+        _document_with_shifted_paragraph()
+    )
+
+    assert len(report.scanner_results) == 1
+    consistency_result = report.scanner_results[0]
+    assert consistency_result.scanner == "consistency"
+    assert consistency_result.findings, "fixture must produce at least one finding"
+    assert consistency_result.overall_risk == 0.0
+    # And the report-level fused risk must not have absorbed any of it either.
+    assert report.overall_risk == 0.0
