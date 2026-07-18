@@ -142,7 +142,7 @@ def test_answer_text_too_long_returns_400(client, enabled, monkeypatch):
 
 # ── attempt cap ──────────────────────────────────────────────────────────────
 
-def test_attempt_cap_reached_returns_429(client, enabled, monkeypatch):
+def test_attempt_cap_reached_returns_409(client, enabled, monkeypatch):
     from app.config import DRAFTPROOF_DEFENCE_MAX_ATTEMPTS
 
     monkeypatch.setattr("app.routes.defence.get_scan", AsyncMock(return_value=SCAN))
@@ -152,7 +152,7 @@ def test_attempt_cap_reached_returns_429(client, enabled, monkeypatch):
         AsyncMock(return_value=DRAFTPROOF_DEFENCE_MAX_ATTEMPTS),
     )
     r = client.post("/api/scans/scan-1/defence/answers", json={"question_index": 0, "answer_text": "hi"})
-    assert r.status_code == 429
+    assert r.status_code == 409
 
 
 def test_attempt_cap_counts_per_question_index_not_per_scan(client, enabled, monkeypatch):

@@ -94,7 +94,10 @@ async def submit_defence_answer(
 
     prior_attempts = await defence_service.count_attempts(scan_id, body.question_index)
     if prior_attempts >= DRAFTPROOF_DEFENCE_MAX_ATTEMPTS:
-        raise HTTPException(status_code=429, detail="Attempt limit reached for this question")
+        # 409 (not 429): this is a permanent per-question count cap, not a time-windowed
+        # rate limit — 429 implies "retry later" which doesn't apply here. Matches the
+        # analogous permanent count-cap precedent in routes/keys.py::create_key_route.
+        raise HTTPException(status_code=409, detail="Attempt limit reached for this question")
 
     created = await defence_service.create_response(
         scan_id=scan_id,
