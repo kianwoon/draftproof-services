@@ -155,3 +155,50 @@ def test_extract_fingerprints_pure_function_no_shared_state_across_calls():
     second = extract_fingerprints(FORMAL_PARAGRAPH)
 
     assert first == second
+
+
+# allow-hardcode: hand-authored TEST FIXTURE prose (like FORMAL_PARAGRAPH/
+# CASUAL_PARAGRAPH above) used as test input data to extract_fingerprints, not a
+# matching/scoring list consumed by production code.
+#
+# A real, non-degenerate paragraph built entirely from long, multisyllabic academic
+# words in long sentences: this legitimately computes a very low (hard-to-read)
+# Flesch Reading Ease score, unlike a genuinely-degenerate zero-word paragraph.
+REAL_LOW_READABILITY_PARAGRAPH = (
+    "Notwithstanding the aforementioned methodological considerations, the "
+    "interdisciplinary characterization of institutionalized organizational "
+    "behavioural transformations necessitates comprehensive reconceptualization "
+    "of previously established epistemological frameworks regarding "
+    "administrative decision-making processes within multinational governmental "
+    "bureaucracies."
+)
+
+
+def test_flesch_reading_ease_distinguishes_degenerate_from_real_low_score():
+    """A paragraph with zero countable word tokens (pure punctuation) has no
+    words/syllables to compute Flesch Reading Ease from at all -- this is
+    fundamentally different from a real paragraph that legitimately computes a very
+    low readability score. `flesch_reading_ease` alone (without a caller separately
+    cross-checking `word_count`) must be able to tell these two cases apart."""
+    degenerate_fp = extract_fingerprints("!!! ??? ,,, ;;;")[0]
+    assert degenerate_fp.word_count == 0
+
+    real_low_fp = extract_fingerprints(REAL_LOW_READABILITY_PARAGRAPH)[0]
+    assert real_low_fp.word_count > 0
+
+    assert degenerate_fp.flesch_reading_ease is None
+    assert real_low_fp.flesch_reading_ease is not None
+
+
+def test_passive_voice_detects_modal_auxiliary_construction():
+    """The passive-voice regex must fire on a modal-passive construction where a
+    modal verb ("must") precedes the be-form ("be") plus participle ("considered") --
+    e.g. "must be considered" -- not just on a bare be-form + participle. The regex
+    only requires the be-form itself to be directly adjacent to the participle, so a
+    preceding modal (which is not itself a BE_FORMS entry) should not block the match."""
+    text = "Several factors must be considered before a final decision is reached."
+
+    fp = extract_fingerprints(text)[0]
+
+    # Two passives in one sentence: "must be considered" and "is reached".
+    assert fp.passive_voice_rate == 2.0

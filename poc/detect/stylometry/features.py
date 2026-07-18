@@ -66,7 +66,12 @@ _DASH_RE = re.compile(r"[–—]|(?<=\s)--?(?=\s)")
 _FLESCH_BASE = 206.835
 _FLESCH_WORDS_PER_SENTENCE_WEIGHT = 1.015
 _FLESCH_SYLLABLES_PER_WORD_WEIGHT = 84.6
-_FLESCH_DEGENERATE_SCORE = 0.0  # returned when word_count or sentence_count is 0
+# Returned when word_count or sentence_count is 0 (e.g. a punctuation-only paragraph
+# with no countable word tokens). Deliberately `None`, not a float, so this degenerate
+# "no data to compute a score from" case can never be confused with a legitimately
+# computed score -- including a real paragraph whose Flesch score happens to be low
+# or even exactly 0.0. Callers must handle `flesch_reading_ease is None` explicitly.
+_FLESCH_DEGENERATE_SCORE = None
 
 # Passive-voice detection: a be-form optionally followed by a single "-ly" adverb, then
 # a candidate past participle. This is a shallow regex approximation of "be + V-en/V-ed"
@@ -101,7 +106,7 @@ class ParagraphFingerprint:
     punctuation_rates: dict[str, float]
     transition_rate: float
     function_word_rate: float
-    flesch_reading_ease: float
+    flesch_reading_ease: float | None
     passive_voice_rate: float
     subordination_rate: float
     lexical_density: float
@@ -297,7 +302,7 @@ def _count_syllables(word: str) -> int:
     return max(count, _MIN_SYLLABLES_PER_WORD)
 
 
-def _flesch_reading_ease(tokens: list[str], sentence_count: int) -> float:
+def _flesch_reading_ease(tokens: list[str], sentence_count: int) -> float | None:
     word_count = len(tokens)
     if word_count == 0 or sentence_count == 0:
         return _FLESCH_DEGENERATE_SCORE
