@@ -138,6 +138,50 @@ def test_missing_axis_fails_open():
     assert _call(_FakeGateway(bad)) is None
 
 
+# ── overall provenance marker ────────────────────────────────────────────────
+# The judge's system prompt tells the model overall should be its own "holistic judgment,
+# not necessarily the mean of the four axes". When the model omits or malforms `overall`,
+# _normalize_judgment reconstructs it as the mean of the 4 axis scores. That reconstructed
+# value must be marked as `derived` so downstream consumers (and the student-facing report)
+# can distinguish a synthesized overall from one the model actually produced.
+
+def test_overall_missing_is_marked_derived_and_equals_axis_mean():
+    raw = json.dumps({
+        "axes": {
+            "answer_understanding": {"level": "high", "score": 80, "rationale": "x"},
+            "semantic_alignment": {"level": "medium", "score": 60, "rationale": "x"},
+            "reasoning_depth": {"level": "low", "score": 20, "rationale": "x"},
+            "source_awareness": {"level": "medium", "score": 40, "rationale": "x"},
+        },
+        # "overall" intentionally omitted.
+        "flags": [],
+    })
+    out = _call(_FakeGateway(raw))
+    assert out is not None
+    assert out["overall"]["derived"] is True
+    assert out["overall"]["score"] == 50.0  # mean of 80, 60, 20, 40
+
+
+def test_overall_malformed_is_marked_derived():
+    raw = json.dumps({
+        "axes": {a: {"level": "medium", "score": 50, "rationale": "x"} for a in _AXES},
+        "overall": {"level": "medium"},  # missing required "score" -> fails _normalize_axis
+        "flags": [],
+    })
+    out = _call(_FakeGateway(raw))
+    assert out is not None
+    assert out["overall"]["derived"] is True
+    assert out["overall"]["score"] == 50.0
+
+
+def test_overall_provided_directly_is_not_marked_derived():
+    gw = _FakeGateway(_GOOD)  # _GOOD supplies overall={"level": "medium", "score": 52} directly
+    out = _call(gw)
+    assert out is not None
+    assert out["overall"]["derived"] is False
+    assert out["overall"]["score"] == 52
+
+
 def test_empty_answer_returns_none_without_calling_gateway():
     gw = _FakeGateway(_GOOD)
     assert _call(gw, answer_text="   ") is None

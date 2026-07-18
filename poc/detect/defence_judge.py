@@ -70,6 +70,12 @@ def judge_defence_answer(
 ) -> dict[str, Any] | None:
     """Return {schema_version, model, generated_at, axes, overall, flags} or None.
 
+    `overall` is {level, score, derived}: `derived` is True when the model omitted or
+    malformed its own "overall" and _normalize_judgment reconstructed it as the mean of
+    the 4 axis scores, False when the model supplied "overall" directly. See
+    _normalize_judgment for why this distinction matters (the system prompt asks the model
+    for its own holistic judgment, not the axis mean).
+
     Fail-open: None on missing question/answer, no gateway/key, malformed JSON, an
     incomplete/invalid judgment shape, or any exception.
     """
@@ -228,10 +234,15 @@ def _normalize_judgment(parsed: Any) -> dict[str, Any] | None:
     overall_raw = parsed.get("overall")
     overall = _normalize_axis(overall_raw) if isinstance(overall_raw, dict) else None
     if overall is None:
+        # Model omitted/malformed "overall" -- reconstruct it as the mean of the 4 axis
+        # scores. The system prompt asks the model for its own holistic judgment ("not
+        # necessarily the mean of the four axes"), so this fallback is NOT equivalent to a
+        # model-provided overall -- mark it `derived` so downstream consumers (and the
+        # student-facing report) never present a synthesized score as the model's own.
         mean_score = round(sum(a["score"] for a in axes.values()) / len(axes), 1)
-        overall = {"level": _level_from_score(mean_score), "score": mean_score}
+        overall = {"level": _level_from_score(mean_score), "score": mean_score, "derived": True}
     else:
-        overall = {"level": overall["level"], "score": overall["score"]}
+        overall = {"level": overall["level"], "score": overall["score"], "derived": False}
 
     flags: list[str] = []
     for raw_flag in parsed.get("flags") or []:
