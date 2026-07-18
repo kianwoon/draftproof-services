@@ -1771,6 +1771,7 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         if _cgp:
             lines.append(_cgp)
             lines.append("")
+
     elif report.ai_risk_badge:
         # Legacy fallback (older reports without a submission_risk diagnosis).
         _submission = _render_submission_risk_headline(report.ai_risk_badge)
@@ -1782,6 +1783,18 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
         lines.append("")
     else:
         lines.append(f"**{badge}** &nbsp; `{tier.value.upper()}`")
+        lines.append("")
+
+    # Stylometric-consistency "Writing-style outliers" panel (advisory,
+    # display-only). Additive: '' when result.consistency_display is absent
+    # (DRAFTPROOF_CONSISTENCY off / no paragraph flagged / older report). Never
+    # suppresses the AI number and is independent of ai_risk_badge (Phase 1 is
+    # informational-only and not wired into the badge — see poc/detect/
+    # consistency.py's module docstring), unlike the claim-graph panel above.
+    from .render_panels import render_consistency_panel
+    _crp = render_consistency_panel(data)
+    if _crp:
+        lines.append(_crp)
         lines.append("")
 
     # ── CALIBRATION SUMMARY (rewrite PDFs only — page parity) ─────
