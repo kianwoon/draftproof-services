@@ -32,6 +32,7 @@ celery_app.conf.update(
         "app.tasks.scan_document": {"queue": "scan"},
         "app.tasks.run_rewrite": {"queue": "scan"},
         "app.tasks.regenerate_rewrite_report_assets": {"queue": "scan"},
+        "app.tasks.judge_defence_answer": {"queue": "scan"},
     },
     broker_transport_options=redis_broker_transport_options(CELERY_VISIBILITY_TIMEOUT_SECONDS),
 )
@@ -41,6 +42,12 @@ celery_app.conf.update(
 scan_document = celery_app.signature("app.tasks.scan_document")
 run_rewrite = celery_app.signature("app.tasks.run_rewrite")
 regenerate_rewrite_report_assets = celery_app.signature("app.tasks.regenerate_rewrite_report_assets")
+# Task 7 (not yet implemented as of this commit) owns worker/app/tasks.py::judge_defence_answer.
+# Enqueued by name string only — the API image never copies poc/ or worker/ (root Dockerfile),
+# so this task cannot be imported directly. Task 7's implementer: this name string
+# ("app.tasks.judge_defence_answer") is the contract — the worker task MUST be named exactly
+# this for draftproof-api/app/routes/defence.py's enqueue call to resolve.
+judge_defence_answer = celery_app.signature("app.tasks.judge_defence_answer")
 
 
 def cancel_rewrite_task(task_id: str) -> bool:

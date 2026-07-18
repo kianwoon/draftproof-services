@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
-from app.routes import documents, scans, reports, rewrites, auth, payments, translate, feedback, keys, ext
+from app.routes import documents, scans, reports, rewrites, auth, payments, translate, feedback, keys, ext, defence
 from app.models.db import init_db, async_session
 from app.config import COOKIE_SECURE, SECRET_KEY, FRONTEND_URL
 from sqlalchemy import text as sa_text
@@ -139,6 +139,9 @@ app.include_router(translate.router, prefix="/api/translate", tags=["translate"]
 app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
 app.include_router(keys.router, prefix="/api/keys", tags=["api-keys"])
 app.include_router(ext.router, prefix="/api/ext", tags=["extension"])
+# Mounted at the SAME prefix as scans.router so paths read as /api/scans/{scan_id}/defence...
+# (kill switch DRAFTPROOF_DEFENCE_CHECK, default OFF — see app/routes/defence.py).
+app.include_router(defence.router, prefix="/api/scans", tags=["defence"])
 
 
 @app.get("/api/health")
