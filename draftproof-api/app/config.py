@@ -128,6 +128,17 @@ REWRITE_STALE_THRESHOLD_MINUTES = max(
 REWRITE_CANCEL_TERMINATE = os.getenv("REWRITE_CANCEL_TERMINATE", "false").strip().lower() in {"1", "true", "yes", "on"}
 REWRITE_CANCEL_TERMINATE_SIGNAL = os.getenv("REWRITE_CANCEL_TERMINATE_SIGNAL", "SIGTERM").strip() or "SIGTERM"
 
+# Defence-readiness check (Task 6). Free-capped v1 per product decision: NO credit_ledger /
+# credit_reservations integration here, just simple env-configured caps at this API layer (see
+# migrations/014_defence_responses.sql). Kill switch, default OFF until Task 7 (judging) and
+# Task 8 (frontend) land — both /api/scans/{id}/defence routes 404 at request time while off.
+DRAFTPROOF_DEFENCE_CHECK = os.getenv("DRAFTPROOF_DEFENCE_CHECK", "false").strip().lower() in {"1", "true", "yes", "on"}
+# Max characters accepted in a single defence answer.
+DRAFTPROOF_DEFENCE_MAX_ANSWER_CHARS = max(1, int(os.getenv("DRAFTPROOF_DEFENCE_MAX_ANSWER_CHARS", "2000")))
+# Max attempts allowed per (scan_id, question_index) — a simple free-tier guard, not real
+# credit metering.
+DRAFTPROOF_DEFENCE_MAX_ATTEMPTS = max(1, int(os.getenv("DRAFTPROOF_DEFENCE_MAX_ATTEMPTS", "2")))
+
 # In-app feedback → GitHub Issues. The repo is private, so visitors can't file
 # issues directly; the API files them server-side with a fine-grained PAT that
 # has only Issues:write on FEEDBACK_GITHUB_REPO. Bot abuse is fenced off with a

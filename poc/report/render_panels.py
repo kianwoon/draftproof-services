@@ -659,6 +659,76 @@ def render_claim_graph_panel(report_data: dict) -> str:
     return "\n".join(p for p in out if p)
 
 
+# ── Stylometric-consistency "Writing-style outliers" panel (advisory,
+# display-only) ──
+# Renders result.consistency_display (poc/report/consistency_panel.py — the
+# single server-side source of truth both surfaces consume). '' when the field
+# is absent (DRAFTPROOF_CONSISTENCY off / no paragraph flagged / older report),
+# so the PDF is byte-identical when the panel is not present. NEVER affects
+# score/tier — mirrors ConsistencyDetector.overall_risk == 0.0 (Phase 1,
+# informational only — see poc/detect/consistency.py's module docstring).
+# KEEP-IN-SYNC: draftproof-frontend/src/pages/report/ConsistencyRisk.jsx (web
+# rendering of the SAME result.consistency_display dict) and
+# draftproof-frontend/src/styles/site-master/06-report-overview.css (the
+# consistency-risk-* classes mirrored below as inline styles, since the PDF has
+# no access to the site's CSS bundle).
+#
+# allow-hardcode: the HTML template strings / student-facing copy below are
+# PRESENTATION markup (mirroring render_claim_graph_panel above), not detection
+# logic — never matched against document text.
+def render_consistency_panel(report_data: dict) -> str:
+    """HTML/PDF panel for the stylometric-consistency "Writing-style outliers"
+    view. Informational only — flagged paragraphs read in a different writing
+    voice than the rest of the document; this is NOT standalone evidence of AI
+    generation or outsourcing. '' when there is no consistency_display.
+    """
+    cd = (report_data or {}).get("consistency_display")
+    if not isinstance(cd, dict) or cd.get("present") is not True:
+        return ""
+
+    rows = cd.get("rows") or []
+    if not rows:
+        return ""
+    flagged = (cd.get("summary") or {}).get("flagged_paragraphs", len(rows))
+
+    out = [
+        '<div class="consistency-risk-panel">',
+        '<p class="dp-callout-title">Writing-style outliers '
+        '<span class="dp-statchip dp-statchip--info">Informational · advisory</span></p>',
+        '<p class="dp-hero-sub">Paragraphs whose sentence structure and word '
+        'choice read differently than the rest of the document. This is '
+        '<strong>not</strong> standalone evidence of AI generation or '
+        'outsourcing — a different voice can also come from a quoted passage, '
+        'a section written on a different day, or a legitimate co-author. It '
+        'does <strong>not</strong> change the AI-likelihood score.</p>',
+        f'<p class="dp-hero-sub"><strong>{escape(str(flagged))}</strong> '
+        f'paragraph(s) flagged for review.</p>',
+    ]
+
+    row_html = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        pid = escape(str(r.get("paragraph_id") or ""))
+        excerpt = escape(str(r.get("excerpt") or ""))
+        features = escape(str(r.get("features_label") or ""))
+        score = r.get("outlier_score")
+        score_txt = f' <span class="dp-hero-sub">(score {escape(str(score))})</span>' if isinstance(score, (int, float)) else ""
+        row_html.append(
+            f'<tr><td>{_statchip(pid, "info")}{score_txt}</td>'
+            f'<td>{excerpt}<br/><span class="dp-hero-sub">Deviates in: {features}</span></td></tr>'
+        )
+    if row_html:
+        out.append('<table class="dp-cg-checks consistency-risk-rows"><tbody>' + "".join(row_html) + "</tbody></table>")
+
+    out.append(
+        '<p class="dp-hero-sub">Advisory only — review these paragraphs, do not '
+        'assume they are AI-generated or need to be rewritten.</p>'
+    )
+    out.append("</div>")
+    return "\n".join(p for p in out if p)
+
+
 def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> str:
     """Scan-PDF lead. PAGE-PARITY contract (owner rule 2026-07-06: the PDF must
     show what the scan page shows — nothing more):

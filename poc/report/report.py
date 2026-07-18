@@ -3555,6 +3555,37 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
             "(advisory, non-fatal)."
         )
 
+    # Stylometric-consistency "Writing-style outliers" DISPLAY composer
+    # (advisory, display-only). Phase-1 ConsistencyDetector findings
+    # (poc/detect/consistency.py, scanner="consistency") behind
+    # DRAFTPROOF_CONSISTENCY (default OFF) — the single server-side source of
+    # truth both the PDF panel (render_panels.py) and the React
+    # ConsistencyRisk component consume. Additive + fail-open: omitted (no new
+    # key) when the flag is off / no paragraph was flagged, so the report is
+    # byte-identical. NEVER touches tier/score/gates (ConsistencyDetector.
+    # overall_risk is unconditionally 0.0 — see its module docstring).
+    try:
+        from .consistency_panel import compose_consistency_display  # noqa: E402
+        _consistency_findings = [
+            {
+                "paragraph_id": (f.metadata or {}).get("paragraph_id"),
+                "excerpt": f.evidence,
+                "outlier_score": (f.metadata or {}).get("outlier_score"),
+                "top_deviating_features": (f.metadata or {}).get("top_deviating_features"),
+                "recommendation": f.recommendation,
+            }
+            for f in all_findings
+            if f.scanner == "consistency"
+        ]
+        _consistency_display = compose_consistency_display(_consistency_findings)
+        if _consistency_display is not None:
+            result["consistency_display"] = _consistency_display
+    except Exception:
+        logger.exception(
+            "report.report: consistency_display compose failed; omitting "
+            "(advisory, non-fatal)."
+        )
+
     result["scan_time_seconds"] = report.scan_time_seconds
     if report.generated_at:
         result["generated_at"] = report.generated_at

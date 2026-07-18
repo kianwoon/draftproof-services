@@ -2192,6 +2192,25 @@ button.fix-first-item:focus-visible {
 .merged-cg-questions li { font-size: 12.5px; color: var(--ink); line-height: 1.5; margin: 0 0 4px; }
 .merged-cg-footer { margin-top: 8px; }
 
+/* Stylometric-consistency "Writing-style outliers" panel (web) — KEEP-IN-SYNC
+   with draftproof-frontend/src/pages/report/ConsistencyRisk.jsx (the .consistency-risk-*
+   class names) and poc/report/render_panels.py's render_consistency_panel
+   (the PDF panel; it inlines its own styles since the PDF has no access to
+   this CSS bundle — see that function's KEEP-IN-SYNC comment). Standalone
+   panel, not nested inside .merged-lens like the claim-graph block above. */
+.consistency-risk-panel { border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 16px 0; background: var(--surface); }
+.consistency-risk-title { font-size: 13px; font-weight: 600; color: var(--navy-900); margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+.consistency-risk-pill { font-size: 11px; font-weight: 500; color: var(--muted); background: var(--sev-neutral-bg, var(--surface)); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; }
+.consistency-risk-sub { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0 0 8px; }
+.consistency-risk-rows { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.consistency-risk-row { padding: 10px 12px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); }
+.consistency-risk-row-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.consistency-risk-badge { font-size: 12px; font-weight: 600; color: var(--sev-neutral); }
+.consistency-risk-score { font-size: 11.5px; color: var(--muted); }
+.consistency-risk-excerpt { font-size: 12.5px; color: var(--ink); line-height: 1.5; margin: 0 0 4px; }
+.consistency-risk-features { font-size: 11.5px; color: var(--muted); margin: 0; }
+.consistency-risk-footer { font-size: 11.5px; color: var(--muted); margin: 8px 0 0; }
+
 .merged-scale { border-top: 1px solid var(--line); padding-top: 12px; margin-bottom: 4px; }
 .merged-scale > summary { font-size: 12.5px; color: var(--muted); cursor: pointer; }
 .merged-scale-table { width: 100%; font-size: 12.5px; margin-top: 10px; border-collapse: collapse; }
@@ -2221,3 +2240,30 @@ button.fix-first-item:focus-visible {
 .merged-dsp-label { min-width: 90px; color: var(--navy-900); font-weight: 600; }
 .merged-dsp-value { font-family: Georgia, "Times New Roman", serif; font-weight: 700; color: var(--navy-950); min-width: 38px; text-align: right; }
 .merged-dsp-detail { flex: 1 1 240px; color: var(--muted); }
+
+/* Defence-readiness check (web) — KEEP-IN-SYNC note not applicable (no PDF panel for this
+   one; it is an interactive, authenticated-only feature). See
+   draftproof-frontend/src/components/DefenceCheck.jsx for the .defence-check-* class names.
+   Level tones are readiness-direction (high = good/green), deliberately NOT the --sev-*
+   risk-severity tokens used elsewhere on this page (there, high = bad). */
+.defence-check-section { border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 16px 0; background: var(--surface); }
+.defence-check-head { margin-bottom: 12px; }
+.defence-check-kicker { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.defence-check-head h2 { font-size: 16px; margin: 4px 0; color: var(--navy-900); }
+.defence-check-head p { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0; }
+.defence-check-body { display: flex; flex-direction: column; gap: 14px; }
+.defence-check-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.defence-check-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.defence-check-dimension { font-size: 11px; font-weight: 600; color: var(--sev-neutral); background: var(--sev-neutral-bg); border-radius: 999px; padding: 2px 9px; }
+.defence-check-quote { font-size: 12px; color: var(--muted); font-style: italic; }
+.defence-check-question { font-size: 13.5px; color: var(--ink); font-weight: 600; margin: 4px 0 8px; }
+.defence-check-textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; }
+.defence-check-textarea:disabled { background: var(--sev-neutral-bg); color: var(--muted); }
+.defence-check-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.defence-check-attempt { font-size: 11.5px; color: var(--muted); }
+.defence-check-error { font-size: 12.5px; color: var(--sev-crit); margin: 8px 0 0; }
+.defence-check-note { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; }
+.defence-check-result { margin-top: 10px; }
+.defence-check-axes { display: flex; flex-direction: column; gap: 6px; }
+.defence-check-axis-chip { font-size: 12px; line-height: 1.5; padding: 6px 10px; border-radius: 8px; }
+.defence-check-axis-rationale { color: inherit; opacity: 0.85; }

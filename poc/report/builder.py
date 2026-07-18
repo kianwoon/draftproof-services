@@ -309,6 +309,14 @@ class ReportBuilder:
                 meta["evidence_strength"] = evidence_strength
             if scanner == "ai_generation" and result.likelihood_score:
                 meta["ai_likelihood"] = result.likelihood_score
+            if scanner == "consistency" and loc.get("paragraph_id"):
+                # Thread the paragraph_id through into metadata — it lives on
+                # the detect Finding's `location` (poc/detect/consistency.py),
+                # which this loop otherwise only reads for sentence_id matching
+                # (Strategies 1-3 above) and never persists onto the converted
+                # report Finding. poc/report/consistency_panel.py's per-paragraph
+                # rows need it (see poc/report/report.py's caller).
+                meta["paragraph_id"] = loc["paragraph_id"]
             # NOTE: document-level predictability_risk is NOT injected into
             # per-finding metadata — it belongs in document_context only.
             # Each finding already carries its own sentence-level score.

@@ -53,10 +53,19 @@ app.conf.update(
     broker_connection_max_retries=None,
     broker_channel_error_retry=True,
     task_ignore_result=True,
+    # Mirrors draftproof-api/app/services/celery_client.py's task_routes -- that module governs
+    # the INITIAL enqueue from the API process, but a task calling `self.retry(...)` (as
+    # judge_defence_answer_task does in app/defence.py) republishes itself via THIS app instance,
+    # so this dict must independently agree on the same queue names or a retry would silently
+    # fall back to task_default_queue instead of the intended queue. "defence" is its own queue
+    # (final-review Finding 3, 2026-07-18) so a quick defence-answer judgment never queues behind
+    # a multi-minute scan/rewrite on the single-concurrency worker (see entrypoint.sh's `-Q` list,
+    # which must also list "defence" for it to actually be consumed).
     task_routes={
         "app.tasks.scan_document": {"queue": "scan"},
         "app.tasks.run_rewrite": {"queue": "scan"},
         "app.tasks.regenerate_rewrite_report_assets": {"queue": "scan"},
+        "app.tasks.judge_defence_answer": {"queue": "defence"},
     },
     task_default_queue="default",
     # Keep the visibility timeout longer than the longest task. Re-delivering

@@ -150,6 +150,9 @@ _SIGNAL_CATEGORY_MAP = {
     "semantic_uniformity": "authorship_risk",
     "discourse_regularity": "authorship_risk",
     "semantic_drift": "authorship_risk",
+    # Phase-1 ConsistencyDetector (poc/detect/consistency.py, kill-switched via
+    # DRAFTPROOF_CONSISTENCY) — paragraph-level stylometric-outlier findings.
+    "stylometric_outlier": "authorship_risk",
 }
 
 

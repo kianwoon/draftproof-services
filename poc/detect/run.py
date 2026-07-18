@@ -21,6 +21,8 @@ from .similarity import SimilarityDetector
 from .citation import CitationDetector
 from .ai_generation import AIGenerationSignalDetector
 from .semantic_shape import SemanticShapeDetector
+from .consistency import ConsistencyDetector, consistency_enabled
+from .consistency import SCANNER_NAME as _CONSISTENCY_SCANNER_NAME
 from .postprocess import PostProcessor, PostProcessConfig
 from .profiles import DomainProfile, resolve_profile
 from .thresholds import ThresholdConfig
@@ -156,7 +158,20 @@ class DetectionRunner:
             for r in scanner_results:
                 pp = processor.process(r, original_text=content)
                 pp_results.append(pp)
-                processed_results.append(pp.result)
+                result = pp.result
+                if result.scanner == _CONSISTENCY_SCANNER_NAME and result.findings:
+                    # PostProcessor._recompute_risk blends the raw overall_risk with
+                    # a risk_level-derived floor for ANY non-empty findings list
+                    # (poc/detect/postprocess.py) — for every other detector that is
+                    # correct post-processing behavior, but the Phase-1
+                    # ConsistencyDetector is informational-only and must contribute
+                    # ZERO weight to the fused score unconditionally (see
+                    # poc/detect/consistency.py module docstring), even after
+                    # post-processing and even while the kill switch is on. Re-zero
+                    # explicitly rather than let the recompute leak a nonzero value
+                    # into DetectionRunner._aggregate_risk's fallback max().
+                    result.overall_risk = 0.0
+                processed_results.append(result)
             scanner_results = processed_results
 
         all_findings = self._collect_findings(scanner_results)
@@ -234,6 +249,12 @@ class DetectionRunner:
             detectors.append(CitationDetector(
                 auto_extract_bibliography=kwargs.get("auto_extract_bibliography", True)
             ))
+        # Phase-1 ConsistencyDetector (poc/detect/consistency.py) — kill-switched via
+        # DRAFTPROOF_CONSISTENCY, default OFF. When OFF, ConsistencyDetector must
+        # never be constructed at all (not merely silent) so the report stays
+        # byte-identical to before this detector existed.
+        if consistency_enabled():
+            detectors.append(ConsistencyDetector())
         return detectors
 
     @staticmethod
