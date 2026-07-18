@@ -42,6 +42,11 @@ from celery.exceptions import SoftTimeLimitExceeded
 # Importing model_preload registers its @worker_process_init.connect handler.
 from . import model_preload  # noqa: F401
 from . import scan_enrichment
+# Importing defence registers judge_defence_answer_task under the explicit name
+# "app.tasks.judge_defence_answer" (Task 7) -- required so the API's name-string-only enqueue
+# (celery_client.py's judge_defence_answer signature) actually resolves to a real handler. See
+# worker/app/defence.py's module docstring for the full task-name-resolution reasoning.
+from . import defence  # noqa: F401
 from .rewrite_billing import (
     _dedupe_historical_seed_texts,
     _historical_rewrite_seed_texts,

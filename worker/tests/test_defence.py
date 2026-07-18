@@ -73,7 +73,12 @@ PENDING_ROW = {
 def test_task_registers_under_exact_contract_name():
     assert defence.judge_defence_answer_task.name == "app.tasks.judge_defence_answer"
     assert "app.tasks.judge_defence_answer" in celery_app.tasks
-    assert celery_app.tasks["app.tasks.judge_defence_answer"] is defence.judge_defence_answer_task
+    registered = celery_app.tasks["app.tasks.judge_defence_answer"]
+    assert registered.name == "app.tasks.judge_defence_answer"
+    # Celery re-binds the task instance per-app (app.tasks[name] is the app-bound instance,
+    # not necessarily the same object as the module-level decorator result) -- what matters for
+    # the contract is that both resolve to the SAME underlying function.
+    assert registered.run.__func__ is defence.judge_defence_answer_task.run.__func__
 
 
 # ── _perform_judging: success / fail-open / skip / retry paths ─────────────
