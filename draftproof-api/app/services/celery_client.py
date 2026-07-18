@@ -19,6 +19,20 @@ broker_ssl_options = redis_ssl_options(REDIS_URL)
 if broker_ssl_options:
     celery_app.conf.update(broker_use_ssl=broker_ssl_options)
 
+# Named queues (single source of truth for THIS process's task_routes -- worker/app/celery_app.py
+# keeps its own mirrored copy, see the comment there for why both need it).
+_SCAN_QUEUE = "scan"
+# Dedicated queue for judge_defence_answer (final-review Finding 3, 2026-07-18). scan/run_rewrite
+# jobs are multi-minute; this deployment runs the worker at CELERY_WORKER_CONCURRENCY=1 (single
+# concurrency, see worker/entrypoint.sh), so a quick defence-answer judgment previously queued
+# behind a long-running scan/rewrite on the shared "scan" queue -- easily long enough to blow past
+# DefenceCheck.jsx's ~2-minute poll cap (DEFENCE_POLL_MAX_ATTEMPTS * DEFENCE_POLL_INTERVAL_MS)
+# before the judge task even started. Splitting it onto its own queue means it is never blocked
+# behind a scan/rewrite that happens to be running when it's enqueued.
+# REQUIRES the worker process to actually consume this queue -- see worker/entrypoint.sh's
+# `-Q` flag (must list this queue name) and worker/app/celery_app.py's mirrored task_routes entry.
+_DEFENCE_QUEUE = "defence"
+
 celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
@@ -29,10 +43,10 @@ celery_app.conf.update(
     broker_connection_max_retries=None,
     broker_channel_error_retry=True,
     task_routes={
-        "app.tasks.scan_document": {"queue": "scan"},
-        "app.tasks.run_rewrite": {"queue": "scan"},
-        "app.tasks.regenerate_rewrite_report_assets": {"queue": "scan"},
-        "app.tasks.judge_defence_answer": {"queue": "scan"},
+        "app.tasks.scan_document": {"queue": _SCAN_QUEUE},
+        "app.tasks.run_rewrite": {"queue": _SCAN_QUEUE},
+        "app.tasks.regenerate_rewrite_report_assets": {"queue": _SCAN_QUEUE},
+        "app.tasks.judge_defence_answer": {"queue": _DEFENCE_QUEUE},
     },
     broker_transport_options=redis_broker_transport_options(CELERY_VISIBILITY_TIMEOUT_SECONDS),
 )

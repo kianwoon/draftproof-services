@@ -182,13 +182,29 @@ fi
 
 echo "[entrypoint] Model cache ready. Celery worker child will lazy-load cached scan models unless preload env flags are enabled."
 
-echo "[entrypoint] Starting Celery worker..."
+# "defence" queue (final-review Finding 3, 2026-07-18): app.tasks.judge_defence_answer now
+# routes here instead of "scan" (see draftproof-api/app/services/celery_client.py and
+# worker/app/celery_app.py's task_routes) so it is never enqueued behind a multi-minute
+# scan/rewrite job. This process must list it in -Q below or the queue is never drained at all
+# (task_routes only decides WHERE a task is published, not who consumes it).
+# IMPORTANT CAVEAT this alone does not fully fix: with CELERY_WORKER_CONCURRENCY=1 there is only
+# ONE execution slot in this single process regardless of how many queues it listens to -- a
+# defence-answer judgment enqueued while a scan/rewrite is already RUNNING will still wait for
+# that slot to free up, whichever queue it sat in. True latency isolation needs either a
+# dedicated second worker service consuming ONLY "defence" (judge_defence_answer needs no HF
+# volume / cached ML models -- just an LLM API call -- so it wouldn't hit the "single-attach HF
+# volume" limit noted in the Koyeb worker runbook) or bumping this process's concurrency (which
+# forks a second child that duplicates already-loaded ML models in memory -- a real RAM/CPU
+# cost). Both are deploy-level decisions outside this repo's reach; see
+# .superpowers/sdd/final-review-fixes-report.md Finding 3 for the full writeup.
+CELERY_QUEUES="default,scan,defence"
+echo "[entrypoint] Starting Celery worker on queues: ${CELERY_QUEUES}"
 cd /app/worker
 exec celery -A app.celery_app worker \
     --loglevel=info \
     --concurrency="${CELERY_WORKER_CONCURRENCY}" \
     --pool=prefork \
-    -Q default,scan \
+    -Q "${CELERY_QUEUES}" \
     --without-heartbeat \
     --without-gossip \
     --without-mingle
