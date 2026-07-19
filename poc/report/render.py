@@ -496,7 +496,14 @@ _POLICY_DISCLAIMER = (
 def _policy_row(label: str, p: dict) -> str:
     issue = _POLICY_ISSUE.get(p.get("main_issue"), "")
     fix = _POLICY_FIX.get(p.get("main_issue"), "")
-    line = f"- **{label}: {_POLICY_LEVEL.get(p.get('level'), 'Unknown')}**"
+    level_text = _POLICY_LEVEL.get(p.get("level"), "Unknown")
+    # 2026-07-20: PDF was level-only ("Moderate") while the web PolicyRiskView and the
+    # legacy render_panels.py cards both show the number too ("Moderate 36") — owner
+    # flagged the mismatch on a live PDF. Same "{Level} {score}" convention as the
+    # legacy cards (render_panels.py's `lvl += f" {round(p['score'])}"`) for parity.
+    if isinstance(p.get("score"), (int, float)):
+        level_text += f" {round(p['score'])}"
+    line = f"- **{label}: {level_text}**"
     if issue:
         line += f" — main issue: {issue}."
     if fix:

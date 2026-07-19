@@ -12,8 +12,15 @@ authorship_breakdown is ABSENT. The fixture below therefore MUST carry an
 authorship_breakdown, or this test would silently exercise the legacy-cards
 path instead of the new panel (the mistake in the first version of this test —
 its "36"/"33" assertions passed against the legacy cards' numeric score, not
-against _render_policy_risk's own output, which never prints raw scores at
-all — see _policy_row in render.py: level + main-issue + fix text only)."""
+against _render_policy_risk's own output).
+
+2026-07-20 follow-up: owner found the panel level-only ("Moderate", no "36")
+on a real downloaded PDF while the web PolicyRiskView and the legacy cards
+both show the number. _policy_row now appends the rounded score ("Moderate
+36"), matching the legacy cards' `f"{level} {round(score)}"` convention --
+see the score assertions below, which now assert PRESENCE (the opposite of
+the original test's design, which deliberately avoided asserting scores
+because this panel didn't render them yet)."""
 from report.report import DraftReport, Tier
 from report.render import render_report
 
@@ -82,10 +89,18 @@ def test_policy_risk_panel_reaches_the_rendered_pdf_markdown():
     assert "AI is allowed" in md
     assert "AI is not allowed" in md
     # _render_policy_risk's own content (render.py::_policy_row) — level + main-issue
-    # text, never a raw score. "36"/"33" would also match the LEGACY cards' numeric
-    # display, so they don't prove this panel specifically rendered; these do.
+    # text uniquely identifies THIS panel vs the legacy cards.
     assert "weak source grounding" in md
     assert "polished, AI-like surface style" in md
+
+
+def test_policy_risk_panel_shows_the_score_number_not_just_the_level():
+    # Owner found this panel showing "Moderate" with no number on a real downloaded
+    # PDF, while the web PolicyRiskView and the legacy cards both show it. Both rows
+    # in the fixture are 36.2 (post-floor) -- "Moderate 36" should appear once per
+    # row, proving the score is attached to EACH row, not a one-off coincidence.
+    md = render_report(_report(_BADGE))
+    assert md.count("Moderate 36") == 2
 
 
 def test_policy_risk_panel_absent_when_diagnosis_abstained():
