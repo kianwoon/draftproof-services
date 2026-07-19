@@ -11,12 +11,22 @@ service only ever writes `status='pending'` rows and reads whatever the worker l
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.models.db import async_session, DefenceResponse
 
 # Best-of-attempts level ranking, worst first — used by aggregate_readiness() to pick the
 # single best judged attempt per dimension.
 _LEVEL_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+class AttemptCapRace(Exception):
+    """Raised when create_response()'s insert loses a race against the DB-level unique
+    constraint on (scan_id, question_index, attempt) added in migrations/015 — i.e. a
+    concurrent request for the same question committed the same attempt number first.
+    count_attempts() + this check-then-insert is not atomic, so this is the backstop that
+    makes the attempt cap a hard guarantee rather than a best-effort one. Callers (see
+    app/routes/defence.py) should treat this identically to the pre-check 409 path."""
 
 
 async def count_attempts(scan_id: str, question_index: int) -> int:
@@ -47,7 +57,12 @@ async def create_response(
     answer_text: str,
     attempt: int,
 ) -> dict:
-    """Insert a pending defence_responses row. Returns {id, status}."""
+    """Insert a pending defence_responses row. Returns {id, status}.
+
+    Raises AttemptCapRace if the DB-level unique constraint on
+    (scan_id, question_index, attempt) rejects this insert — a concurrent request already
+    committed this exact attempt number first (see migrations/015 and the class docstring).
+    """
     row = DefenceResponse(
         id=uuid.uuid4(),
         scan_id=uuid.UUID(scan_id),
@@ -62,7 +77,14 @@ async def create_response(
     )
     async with async_session() as session:
         session.add(row)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise AttemptCapRace(
+                f"attempt {attempt} for (scan_id={scan_id}, question_index={question_index}) "
+                "already exists"
+            ) from exc
         await session.refresh(row)
     return {"id": str(row.id), "status": row.status}
 

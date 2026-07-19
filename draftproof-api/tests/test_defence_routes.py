@@ -210,6 +210,25 @@ def test_attempt_cap_reached_returns_409(client, enabled, monkeypatch):
     assert r.status_code == 409
 
 
+def test_attempt_cap_race_loser_gets_409(client, enabled, monkeypatch):
+    """count_attempts() + create_response() is not atomic — two near-simultaneous requests
+    can both read prior_attempts below the cap and both pass the pre-check. The DB-level
+    unique constraint (migrations/015) makes the loser's insert raise AttemptCapRace; this
+    must surface as the same 409 the pre-check path returns, not a raw 500."""
+    from app.services import defence_service
+
+    monkeypatch.setattr("app.routes.defence.get_scan", AsyncMock(return_value=SCAN))
+    _mock_report(monkeypatch)
+    monkeypatch.setattr("app.routes.defence.defence_service.count_attempts", AsyncMock(return_value=0))
+    monkeypatch.setattr(
+        "app.routes.defence.defence_service.create_response",
+        AsyncMock(side_effect=defence_service.AttemptCapRace("raced")),
+    )
+    r = client.post("/api/scans/scan-1/defence/answers", json={"question_index": 0, "answer_text": "hi"})
+    assert r.status_code == 409
+    assert r.json()["detail"] == "Attempt limit reached for this question"
+
+
 def test_attempt_cap_counts_per_question_index_not_per_scan(client, enabled, monkeypatch):
     """A maxed-out attempt count on question_index=0 must not block question_index=1."""
     from app.config import DRAFTPROOF_DEFENCE_MAX_ATTEMPTS
