@@ -95,6 +95,45 @@ def rebuild_deep_scan_paragraph_rows(existing_rows, heatmap_rows, doc_band, band
     return new_rows if len(new_rows) == len(existing_rows) else None
 
 
+def resolve_deberta_model_version(heatmap_source, deep_scan_model_version, fakespot_model_version):
+    """Pick the model_version to stamp on the badge's ai_signal_deberta headline, so it
+    correctly reflects which DeBERTa-family detector actually produced the LAST
+    _compute_deberta_heatmap() call.
+
+    Pure function (no I/O, no globals) so it is unit-testable in isolation — mirrors
+    rebuild_deep_scan_paragraph_rows above.
+
+    2026-07-19 bugfix: _sync_deberta_headline_from_heatmap used to hardcode
+    ``"model_version": "deberta_signal_v2"`` unconditionally, even when the heatmap
+    rows it was rebuilding the tile from came from the SEPARATE V7 deep-scan Modal
+    pipeline (detect_v7/deep_scan_heatmap.py), making it impossible to tell from the
+    report JSON which detector actually produced a given reading.
+
+    - ``heatmap_source``: "fakespot" | "deep_scan" — report.py's own tracking of
+      which branch _compute_deberta_heatmap() took on its last call (see the
+      ``heatmap_source`` closure variable, also used for ``signal_highlight_source``).
+    - ``deep_scan_model_version``: the REAL V7 checkpoint id threaded from
+      detect_v7/deep_scan_heatmap.py::compose_deep_scan_heatmap's own "model_version"
+      field (sourced from the live Modal response, or the DRAFTPROOF_MODAL_CHECKPOINT
+      env tag — see that function's docstring), or None if neither was available.
+    - ``fakespot_model_version``: detect.deberta_signal.MODEL_VERSION, the fakespot
+      path's own real, existing identifier — passed in rather than imported here so
+      this function stays dependency-free for testing.
+
+    "deep_scan": prefers ``deep_scan_model_version``. When that is unavailable, falls
+    back to the ``heatmap_source`` label itself ("deep_scan" — already a real
+    identifier used elsewhere in this module) rather than silently mislabeling the
+    reading with the fakespot detector's own version string, which is exactly the bug
+    being fixed.
+
+    Anything else (the default "fakespot"): returns ``fakespot_model_version``
+    unchanged — byte-identical to pre-fix behavior.
+    """
+    if heatmap_source == "deep_scan":
+        return deep_scan_model_version or heatmap_source
+    return fakespot_model_version
+
+
 from detect.scoring import extract_signals, calculate_authorship_concern, estimate_citation_risk
 from report.authorship_evidence import build_authorship_evidence, strengthen_anchor_sentences
 from detect.authorship_windows import build_ai_footprint_profile, build_authorship_window_profile
@@ -1430,6 +1469,12 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
     # frontend which detector actually produced the highlight map (fakespot vs deep-scan), for
     # the legend copy — set inside the closure below, read after the call in _scan_intelligence.
     heatmap_source = {"value": "fakespot"}
+    # REAL model/checkpoint identifier for the LAST _compute_deberta_heatmap() call when it
+    # took the "deep_scan" branch (see resolve_deberta_model_version above). None when the
+    # fakespot branch was used, or when a deep-scan call somehow didn't report an id — never
+    # a hardcoded guess (2026-07-19 fix: _sync_deberta_headline_from_heatmap used to stamp
+    # the fakespot detector's OWN "deberta_signal_v2" version string on deep-scan readings).
+    heatmap_model_version = {"value": None}
 
     # Verdict tiers that mean "the document reads clean". A high-confidence (>=0.999) sentence
     # inside such a document is a SATURATION artifact — the per-sentence detector crosses 0.999 on
@@ -1506,6 +1551,7 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                 deep_result = compose_deep_scan_heatmap(sens)
                 if deep_result and deep_result.get("available"):
                     heatmap_source["value"] = "deep_scan"
+                    heatmap_model_version["value"] = deep_result.get("model_version")
                     return _gate_heatmap_bands(deep_result.get("sentence_scores") or [])
         except Exception:
             logger.exception(
@@ -1526,11 +1572,16 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         """Rebuild the badge's ai_signal_deberta headline from the SAME heatmap the map uses, so
         the tile's flagged_passages / signal_pct are derived from _source_segments — identical
         sentence boundaries to the map. Without this, the tile would carry build()'s headline
-        (from structured_sentence_segments, a different split) and disagree with the map."""
+        (from structured_sentence_segments, a different split) and disagree with the map.
+
+        model_version PROVENANCE (2026-07-19 fix): stamped via resolve_deberta_model_version
+        using heatmap_source/heatmap_model_version (set by _compute_deberta_heatmap above), so
+        a deep-scan-sourced reading reports the REAL V7 Modal checkpoint instead of the
+        fakespot detector's own "deberta_signal_v2" hardcode — see that function's docstring."""
         if not heatmap_rows:
             return
         try:
-            from detect.deberta_signal import headline_from_heatmap  # noqa: E402
+            from detect.deberta_signal import headline_from_heatmap, MODEL_VERSION as _fakespot_model_version  # noqa: E402
         except Exception:
             return
         # Reconstruct the canonical sentence list the heatmap was built from, so
@@ -1542,7 +1593,10 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
                            if it.get("sentence_id") == r.get("sentence_id")), "")}
             for r in heatmap_rows
         ]
-        heat = {"available": True, "sentence_scores": heatmap_rows, "model_version": "deberta_signal_v2"}
+        model_version = resolve_deberta_model_version(
+            heatmap_source["value"], heatmap_model_version["value"], _fakespot_model_version,
+        )
+        heat = {"available": True, "sentence_scores": heatmap_rows, "model_version": model_version}
         new_headline = headline_from_heatmap(heat, sens)
         badge = getattr(report, "ai_risk_badge", None) or {}
         if new_headline and badge.get("ai_signal_deberta") is not None:

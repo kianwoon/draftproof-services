@@ -121,12 +121,18 @@ def compose(text: str) -> dict:
     return _build_headline(scored_tuples)
 
 
-def _build_headline(scored_sentences: list[tuple]) -> dict:
+def _build_headline(scored_sentences: list[tuple], model_version: str = MODEL_VERSION) -> dict:
     """Shared headline builder. Takes [(sentence_id, score, text), ...] and returns the full
     ai_signal_deberta dict (signal_pct, flagged_passages, band, caveat, ...). Used by both
     compose() (naive-splitter sentences) and the report's canonical-sentence path, so the
     headline math is IDENTICAL regardless of which sentence splitter produced the inputs —
     eliminating the tile-vs-map inconsistency that arose from two different splitters.
+
+    ``model_version`` defaults to this module's own MODEL_VERSION (compose()'s native
+    path). ``headline_from_heatmap`` overrides it with the SOURCE heatmap's own
+    model_version when the scores came from a different detector entirely (e.g. the V7
+    deep-scan Modal checkpoint) — see that function's docstring for the 2026-07-19
+    provenance bugfix this parameter exists to fix.
 
     SINGLE FLAG DEFINITION: a sentence is "flagged" iff score >= SENT_THRESHOLD (0.99 — the
     high-confidence band). This MATCHES the authoritative badge's signal_pct so the tile and
@@ -165,7 +171,7 @@ def _build_headline(scored_sentences: list[tuple]) -> dict:
     return {
         "signal_pct": signal_pct, "sentences_scored": n_scored,
         "sentences_flagged": n_flagged, "flagged_passages": flagged_passages,
-        "band": band, "confidence": confidence, "model_version": MODEL_VERSION,
+        "band": band, "confidence": confidence, "model_version": model_version,
         "available": True, "caveat": caveat,
     }
 
@@ -268,10 +274,20 @@ def headline_from_heatmap(heatmap: dict | None, sentences: list[dict]) -> dict |
     """Build the ai_signal_deberta HEADLINE dict from the canonical-sentence heatmap, so the
     tile and the map share ONE sentence segmentation (no naive-splitter mismatch).
 
-    `heatmap` is the output of compose_from_sentences(); `sentences` is the same canonical
-    sentence list passed to it (needed to recover the text for flagged_passages). Returns the
+    `heatmap` is the output of compose_from_sentences() OR any other heatmap composer
+    sharing its shape (e.g. detect_v7/deep_scan_heatmap.py::compose_deep_scan_heatmap,
+    a genuinely SEPARATE Modal-backed detector — see poc/report/report.py's
+    _compute_deberta_heatmap SOURCE SWITCH); `sentences` is the same canonical sentence
+    list passed to it (needed to recover the text for flagged_passages). Returns the
     full headline dict via the shared _build_headline helper, or None if the heatmap is
-    unavailable (caller falls back to compose(text))."""
+    unavailable (caller falls back to compose(text)).
+
+    PROVENANCE (2026-07-19 fix): the returned dict's "model_version" reflects
+    `heatmap`'s OWN "model_version" field when present — so a headline built from a
+    deep-scan heatmap correctly reports the V7 Modal checkpoint, not this module's
+    MODEL_VERSION. Falls back to MODEL_VERSION when the heatmap omits the key
+    (compose_from_sentences() always sets it to MODEL_VERSION itself, so that path is
+    byte-identical to before this fix)."""
     if not heatmap or not heatmap.get("available"):
         return None
     rows = heatmap.get("sentence_scores") or []
@@ -287,7 +303,8 @@ def headline_from_heatmap(heatmap: dict | None, sentences: list[dict]) -> dict |
             scored_tuples.append((sid, score, sent.get("text", "")))
     if not scored_tuples:
         return None
-    return _build_headline(scored_tuples)
+    model_version = heatmap.get("model_version") or MODEL_VERSION
+    return _build_headline(scored_tuples, model_version=model_version)
 
 
 # ─── Authoritative-tier signal (>=0.99 high-confidence proportion) ────────────

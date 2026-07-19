@@ -268,3 +268,40 @@ def test_compose_from_sentences_returns_none_when_disabled_or_empty():
         assert deberta_signal.compose_from_sentences([]) is None
     finally:
         os.environ.pop("DRAFTPROOF_DEBERTA_SIGNAL", None)
+
+
+def test_headline_from_heatmap_threads_model_version_from_heatmap():
+    """2026-07-19 bugfix: headline_from_heatmap previously ignored the heatmap dict's
+    own "model_version" key and _build_headline always stamped the module's native
+    MODEL_VERSION, even when the heatmap rows came from a completely different
+    detector (e.g. the V7 deep-scan Modal checkpoint via
+    detect_v7/deep_scan_heatmap.py::compose_deep_scan_heatmap, threaded through
+    report.py's _sync_deberta_headline_from_heatmap). The returned headline must
+    report the ACTUAL source, not a hardcoded guess."""
+    sentences = [{"sentence_id": "s001", "paragraph_id": "p001", "text": "irrelevant text"}]
+    heatmap = {
+        "available": True,
+        "sentence_scores": [{"sentence_id": "s001", "paragraph_id": "p001",
+                              "score": 0.995, "band": "high"}],
+        "model_version": "desklib/ai-text-detector-academic-v1.01",
+    }
+    out = deberta_signal.headline_from_heatmap(heatmap, sentences)
+    assert out is not None
+    assert out["model_version"] == "desklib/ai-text-detector-academic-v1.01"
+    assert out["model_version"] != deberta_signal.MODEL_VERSION
+
+
+def test_headline_from_heatmap_defaults_to_module_model_version_when_absent():
+    """Backward compat: a heatmap without its own "model_version" key (the shape
+    compose_from_sentences has always returned, and the only shape this function
+    handled before the fix) keeps the native deberta_signal.MODEL_VERSION —
+    byte-identical to pre-fix behavior."""
+    sentences = [{"sentence_id": "s001", "paragraph_id": "p001", "text": "irrelevant text"}]
+    heatmap = {
+        "available": True,
+        "sentence_scores": [{"sentence_id": "s001", "paragraph_id": "p001",
+                              "score": 0.995, "band": "high"}],
+    }
+    out = deberta_signal.headline_from_heatmap(heatmap, sentences)
+    assert out is not None
+    assert out["model_version"] == deberta_signal.MODEL_VERSION
