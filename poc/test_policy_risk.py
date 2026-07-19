@@ -55,9 +55,14 @@ def test_spec_worked_example_renormalised():
     # AI-Allowed = (.30*65 + .25*60 + .20*55 + .10*70) / .85 = 52.5 / .85 = 61.76
     assert abs(r["ai_allowed"]["score"] - 61.76) < 0.05
     assert r["ai_allowed"]["level"] == "high"          # 51-75
-    # AI-Restricted = (.30*70 + .25*50 + .20*65 + .15*55) / .90 = 54.75 / .90 = 60.83
-    assert abs(r["ai_restricted"]["score"] - 60.83) < 0.05
-    assert r["ai_restricted"]["level"] == "high"        # 46-70
+    # AI-Restricted organic weighted mean = (.30*70 + .25*50 + .20*65 + .15*55) / .90
+    # = 54.75 / .90 = 60.83 -- BELOW ai_allowed's 61.76, so the ordering floor (see
+    # test_restricted_never_scores_below_allowed below) lifts the displayed score to
+    # match. pre_floor_score keeps the organic value inspectable.
+    assert abs(r["ai_restricted"]["pre_floor_score"] - 60.83) < 0.05
+    assert r["ai_restricted"]["floored_to_ai_allowed"] is True
+    assert abs(r["ai_restricted"]["score"] - r["ai_allowed"]["score"]) < 0.005
+    assert r["ai_restricted"]["level"] == r["ai_allowed"]["level"]
 
 
 def test_main_issue_is_top_weighted_contributor():
@@ -123,3 +128,60 @@ def test_shape_and_model():
         "judgment_gap", "prompt_specificity_gap",
     }
     assert "ai_allowed" in r and "ai_restricted" in r
+
+
+# ── ordering floor (2026-07-20 owner review) ──────────────────────────────────
+# A stricter (AI-restricted) policy must never read as lower risk than a more
+# permissive (AI-allowed) policy for the same document -- that inverts the
+# ordinary reading of the two numbers side by side.
+
+def test_restricted_never_scores_below_allowed_real_bug_scenario():
+    # Real base_signals pulled from a live report (R2 scan 99b1ad83) where the
+    # organic math produced ai_allowed=36.2 > ai_restricted=33.39 -- the exact
+    # scenario the owner flagged as counter-intuitive.
+    r = _run(surface=31.42, grounding=43.75, voice=16.0, judgment=16.0, specificity=52.5)
+    assert abs(r["ai_allowed"]["score"] - 36.2) < 0.01
+    assert abs(r["ai_restricted"]["pre_floor_score"] - 33.39) < 0.01
+    assert r["ai_restricted"]["floored_to_ai_allowed"] is True
+    assert r["ai_restricted"]["score"] == r["ai_allowed"]["score"]
+    assert r["ai_restricted"]["level"] == r["ai_allowed"]["level"]
+    # main_issue still explains the ORGANIC restricted computation, not the floor.
+    assert r["ai_restricted"]["main_issue"] == "surface_ai_text_signal"
+
+
+def test_no_floor_when_restricted_already_scores_higher():
+    # Typical case: surface AI-text signal dominates -> restricted organically
+    # >= allowed. Floor must be a no-op here (byte-identical to pre-floor math).
+    r = _run(surface=80, grounding=20, voice=70, judgment=20, specificity=20)
+    assert r["ai_restricted"]["score"] > r["ai_allowed"]["score"]
+    assert r["ai_restricted"]["floored_to_ai_allowed"] is False
+    assert r["ai_restricted"]["pre_floor_score"] is None
+
+
+def test_no_floor_at_exact_equality():
+    r = _run(surface=50, grounding=50, voice=50, judgment=50, specificity=50)
+    assert r["ai_restricted"]["score"] == r["ai_allowed"]["score"]
+    assert r["ai_restricted"]["floored_to_ai_allowed"] is False
+
+
+def test_floor_skips_gracefully_when_a_score_is_unknown():
+    # Only judgment_gap derivable: AI-Restricted's weights (surface/voice/grounding/
+    # specificity) are all missing -> zero available weight -> score None/"unknown".
+    # AI-Allowed still has judgment_gap (.25 weight) -> a real score. Floor must not
+    # crash comparing a None restricted score against a real allowed score.
+    r = score_policy_risk(
+        grounding_diagnosis={},
+        critical_thinking_control={"dimensions": {"student_judgement": {"gap": 20}}},
+    )
+    assert r["ai_allowed"]["score"] == 20.0
+    assert r["ai_restricted"]["score"] is None
+    assert r["ai_restricted"]["floored_to_ai_allowed"] is False
+    assert r["ai_restricted"]["pre_floor_score"] is None
+
+
+def test_floor_rebases_confirm_level_onto_the_floored_score():
+    r = _run(surface=31.42, grounding=43.75, voice=16.0, judgment=16.0, specificity=52.5)
+    restricted = r["ai_restricted"]
+    # confirm_delta is an absolute point amount -- unchanged by the floor.
+    confirmed = restricted["score"] - restricted["confirm_delta"]
+    assert restricted["confirm_level"] == _band(confirmed, RESTRICTED_BANDS)

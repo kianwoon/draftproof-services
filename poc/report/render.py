@@ -1772,7 +1772,42 @@ def render_report(report: DraftReport, verbose: bool = False) -> str:
             lines.append(_cgp)
             lines.append("")
 
+        # Policy-risk panel (AI-Allowed / AI-Restricted, advisory, display-only).
+        # 2026-07-20: standalone section giving the /report page's PolicyRiskView a
+        # PDF equivalent (web mounts it after ConsistencyRisk; here it sits earlier,
+        # right after the claim-graph panel — order isn't identical across the two
+        # surfaces, only presence/content is). Additive: '' when the diagnosis
+        # abstained (policy_risk.ai_allowed.level is absent/"unknown") — see
+        # _render_policy_risk. This composer was previously ONLY reachable from a
+        # dead `elif report.ai_risk_badge:` branch below (identical condition to
+        # this `if`, so Python could never take it) — the PDF has never shown this
+        # panel for ANY report; the /report page only started showing it 2026-07-19
+        # (Report.jsx PolicyRiskView mount), so the two surfaces had silently
+        # diverged.
+        #
+        # Gated on authorship_breakdown's PRESENCE (independent-review finding,
+        # 2026-07-20): render_merged_authorship_risk() -> render_scan_lead() already
+        # renders its OWN legacy "Policy view" cards (render_panels.py ~895) whenever
+        # authorship_breakdown is ABSENT (suppress_ai_likelihood=False there ->
+        # page_parity=False -> `not page_parity` gate on those cards is True). Calling
+        # this panel unconditionally would double-render policy content on that path
+        # (local/dev scans, prod flag-off). Exactly one policy surface must render in
+        # every config: this panel fires only where the legacy cards are suppressed
+        # (breakdown present -> page_parity=True -> legacy cards skipped).
+        if (report.ai_risk_badge or {}).get("authorship_breakdown"):
+            _policy = _render_policy_risk(report.ai_risk_badge)
+            if _policy:
+                lines.extend(_policy)
+                lines.append("")
+
     elif report.ai_risk_badge:
+        # NOTE: this branch is unreachable (identical condition to the `if` above —
+        # Python always takes the first matching branch) and has been since before
+        # this comment. Left in place rather than deleted: removing dead code that
+        # nothing else references is a separate, lower-risk cleanup than this fix,
+        # and this file is already large enough that an unrelated deletion here
+        # would just add PR noise. Do not add new logic to this branch — it will
+        # never run.
         # Legacy fallback (older reports without a submission_risk diagnosis).
         _submission = _render_submission_risk_headline(report.ai_risk_badge)
         if _submission:
