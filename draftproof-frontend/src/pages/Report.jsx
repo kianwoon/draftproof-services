@@ -1465,6 +1465,15 @@ export default function Report() {
             MergedAuthorshipRisk like the claim-graph panel) since this signal
             is independent of the authorship/tier badge. */}
         <ConsistencyRisk display={consistencyDisplay} />
+        {/* AI-Allowed / AI-Restricted policy-risk composer (poc/detect/policy_risk.py).
+            2026-07-19: was computed on every scan but only ever rendered inside
+            TransformationScorecard (gated behind hasRewriteSignalComparison), so it
+            never appeared on a plain scan report — real data silently discarded.
+            Mounted here, standalone, same pattern as ConsistencyRisk above: renders
+            nothing when policyRisk(heroBadge) is null (diagnosis abstained / older
+            report). heroBadge (not badge) so it reflects whichever variant — original
+            or rewritten — the hero card currently shows. */}
+        <PolicyRiskView t={t} pr={policyRisk(heroBadge)} />
         {showRewriteProgress && (
           <div className={`report-rewrite-progress${rewriteError ? ' has-error' : ''}${hasCompletedRewrite ? ' is-complete' : ''}`}>
             <div className="scan-progress" role="status" aria-live="polite">
