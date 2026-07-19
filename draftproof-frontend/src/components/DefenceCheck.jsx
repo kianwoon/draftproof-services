@@ -71,8 +71,17 @@ const DEFENCE_MAX_ANSWER_CHARS = 2000;
 // same first-N slice server-side, so submitting for an index beyond this cap would 400 with
 // "Invalid question_index" anyway — slicing here keeps the UI from ever showing a card that
 // can't actually be submitted, and bounds worst-case LLM-judge cost per scan to
-// DEFENCE_MAX_QUESTIONS * (DRAFTPROOF_DEFENCE_MAX_ATTEMPTS, currently 1) judge calls.
+// DEFENCE_MAX_QUESTIONS * DEFENCE_MAX_ATTEMPTS judge calls.
 const DEFENCE_MAX_QUESTIONS = 3;
+
+// MUST match draftproof-api/app/config.py's DRAFTPROOF_DEFENCE_MAX_ATTEMPTS default (1) — same
+// mirrored-literal caveat as the two constants above. defence_service.count_attempts() counts
+// EVERY existing row for a question (pending/judged/failed) toward this cap, so once a row's
+// `attempt` reaches this value there is no server-side path left that would ever accept another
+// submission for that question — leaving the form visible/enabled past that point would only
+// ever produce a guaranteed 409. Used below to hide the textarea/button proactively instead of
+// making the student discover the cap by clicking into a rejected request.
+const DEFENCE_MAX_ATTEMPTS = 1;
 
 const LEVEL_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 // Readiness-direction tones (high = good/green), distinct from the document's risk-severity
@@ -300,6 +309,11 @@ export default function DefenceCheck({ scanId, questions, t }) {
           const isJudged = row?.status === 'judged' && row.judgment && typeof row.judgment === 'object';
           const isFailed = row?.status === 'failed';
           const axes = isJudged && row.judgment.axes && typeof row.judgment.axes === 'object' ? row.judgment.axes : {};
+          // Once the row for this question has consumed every attempt the server will ever
+          // accept, hide the form rather than leave a button that can only ever 409. Not
+          // exhausted while still pending — that row's own attempt already counts toward the
+          // cap, but the student is watching it resolve, not trying to submit a new one.
+          const attemptsExhausted = !isPending && typeof row?.attempt === 'number' && row.attempt >= DEFENCE_MAX_ATTEMPTS;
 
           return (
             <div className="defence-check-card" key={`${q?.anchor_quote || ''}-${i}`}>
@@ -309,30 +323,34 @@ export default function DefenceCheck({ scanId, questions, t }) {
               </div>
               <p className="defence-check-question">{q?.question}</p>
 
-              <textarea
-                className="defence-check-textarea"
-                rows={4}
-                placeholder="Answer in your own words…"
-                value={drafts[i] ?? ''}
-                onChange={(e) => setDrafts((d) => ({ ...d, [i]: e.target.value }))}
-                disabled={isPending}
-                maxLength={DEFENCE_MAX_ANSWER_CHARS}
-                aria-label="Your answer"
-              />
+              {!attemptsExhausted && (
+                <>
+                  <textarea
+                    className="defence-check-textarea"
+                    rows={4}
+                    placeholder="Answer in your own words…"
+                    value={drafts[i] ?? ''}
+                    onChange={(e) => setDrafts((d) => ({ ...d, [i]: e.target.value }))}
+                    disabled={isPending}
+                    maxLength={DEFENCE_MAX_ANSWER_CHARS}
+                    aria-label="Your answer"
+                  />
 
-              <div className="defence-check-actions">
-                <button
-                  type="button"
-                  className="btn btn-small btn-primary"
-                  onClick={() => handleSubmit(i)}
-                  disabled={isPending || !((drafts[i] || '').trim())}
-                >
-                  {isPending ? 'Judging…' : 'Submit answer'}
-                </button>
-                {typeof row?.attempt === 'number' && (
-                  <span className="defence-check-attempt">Attempt {row.attempt}</span>
-                )}
-              </div>
+                  <div className="defence-check-actions">
+                    <button
+                      type="button"
+                      className="btn btn-small btn-primary"
+                      onClick={() => handleSubmit(i)}
+                      disabled={isPending || !((drafts[i] || '').trim())}
+                    >
+                      {isPending ? 'Judging…' : 'Submit answer'}
+                    </button>
+                    {typeof row?.attempt === 'number' && (
+                      <span className="defence-check-attempt">Attempt {row.attempt}</span>
+                    )}
+                  </div>
+                </>
+              )}
 
               {state.status === 'error' && state.error && (
                 <p className="defence-check-error" role="alert">{state.error}</p>
@@ -347,7 +365,15 @@ export default function DefenceCheck({ scanId, questions, t }) {
 
               {isFailed && (
                 <p className="defence-check-note">
-                  Judging is unavailable right now — your answer was saved. Please try again later.
+                  {attemptsExhausted
+                    ? 'Judging failed for this attempt. Your answer was saved, but no attempts remain for this question.'
+                    : 'Judging is unavailable right now — your answer was saved. Please try again later.'}
+                </p>
+              )}
+
+              {attemptsExhausted && !isJudged && !isFailed && (
+                <p className="defence-check-note">
+                  You have used your attempt for this question. Your answer was saved.
                 </p>
               )}
 
