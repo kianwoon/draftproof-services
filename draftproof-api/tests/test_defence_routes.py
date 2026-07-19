@@ -128,6 +128,61 @@ def test_question_index_invalid_when_report_missing(client, enabled, monkeypatch
     assert r.status_code == 400
 
 
+# ── question-count cap ───────────────────────────────────────────────────────
+
+def test_questions_beyond_max_questions_cap_return_400(client, enabled, monkeypatch):
+    """The generation-time LLM call in critical_thinking_llm.py has no hard cap of its own
+    (a soft "3-5 questions" prompt instruction only) — _load_questions is the actual
+    enforcement point that bounds worst-case per-scan judge-call cost. A report with more
+    questions than DRAFTPROOF_DEFENCE_MAX_QUESTIONS must still reject any index at or beyond
+    the cap, even though the report itself contains a "valid-looking" question there."""
+    from app.config import DRAFTPROOF_DEFENCE_MAX_QUESTIONS
+
+    monkeypatch.setattr("app.routes.defence.get_scan", AsyncMock(return_value=SCAN))
+    many_questions = [
+        {"dimension": f"dim_{i}", "anchor_quote": f"quote {i}", "question": f"Q{i}?"}
+        for i in range(DRAFTPROOF_DEFENCE_MAX_QUESTIONS + 2)
+    ]
+    _mock_report(
+        monkeypatch,
+        report={"ai_risk_badge": {"critical_thinking_control": {"questions": many_questions}}},
+    )
+    # The very first index beyond the cap must 400, even though it exists in the raw report.
+    r = client.post(
+        "/api/scans/scan-1/defence/answers",
+        json={"question_index": DRAFTPROOF_DEFENCE_MAX_QUESTIONS, "answer_text": "hi"},
+    )
+    assert r.status_code == 400
+
+
+def test_questions_within_max_questions_cap_are_accepted(client, enabled, monkeypatch):
+    """The last index still inside the cap (DRAFTPROOF_DEFENCE_MAX_QUESTIONS - 1) must remain
+    answerable — this is the boundary check paired with the test above."""
+    from app.config import DRAFTPROOF_DEFENCE_MAX_QUESTIONS
+
+    monkeypatch.setattr("app.routes.defence.get_scan", AsyncMock(return_value=SCAN))
+    many_questions = [
+        {"dimension": f"dim_{i}", "anchor_quote": f"quote {i}", "question": f"Q{i}?"}
+        for i in range(DRAFTPROOF_DEFENCE_MAX_QUESTIONS + 2)
+    ]
+    _mock_report(
+        monkeypatch,
+        report={"ai_risk_badge": {"critical_thinking_control": {"questions": many_questions}}},
+    )
+    monkeypatch.setattr("app.routes.defence.defence_service.count_attempts", AsyncMock(return_value=0))
+    monkeypatch.setattr(
+        "app.routes.defence.defence_service.create_response",
+        AsyncMock(return_value={"id": "resp-boundary", "status": "pending"}),
+    )
+    with patch("app.services.celery_client.judge_defence_answer") as mock_task:
+        r = client.post(
+            "/api/scans/scan-1/defence/answers",
+            json={"question_index": DRAFTPROOF_DEFENCE_MAX_QUESTIONS - 1, "answer_text": "hi"},
+        )
+    assert r.status_code == 202
+    mock_task.delay.assert_called_once_with("resp-boundary")
+
+
 # ── answer_text length ───────────────────────────────────────────────────────
 
 def test_answer_text_too_long_returns_400(client, enabled, monkeypatch):

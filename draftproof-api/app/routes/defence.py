@@ -29,6 +29,7 @@ from app.config import (
     DRAFTPROOF_DEFENCE_CHECK,
     DRAFTPROOF_DEFENCE_MAX_ANSWER_CHARS,
     DRAFTPROOF_DEFENCE_MAX_ATTEMPTS,
+    DRAFTPROOF_DEFENCE_MAX_QUESTIONS,
 )
 from app.routes.auth import get_current_user
 from app.services import defence_service
@@ -52,8 +53,12 @@ def _require_enabled() -> None:
 async def _load_questions(scan_id: str) -> list[dict]:
     """Read the scan's report JSON from R2 (same read path as report_service.get_report /
     scan_service._scan_report_in_r2) and return its critical_thinking_control.questions
-    array. Empty list if the report / badge / questions block is missing or the scan
-    hasn't completed yet — callers treat that as "no valid question_index"."""
+    array, truncated to the first DRAFTPROOF_DEFENCE_MAX_QUESTIONS entries. Empty list if
+    the report / badge / questions block is missing or the scan hasn't completed yet —
+    callers treat that as "no valid question_index". The generation step in
+    critical_thinking_llm.py has no hard cap of its own (a soft "3-5 questions" prompt
+    instruction only), so this truncation is the actual enforcement point for the
+    per-scan question-count bound on LLM-judge cost."""
     report = await asyncio.to_thread(
         _fetch_optional_report_json_sync, f"reports/{scan_id}/report.json"
     )
@@ -66,7 +71,9 @@ async def _load_questions(scan_id: str) -> list[dict]:
     if not isinstance(ctc, dict):
         return []
     questions = ctc.get("questions")
-    return questions if isinstance(questions, list) else []
+    if not isinstance(questions, list):
+        return []
+    return questions[:DRAFTPROOF_DEFENCE_MAX_QUESTIONS]
 
 
 @router.post(
