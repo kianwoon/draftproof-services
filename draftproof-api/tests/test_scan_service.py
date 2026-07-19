@@ -30,6 +30,9 @@ class FakeResult:
     def scalars(self):
         return SimpleNamespace(all=lambda: self.rows)
 
+    def all(self):
+        return self.rows
+
 
 class FakeListSession:
     def __init__(self, results):
@@ -303,10 +306,10 @@ async def test_list_scans_returns_report_metadata(monkeypatch):
         word_count=640,
         created_at=datetime(2026, 5, 11, 1, 0, tzinfo=timezone.utc),
         completed_at=datetime(2026, 5, 11, 1, 2, tzinfo=timezone.utc),
+        total_count=1,
     )
     fake_session = FakeListSession([
         FakeResult(rows=[]),
-        FakeResult(scalar_value=1),
         FakeResult(rows=[job]),
     ])
 
@@ -321,6 +324,29 @@ async def test_list_scans_returns_report_metadata(monkeypatch):
     assert result["total"] == 1
     assert result["items"][0]["document_title"] == "Essay introduction"
     assert result["items"][0]["content_preview"] == "This essay introduces the argument."
+
+
+@pytest.mark.asyncio
+async def test_list_scans_past_last_page_falls_back_to_count_query(monkeypatch):
+    """A page request past the end returns no rows, so the window-function total
+    isn't available -- list_scans() must fall back to a real COUNT(*) rather than
+    silently reporting total=0."""
+    fake_session = FakeListSession([
+        FakeResult(rows=[]),  # active-jobs check
+        FakeResult(rows=[]),  # merged count+select: page is empty
+        FakeResult(scalar_value=3),  # COUNT(*) fallback
+    ])
+
+    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
+
+    result = await scan_service.list_scans(
+        "00000000-0000-0000-0000-000000000001",
+        page=5,
+        per_page=10,
+    )
+
+    assert result["total"] == 3
+    assert result["items"] == []
 
 
 @pytest.mark.asyncio

@@ -399,40 +399,59 @@ async def list_scans(user_id: str, page: int = 1, per_page: int = 10) -> dict:
                     await _mark_scan_interrupted(session, active_job)
             await session.commit()
 
-        count_result = await session.execute(
-            select(func.count()).select_from(ScanJob)
-            .where(ScanJob.user_id == uid)
+        # Select only the columns the response actually serializes (skips the
+        # JSONB report_urls blob, input_text_hash, etc.) and fold the total
+        # count into the same round trip via a window function instead of a
+        # separate COUNT(*) query -- list_scans() is called on every
+        # dashboard badge and reports-page load, so cutting one DB round
+        # trip per call matters more than the query cost itself.
+        list_cols = (
+            ScanJob.id, ScanJob.status, ScanJob.document_title,
+            ScanJob.content_preview, ScanJob.tier, ScanJob.ai_score,
+            ScanJob.writing_score, ScanJob.finding_count,
+            ScanJob.progress_percent, ScanJob.progress_message,
+            ScanJob.word_count, ScanJob.created_at, ScanJob.completed_at,
         )
-        total = count_result.scalar() or 0
-
         result = await session.execute(
-            select(ScanJob)
+            select(*list_cols, func.count().over().label("total_count"))
             .where(ScanJob.user_id == uid)
             .order_by(ScanJob.created_at.desc())
             .offset(offset)
             .limit(per_page)
         )
-        jobs = result.scalars().all()
+        rows = result.all()
+
+        if rows:
+            total = rows[0].total_count
+        else:
+            # Requested page is past the end (e.g. a stale page param) -- the
+            # window function has no rows to count from, so fall back to a
+            # real COUNT(*) to report the true total.
+            count_result = await session.execute(
+                select(func.count()).select_from(ScanJob).where(ScanJob.user_id == uid)
+            )
+            total = count_result.scalar() or 0
+
         return {
             "items": [
                 {
-                    "id": str(j.id),
+                    "id": str(r.id),
                     "document_id": "",
-                    "status": j.status,
-                    "report_id": str(j.id) if j.status == "completed" else None,
-                    "document_title": j.document_title,
-                    "content_preview": j.content_preview,
-                    "tier": j.tier,
-                    "ai_score": float(j.ai_score) if j.ai_score is not None else None,
-                    "writing_score": float(j.writing_score) if j.writing_score is not None else None,
-                    "finding_count": j.finding_count,
-                    "progress_percent": j.progress_percent,
-                    "progress_message": j.progress_message,
-                    "word_count": j.word_count,
-                    "created_at": j.created_at.isoformat() if j.created_at else None,
-                    "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+                    "status": r.status,
+                    "report_id": str(r.id) if r.status == "completed" else None,
+                    "document_title": r.document_title,
+                    "content_preview": r.content_preview,
+                    "tier": r.tier,
+                    "ai_score": float(r.ai_score) if r.ai_score is not None else None,
+                    "writing_score": float(r.writing_score) if r.writing_score is not None else None,
+                    "finding_count": r.finding_count,
+                    "progress_percent": r.progress_percent,
+                    "progress_message": r.progress_message,
+                    "word_count": r.word_count,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "completed_at": r.completed_at.isoformat() if r.completed_at else None,
                 }
-                for j in jobs
+                for r in rows
             ],
             "total": total,
             "page": page,

@@ -1,0 +1,27 @@
+-- Schema-history backfill, not a performance fix.
+--
+-- Investigating a reported dashboard/reports slowness, I intended to add a
+-- (user_id, created_at DESC) composite index on scan_jobs to match the
+-- pattern already used for payments/credit_ledger/usage_events (migration
+-- 001) -- scan_jobs (migration 002) only ever got single-column indexes on
+-- user_id and status.
+--
+-- On applying this to production it turned out the index already existed
+-- live as `idx_scan_jobs_user_created_at`, just never captured in a tracked
+-- migration file (added out-of-band at some point). This migration exists so
+-- that replaying 001-016 on a fresh database (or any environment that never
+-- got the manual change) produces the same schema production already has.
+-- IF NOT EXISTS makes it a no-op anywhere the index is already present.
+--
+-- (For the record: EXPLAIN ANALYZE on the real list_scans() query against
+-- production data -- 40 rows total, 29 max for one user -- showed 0.116ms
+-- execution time even before this was confirmed to already exist. The
+-- reported page slowness is not caused by this query; see the investigation
+-- notes in the PR/commit for the actual root cause.)
+--
+-- NOTE: CREATE INDEX CONCURRENTLY cannot run inside a transaction block. This
+-- is the first migration in this repo to use it -- apply with a plain
+-- `psql -f` (or `-c`), never through tooling/a runner that wraps statements
+-- in BEGIN/COMMIT (e.g. `psql -1`), or it will fail outright.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_scan_jobs_user_created_at
+  ON scan_jobs(user_id, created_at DESC);
