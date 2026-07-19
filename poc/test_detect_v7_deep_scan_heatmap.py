@@ -133,6 +133,52 @@ class TestTooShortSentences:
         assert result["sentence_scores"][0]["band"] == "clean"
 
 
+class TestModelVersionProvenance:
+    """2026-07-19: report.py used to hardcode the badge's ai_signal_deberta.model_version
+    as "deberta_signal_v2" (poc/detect/deberta_signal.py's OWN constant) even when the
+    heatmap it just rebuilt the tile from came from THIS module — a separate Modal
+    checkpoint. This module is the actual source of truth for which checkpoint served
+    the call, so it must surface a real identifier instead of letting the caller guess."""
+
+    def test_model_version_sourced_from_modal_response_checkpoint(self, monkeypatch):
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+        monkeypatch.delenv("DRAFTPROOF_MODAL_CHECKPOINT", raising=False)
+
+        def _fake_call(chunks, timeout_s=60.0):
+            return {
+                "available": True,
+                "calibrated": True,
+                "chunk_scores": [0.9],
+                "checkpoint": "desklib/ai-text-detector-academic-v1.01",
+            }
+
+        monkeypatch.setattr(modal_client, "call_deep_scan", _fake_call)
+        result = deep_scan_heatmap.compose_deep_scan_heatmap(_sentences(LONG_A))
+        assert result["model_version"] == "desklib/ai-text-detector-academic-v1.01"
+
+    def test_model_version_falls_back_to_env_checkpoint_when_response_omits_it(self, monkeypatch):
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+        monkeypatch.setenv("DRAFTPROOF_MODAL_CHECKPOINT", "draftproof/finetune-v1-gpt55")
+
+        def _fake_call(chunks, timeout_s=60.0):
+            return {"available": True, "calibrated": True, "chunk_scores": [0.9]}  # no "checkpoint" key
+
+        monkeypatch.setattr(modal_client, "call_deep_scan", _fake_call)
+        result = deep_scan_heatmap.compose_deep_scan_heatmap(_sentences(LONG_A))
+        assert result["model_version"] == "draftproof/finetune-v1-gpt55"
+
+    def test_model_version_none_when_no_source_available(self, monkeypatch):
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+        monkeypatch.delenv("DRAFTPROOF_MODAL_CHECKPOINT", raising=False)
+
+        def _fake_call(chunks, timeout_s=60.0):
+            return {"available": True, "calibrated": True, "chunk_scores": [0.9]}
+
+        monkeypatch.setattr(modal_client, "call_deep_scan", _fake_call)
+        result = deep_scan_heatmap.compose_deep_scan_heatmap(_sentences(LONG_A))
+        assert result.get("model_version") is None
+
+
 class TestFailOpen:
     def test_modal_unavailable_returns_none(self, monkeypatch):
         monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")

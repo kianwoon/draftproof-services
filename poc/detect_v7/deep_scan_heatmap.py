@@ -18,12 +18,36 @@ The caller (report.py) falls back to the existing ai_signal_deberta fakespot hea
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional
 
 from . import config, modal_client
 from .pipeline_bridge import is_deep_scan_enabled
 
 logger = logging.getLogger(__name__)
+
+# Env var the operator sets to label which checkpoint the Modal endpoint is currently
+# serving (same convention poc/report/authorship_evidence_levels.py and
+# poc/calibration/v7_deberta_academic_calibrate.py already use) — a fallback ONLY for
+# when the live response itself omits "checkpoint" (older/mocked endpoint). Prefer the
+# response's own field: it is what actually served THIS call, not an operator's label
+# that could drift out of sync with a real redeploy.
+_CHECKPOINT_ENV_VAR = "DRAFTPROOF_MODAL_CHECKPOINT"
+
+
+def _checkpoint_label(modal_response: Optional[dict] = None) -> Optional[str]:
+    """Best-effort identifier for the checkpoint that actually produced this heatmap,
+    so report.py never has to guess/hardcode which DeBERTa-family detector a given
+    ai_signal_deberta reading came from (2026-07-19 observability gap). Returns None
+    — never a fabricated placeholder — when neither source is available; callers
+    fall back to their own honest label (e.g. report.py falls back to the
+    "deep_scan" heatmap-source tag itself)."""
+    if modal_response and modal_response.get("checkpoint"):
+        return str(modal_response["checkpoint"])
+    env_tag = os.environ.get(_CHECKPOINT_ENV_VAR)
+    if not env_tag:
+        return None
+    return env_tag.strip() or None
 
 
 def _band_for_deep_scan_score(score: Optional[float], sent_threshold: float) -> str:
@@ -55,7 +79,15 @@ def compose_deep_scan_heatmap(sentences: list[dict]) -> Optional[dict]:
     a per-sentence heatmap in the SAME shape as
     ``poc.detect.deberta_signal.compose_from_sentences``:
 
-    ``{"sentence_scores": [{sentence_id, paragraph_id, score, band}, ...], "available": bool}``
+    ``{"sentence_scores": [{sentence_id, paragraph_id, score, band}, ...], "available": bool,
+    "model_version": str | None}``
+
+    ``model_version`` is the REAL checkpoint id that served this call (see
+    ``_checkpoint_label`` — sourced from the live Modal response's own ``"checkpoint"``
+    field, falling back to the ``DRAFTPROOF_MODAL_CHECKPOINT`` env tag, else ``None``).
+    Callers (``poc/report/report.py``) must use this instead of guessing/hardcoding
+    which DeBERTa-family detector produced a given reading — see the 2026-07-19
+    ``ai_signal_deberta.model_version`` observability bugfix.
 
     Each input dict carries ``{sentence_id (sNNN), paragraph_id (pNNN), text}`` — the exact
     canonical sentence list ``poc/report/report.py``'s ``_source_segments(complete=True)``
@@ -92,6 +124,7 @@ def compose_deep_scan_heatmap(sentences: list[dict]) -> Optional[dict]:
                     for sent in sentences
                 ],
                 "available": True,
+                "model_version": _checkpoint_label(),  # no Modal call made; env tag only
             }
 
         chunks = [texts[i] for i in qualifying_indices]
@@ -129,7 +162,11 @@ def compose_deep_scan_heatmap(sentences: list[dict]) -> Optional[dict]:
                     "band": _band_for_deep_scan_score(score, sent_threshold),
                 }
             )
-        return {"sentence_scores": out, "available": True}
+        return {
+            "sentence_scores": out,
+            "available": True,
+            "model_version": _checkpoint_label(modal_response),
+        }
     except Exception as e:  # noqa: BLE001 — fail-open, never break the report
         logger.warning("detect_v7.deep_scan_heatmap: compose_deep_scan_heatmap failed (fail-open): %s", e)
         return None

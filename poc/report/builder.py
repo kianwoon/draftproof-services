@@ -37,6 +37,7 @@ from report.grounding import (
     _topk_calibration_fields_for_summary,
     estimate_in_text_source_grounding_strength as _estimate_in_text_source_grounding_strength,
 )
+from report.policy_signal import policy_signal_pct_for_llm_patterning
 
 
 def _lean_gate_scan_active() -> bool:
@@ -1457,16 +1458,32 @@ class ReportBuilder:
         # When the DeBERTa authoritative path is active, record its high-confidence counts in
         # ai_components so downstream consumers (audit, UI) can see the basis of the score. The
         # perplexity component keys are retained for fallback continuity.
-        if authoritative_score and authoritative_score.get("available"):
+        _deb_available = bool(authoritative_score and authoritative_score.get("available"))
+        _deb_pct = None
+        if _deb_available:
             _deb_pct = round(authoritative_score["ai_likelihood_score"] * 100, 2)
             ai_components["deberta_high_confidence_proportion"] = _deb_pct
             ai_components["deberta_n_high_confidence"] = authoritative_score["n_high_confidence"]
             ai_components["deberta_n_scored"] = authoritative_score["n_scored"]
-            # Override the perplexity keys that feed the grounding diagnosis's llm_patterning
-            # bucket (and through it, policy_risk). When the score is suppressed (<20% → green,
-            # Turnitin-style), set them to 0 so policy_risk's surface_ai_text_signal reads 0
-            # (the AI text is too thin to count as a policy concern). Above 20%, use the real %.
-            _policy_pct = 0.0 if _deb_score < 0.20 else _deb_pct
+        # Override the perplexity keys that feed the grounding diagnosis's llm_patterning bucket
+        # (and through it, policy_risk). When the V7 tier-authority fusion actually APPLIED, these
+        # must track the FUSED authoritative_ai_likelihood (0-100 — the badge's own score), NOT the
+        # stale early-DeBERTa read: that stale read is the exact bug where a fused 67 surfaced ~5-9
+        # to policy_risk. When fusion did not apply, fall back byte-identically to the legacy
+        # early-DeBERTa <0.20 suppression. See report/policy_signal.py for the units-correct rules.
+        _tier_authority_applied = bool(
+            _tier_authority_flag_on
+            and tier_authority_status
+            and tier_authority_status.get("applied")
+        )
+        _policy_pct = policy_signal_pct_for_llm_patterning(
+            deberta_available=_deb_available,
+            deberta_score_fraction=(_deb_score if _deb_available else None),
+            deberta_pct=_deb_pct,
+            tier_authority_applied=_tier_authority_applied,
+            fused_ai_likelihood_pct=(authoritative_ai_likelihood if _tier_authority_applied else None),
+        )
+        if _policy_pct is not None:
             ai_components["predictability"] = _policy_pct
             ai_components["topk_pattern"] = _policy_pct
             ai_components["topk_pattern_raw"] = _policy_pct
