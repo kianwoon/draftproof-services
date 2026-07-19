@@ -64,6 +64,16 @@ const DEFENCE_POLL_MAX_ATTEMPTS = 30; // ~2 minutes before we stop and tell the 
 // (final-review Finding 1). If the backend value changes, update this constant to match.
 const DEFENCE_MAX_ANSWER_CHARS = 2000;
 
+// MUST match draftproof-api/app/config.py's DRAFTPROOF_DEFENCE_MAX_QUESTIONS default (3) —
+// same mirrored-literal caveat as DEFENCE_MAX_ANSWER_CHARS above. `questions` (the prop) is the
+// FULL critical_thinking_control.questions array shared with the read-only panel above this
+// one, which has no cap of its own; `_load_questions` in routes/defence.py truncates to the
+// same first-N slice server-side, so submitting for an index beyond this cap would 400 with
+// "Invalid question_index" anyway — slicing here keeps the UI from ever showing a card that
+// can't actually be submitted, and bounds worst-case LLM-judge cost per scan to
+// DEFENCE_MAX_QUESTIONS * (DRAFTPROOF_DEFENCE_MAX_ATTEMPTS, currently 1) judge calls.
+const DEFENCE_MAX_QUESTIONS = 3;
+
 const LEVEL_LABELS = { high: 'High', medium: 'Medium', low: 'Low' };
 // Readiness-direction tones (high = good/green), distinct from the document's risk-severity
 // --sev-* tokens (high = bad there). Mirrors the FUSED_TIER_TONES pattern already used
@@ -142,7 +152,14 @@ export default function DefenceCheck({ scanId, questions, t }) {
   const [submitState, setSubmitState] = useState({});
   const pollTimersRef = useRef({});
 
-  const hasQuestions = Array.isArray(questions) && questions.length > 0;
+  // Cap to the same first-N slice the backend enforces (_load_questions in routes/defence.py)
+  // — see the DEFENCE_MAX_QUESTIONS constant above for why. Every index used below (drafts,
+  // submitState, responsesByQuestion, handleSubmit's questionIndex) refers to this capped
+  // array's own index, which matches the backend's question_index for entries 0..N-1 since
+  // both slice the same source array the same way (Array.prototype.slice / Python list[:N]
+  // both keep original order, and neither this component nor the backend ever reorders).
+  const cappedQuestions = Array.isArray(questions) ? questions.slice(0, DEFENCE_MAX_QUESTIONS) : [];
+  const hasQuestions = cappedQuestions.length > 0;
 
   const stopPolling = useCallback((questionIndex) => {
     const timer = pollTimersRef.current[questionIndex];
@@ -276,7 +293,7 @@ export default function DefenceCheck({ scanId, questions, t }) {
         </p>
       </div>
       <div className="defence-check-body">
-        {questions.map((q, i) => {
+        {cappedQuestions.map((q, i) => {
           const row = responsesByQuestion[i];
           const state = submitState[i] || {};
           const isPending = state.status === 'pending' || state.status === 'submitting' || row?.status === 'pending';

@@ -136,8 +136,15 @@ DRAFTPROOF_DEFENCE_CHECK = os.getenv("DRAFTPROOF_DEFENCE_CHECK", "false").strip(
 # Max characters accepted in a single defence answer.
 DRAFTPROOF_DEFENCE_MAX_ANSWER_CHARS = max(1, int(os.getenv("DRAFTPROOF_DEFENCE_MAX_ANSWER_CHARS", "2000")))
 # Max attempts allowed per (scan_id, question_index) — a simple free-tier guard, not real
-# credit metering.
-DRAFTPROOF_DEFENCE_MAX_ATTEMPTS = max(1, int(os.getenv("DRAFTPROOF_DEFENCE_MAX_ATTEMPTS", "2")))
+# credit metering. Set to 1 (no retries) to bound total LLM-judge calls per scan; see
+# DRAFTPROOF_DEFENCE_MAX_QUESTIONS below for the other factor in that bound.
+DRAFTPROOF_DEFENCE_MAX_ATTEMPTS = max(1, int(os.getenv("DRAFTPROOF_DEFENCE_MAX_ATTEMPTS", "1")))
+# Max distinct questions eligible for defence-check per scan (independent of how many the
+# generation-time LLM call in critical_thinking_llm.py actually produced — that step has no
+# hard cap of its own, only a soft "3-5 questions" prompt instruction). Bounds worst-case
+# LLM-judge cost per scan to DRAFTPROOF_DEFENCE_MAX_QUESTIONS * DRAFTPROOF_DEFENCE_MAX_ATTEMPTS
+# judge calls (default 3 * 1 = 3).
+DRAFTPROOF_DEFENCE_MAX_QUESTIONS = max(1, int(os.getenv("DRAFTPROOF_DEFENCE_MAX_QUESTIONS", "3")))
 
 # In-app feedback → GitHub Issues. The repo is private, so visitors can't file
 # issues directly; the API files them server-side with a fine-grained PAT that
