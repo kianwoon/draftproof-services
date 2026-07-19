@@ -123,7 +123,9 @@ def test_legend_present_and_english_fallbacks_carried():
     }
     out = compose_sentence_issue_tags(fields)
     colors = [row["color"] for row in out["legend"]]
-    assert colors == ["red", "amber", "purple"]
+    # Legend always lists all 4 known types (unconditional, matching the
+    # pre-existing red/amber/purple behavior) — citation joined 2026-07-19.
+    assert colors == ["red", "amber", "purple", "blue"]
     # Every tag carries an i18n code AND an English fallback (for the PDF).
     tag = out["sentences"]["s009"][0]
     assert tag["label_code"] and tag["label_en"]
@@ -137,3 +139,99 @@ def test_no_duplicate_ai_tags_for_repeated_segment():
     }
     out = compose_sentence_issue_tags(fields)
     assert len(out["sentences"]["s001"]) == 1
+
+
+# ── Citation (blue), added 2026-07-19 ──
+#
+# Citation findings use `sentence_id` exactly like grounding/reasoning — it is
+# ALREADY resolved upstream (poc/report/builder.py::add_detection's "Strategy 2",
+# start_char -> containing predictability sentence) by the time a finding dict
+# reaches this module. There is no separate location/document_text mechanism
+# here (an earlier version of this file tried that; `location` never survives
+# report-layer serialization into result["findings"] in the first place, so it
+# would have been silently inert on every real report — see report.py's
+# `_tier_findings`, which serializes `sentence_id` but not `location`).
+
+
+def test_citation_finding_with_sentence_id_is_tagged():
+    fields = {"findings": {"high": [_finding("missing_from_bib", "s002", "citation")]},
+              "highlight_segments": []}
+    out = compose_sentence_issue_tags(fields)
+    assert out is not None
+    assert set(out["sentences"].keys()) == {"s002"}
+    tag = out["sentences"]["s002"][0]
+    assert tag["type"] == "citation"
+    assert tag["color"] == "blue"
+
+
+def test_uncited_claim_also_tags():
+    fields = {"findings": {"medium": [_finding("uncited_claim", "s003", "citation")]},
+              "highlight_segments": []}
+    out = compose_sentence_issue_tags(fields)
+    assert set(out["sentences"].keys()) == {"s003"}
+    assert out["sentences"]["s003"][0]["type"] == "citation"
+
+
+def test_uncited_in_body_never_tags_a_sentence():
+    """uncited_in_body is excluded from _CITATION_TITLES entirely (module
+    docstring: its evidence lives only in the bibliography, which
+    CitationDetector strips before locating evidence, so it never resolves a
+    sentence_id upstream either) — even WITH a sentence_id present here (e.g. a
+    future upstream change that resolves one anyway), it must still never tag,
+    proving the exclusion is title-based, not merely an absent-sentence_id
+    side effect."""
+    fields = {"findings": {"low": [_finding("uncited_in_body", "s001", "citation")]},
+              "highlight_segments": []}
+    assert compose_sentence_issue_tags(fields) is None
+
+
+def test_citation_finding_without_sentence_id_is_skipped_not_crashed():
+    """Strategy 2 upstream can fail to resolve a sentence_id (e.g. no
+    predictability summary available) -- sentence_id absent/None must be
+    skipped silently, never crash, never fall back to document_level (an
+    unanchorable citation tag would misattribute it to the whole document)."""
+    fields = {"findings": {"high": [_finding("missing_from_bib", None, "citation")]},
+              "highlight_segments": []}
+    out = compose_sentence_issue_tags(fields)
+    assert out is None
+
+
+def test_multiple_citation_findings_across_sentences_are_independent():
+    fields = {
+        "findings": {
+            "high": [_finding("missing_from_bib", "s002", "citation")],
+            "medium": [_finding("uncited_claim", "s003", "citation")],
+        },
+        "highlight_segments": [],
+    }
+    out = compose_sentence_issue_tags(fields)
+    assert set(out["sentences"].keys()) == {"s002", "s003"}
+    assert out["sentences"]["s002"][0]["type"] == "citation"
+    assert out["sentences"]["s003"][0]["type"] == "citation"
+
+
+def test_two_citation_findings_same_sentence_dedupe_to_one():
+    fields = {
+        "findings": {
+            "high": [_finding("missing_from_bib", "s002", "citation")],
+            "medium": [_finding("uncited_claim", "s002", "citation")],
+        },
+        "highlight_segments": [],
+    }
+    out = compose_sentence_issue_tags(fields)
+    assert len(out["sentences"]["s002"]) == 1
+    assert out["sentences"]["s002"][0]["type"] == "citation"
+
+
+def test_citation_stacks_with_ai_and_grounding_in_stable_order():
+    fields = {
+        "findings": {
+            "medium": [_finding("low_specificity", "s002"),
+                       _finding("missing_from_bib", "s002", "citation")],
+        },
+        "highlight_segments": [_seg("s002", "high")],
+    }
+    out = compose_sentence_issue_tags(fields)
+    tags = out["sentences"]["s002"]
+    assert [t["type"] for t in tags] == ["ai", "grounding", "citation"]
+    assert [t["color"] for t in tags] == ["red", "amber", "blue"]

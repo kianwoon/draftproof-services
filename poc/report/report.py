@@ -3540,10 +3540,15 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
 
     # Per-sentence issue-tag DISPLAY composer (advisory, display-only). Builds the
     # "Read full document" issue-underline layer (red=AI / amber=weak grounding /
-    # purple=reasoning jump) from result.findings + result.highlight_segments — the
-    # single source of truth both the web view and the PDF full-doc render consume.
-    # Additive + fail-open: omitted (no new key) when there is no trustworthy
-    # finding, so the view stays byte-identical. NEVER touches tier/score/gates.
+    # purple=reasoning jump / blue=citation not verified) from result.findings +
+    # result.highlight_segments — the single source of truth both the web view and
+    # the PDF full-doc render consume. Additive + fail-open: omitted (no new key)
+    # when there is no trustworthy finding, so the view stays byte-identical.
+    # NEVER touches tier/score/gates. Citation findings resolve to a sentence via
+    # their already-populated `sentence_id` (see sentence_issue_tags.py's
+    # docstring) — no document text needed here, unlike an earlier version of
+    # this call that tried to re-resolve via the finding's raw location, which
+    # never survives serialization into result["findings"] in the first place.
     try:
         from .sentence_issue_tags import compose_sentence_issue_tags  # noqa: E402
         _issue_tags = compose_sentence_issue_tags(result)

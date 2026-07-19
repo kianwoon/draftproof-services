@@ -2106,6 +2106,7 @@ button.paragraph-severity-seg {
 .submitted-issue-swatch.is-red { background: #dc2626; }
 .submitted-issue-swatch.is-amber { background: #f59e0b; }
 .submitted-issue-swatch.is-purple { background: #7c3aed; }
+.submitted-issue-swatch.is-blue { background: #2563eb; }
 
 .submitted-issue-legend {
   display: flex;

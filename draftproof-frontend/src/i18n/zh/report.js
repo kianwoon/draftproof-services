@@ -516,7 +516,9 @@ export const report = {
       "tagGrounding": "论据薄弱",
       "tagGroundingFix": "补充具体依据——姓名、数字、实例或来源。",
       "tagReasoning": "推理跳跃",
-      "tagReasoningFix": "用连接这些观点的证据或逻辑来衔接过渡。"
+      "tagReasoningFix": "用连接这些观点的证据或逻辑来衔接过渡。",
+      "tagCitation": "引用未核实",
+      "tagCitationFix": "将此来源加入参考文献列表，或为该论点标注引用来源。"
     },
     "documentText": "提交文档文本",
     "selectedSignal": "所选信号详情",
