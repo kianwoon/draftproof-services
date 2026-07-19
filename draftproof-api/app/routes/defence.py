@@ -106,16 +106,25 @@ async def submit_defence_answer(
         # analogous permanent count-cap precedent in routes/keys.py::create_key_route.
         raise HTTPException(status_code=409, detail="Attempt limit reached for this question")
 
-    created = await defence_service.create_response(
-        scan_id=scan_id,
-        user_id=user["id"],
-        question_index=body.question_index,
-        dimension=q.get("dimension"),
-        question=str(q.get("question") or ""),
-        anchor_quote=q.get("anchor_quote"),
-        answer_text=body.answer_text,
-        attempt=prior_attempts + 1,
-    )
+    try:
+        created = await defence_service.create_response(
+            scan_id=scan_id,
+            user_id=user["id"],
+            question_index=body.question_index,
+            dimension=q.get("dimension"),
+            question=str(q.get("question") or ""),
+            anchor_quote=q.get("anchor_quote"),
+            answer_text=body.answer_text,
+            attempt=prior_attempts + 1,
+        )
+    except defence_service.AttemptCapRace:
+        # count_attempts() + this insert is not atomic (independent-review finding on the
+        # cost-cap fix): two near-simultaneous submissions for the same (scan_id,
+        # question_index) can both read the same prior_attempts and both pass the check
+        # above. migrations/015's unique constraint on (scan_id, question_index, attempt)
+        # is the DB-level backstop — the loser of the race lands here and gets the same
+        # 409 the pre-check path returns, rather than exceeding the attempt cap.
+        raise HTTPException(status_code=409, detail="Attempt limit reached for this question")
 
     from app.services.celery_client import judge_defence_answer
     judge_defence_answer.delay(created["id"])
