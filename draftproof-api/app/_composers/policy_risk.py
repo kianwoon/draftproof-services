@@ -112,6 +112,45 @@ def _score_policy(weights: dict, base_signals: dict, omit_key: str, bands) -> di
     }
 
 
+def _floor_restricted_to_allowed(ai_allowed: dict, ai_restricted: dict) -> dict:
+    """A stricter (AI-restricted) policy must never read as LOWER risk than a more
+    permissive (AI-allowed) policy for the SAME document -- that inverts the ordinary
+    reading of the two numbers side by side ("stricter policy = same-or-worse risk").
+    The two composites weight genuinely different signals (Allowed leans on
+    grounding/judgment/specificity gaps; Restricted leans on surface-AI-text/voice
+    gaps) and CAN organically invert when a document's worst signals happen to be the
+    ones Allowed weights heaviest (2026-07-20 owner review, confirmed via hand
+    arithmetic on a live report: grounding_gap=43.75 + prompt_specificity_gap=52.5
+    dominate Allowed's weighting while staying below surface_ai_text_signal's weight
+    in Restricted, producing ai_allowed=36.2 > ai_restricted=33.39).
+
+    Fix: when ai_restricted's organic score is lower than ai_allowed's, floor it up to
+    match. ``main_issue`` and ``confirm_delta`` are left untouched -- they still
+    correctly explain what drove the ORGANIC restricted computation. ``confirm_level``
+    is rebased onto the floored score so it never shows a lower band than the
+    (now-floored) headline level: confirmed_absolute = floored_score - confirm_delta
+    (confirm_delta is an absolute point amount, so this is just re-anchoring it to the
+    new floor, not recomputing it). ``pre_floor_score``/``floored_to_ai_allowed`` keep
+    the organic value inspectable -- we never silently overwrite a computed value
+    without leaving a trace of what it was before."""
+    a_score = ai_allowed.get("score")
+    r_score = ai_restricted.get("score")
+    ai_restricted["floored_to_ai_allowed"] = False
+    ai_restricted["pre_floor_score"] = None
+    if not isinstance(a_score, (int, float)) or not isinstance(r_score, (int, float)):
+        return ai_restricted
+    if r_score >= a_score:
+        return ai_restricted
+
+    confirm_delta = ai_restricted.get("confirm_delta") or 0.0
+    ai_restricted["pre_floor_score"] = r_score
+    ai_restricted["floored_to_ai_allowed"] = True
+    ai_restricted["score"] = a_score
+    ai_restricted["level"] = _band(a_score, RESTRICTED_BANDS)
+    ai_restricted["confirm_level"] = _band(a_score - confirm_delta, RESTRICTED_BANDS)
+    return ai_restricted
+
+
 def score_policy_risk(
     *,
     grounding_diagnosis: dict[str, Any] | None = None,
@@ -130,9 +169,13 @@ def score_policy_risk(
         "prompt_specificity_gap": _dim_gap(dims, "specific_context"),
     }
 
+    ai_allowed = _score_policy(WEIGHTS_ALLOWED, base_signals, "declaration_gap", ALLOWED_BANDS)
+    ai_restricted = _score_policy(WEIGHTS_RESTRICTED, base_signals, "process_defensibility_gap", RESTRICTED_BANDS)
+    ai_restricted = _floor_restricted_to_allowed(ai_allowed, ai_restricted)
+
     return {
-        "ai_allowed": _score_policy(WEIGHTS_ALLOWED, base_signals, "declaration_gap", ALLOWED_BANDS),
-        "ai_restricted": _score_policy(WEIGHTS_RESTRICTED, base_signals, "process_defensibility_gap", RESTRICTED_BANDS),
+        "ai_allowed": ai_allowed,
+        "ai_restricted": ai_restricted,
         "base_signals": {k: (round(v, 2) if isinstance(v, (int, float)) else None) for k, v in base_signals.items()},
         "weights": {"ai_allowed": dict(WEIGHTS_ALLOWED), "ai_restricted": dict(WEIGHTS_RESTRICTED)},
         "model": MODEL_VERSION,
