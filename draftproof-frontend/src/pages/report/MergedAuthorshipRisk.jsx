@@ -252,9 +252,13 @@ const AEL_LENSES = ['ai_pattern', 'grounding', 'citation', 'reasoning'];
 // grounding, purple = reasoning jump). The swatch <span> reuses the shared
 // `.submitted-issue-swatch is-{color}` CSS (07-report-submitted.css), whose
 // hexes ARE the SignalHighlights ISSUE_COLOR_HEX values (#dc2626/#f59e0b/#7c3aed)
-// — one source of truth, no new colour. `citation` (Source traceability) is a
-// DOCUMENT-level dimension with no sentence underline, so it gets NO swatch
-// (honest: there is nothing to point at in the text).
+// — one source of truth, no new colour. `citation` here (Source traceability)
+// is a broader, DOCUMENT-level authorship-evidence dimension — a different
+// signal from the narrower blue "citation not verified" sentence underline
+// added 2026-07-19 (poc/report/sentence_issue_tags.py, CitationDetector's
+// literal bibliography cross-check only). This lens intentionally gets NO
+// swatch: it doesn't correspond 1:1 to that underline's data source, and
+// reusing blue here would falsely imply they're the same signal.
 const AEL_LENS_SWATCH = { ai_pattern: 'red', grounding: 'amber', reasoning: 'purple' };
 // Map each lens's raw band/level code to a display band token + level class.
 const AEL_TIER_BAND = { green: 'low', clean: 'low', low: 'low', amber: 'moderate', orange: 'high', red: 'high', high: 'high' };

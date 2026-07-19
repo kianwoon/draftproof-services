@@ -1143,8 +1143,9 @@ _DENSITY_CLEAN_COLOR = "#16a34a"
 
 # Per-sentence issue-tag underline colors — the single source is
 # poc/report/sentence_issue_tags.py (red=AI / amber=weak grounding /
-# purple=reasoning jump). Mirrors the page's underline key.
-_ISSUE_COLOR_HEX = {"red": "#dc2626", "amber": "#f59e0b", "purple": "#7c3aed"}
+# purple=reasoning jump / blue=citation not verified). Mirrors the page's
+# underline key (KEEP-IN-SYNC with SignalHighlights.jsx's ISSUE_COLOR_HEX).
+_ISSUE_COLOR_HEX = {"red": "#dc2626", "amber": "#f59e0b", "purple": "#7c3aed", "blue": "#2563eb"}
 
 
 def _issue_tags(data: dict) -> dict:
@@ -1165,7 +1166,7 @@ def _issue_legend_html(data: dict) -> str:
     if not legend:
         return ""
     _EN = {"tagAi": "Reads as AI", "tagGrounding": "Weak grounding",
-           "tagReasoning": "Reasoning jump"}
+           "tagReasoning": "Reasoning jump", "tagCitation": "Citation not verified"}
     chips = []
     for row in legend:
         color = _ISSUE_COLOR_HEX.get(row.get("color"), "#94a3b8")

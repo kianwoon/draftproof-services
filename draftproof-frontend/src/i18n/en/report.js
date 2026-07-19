@@ -521,7 +521,9 @@ export const report = {
       "tagGrounding": "Weak grounding",
       "tagGroundingFix": "Add a concrete anchor — a name, a number, an example, a source.",
       "tagReasoning": "Reasoning jump",
-      "tagReasoningFix": "Bridge the transition with the evidence or logic that connects the ideas."
+      "tagReasoningFix": "Bridge the transition with the evidence or logic that connects the ideas.",
+      "tagCitation": "Citation not verified",
+      "tagCitationFix": "Add this source to your bibliography, or cite a source for this claim."
     },
     "documentText": "Submitted document text",
     "selectedSignal": "Selected signal detail",

@@ -37,13 +37,16 @@ export default function SignalHighlights({
   // Per-sentence issue-tag underline layer (server composer: poc/report/
   // sentence_issue_tags.py). Single source of truth for the colored issue
   // underlines: red = reads as AI, amber = weak grounding, purple = reasoning
-  // jump. Null on older reports / clean docs -> the view renders exactly as
-  // before (byte-identical). AI's red treatment stays on the existing heatmap
-  // span; this layer ADDS the amber/purple underlines (stacked) + a per-sentence
-  // popover listing every issue with its one-line fix.
+  // jump, blue = citation not verified (bibliography cross-check — distinct
+  // from the unrelated "Citation grounding" AI-pattern signal chip elsewhere
+  // on this page, also red). Null on older reports / clean docs -> the view
+  // renders exactly as before (byte-identical). AI's red treatment stays on
+  // the existing heatmap span; this layer ADDS the amber/purple/blue
+  // underlines (stacked) + a per-sentence popover listing every issue with
+  // its one-line fix.
   const issueTags = submittedContent.sentenceIssueTags || null;
   const issueTagsBySid = new Map(Object.entries(issueTags?.sentences || {}));
-  const ISSUE_COLOR_HEX = { red: '#dc2626', amber: '#f59e0b', purple: '#7c3aed' };
+  const ISSUE_COLOR_HEX = { red: '#dc2626', amber: '#f59e0b', purple: '#7c3aed', blue: '#2563eb' };
   const issueLabel = (code) => t(`report.submitted.issueTags.${code}`, { defaultValue: code });
   const issueFix = (tag) => tag.fix_text || issueLabel(tag.fix_code);
 
@@ -110,8 +113,8 @@ export default function SignalHighlights({
                 const deb = debertaBySid.get(segment.sentence_id);
                 const sev = deb ? debertaSeverityClass(deb) : '';
                 const tags = issueTagsBySid.get(segment.sentence_id) || [];
-                // Only grounding/reasoning add a NEW underline here — AI's red is
-                // already on the heatmap span below (backward-compat).
+                // Only grounding/reasoning/citation add a NEW underline here —
+                // AI's red is already on the heatmap span below (backward-compat).
                 const extraTags = tags.filter((tg) => tg.type !== 'ai');
                 // Byte-identical path: nothing new to mark -> render exactly as before.
                 if (extraTags.length === 0) {
