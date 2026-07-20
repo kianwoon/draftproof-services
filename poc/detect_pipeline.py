@@ -52,6 +52,7 @@ def run_detect(
     verbose: bool = False,
     model_name: str | None = None,
     progress_callback=None,
+    ai_policy: str | None = None,
 ) -> dict:
     raw_text = str(text or "")
     text = normalize_submitted_text(raw_text)
@@ -111,7 +112,7 @@ def run_detect(
         builder.add_detection_report(det_report)
         if det_report.postprocess_results:
             builder.add_postprocess_results(det_report.postprocess_results)
-        builder.set_meta(scan_time=elapsed, original_text=text)
+        builder.set_meta(scan_time=elapsed, original_text=text, ai_policy=ai_policy)
         draft_report = builder.build()
     finally:
         _hb_stop.set()

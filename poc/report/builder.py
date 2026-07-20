@@ -198,16 +198,19 @@ class ReportBuilder:
         self._original_text = ""
         self._rewritten_text = ""
         self._scan_time = 0.0
+        self._ai_policy: Optional[str] = None
         self._deberta_heatmap: dict | None = None  # cached canonical-sentence heatmap (map+tile share it)
         self._summaries: Dict[str, Any] = {}
         self._false_positives: List[Dict[str, str]] = []
         self._sentence_id_map: Dict[str, str] = {}
 
     def set_meta(self, scan_time: float = 0.0,
-                 original_text: str = "", rewritten_text: str = ""):
+                 original_text: str = "", rewritten_text: str = "",
+                 ai_policy: Optional[str] = None):
         self._scan_time = scan_time
         self._original_text = original_text
         self._rewritten_text = rewritten_text
+        self._ai_policy = ai_policy
         self._generated_at = self._sgt_now()
         return self
 
@@ -1800,6 +1803,7 @@ class ReportBuilder:
             generated_at=getattr(self, "_generated_at", ""),
             original_text=self._original_text,
             rewritten_text=self._rewritten_text,
+            ai_policy=self._ai_policy,
             false_positives=self._false_positives or None,
             raw_overall_tier=raw_tier.value,
             adjusted_overall_tier=adjusted_tier.value,

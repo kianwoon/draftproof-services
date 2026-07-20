@@ -121,7 +121,7 @@ def _fetch_r2_json(s3, bucket: str, key: str) -> dict:
     soft_time_limit=settings.SCAN_SOFT_TIME_LIMIT_SECONDS,
     time_limit=settings.SCAN_TIME_LIMIT_SECONDS,
 )
-def scan_document(self, job_id: str, text: str) -> dict:
+def scan_document(self, job_id: str, text: str, ai_policy: str | None = None) -> dict:
     """Run the full detect pipeline on text and store results."""
     try:
         claimed = update_job_status(
@@ -194,6 +194,7 @@ def scan_document(self, job_id: str, text: str) -> dict:
                 verbose=True,
                 model_name=model_name,
                 progress_callback=report_progress,
+                ai_policy=ai_policy,
             )
 
             tier = result["tier"]
