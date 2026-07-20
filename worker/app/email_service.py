@@ -355,12 +355,24 @@ def build_scan_completion_email(
     pr = policy_risk or {}
     pa, prr = pr.get("ai_allowed") or {}, pr.get("ai_restricted") or {}
     if pa.get("level") and pa["level"] != "unknown":
-        details.append(
-            f"If AI is allowed (with declaration): {_POLICY_LEVEL.get(pa['level'], pa['level'])} ({round(pa.get('score') or 0)})"
-        )
-        details.append(
-            f"If AI is not allowed: {_POLICY_LEVEL.get(prr.get('level'), prr.get('level'))} ({round(prr.get('score') or 0)})"
-        )
+        # Phase 2 (docs/plans/policy_risk_external_review_response.md): pr.headline
+        # ("allowed"/"restricted"/"both") selects which line(s) to show when the
+        # assignment's real ai_policy is known. Absent/"both" (older reports, or
+        # ai_policy not offered/unknown) renders both lines exactly as before Phase 2.
+        headline = pr.get("headline") or "both"
+        if headline != "restricted":
+            details.append(
+                f"If AI is allowed (with declaration): {_POLICY_LEVEL.get(pa['level'], pa['level'])} ({round(pa.get('score') or 0)})"
+            )
+        if headline != "allowed":
+            if pr.get("headline_policy") == "editing_only":
+                details.append(
+                    "Editing-only policy: light AI-assisted polishing may be acceptable, but "
+                    "substantial AI transformation may create policy risk."
+                )
+            details.append(
+                f"If AI is not allowed: {_POLICY_LEVEL.get(prr.get('level'), prr.get('level'))} ({round(prr.get('score') or 0)})"
+            )
         details.append(
             "These scores do not prove AI use; they estimate how the draft may read under different school policies."
         )

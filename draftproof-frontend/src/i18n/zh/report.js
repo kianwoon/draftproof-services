@@ -599,8 +599,10 @@ export const report = {
   "policyRisk": {
     "heading": "政策风险",
     "subheading": "在你学校的 AI 政策下，这份草稿可能如何被看待",
+    "subheadingKnown": "在本次作业的 AI 政策下，这份草稿会如何被看待",
     "allowedLabel": "若允许使用 AI（需声明）",
     "restrictedLabel": "若不允许使用 AI",
+    "editingOnlyNote": "仅限编辑用途的政策：轻度的 AI 辅助润色可能是可接受的，但大幅度的 AI 转写可能构成政策风险。",
     "mainIssuePrefix": "主要问题：",
     "bestFixPrefix": "最佳修复：",
     "confirmTitle": "自行确认以降低分数",

@@ -605,8 +605,14 @@ export const report = {
   "policyRisk": {
     "heading": "Policy risk",
     "subheading": "How this draft may read under your school's AI policy",
+    // Phase 2 (docs/plans/policy_risk_external_review_response.md): shown instead
+    // of "subheading" when the assignment's real ai_policy is known (pr.headline
+    // is "allowed"/"restricted", not "both") -- KEEP IN SYNC with render.py's
+    // _render_policy_risk headlined heading text.
+    "subheadingKnown": "How this draft reads under your assignment's AI policy",
     "allowedLabel": "If AI is allowed (with declaration)",
     "restrictedLabel": "If AI is not allowed",
+    "editingOnlyNote": "Editing-only policy: light AI-assisted polishing may be acceptable, but substantial AI transformation may create policy risk.",
     "mainIssuePrefix": "Main issue:",
     "bestFixPrefix": "Best fix:",
     "confirmTitle": "Confirm yourself to lower a score",

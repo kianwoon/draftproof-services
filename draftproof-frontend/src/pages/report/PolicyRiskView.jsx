@@ -9,19 +9,36 @@ const ROWS = [
   { key: 'ai_restricted', labelKey: 'restrictedLabel', confirmKey: 'confirmRestricted' },
 ];
 
+// Phase 2 (docs/plans/policy_risk_external_review_response.md): pr.headline
+// ("allowed"/"restricted"/"both", computed server-side by
+// poc/detect/policy_risk.py's _select_headline) picks which row to show when the
+// assignment's real ai_policy is known. Absent/"both" (older reports, or ai_policy
+// not offered/unknown) renders both rows exactly as before Phase 2 -- pure
+// selection, never a client-side scoring decision.
+const HEADLINE_ROW_KEY = { allowed: 'ai_allowed', restricted: 'ai_restricted' };
+
 export default function PolicyRiskView({ t, pr }) {
   const [confirmed, setConfirmed] = useState({ ai_allowed: false, ai_restricted: false });
   if (!pr || !pr.ai_allowed || !pr.ai_allowed.level || pr.ai_allowed.level === 'unknown') return null;
+
+  const headline = pr.headline || 'both';
+  const rows = headline === 'both' ? ROWS : ROWS.filter((row) => row.key === HEADLINE_ROW_KEY[headline]);
 
   return (
     <div className="policy-risk" aria-label={t('report.policyRisk.heading')}>
       <div className="policy-risk-head">
         <span className="policy-risk-kicker">{t('report.policyRisk.heading')}</span>
-        <p className="policy-risk-sub">{t('report.policyRisk.subheading')}</p>
+        <p className="policy-risk-sub">
+          {t(headline === 'both' ? 'report.policyRisk.subheading' : 'report.policyRisk.subheadingKnown')}
+        </p>
       </div>
 
+      {headline === 'restricted' && pr.headline_policy === 'editing_only' && (
+        <p className="policy-risk-editing-note">{t('report.policyRisk.editingOnlyNote')}</p>
+      )}
+
       <div className="policy-risk-rows">
-      {ROWS.map((row) => {
+      {rows.map((row) => {
         const p = pr[row.key] || {};
         const isConfirmed = confirmed[row.key];
         const level = isConfirmed ? (p.confirm_level || p.level) : p.level;

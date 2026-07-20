@@ -133,3 +133,46 @@ def test_dead_elif_branch_is_provably_unreachable():
     elif_count = sum(1 for line in src_lines if line == "elif report.ai_risk_badge:")
     assert if_count >= 1
     assert elif_count >= 1
+
+
+# ── Phase 2 headline selection (docs/plans/policy_risk_external_review_response.md) ──
+
+def _badge_with_headline(headline, headline_policy):
+    pr = {**_POLICY_RISK, "headline": headline, "headline_policy": headline_policy}
+    return {**_BADGE, "policy_risk": pr}
+
+
+def test_headline_allowed_shows_only_the_allowed_row():
+    md = render_report(_report(_badge_with_headline("allowed", "allowed_with_declaration")))
+    assert "AI is allowed" in md
+    assert "AI is not allowed" not in md
+    assert "reads under your assignment's AI policy" in md
+
+
+def test_headline_restricted_shows_only_the_restricted_row():
+    md = render_report(_report(_badge_with_headline("restricted", "prohibited")))
+    assert "AI is not allowed" in md
+    assert "AI is allowed" not in md
+    assert "reads under your assignment's AI policy" in md
+
+
+def test_headline_restricted_editing_only_includes_the_explanatory_note():
+    md = render_report(_report(_badge_with_headline("restricted", "editing_only")))
+    assert "Editing-only policy" in md
+    assert "light AI-assisted polishing may be acceptable" in md
+
+
+def test_headline_restricted_non_editing_only_omits_the_note():
+    md = render_report(_report(_badge_with_headline("restricted", "prohibited")))
+    assert "Editing-only policy" not in md
+
+
+def test_headline_both_is_byte_identical_to_pre_phase2_rendering():
+    # No headline field at all (older reports) vs an explicit "both" -- same output,
+    # and the same output as the ORIGINAL (pre-Phase-2) fixture asserted in
+    # test_policy_risk_panel_reaches_the_rendered_pdf_markdown above.
+    no_field = render_report(_report(_BADGE))
+    explicit_both = render_report(_report(_badge_with_headline("both", "unknown")))
+    assert no_field == explicit_both
+    assert "AI is allowed" in no_field
+    assert "AI is not allowed" in no_field

@@ -380,6 +380,18 @@
 }
 .policy-risk-sub { margin: .15rem 0 .7rem; color: #475569; font-size: .9rem; }
 
+/* Phase 2 editing_only explanatory note -- amber-tinted callout, distinct from
+   the neutral disclaimer, mirrors the level="moderate" accent (#d97706). */
+.policy-risk-editing-note {
+  margin: 0 0 .7rem;
+  padding: .5rem .7rem;
+  border-left: 3px solid #d97706;
+  background: rgba(217, 119, 6, .08);
+  color: #92400e;
+  font-size: .84rem;
+  line-height: 1.5;
+}
+
 .policy-risk-rows {
   display: grid;
   grid-template-columns: 1fr 1fr;
