@@ -18,7 +18,7 @@ import importlib
 
 import pytest
 
-from detect_v7 import modal_client, pipeline_bridge
+from detect_v7 import config, modal_client, pipeline_bridge
 
 _ENV_VAR = "DRAFTPROOF_V7_AUTHORSHIP_BREAKDOWN"
 _DEEP_SCAN_ENV_VAR = "DRAFTPROOF_V7_DEEP_SCAN"
@@ -61,6 +61,56 @@ def _realistic_detection_result(ai_likelihood_score: float = 62.5, text: str | N
     if text is not None:
         result["text"] = text
     return result
+
+
+def _expected_calibrated_mean_proportion(sentence_scores: list[float]) -> float:
+    """Doc-level deep-scan ``proportion`` under the shipped
+    ``representation="calibrated_mean"`` contract (added 2026-07-14, config
+    ``deep_scan_calibration``): ``clip((mean(sentence_scores)-lo)/(hi-lo),0,1)``
+    — NOT the legacy flagged-fraction. Anchors are read from config so the
+    expectation tracks any re-anchoring (no hardcoded checkpoint constants)."""
+    cal = config.get_deep_scan_calibration()
+    lo, hi = cal["mean_anchor_lo"], cal["mean_anchor_hi"]
+    mean = sum(sentence_scores) / len(sentence_scores)
+    return max(0.0, min(1.0, (mean - lo) / (hi - lo)))
+
+
+def _inject_sentence_scores(monkeypatch, sentence_scores: list[float], *, calibrated: bool = True):
+    """Drive the deep-scan DISPLAY logic (bands / per-paragraph rows / floor)
+    with EXACT per-sentence scores.
+
+    Since commit 18b0a7c5 the Modal call receives overlapping 3-sentence
+    WINDOWS (deberta_windowing.build_windows) and pipeline_bridge aggregates
+    them back to per-sentence scores; a single window score therefore cannot
+    express an arbitrary per-sentence pattern (overlapping windows average).
+    These tests are about the proportion/band/per-paragraph math GIVEN
+    per-sentence scores, so we inject the aggregated scores directly — the
+    windowing + aggregation transport is covered by deberta_windowing's own
+    tests. ``call_deep_scan`` still returns a window-length score list so the
+    length-match guard in get_deep_scan_proportion passes.
+
+    ``sentence_scores`` MUST match ``split_sentences`` on the document text
+    (production zips sentences with the aggregated scores)."""
+    import detect.deberta_windowing as _dw  # same module pipeline_bridge imports at call time
+
+    monkeypatch.setattr(
+        modal_client,
+        "call_deep_scan",
+        lambda chunks, timeout_s=60.0: {
+            "available": True,
+            "calibrated": calibrated,
+            "chunk_scores": [1.0] * len(chunks),
+            "document_score": 1.0,
+        },
+    )
+    monkeypatch.setattr(
+        _dw,
+        "aggregate",
+        lambda sentences, windows, window_probs, size=3, step=1: {
+            "sentence_scores": list(sentence_scores),
+            "document_score": (sum(sentence_scores) / len(sentence_scores)) if sentence_scores else 0.0,
+        },
+    )
 
 
 class TestIsV7Enabled:
@@ -612,15 +662,23 @@ class TestDeepScanFusion:
         assert result is not None
         assert "deep_scan_uncalibrated" not in result.get("uncertainty_flags", [])
 
-    def test_multi_sentence_document_splits_before_modal_call(self, monkeypatch):
-        """The Modal call must receive one chunk PER SENTENCE, not one
-        document-length chunk — this is the core bug fix: the calibration
-        (poc/calibration/v7_deberta_academic_baseline.json) was validated at
-        sentence granularity, so a whole-document call is meaningless."""
+    def test_multi_sentence_document_windows_before_modal_call(self, monkeypatch):
+        """The Modal call must receive overlapping 3-sentence WINDOWS
+        (deberta_windowing.build_windows), NOT one document-length chunk — the
+        calibration (poc/calibration/v7_deberta_academic_baseline.json) is
+        validated at window granularity, so a whole-document call is
+        meaningless. Windowing replaced the earlier per-sentence chunking in
+        commit 18b0a7c5 (isolated short sentences scored ~0 on the
+        window-trained checkpoint and cratered the calibrated mean). A
+        5-sentence document must therefore yield 3 overlapping windows, never a
+        single whole-document chunk."""
         monkeypatch.setenv(_ENV_VAR, "1")
         monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
 
-        doc_text = "The first sentence is short. Here is a second sentence, also short. And a third one."
+        doc_text = (
+            "First sentence here. Second sentence here. Third sentence here. "
+            "Fourth sentence here. Fifth sentence here."
+        )  # 5 sentences -> build_windows(size=3, step=1) -> 3 overlapping windows
         captured = {}
 
         def _fake_call(chunks, timeout_s=60.0):
@@ -628,7 +686,7 @@ class TestDeepScanFusion:
             return {
                 "available": True,
                 "calibrated": True,
-                "chunk_scores": [0.9999, 0.1, 0.9999],
+                "chunk_scores": [0.9] * len(chunks),
                 "document_score": 0.7,
             }
 
@@ -638,52 +696,41 @@ class TestDeepScanFusion:
         assert result is not None
         chunks = captured["chunks"]
         assert len(chunks) == 3
-        assert all(len(c) < len(doc_text) for c in chunks)
         assert chunks != [doc_text]
+        assert all(len(c) < len(doc_text) for c in chunks)
 
     def test_proportion_computed_correctly_from_chunk_scores(self, monkeypatch):
-        """2 of 4 sentences >= sent_threshold (0.999) -> proportion == 0.5,
-        which is >= doc_floor (0.3), so no reliability-floor flag."""
+        """The doc-level proportion is computed from the per-sentence scores:
+        under representation=calibrated_mean it is
+        ``clip((mean(sentence_scores)-lo)/(hi-lo),0,1)``. These distinct scores
+        mean 0.945, giving proportion 0.5 — which is >= doc_floor (0.3), so the
+        deep_scan payload is present with that proportion and NO
+        reliability-floor flag is set."""
         monkeypatch.setenv(_ENV_VAR, "1")
         monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
 
         doc_text = "Sentence one is here. Sentence two follows. Sentence three next. Sentence four last."
-
-        monkeypatch.setattr(
-            modal_client,
-            "call_deep_scan",
-            lambda chunks, timeout_s=60.0: {
-                "available": True,
-                "calibrated": True,
-                "chunk_scores": [0.999, 0.5, 0.9995, 0.2],
-                "document_score": 0.5,
-            },
-        )
+        # Distinct per-sentence scores (not uniform) so the assertion genuinely
+        # exercises the mean-over-sentences computation; mean == 0.945.
+        sentence_scores = [0.96, 0.93, 0.96, 0.93]
+        _inject_sentence_scores(monkeypatch, sentence_scores, calibrated=True)
         result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result(text=doc_text))
 
         assert result is not None
+        deep = result.get("deep_scan")
+        assert deep is not None  # payload present — the proportion was computed, not skipped
+        expected = _expected_calibrated_mean_proportion(sentence_scores)
+        assert deep["proportion"] == pytest.approx(expected, abs=1e-6)
+        assert expected >= config.get_deep_scan_calibration()["doc_floor"]
         assert "deep_scan_below_reliability_floor" not in result.get("uncertainty_flags", [])
 
     def test_proportion_below_floor_sets_reliability_flag(self, monkeypatch):
-        """1 of 4 sentences >= sent_threshold (0.999) -> proportion == 0.25,
-        which is < doc_floor (0.3): fusion score is still computed and passed
-        (not zeroed), but the low-reliability flag must be set."""
-        monkeypatch.setenv(_ENV_VAR, "1")
-        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
-
-        doc_text = "Sentence one is here. Sentence two follows. Sentence three next. Sentence four last."
-
-        monkeypatch.setattr(
-            modal_client,
-            "call_deep_scan",
-            lambda chunks, timeout_s=60.0: {
-                "available": True,
-                "calibrated": True,
-                "chunk_scores": [0.999, 0.1, 0.2, 0.3],
-                "document_score": 0.4,
-            },
-        )
-        result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result(text=doc_text))
+        """A doc-level deep-scan proportion below doc_floor (0.3): the fusion
+        score is still computed and passed (not zeroed), but the low-reliability
+        flag must be set. Post-2026-07-14 the doc-level signal is the CALIBRATED
+        MEAN of the per-sentence scores (config representation=calibrated_mean),
+        so ``_run_with_proportion(flagged=2)`` drives proportion == 0.2 < 0.3."""
+        result = _run_with_proportion(monkeypatch, flagged=2)  # proportion 0.2 < doc_floor 0.3
 
         assert result is not None
         assert "deep_scan_below_reliability_floor" in result.get("uncertainty_flags", [])
@@ -782,24 +829,30 @@ def _ten_sentence_doc() -> str:
     return " ".join(f"Sentence number {i}." for i in range(10))
 
 
-def _chunk_scores_with_flagged(flagged: int, total: int = 10) -> list[float]:
-    """flagged sentences at >= sent_threshold (0.999), rest well below."""
-    return [0.9995] * flagged + [0.1] * (total - flagged)
-
-
 def _run_with_proportion(monkeypatch, flagged: int, calibrated: bool = True):
+    """Drive the doc-level deep-scan ``proportion`` to EXACTLY ``flagged/10``
+    over a 10-sentence document, then exercise the display-band mapping.
+
+    The proportion->band mapping (``_deep_scan_band`` + the weights.json
+    display-band cutoffs) is representation-INDEPENDENT, but the default
+    ``representation="calibrated_mean"`` computes the doc signal as
+    ``clip((mean-lo)/(hi-lo),0,1)`` whose float round-trip cannot land on the
+    exact band boundaries (e.g. an intended 0.70 comes back 0.6999…, flipping
+    orange<->red). So this helper pins the config's documented
+    ``representation="proportion"`` rollback (a config-only switch, see
+    ``deep_scan_calibration._representation_notes``): proportion becomes the
+    exact rational ``flagged/10`` (count of sentences >= sent_threshold). The
+    calibrated_mean doc signal is covered by the per-paragraph tests. Anchors /
+    threshold are read from config (no hardcoded checkpoint constants)."""
     monkeypatch.setenv(_ENV_VAR, "1")
     monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
-    monkeypatch.setattr(
-        modal_client,
-        "call_deep_scan",
-        lambda chunks, timeout_s=60.0: {
-            "available": True,
-            "calibrated": calibrated,
-            "chunk_scores": _chunk_scores_with_flagged(flagged),
-            "document_score": 0.5,
-        },
-    )
+    cal = dict(config.get_deep_scan_calibration())
+    cal["representation"] = "proportion"
+    monkeypatch.setattr(config, "get_deep_scan_calibration", lambda: cal)
+    sent_threshold = cal["sent_threshold"]
+    # exactly `flagged` sentences at/above the flag threshold, rest well below.
+    scores = [sent_threshold] * flagged + [0.0] * (10 - flagged)
+    _inject_sentence_scores(monkeypatch, scores, calibrated=calibrated)
     return pipeline_bridge.run_v7_breakdown(_realistic_detection_result(text=_ten_sentence_doc()))
 
 
@@ -881,24 +934,21 @@ class TestDeepScanPerParagraphProportions:
         monkeypatch.setenv(_ENV_VAR, "1")
         monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
 
-        def _fake_call(chunks, timeout_s=60.0):
-            assert len(chunks) == 3  # 2 sentences para 1 + 1 sentence para 2
-            return {
-                "available": True,
-                "calibrated": True,
-                "chunk_scores": [1.0, 1.0, 0.0],
-                "document_score": 0.9,
-            }
-
-        monkeypatch.setattr(modal_client, "call_deep_scan", _fake_call)
+        # 3 sentences: para 1 = s0,s1 (both AI-like); para 2 = s2 (human).
+        sentence_scores = [1.0, 1.0, 0.0]
+        _inject_sentence_scores(monkeypatch, sentence_scores, calibrated=True)
         result = pipeline_bridge.run_v7_breakdown(
             _realistic_detection_result(text=self._TEXT)
         )
         assert result is not None
         deep = result.get("deep_scan")
         assert deep is not None
-        # document proportion unchanged by the grouping: 2/3 flagged
-        assert deep["proportion"] == pytest.approx(2 / 3, abs=1e-6)
+        # Doc-level signal is the CALIBRATED MEAN of the per-sentence scores
+        # (representation=calibrated_mean), NOT the flagged fraction — and it is
+        # unchanged by the additive per-paragraph grouping below.
+        assert deep["proportion"] == pytest.approx(
+            _expected_calibrated_mean_proportion(sentence_scores), abs=1e-6
+        )
         rows = deep.get("paragraphs")
         assert rows is not None and len(rows) == 2
         assert rows[0] == {
@@ -1022,16 +1072,9 @@ class TestDeepScanPerParagraphProportions:
             "Everyone noticed the change."
         )
 
-        def fake_call(chunks, timeout_s=60.0):
-            # deep splitter yields 5 chunks (2 + 3); flag only the last.
-            return {
-                "available": True,
-                "calibrated": True,
-                "chunk_scores": [0.0] * (len(chunks) - 1) + [1.0],
-                "document_score": 0.2,
-            }
-
-        monkeypatch.setattr(modal_client, "call_deep_scan", fake_call)
+        # Deep splitter yields 5 sentences (2 + 3); flag only the last.
+        sentence_scores = [0.0, 0.0, 0.0, 0.0, 1.0]
+        _inject_sentence_scores(monkeypatch, sentence_scores, calibrated=True)
         result = pipeline_bridge.run_v7_breakdown(_realistic_detection_result(text=text))
         assert result is not None
         deep = result.get("deep_scan")
@@ -1044,9 +1087,13 @@ class TestDeepScanPerParagraphProportions:
         # not the pre-fix 1 of 3 = 0.333.
         assert rows[1]["flagged_count"] == 1
         assert rows[1]["proportion"] == pytest.approx(0.5)
-        # Document-level proportion is the detector's own 1/5 — untouched by the
-        # display re-basing (the ESL-gated fused-score input must not move).
-        assert deep["proportion"] == pytest.approx(1 / 5, abs=1e-6)
+        # Document-level proportion is the calibrated MEAN of the per-sentence
+        # scores (representation=calibrated_mean) — decoupled from and NOT
+        # re-based by the per-paragraph display counts (the ESL-gated fused-score
+        # input must not move).
+        assert deep["proportion"] == pytest.approx(
+            _expected_calibrated_mean_proportion(sentence_scores), abs=1e-6
+        )
 
 
 class TestBuilderThreadsCriterionScores:
