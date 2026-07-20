@@ -1,6 +1,11 @@
 export const rewritePage = {
   "failed": "改写失败",
+  "canceled": "改写已取消。",
   "incomplete": "改写尚未完成。",
+  "inProgress": "你的改写仍在进行中。",
+  "inProgressRedirecting": "正在带你前往实时进度追踪……",
+  "inProgressNoTracking": "请稍后再查看——此次改写尚未完成。",
+  "viewLiveProgress": "查看实时进度",
   "loadFailed": "无法加载改写结果",
   "downloadUnavailable": "下载尚不可用。请稍后再试。",
   "downloadFailed": "下载失败。请重试。",

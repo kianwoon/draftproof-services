@@ -428,7 +428,10 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
 
 async def cancel_rewrite(rewrite_id: str, user_id: str) -> dict | None:
     """Cancel an active rewrite and release its reserved credits."""
-    rewrite_uuid = uuid.UUID(rewrite_id)
+    try:
+        rewrite_uuid = uuid.UUID(rewrite_id)
+    except (ValueError, TypeError):
+        return None  # malformed id -> not found (404), not a 500 (L13)
     uid = uuid.UUID(user_id)
     should_revoke_task = False
     async with async_session() as session:
@@ -468,7 +471,11 @@ async def get_rewrite(rewrite_id: str, user_id: str | None = None) -> dict | Non
     prevents deploy-killed worker tasks from leaving jobs stuck indefinitely.
     """
     async with async_session() as session:
-        q = select(RewriteJob).where(RewriteJob.id == uuid.UUID(rewrite_id))
+        try:
+            rewrite_uuid = uuid.UUID(rewrite_id)
+        except (ValueError, TypeError):
+            return None  # malformed id -> not found (404), not a 500 (L13)
+        q = select(RewriteJob).where(RewriteJob.id == rewrite_uuid)
         if user_id:
             q = q.where(RewriteJob.user_id == uuid.UUID(user_id))
         q = q.with_for_update()

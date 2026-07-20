@@ -1,9 +1,11 @@
 import asyncio
 import json
+import logging
 import re
 
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
+from app.config import SSE_REWRITE_STREAM_MAX_SECONDS
 from app.models import RewriteCreateRequest, RewriteOut, RewriteReportOut
 from app.services import progress_stream
 from app.services import rewrite_service
@@ -107,8 +109,22 @@ async def stream_rewrite_events(
         if result["status"] in _TERMINAL_REWRITE_STATUSES:
             return
 
+        stream_started = asyncio.get_running_loop().time()
+
         while True:
             if await request.is_disconnected():
+                break
+
+            # Absolute lifetime cap (SSE_REWRITE_STREAM_MAX_SECONDS): close cleanly, the
+            # same way the terminal-status path below does, so the client's polling
+            # fallback (GET /rewrites/{id}) takes over instead of the connection hanging
+            # open indefinitely. This is a backstop on top of disconnect detection and
+            # the stale-job reaper (rewrite_service._processing_rewrite_is_stale), not a
+            # replacement for either.
+            if asyncio.get_running_loop().time() - stream_started > SSE_REWRITE_STREAM_MAX_SECONDS:
+                logging.getLogger(__name__).info(
+                    "SSE rewrite stream %s closed at lifetime cap (%ss)", rewrite_id, SSE_REWRITE_STREAM_MAX_SECONDS
+                )
                 break
 
             if not redis_unavailable:

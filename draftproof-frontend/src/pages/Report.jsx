@@ -108,6 +108,16 @@ import {
   EXTERNAL_ESTIMATE_DISPLAY_ENABLED,
 } from './report/reportHelpers';
 
+// Stall watchdog for the rewrite progress SSE stream (mirrors Scan.jsx's
+// SSE_STALL_TIMEOUT_MS pattern): a stalled-open EventSource (socket alive, no
+// events) would otherwise spin forever since the polling fallback only kicks in
+// once the stream actually errors. The worker publishes a heartbeat "processing"
+// event every 30s throughout the dominant writer-loop phase of a rewrite
+// (worker/app/tasks.py rewrite_heartbeat), tighter than scan's guarantee — 90s
+// allows 3 missed heartbeats (network/GC jitter) before we treat the stream as
+// dead, close it, and fall through to the poll fallback.
+const REWRITE_SSE_STALL_TIMEOUT_MS = 90000;
+
 export default function Report() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -148,6 +158,7 @@ export default function Report() {
   const [submittedTrackedCopyStatus, setSubmittedTrackedCopyStatus] = useState('idle');
   const rewritePollRef = useRef(null);
   const rewriteEventSourceRef = useRef(null);
+  const rewriteStallTimerRef = useRef(null);
   const rewriteTimerStartRef = useRef(null);
   const watchedRewriteIdsRef = useRef(new Set());
   const notifiedRewriteIdsRef = useRef(new Set());
@@ -270,12 +281,20 @@ export default function Report() {
     }
   }, [showReviewOnlyRewriteNotice, syncRewriteJob, t]);
 
+  const clearRewriteStallTimer = useCallback(() => {
+    if (rewriteStallTimerRef.current) {
+      clearTimeout(rewriteStallTimerRef.current);
+      rewriteStallTimerRef.current = null;
+    }
+  }, []);
+
   const closeRewriteEventSource = useCallback(() => {
+    clearRewriteStallTimer();
     if (rewriteEventSourceRef.current) {
       rewriteEventSourceRef.current.close();
       rewriteEventSourceRef.current = null;
     }
-  }, []);
+  }, [clearRewriteStallTimer]);
 
   const connectRewriteEvents = useCallback((rewriteId) => {
     closeRewriteEventSource();
@@ -284,7 +303,22 @@ export default function Report() {
     const source = new EventSource(buildRewriteEventsUrl(rewriteId), { withCredentials: true });
     rewriteEventSourceRef.current = source;
 
+    // On stall: close the dead-looking stream (also clears the ref via
+    // closeRewriteEventSource) and flip rewriteSseUnavailable so the poll-fallback
+    // effect (which only engages once the ref is clear) takes over immediately,
+    // plus fire one poll right away instead of waiting for its own interval tick.
+    const resetStallTimer = () => {
+      clearRewriteStallTimer();
+      rewriteStallTimerRef.current = setTimeout(() => {
+        closeRewriteEventSource();
+        setRewriteSseUnavailable(true);
+        pollRewriteStatus(rewriteId);
+      }, REWRITE_SSE_STALL_TIMEOUT_MS);
+    };
+    resetStallTimer();
+
     source.addEventListener('progress', (event) => {
+      resetStallTimer();
       let data;
       try {
         data = JSON.parse(event.data);
@@ -316,13 +350,20 @@ export default function Report() {
     });
 
     source.addEventListener('error', () => {
-      closeRewriteEventSource();
-      setRewriteSseUnavailable(true);
-      pollRewriteStatus(rewriteId);
+      // The browser auto-reconnects on a transient network blip (readyState goes
+      // CONNECTING); only give up when it has fully given up (CLOSED). Do NOT reset
+      // the stall watchdog here: only real progress events do that, so a reconnect
+      // loop that never delivers another event still terminates via
+      // REWRITE_SSE_STALL_TIMEOUT_MS (mirrors Scan.jsx's waitForScanEvents).
+      if (source.readyState === EventSource.CLOSED) {
+        closeRewriteEventSource();
+        setRewriteSseUnavailable(true);
+        pollRewriteStatus(rewriteId);
+      }
     });
 
     return true;
-  }, [closeRewriteEventSource, pollRewriteStatus, showReviewOnlyRewriteNotice, syncRewriteJob, t]);
+  }, [clearRewriteStallTimer, closeRewriteEventSource, pollRewriteStatus, showReviewOnlyRewriteNotice, syncRewriteJob, t]);
 
   useEffect(() => {
     const ac = new AbortController();

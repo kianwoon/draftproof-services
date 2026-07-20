@@ -6,8 +6,14 @@ redelivered. On worker boot this sweep finds those rows and resolves each one,
 mirroring the API-side recovery (``rewrite_service._processing_rewrite_is_stale``
 + ``_mark_rewrite_interrupted``) so behaviour is identical wherever recovery runs:
 
-* a job whose delivered rewrite report is already in R2 -> ``completed`` (+capture)
-* otherwise -> ``failed`` with a retry message (+release of reserved credits)
+* a job whose delivered rewrite report is already in R2 AND whose stamped
+  ``rewrite_id`` matches this job -> ``completed`` (+capture)
+* otherwise (undelivered, or an artifact stamped for a different/no job) ->
+  ``failed`` with a retry message (+release of reserved credits)
+
+The ``rewrite_id`` gate is load-bearing: the R2 key is per-scan, not per-job, so a
+retry job must not inherit (and get billed for) a prior job's already-delivered
+artifact. This matches the API path's ``saved_rewrite_id == str(job.id)`` check.
 
 Staleness is decided by the Redis progress stream acting as a heartbeat, so a
 rewrite still running on a briefly-overlapping worker during a rolling deploy is
@@ -141,7 +147,33 @@ def reconcile_interrupted_rewrites(now: datetime | None = None) -> dict:
                 continue
 
             report = _fetch_rewrite_report_json(scan_id)
-            if _rewrite_report_has_delivered_content(report):
+            # The rewrite.json R2 key is per-scan, not per-job — a scan can accumulate
+            # multiple rewrite attempts (retries) and each successful worker run
+            # overwrites the same key. Without the stamped-rewrite_id gate below, a
+            # stale job B would "inherit" a prior job A's already-billed artifact and
+            # get marked completed + billed for work it never did. Mirror the API-side
+            # recovery (rewrite_service._mark_rewrite_interrupted): only trust the
+            # artifact as evidence of THIS job's delivery when its stamped rewrite_id
+            # matches; a missing stamp (pre-fix legacy artifact) or a mismatch falls
+            # through to "failed, release credits" — the fail-safe billing direction.
+            saved_rewrite_id = (
+                str(report.get("rewrite_id") or "") if isinstance(report, dict) else ""
+            )
+            if saved_rewrite_id and saved_rewrite_id != rewrite_id:
+                logger.info(
+                    "Startup reconciler: rewrite %s — saved rewrite.json belongs to a "
+                    "different job (%s); not reusing it, treating as interrupted.",
+                    rewrite_id,
+                    saved_rewrite_id,
+                )
+            elif not saved_rewrite_id and report is not None:
+                logger.info(
+                    "Startup reconciler: rewrite %s — saved rewrite.json has no "
+                    "rewrite_id (pre-fix artifact); not reusing it, treating as "
+                    "interrupted.",
+                    rewrite_id,
+                )
+            if saved_rewrite_id == rewrite_id and _rewrite_report_has_delivered_content(report):
                 db.update_rewrite_status(
                     rewrite_id,
                     "completed",

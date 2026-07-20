@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { getRewriteStatus, getRewriteReport, getRewriteDownload, isAuthExpiryError } from '../api/draftproofApi';
 import ErrorReload from '../components/ErrorReload';
@@ -9,6 +9,12 @@ import {
   requiresRewriteAuthorReview,
   requiresRewriteExternalReview,
 } from './report/reportHelpers';
+
+// Rewrite jobs still running when this standalone page is opened (direct link,
+// bookmark, or a stale notification click) — the report page already has full
+// live tracking (SSE + stall-watchdog + poll fallback, see Report.jsx), so we
+// redirect there instead of duplicating that logic on this page.
+const IN_PROGRESS_REWRITE_STATUSES = new Set(['pending', 'processing', 'retrying']);
 
 function normalizeSentence(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -169,6 +175,7 @@ function renderTopkHighlights(text, sentenceSpans, wordSpans, bracketSpans) {
 
 export default function Rewrite() {
   const { rewriteId } = useParams();
+  const navigate = useNavigate();
   const { refreshBalance } = useAuth();
   const { t } = useTranslation();
   const [rewrite, setRewrite] = useState(null);
@@ -192,8 +199,21 @@ export default function Rewrite() {
         const { data: status } = await getRewriteStatus(rewriteId);
         if (cancelled) return;
         setRewrite(status);
+
+        if (IN_PROGRESS_REWRITE_STATUSES.has(status.status)) {
+          // Don't error/reload-loop on a job that simply hasn't finished — send
+          // the user to the report page's live tracking (scan_id is always
+          // present on RewriteOut). If it's ever absent, fall through and render
+          // the in-progress state below with a manual link instead.
+          if (status.scan_id) {
+            navigate(`/report/${status.scan_id}`, { replace: true });
+          }
+          return;
+        }
+
         if (status.status !== 'completed') {
-          setError(status.status === 'failed' ? (status.error || t('rewritePage.failed')) : t('rewritePage.incomplete'));
+          // failed / canceled: terminal states, rendered from `rewrite.status`
+          // below (no error string, no ErrorReload auto-reload loop).
           return;
         }
 
@@ -216,7 +236,7 @@ export default function Rewrite() {
     return () => {
       cancelled = true;
     };
-  }, [rewriteId, refreshBalance, t]);
+  }, [rewriteId, refreshBalance, navigate, t]);
 
   if (!rewriteId) {
     return <Navigate to="/reports" replace />;
@@ -323,6 +343,9 @@ export default function Rewrite() {
     ? { background: '#fffbeb', color: '#92400e', borderColor: '#fde68a' }
     : { background: '#f0fdf4', color: '#15803d', borderColor: '#bbf7d0' };
   const scanId = rewrite?.scan_id;
+  const isInProgress = Boolean(rewrite?.status && IN_PROGRESS_REWRITE_STATUSES.has(rewrite.status) && !report);
+  const isFailedTerminal = rewrite?.status === 'failed' && !report;
+  const isCanceledTerminal = rewrite?.status === 'canceled' && !report;
   const rewrittenWordCount = countWords(report?.final_text);
   const originalText = report?.original_text || summary.original_text || '';
   const documentDiff = buildSplitDiff(originalText, report?.final_text || '');
@@ -376,8 +399,35 @@ export default function Rewrite() {
           </div>
         )}
 
-        {error && <ErrorReload message={error} />}
+        {!loading && error && <ErrorReload message={error} />}
 
+        {!loading && !error && isInProgress && (
+          <div className="report-loading" role="status" aria-live="polite">
+            <div className="report-pulse" />
+            <p>{t('rewritePage.inProgress')}</p>
+            {scanId ? (
+              <p className="error-reload-hint">
+                {t('rewritePage.inProgressRedirecting')}{' '}
+                <Link to={`/report/${scanId}`}>{t('rewritePage.viewLiveProgress')}</Link>
+              </p>
+            ) : (
+              <p className="error-reload-hint">{t('rewritePage.inProgressNoTracking')}</p>
+            )}
+          </div>
+        )}
+
+        {!loading && !error && (isFailedTerminal || isCanceledTerminal) && (
+          <div className="error-reload">
+            <p className="error">
+              {isFailedTerminal ? (rewrite?.error || t('rewritePage.failed')) : t('rewritePage.canceled')}
+            </p>
+            {scanId && (
+              <Link to={`/report/${scanId}`} className="btn btn-secondary">
+                {t('rewritePage.back')}
+              </Link>
+            )}
+          </div>
+        )}
 
         {requiresManualReview && report?.final_text && (
           <section className="rewrite-status-alert">

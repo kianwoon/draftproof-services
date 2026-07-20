@@ -133,6 +133,14 @@ SSE_XREAD_BLOCK_MS = min(
 # legitimately still-processing scan is never cut off early. 600s = ~1.8x the worker cap.
 SSE_SCAN_STREAM_MAX_SECONDS = max(60, int(os.getenv("SSE_SCAN_STREAM_MAX_SECONDS", "600")))
 
+# Absolute lifetime cap for /api/rewrites/{id}/events, same purpose and mechanism as
+# SSE_SCAN_STREAM_MAX_SECONDS above (worker/app/config.py Settings.REWRITE_TIME_LIMIT_SECONDS,
+# default 1020s, is the guaranteed-terminal-state bound). The scan cap (600s) sits ~82% above
+# its own hard limit (330s: 600 = 330 + 270, 270/330 ~= 0.82) to absorb Celery queueing delay
+# before the task starts. Applying the same ~82% margin to the rewrite hard limit gives
+# 1020 * 1.82 ~= 1858s; rounded up to 1900s.
+SSE_REWRITE_STREAM_MAX_SECONDS = max(60, int(os.getenv("SSE_REWRITE_STREAM_MAX_SECONDS", "1900")))
+
 # R2 Storage (for fetching report JSON)
 R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL", "")
 R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")

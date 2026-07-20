@@ -1,6 +1,11 @@
 export const rewritePage = {
   "failed": "Rewrite failed",
+  "canceled": "Rewrite was canceled.",
   "incomplete": "Rewrite is not complete yet.",
+  "inProgress": "Your rewrite is still in progress.",
+  "inProgressRedirecting": "Taking you to live progress tracking...",
+  "inProgressNoTracking": "Check back shortly — this rewrite has not finished yet.",
+  "viewLiveProgress": "View live progress",
   "loadFailed": "Failed to load rewrite result",
   "downloadUnavailable": "Download not available yet. Please try again in a moment.",
   "downloadFailed": "Download failed. Please try again.",

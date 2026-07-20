@@ -102,6 +102,31 @@ def _best_effort_scan_status_update(job_id: str, status: str, **fields) -> bool:
         return False
 
 
+def _deliver_rewrite_completion_email(
+    *, rewrite_id: str, scan_id: str, rewritten_text: str, rewrite_summary, pdf_bytes, settings_obj
+) -> None:
+    """Best-effort completion-email delivery — must never raise.
+
+    Called AFTER the rewrite is marked 'completed' and credits are captured. A
+    failure in the email lookup/send (network, provider, missing recipient) must
+    NOT propagate: the generic task handler would otherwise flip the already-billed
+    'completed' job to 'failed'. Mirrors the SCAN completion-email hook.
+    """
+    try:
+        recipient_email = get_rewrite_user_email(rewrite_id)
+        send_rewrite_completion_email(
+            recipient_email=recipient_email,
+            rewrite_id=rewrite_id,
+            scan_id=scan_id,
+            final_text=rewritten_text,
+            rewrite_summary=rewrite_summary if isinstance(rewrite_summary, dict) else {},
+            pdf_bytes=pdf_bytes,
+            settings=settings_obj,
+        )
+    except Exception:
+        logger.warning("Rewrite completion email hook failed for %s", rewrite_id, exc_info=True)
+
+
 class RewriteCanceled(BaseException):
     """Raised inside a worker task when the user cancels a rewrite cooperatively.
 
@@ -903,15 +928,15 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
         else:
             release_rewrite_credits(rewrite_id)
         publish_progress("completed", 100, "Rewrite complete")
-        recipient_email = get_rewrite_user_email(rewrite_id)
-        send_rewrite_completion_email(
-            recipient_email=recipient_email,
+        # Status is already 'completed' and credits captured above — a failure in the
+        # email hook must NOT flip the billed job to 'failed' via the generic handler.
+        _deliver_rewrite_completion_email(
             rewrite_id=rewrite_id,
             scan_id=scan_id,
-            final_text=rewritten_text,
-            rewrite_summary=rewrite_json.get("summary") if isinstance(rewrite_json.get("summary"), dict) else {},
+            rewritten_text=rewritten_text,
+            rewrite_summary=rewrite_json.get("summary"),
             pdf_bytes=pdf_bytes,
-            settings=settings,
+            settings_obj=settings,
         )
         return {"status": "completed"}
 

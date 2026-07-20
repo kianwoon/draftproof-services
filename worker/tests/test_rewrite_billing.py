@@ -1,12 +1,55 @@
 from types import SimpleNamespace
 
+import app.tasks as tasks
 from app.tasks import (
     _bounded_json_debug_log,
     _bounded_rewrite_json_payload,
+    _deliver_rewrite_completion_email,
     _historical_rewrite_seed_texts,
     _rewrite_billing_decision,
     _selected_rewrite_pipeline,
 )
+
+
+def test_completion_email_lookup_raise_is_swallowed(monkeypatch):
+    # Runs AFTER status='completed' + credits captured. An email-lookup raise must
+    # NOT propagate (the generic run_rewrite handler would flip the billed job to
+    # 'failed'). The helper must swallow it so the completed status survives.
+    def boom(_rid):
+        raise RuntimeError("user email lookup failed")
+
+    sent = []
+    monkeypatch.setattr(tasks, "get_rewrite_user_email", boom)
+    monkeypatch.setattr(tasks, "send_rewrite_completion_email", lambda **kw: sent.append(kw))
+
+    # Must not raise.
+    _deliver_rewrite_completion_email(
+        rewrite_id="rw1",
+        scan_id="sc1",
+        rewritten_text="new text",
+        rewrite_summary={"outcome": "ai_mitigated"},
+        pdf_bytes=b"",
+        settings_obj=SimpleNamespace(),
+    )
+    assert sent == []  # send never reached because lookup raised first
+
+
+def test_completion_email_send_raise_is_swallowed(monkeypatch):
+    def boom(**_kw):
+        raise RuntimeError("smtp down")
+
+    monkeypatch.setattr(tasks, "get_rewrite_user_email", lambda _rid: "u@example.com")
+    monkeypatch.setattr(tasks, "send_rewrite_completion_email", boom)
+
+    # Must not raise even when the send itself fails.
+    _deliver_rewrite_completion_email(
+        rewrite_id="rw1",
+        scan_id="sc1",
+        rewritten_text="new text",
+        rewrite_summary={"outcome": "ai_mitigated"},
+        pdf_bytes=b"",
+        settings_obj=SimpleNamespace(),
+    )
 
 
 def test_rewrite_pipeline_selection_returns_v6_when_enabled():

@@ -112,13 +112,45 @@ def test_reconcile_completes_job_with_delivered_checkpoint(monkeypatch):
         monkeypatch,
         [{"id": "rw1", "scan_id": "sc1", "user_id": "u1", "created_at": NOW}],
         stale=True,
-        report={"status": "ai_mitigated", "original_text": "old", "final_text": "new better"},
+        report={"rewrite_id": "rw1", "status": "ai_mitigated", "original_text": "old", "final_text": "new better"},
     )
     stats = recovery.reconcile_interrupted_rewrites(now=NOW)
     assert stats == {"scanned": 1, "completed": 1, "failed": 0, "skipped": 0}
     assert spy.updates[0][1] == "completed"
     assert spy.captures == [("u1", "rw1")]
     assert spy.releases == []
+
+
+def test_reconcile_does_not_complete_on_rewrite_id_mismatch(monkeypatch):
+    # Artifact was delivered by a DIFFERENT job (rw_other) at the same per-scan R2
+    # key. The stale job rw1 must NOT inherit + get billed for it.
+    spy = _wire(
+        monkeypatch,
+        [{"id": "rw1", "scan_id": "sc1", "user_id": "u1", "created_at": NOW}],
+        stale=True,
+        report={"rewrite_id": "rw_other", "status": "ai_mitigated", "original_text": "old", "final_text": "new better"},
+    )
+    stats = recovery.reconcile_interrupted_rewrites(now=NOW)
+    assert stats == {"scanned": 1, "completed": 0, "failed": 1, "skipped": 0}
+    assert spy.updates[0][1] == "failed"
+    assert spy.releases == ["rw1"]
+    assert spy.captures == []
+
+
+def test_reconcile_does_not_complete_on_missing_stamp(monkeypatch):
+    # Pre-fix legacy artifact with delivered content but no rewrite_id stamp — can't
+    # prove it belongs to rw1, so fail-safe to interrupted (release, not capture).
+    spy = _wire(
+        monkeypatch,
+        [{"id": "rw1", "scan_id": "sc1", "user_id": "u1", "created_at": NOW}],
+        stale=True,
+        report={"status": "ai_mitigated", "original_text": "old", "final_text": "new better"},
+    )
+    stats = recovery.reconcile_interrupted_rewrites(now=NOW)
+    assert stats == {"scanned": 1, "completed": 0, "failed": 1, "skipped": 0}
+    assert spy.updates[0][1] == "failed"
+    assert spy.releases == ["rw1"]
+    assert spy.captures == []
 
 
 def test_reconcile_fails_job_without_delivered_checkpoint(monkeypatch):

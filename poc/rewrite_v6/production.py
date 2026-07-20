@@ -423,6 +423,15 @@ def run_rewrite_pipeline_v6(
     if showcase_items:
         summary["predictability_showcase"] = list(showcase_items)
 
+    # Surface the direct path's per-paragraph review flags to BOTH user surfaces. The flags live
+    # only in v6_pass_trace rows (author_review_items); render_rewrite + Rewrite.jsx both read
+    # summary.author_review_cards, a key that only the unreachable legacy v5 producer set -- so the
+    # "Author Review Cards" section was silently empty on every production rewrite. Compose it here
+    # from the existing pass-trace data (inventing nothing).
+    author_review_cards = _author_review_cards_from_pass_trace(document.pass_trace)
+    if author_review_cards:
+        summary["author_review_cards"] = author_review_cards
+
     result_obj = SimpleNamespace(
         summary=summary,
         sentence_comparison=sentence_comparison,
@@ -554,6 +563,67 @@ def _findings_by_paragraph(scan: dict[str, Any]) -> dict[str, int]:
         if paragraph_id:
             counts[paragraph_id] = counts.get(paragraph_id, 0) + 1
     return counts
+
+
+def _author_review_cards_from_pass_trace(pass_trace: Any) -> list[dict[str, Any]]:
+    """Compose the user-facing ``author_review_cards`` from the direct path's per-paragraph
+    review items so the guard annotations actually reach BOTH surfaces (PDF
+    ``render_rewrite._author_review_card_section`` + web ``Rewrite.jsx`` author-review section).
+
+    The direct path (``direct_rewrite.py``) stores its review flags ONLY in
+    ``summary.v6_pass_trace`` rows as ``author_review_items`` -- each item is a
+    ``{"added": <what DraftProof added/changed>, "why": <what the author must verify/replace>}``
+    dict (see ``direct_rewrite._review_flags`` + the ``author_review_items`` LLM contract in
+    ``direct_prompts``). Only the unreachable legacy v5 producer set ``author_review_cards``,
+    so the section was silently empty on every production rewrite. This maps the existing
+    pass-trace data onto the card shape both renderers consume -- inventing nothing.
+
+    Card fields consumed by the renderers (union):
+      - ``card_id``           PDF: none; web key (Rewrite.jsx ~569)
+      - ``kind``              PDF title fallback (render_rewrite 709); web key fallback (~569)
+      - ``provenance``        PDF "Provenance" line (714-716); web header badge (~571)
+      - ``where``             PDF: none; web header badge (~572)
+      - ``instruction``       PDF title (709); web h4 title (~574)
+      - ``target_text``       both guarded/optional -> omitted (no candidate-detail text available)
+      - ``user_input_needed`` both guarded/optional -> omitted
+      - ``author_task``       PDF "Author task" line (721-722); web note block (~587)
+    Both renderers cap at 12; we cap here to match.
+    """
+    cards: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in pass_trace or []:
+        if not isinstance(row, dict):
+            continue
+        items = row.get("author_review_items")
+        if not isinstance(items, list) or not items:
+            continue
+        pid = str(row.get("target_paragraph_id") or "").strip()
+        where = f"Paragraph {pid}" if pid else "Rewritten paragraph"
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            added = str(item.get("added") or "").strip()
+            why = str(item.get("why") or "").strip()
+            if not added and not why:
+                continue
+            instruction = added or why
+            key = (instruction, why)
+            if key in seen:
+                continue
+            seen.add(key)
+            card: dict[str, Any] = {
+                "card_id": f"{pid or 'para'}-{len(cards) + 1:02d}",
+                "kind": "direct_review_flag",
+                "provenance": "illustrative_content",
+                "where": where,
+                "instruction": instruction,
+            }
+            if why:
+                card["author_task"] = why
+            cards.append(card)
+            if len(cards) >= 12:
+                return cards
+    return cards
 
 
 def _enrich_badge_diagnoses(scan_report: dict[str, Any] | None) -> dict[str, Any] | None:

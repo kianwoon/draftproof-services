@@ -28,6 +28,7 @@ try:
 except ImportError:  # pragma: no cover
     from poc.detect.layer3_scoring import _sentence_has_concrete_or_context, _sentence_has_hard_concrete, split_sentences
 
+from .candidate_bounds import word_bounds_status as _word_bounds_status
 from .coverage_guard import missing_required_source_beat_groups
 from .author_proxy_routes import select_author_proxy_routes
 from .integrity_guard import candidate_integrity_blockers
@@ -1347,21 +1348,6 @@ def _collapse_paragraph_breaks(text: str) -> str:
     return re.sub(r"\s*[\r\n\u2028\u2029]+\s*", " ", str(text or "")).strip()
 
 
-def _candidate_word_bounds(paragraph: Paragraph) -> tuple[int, int]:
-    source_words = max(1, len(str(paragraph.text or "").split()))
-    min_ratio = _float_env("DRAFTPROOF_V6_PARAGRAPH_MIN_WORD_RATIO", 0.55)
-    max_ratio = _float_env("DRAFTPROOF_V6_PARAGRAPH_MAX_WORD_RATIO", 1.75)
-    min_ratio = max(0.25, min(0.95, min_ratio))
-    max_ratio = max(1.0, min(2.5, max_ratio))
-    return max(8, int(source_words * min_ratio)), max(12, int(source_words * max_ratio) + 1)
-
-
-def _within_candidate_word_bounds(candidate: str, paragraph: Paragraph) -> bool:
-    words = len(str(candidate or "").split())
-    lower, upper = _candidate_word_bounds(paragraph)
-    return lower <= words <= upper
-
-
 def _clean_candidate(
     gateway: LLMGateway,
     paragraph: Paragraph,
@@ -1379,9 +1365,14 @@ def _clean_candidate(
     shipping broken grammar) is the safety net the user reads. Meaning concerns are NOT rejected
     here -- they ride along as review flags. A quote-fragmented generation (gpt-oss degradation) is
     treated as not-clean so the retry can produce real prose; if every attempt degrades, the dequoted
-    salvage is returned with a `writer_quote_degraded` flag rather than discarded."""
+    salvage is returned with a `writer_quote_degraded` flag rather than discarded. Over-length still
+    retries on earlier attempts, but on the FINAL attempt an otherwise-clean, non-stub over-length
+    candidate SHIPS with a `rewrite_over_length` flag instead of source_preserved -- length alone is
+    not a meaning/grammar defect. Under-length (stub territory) is unchanged: always a hard reject."""
     salvage: tuple[str, list[dict[str, Any]]] | None = None
-    for _ in range(max(1, attempts)):
+    overlength_final: tuple[str, list[dict[str, Any]]] | None = None
+    attempts_n = max(1, attempts)
+    for attempt_idx in range(attempts_n):
         candidate, review_items = _rewrite_paragraph(
             gateway, paragraph, diagnosis, findings,
             authorship_targets=authorship_targets,
@@ -1391,7 +1382,23 @@ def _clean_candidate(
         candidate = _normalize_punctuation(candidate) if candidate else candidate
         candidate = _collapse_paragraph_breaks(candidate) if candidate else candidate
         cand = candidate or ""
-        if not _is_usable(cand, paragraph) or not _within_candidate_word_bounds(cand, paragraph) or _has_broken_grammar(cand):
+        if not _is_usable(cand, paragraph) or _has_broken_grammar(cand):
+            continue
+        bounds_status = _word_bounds_status(cand, paragraph)
+        if bounds_status == "under":
+            continue
+        if bounds_status == "over":
+            other_defect = (_severe_polarity_inversion(cand, paragraph)
+                             or _severe_beat_loss(cand, paragraph) or _is_quote_fragmented(cand))
+            if attempt_idx == attempts_n - 1 and not other_defect:
+                flag = {"added": "the rewrite is longer than your original",
+                        "why": "DraftProof added grounding content beyond the usual length for this "
+                               "paragraph -- trim it while keeping the specifics you want to keep.",
+                        "type": "rewrite_over_length"}
+                # Flag FIRST: _trace caps author_review_items at 6, and a writer that
+                # emits many items is exactly the content-heavy case that trips the
+                # length bound — appending would let the cap silently drop this flag.
+                overlength_final = (candidate, [flag] + review_items)
             continue
         if _severe_polarity_inversion(cand, paragraph) or _severe_beat_loss(cand, paragraph):
             continue
@@ -1406,6 +1413,8 @@ def _clean_candidate(
         return candidate, review_items
     if salvage is not None:
         return salvage
+    if overlength_final is not None:
+        return overlength_final
     return None, []
 
 
