@@ -51,6 +51,28 @@ CONFIRM_FACTOR = {"ai_allowed": "declaration_gap", "ai_restricted": "process_def
 ALLOWED_BANDS = ((25.0, "low"), (50.0, "moderate"), (75.0, "high"), (float("inf"), "severe"))
 RESTRICTED_BANDS = ((20.0, "low"), (45.0, "moderate"), (70.0, "high"), (float("inf"), "severe"))
 
+# Phase 2 (docs/plans/policy_risk_external_review_response.md): when the caller
+# knows the ASSIGNMENT's real ai_policy (Phase 1 capture), headline the ONE lens
+# that answers it instead of showing both as hypotheticals. Pure selection over
+# the two already-computed scores -- no recomputation, no new scoring constants.
+# editing_only maps to "restricted" as the INITIAL grouping only (reviewer
+# follow-up, accepted): it is not equivalent to full prohibition and is a
+# flagged candidate for its own dedicated interpretation once real usage data
+# exists (Phase 4) -- there is no derivation source for a third scoring lens
+# today. Any value not in this map (including None/unrecognized/"unknown")
+# falls back to "both", the exact behavior every report had before Phase 2.
+_HEADLINE_MAP = {
+    "prohibited": "restricted",
+    "editing_only": "restricted",
+    "allowed_with_declaration": "allowed",
+    "collaboration_allowed": "allowed",
+    "unknown": "both",
+}
+
+
+def _select_headline(ai_policy: str | None) -> str:
+    return _HEADLINE_MAP.get(ai_policy, "both")
+
 # allow-hardcode: a single human-readable transparency note for non-i18n consumers
 # (PDF/logs). NOT a scoring/matching oracle — never compared against document text.
 # The frontend uses its own localized copy (report.policyRisk.*).
@@ -169,9 +191,16 @@ def score_policy_risk(
     *,
     grounding_diagnosis: dict[str, Any] | None = None,
     critical_thinking_control: dict[str, Any] | None = None,
+    ai_policy: str | None = None,
 ) -> dict[str, Any]:
     """Return the additive two-score policy risk. Pure function over already-computed
-    signals; never gates anything."""
+    signals; never gates anything.
+
+    ai_policy (Phase 2): the ASSIGNMENT's real AI policy if known (Phase 1 capture,
+    poc/report/models.py's AI_POLICY_VALUES). Purely selects which of the two
+    already-computed scores to headline -- see _select_headline / _HEADLINE_MAP.
+    None (older reports, or genuinely not offered) behaves exactly as before Phase 2:
+    "headline": "both", both scores shown as hypotheticals, zero behavior change."""
     buckets = (grounding_diagnosis or {}).get("buckets") or {}
     dims = (critical_thinking_control or {}).get("dimensions") or {}
 
@@ -194,4 +223,6 @@ def score_policy_risk(
         "weights": {"ai_allowed": dict(WEIGHTS_ALLOWED), "ai_restricted": dict(WEIGHTS_RESTRICTED)},
         "model": MODEL_VERSION,
         "note": _NOTE,
+        "headline": _select_headline(ai_policy),
+        "headline_policy": ai_policy if ai_policy in _HEADLINE_MAP else "unknown",
     }

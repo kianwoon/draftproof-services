@@ -1549,9 +1549,13 @@ class ReportBuilder:
         # signals into two policy-interpreted scores (AI-allowed vs AI-restricted).
         # Additive only -- does NOT affect tier, ai_likelihood, or any gate. Declaration
         # and process aren't in the text -> confirm-yourself factors (see detect.policy_risk).
+        # Phase 2: self._ai_policy (set via set_meta, Phase 1) drives which lens the
+        # composer headlines -- None (older code paths, or genuinely not offered)
+        # returns "headline": "both", byte-identical to pre-Phase-2 behavior.
         policy_risk = score_policy_risk(
             grounding_diagnosis=grounding_diagnosis,
             critical_thinking_control=critical_thinking_control,
+            ai_policy=self._ai_policy,
         )
 
         ai_risk_badge = {

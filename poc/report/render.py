@@ -491,6 +491,16 @@ _POLICY_DISCLAIMER = (
     "These scores do not prove AI use. They estimate how risky the draft may look under "
     "different school policies."
 )
+# Phase 2 (docs/plans/policy_risk_external_review_response.md): editing_only maps
+# to the restrictive lens (initial grouping only -- see policy_risk.py's
+# _HEADLINE_MAP), but that score alone reads as if grammar-only AI use were
+# equated with full prohibition. This explanatory line ships alongside the
+# (unchanged) restricted score whenever headline_policy == "editing_only" --
+# required Phase 2 deliverable per the reviewer follow-up, not optional copy.
+_EDITING_ONLY_NOTE = (
+    "Editing-only policy: light AI-assisted polishing may be acceptable, but substantial "
+    "AI transformation may create policy risk."
+)
 
 
 def _policy_row(label: str, p: dict) -> str:
@@ -512,13 +522,41 @@ def _policy_row(label: str, p: dict) -> str:
 
 
 def _render_policy_risk(badge: dict | None) -> list[str]:
-    """Two policy-interpreted scores (AI-allowed vs AI-restricted). Returns [] when the
-    diagnosis abstained, so the caller keeps the raw detector detail as the fallback."""
+    """Policy-interpreted score(s) (AI-allowed / AI-restricted). Returns [] when the
+    diagnosis abstained, so the caller keeps the raw detector detail as the fallback.
+
+    Phase 2 (docs/plans/policy_risk_external_review_response.md): when the composer
+    knows the real assignment ai_policy, ``headline`` selects ONE lens to show instead
+    of both hypotheticals -- pure selection, the scores themselves are unchanged.
+    ``headline`` absent (older reports, pre-Phase-2) or "both" (ai_policy unknown/not
+    offered) renders EXACTLY as before Phase 2 -- both rows, generic heading."""
     pr = (badge or {}).get("policy_risk") or {}
     a = pr.get("ai_allowed") or {}
     r = pr.get("ai_restricted") or {}
     if not a.get("level") or a.get("level") == "unknown":
         return []
+    headline = pr.get("headline") or "both"
+
+    if headline == "allowed":
+        return [
+            "**Policy risk — how this draft reads under your assignment's AI policy**",
+            "",
+            _policy_row("If AI is allowed (with declaration)", a),
+            "",
+            f"_{_POLICY_DISCLAIMER}_",
+            "",
+        ]
+    if headline == "restricted":
+        lines = ["**Policy risk — how this draft reads under your assignment's AI policy**", ""]
+        if pr.get("headline_policy") == "editing_only":
+            lines.append(_EDITING_ONLY_NOTE)
+            lines.append("")
+        lines.append(_policy_row("If AI is not allowed", r))
+        lines.append("")
+        lines.append(f"_{_POLICY_DISCLAIMER}_")
+        lines.append("")
+        return lines
+
     return [
         "**Policy risk — how this draft may read under your school's AI policy**",
         "",

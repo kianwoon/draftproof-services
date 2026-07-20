@@ -270,6 +270,88 @@ def test_build_scan_completion_email_attaches_report_pdf():
     ]
 
 
+# ── Phase 2 headline selection (docs/plans/policy_risk_external_review_response.md) ──
+
+def _policy_risk_payload(headline, headline_policy):
+    return {
+        "ai_allowed": {"level": "moderate", "score": 41.4},
+        "ai_restricted": {"level": "high", "score": 67.6},
+        "headline": headline,
+        "headline_policy": headline_policy,
+    }
+
+
+def test_email_headline_restricted_omits_the_allowed_line():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-1",
+        submission_risk={"overall": {"level": "medium"}},
+        policy_risk=_policy_risk_payload("restricted", "prohibited"),
+        settings=_settings(),
+    )
+    assert "If AI is not allowed: High (68)" in payload["text"]
+    assert "If AI is allowed" not in payload["text"]
+
+
+def test_email_headline_allowed_omits_the_restricted_line():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-1",
+        submission_risk={"overall": {"level": "medium"}},
+        policy_risk=_policy_risk_payload("allowed", "allowed_with_declaration"),
+        settings=_settings(),
+    )
+    assert "If AI is allowed (with declaration): Moderate (41)" in payload["text"]
+    assert "If AI is not allowed" not in payload["text"]
+
+
+def test_email_headline_both_shows_both_lines_unchanged():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-1",
+        submission_risk={"overall": {"level": "medium"}},
+        policy_risk=_policy_risk_payload("both", "unknown"),
+        settings=_settings(),
+    )
+    assert "If AI is allowed (with declaration): Moderate (41)" in payload["text"]
+    assert "If AI is not allowed: High (68)" in payload["text"]
+
+
+def test_email_headline_absent_is_byte_identical_to_both():
+    # Older reports have no "headline" key at all -- must render exactly like "both".
+    no_headline = {"ai_allowed": {"level": "moderate", "score": 41.4}, "ai_restricted": {"level": "high", "score": 67.6}}
+    common = dict(
+        recipient_email="student@example.com", scan_id="scan-1",
+        submission_risk={"overall": {"level": "medium"}}, settings=_settings(),
+    )
+    without = build_scan_completion_email(policy_risk=no_headline, **common)
+    explicit_both = build_scan_completion_email(policy_risk=_policy_risk_payload("both", "unknown"), **common)
+    assert without["text"] == explicit_both["text"]
+
+
+def test_email_headline_restricted_editing_only_includes_the_note():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-1",
+        submission_risk={"overall": {"level": "medium"}},
+        policy_risk=_policy_risk_payload("restricted", "editing_only"),
+        settings=_settings(),
+    )
+    assert "Editing-only policy" in payload["text"]
+    assert "light AI-assisted polishing may be acceptable" in payload["text"]
+
+
+def test_email_headline_restricted_non_editing_only_omits_the_note():
+    payload = build_scan_completion_email(
+        recipient_email="student@example.com",
+        scan_id="scan-1",
+        submission_risk={"overall": {"level": "medium"}},
+        policy_risk=_policy_risk_payload("restricted", "prohibited"),
+        settings=_settings(),
+    )
+    assert "Editing-only policy" not in payload["text"]
+
+
 def test_build_scan_completion_email_formats_page_aligned_lead():
     # Policy scores are rounded; the non-accusatory disclaimer accompanies them.
     payload = build_scan_completion_email(

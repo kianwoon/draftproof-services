@@ -31,9 +31,9 @@ def _inputs(surface=None, grounding=None, voice=None, judgment=None, specificity
     return gd, ctc
 
 
-def _run(**kw):
+def _run(ai_policy=None, **kw):
     gd, ctc = _inputs(**kw)
-    return score_policy_risk(grounding_diagnosis=gd, critical_thinking_control=ctc)
+    return score_policy_risk(grounding_diagnosis=gd, critical_thinking_control=ctc, ai_policy=ai_policy)
 
 
 # ── weights ─────────────────────────────────────────────────────────────────
@@ -185,3 +185,50 @@ def test_floor_rebases_confirm_level_onto_the_floored_score():
     # confirm_delta is an absolute point amount -- unchanged by the floor.
     confirmed = restricted["score"] - restricted["confirm_delta"]
     assert restricted["confirm_level"] == _band(confirmed, RESTRICTED_BANDS)
+
+
+# ── Phase 2 headline selection (docs/plans/policy_risk_external_review_response.md) ──
+
+def test_headline_defaults_to_both_when_ai_policy_absent():
+    # No behavior change for older reports / not-offered submissions.
+    r = _run(surface=30, grounding=30, voice=30, judgment=30, specificity=30)
+    assert r["headline"] == "both"
+    assert r["headline_policy"] == "unknown"
+
+
+def test_headline_maps_prohibited_and_editing_only_to_restricted():
+    for policy in ("prohibited", "editing_only"):
+        r = _run(surface=30, grounding=30, voice=30, judgment=30, specificity=30, ai_policy=policy)
+        assert r["headline"] == "restricted"
+        assert r["headline_policy"] == policy
+
+
+def test_headline_maps_allowed_variants_to_allowed():
+    for policy in ("allowed_with_declaration", "collaboration_allowed"):
+        r = _run(surface=30, grounding=30, voice=30, judgment=30, specificity=30, ai_policy=policy)
+        assert r["headline"] == "allowed"
+        assert r["headline_policy"] == policy
+
+
+def test_headline_explicit_unknown_is_both():
+    r = _run(surface=30, grounding=30, voice=30, judgment=30, specificity=30, ai_policy="unknown")
+    assert r["headline"] == "both"
+    assert r["headline_policy"] == "unknown"
+
+
+def test_headline_unrecognized_value_falls_back_to_both_never_crashes():
+    # Defence in depth: the real enum rejection is the API's Pydantic schema
+    # (batch 2); this layer must still degrade gracefully, never fabricate.
+    r = _run(surface=30, grounding=30, voice=30, judgment=30, specificity=30, ai_policy="my_school_allows_it")
+    assert r["headline"] == "both"
+    assert r["headline_policy"] == "unknown"
+
+
+def test_headline_never_changes_the_underlying_scores():
+    # Phase 2 is pure selection -- the two scores/levels/main_issue/confirm_delta
+    # must be byte-identical whether or not ai_policy is passed.
+    kwargs = dict(surface=31.42, grounding=43.75, voice=16.0, judgment=16.0, specificity=52.5)
+    without = _run(**kwargs)
+    with_policy = _run(ai_policy="prohibited", **kwargs)
+    assert without["ai_allowed"] == with_policy["ai_allowed"]
+    assert without["ai_restricted"] == with_policy["ai_restricted"]
