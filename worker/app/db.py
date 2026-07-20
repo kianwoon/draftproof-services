@@ -279,6 +279,49 @@ def claim_rewrite_job(job_id: str) -> Optional[dict]:
         return cur.fetchone()
 
 
+def claim_scan_job(
+    job_id: str,
+    progress_percent: int = None,
+    progress_message: str = None,
+) -> Optional[dict]:
+    """Atomically move a scan job into processing if it has not run yet.
+
+    Scan analog of ``claim_rewrite_job``. The CAS matches only jobs that have not
+    yet started or that are re-enqueued by a Celery retry -- 'pending' (fresh) or
+    'retrying'. A job already 'processing' (a redelivered/duplicate acks_late run)
+    or terminal ('completed'/'failed'/'canceled') matches zero rows, so the
+    duplicate task aborts instead of running the pipeline a second time
+    concurrently. ``update_job_status(..., 'processing')`` could NOT do this: its
+    CAS only blocks terminal states, so it would happily re-claim a job already
+    'processing'. Returns the claimed row, or None when the claim was lost.
+    """
+    def _execute(include_progress: bool = True):
+        sets = ["status = 'processing'", "started_at = COALESCE(started_at, now())"]
+        vals = []
+        if include_progress and progress_percent is not None:
+            sets.append("progress_percent = %s")
+            vals.append(max(0, min(100, int(progress_percent))))
+        if include_progress and progress_message is not None:
+            sets.append("progress_message = %s")
+            vals.append(progress_message)
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                f"UPDATE scan_jobs SET {', '.join(sets)} "
+                "WHERE id = %s AND status IN ('pending', 'retrying') "
+                "RETURNING *",
+                vals + [job_id],
+            )
+            return cur.fetchone()
+
+    try:
+        return _execute()
+    except psycopg2.errors.UndefinedColumn as exc:
+        if "progress_" not in str(exc):
+            raise
+        return _execute(include_progress=False)
+
+
 def update_rewrite_status(
     job_id: str,
     status: str,

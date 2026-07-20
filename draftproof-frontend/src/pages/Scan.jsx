@@ -12,6 +12,11 @@ import { countWords, paidScanTokens } from '../utils/scanBilling';
 const POLL_INTERVAL = 3000;
 const MAX_POLLS = 200; // 200 × 3s = 10 min max
 const START_SCAN_TIMEOUT_MS = 20000;
+// Stall watchdog for the SSE progress stream: a stalled-open EventSource (socket alive,
+// no events) would otherwise spin forever since the polling fallback only kicks in once
+// the stream actually errors. Reset on every received event; fires after this long with
+// no event, closing the stream and falling through to pollUntilDone (same as 'error').
+const SSE_STALL_TIMEOUT_MS = 100000; // 100s, inside the ~90-120s budget
 // Guidance floor shown under the live word count. Matches the detector's
 // "good coverage" tier (poc/detect/transformation.py: 350 words + 12 sentences
 // → 0.75 coverage). Below this a scan can still run, but the deep-scan signal
@@ -119,20 +124,33 @@ export default function Scan() {
       const source = new EventSource(buildScanEventsUrl(scanId), { withCredentials: true });
       eventSourceRef.current = source;
       let settled = false;
+      let stallTimer = null;
 
       const finish = (result) => {
         if (settled) return;
         settled = true;
+        if (stallTimer) {
+          clearTimeout(stallTimer);
+          stallTimer = null;
+        }
         signal.removeEventListener('abort', onAbort);
         source.close();
         if (eventSourceRef.current === source) eventSourceRef.current = null;
         resolve(result);
       };
 
+      const resetStallTimer = () => {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => finish(null), SSE_STALL_TIMEOUT_MS);
+      };
+
       const onAbort = () => finish(false);
       signal.addEventListener('abort', onAbort, { once: true });
 
+      resetStallTimer();
+
       source.addEventListener('progress', (event) => {
+        resetStallTimer();
         let data;
         try {
           data = JSON.parse(event.data);
@@ -150,6 +168,7 @@ export default function Scan() {
       });
 
       source.addEventListener('scan-error', () => {
+        resetStallTimer();
         setProgressMessage(t('scan.failed'));
         setServerError(t('scan.serverFailed'));
         finish(false);

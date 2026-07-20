@@ -157,6 +157,10 @@ export default function Report() {
   const submittedDocumentRef = useRef(null);
   const submittedEditorCloseTimerRef = useRef(null);
   const submittedTrackedCopyTimerRef = useRef(null);
+  // Fix 1 (scan-flow lifecycle): rescanSubmittedDraft's up-to-10-minute poll loop
+  // otherwise has no cancellation — mirrors Scan.jsx's abortRef pattern so navigating
+  // away aborts the in-flight poll instead of setState-ing/navigating from an unmounted page.
+  const submittedRescanAbortRef = useRef(null);
   const {
     caret: submittedCaret,
     hideCaret: hideSubmittedCaret,
@@ -368,6 +372,9 @@ export default function Report() {
   useEffect(() => () => {
     clearSubmittedEditorCloseTimer();
     clearSubmittedTrackedCopyTimer();
+    if (submittedRescanAbortRef.current) {
+      submittedRescanAbortRef.current.abort();
+    }
   }, [clearSubmittedEditorCloseTimer, clearSubmittedTrackedCopyTimer]);
 
   // Which text the "Manual Rewrite / Correction" editor works on:
@@ -1182,26 +1189,33 @@ export default function Report() {
       return;
     }
 
+    const controller = new AbortController();
+    submittedRescanAbortRef.current = controller;
+    const { signal } = controller;
+
     setSubmittedRescanBusy(true);
     setSubmittedRescanError(null);
     setSubmittedRescanStatus(t('report.submitted.editor.rescanQueueing'));
 
     try {
-      const { data: scan } = await startScanWithText(text);
+      const { data: scan } = await startScanWithText(text, { signal });
+      if (signal.aborted) return;
       setSubmittedRescanStatus(t('report.submitted.editor.rescanProcessing'));
 
       if (scan.status === 'completed') {
         refreshBalance?.();
-        navigate(`/report/${scan.id}`);
+        if (!signal.aborted) navigate(`/report/${scan.id}`);
         return;
       }
 
       for (let i = 0; i < RESCAN_MAX_POLLS; i += 1) {
         await sleep(RESCAN_POLL_INTERVAL);
-        const { data } = await getScanStatus(scan.id);
+        if (signal.aborted) return;
+        const { data } = await getScanStatus(scan.id, { signal });
+        if (signal.aborted) return;
         if (data.status === 'completed') {
           refreshBalance?.();
-          navigate(`/report/${scan.id}`);
+          if (!signal.aborted) navigate(`/report/${scan.id}`);
           return;
         }
         if (data.status === 'failed') {
@@ -1212,8 +1226,9 @@ export default function Report() {
         }
       }
 
-      throw new Error(t('report.submitted.editor.rescanTimedOut'));
+      if (!signal.aborted) throw new Error(t('report.submitted.editor.rescanTimedOut'));
     } catch (err) {
+      if (signal.aborted || err.name === 'AbortError' || err.code === 'ERR_CANCELED') return;
       const msg = err.response?.data?.detail || err.message || t('report.submitted.editor.rescanFailed');
       const httpStatus = err.response?.status;
       const isAuthExpired = httpStatus === 401 || (
@@ -1238,6 +1253,10 @@ export default function Report() {
       }
       setSubmittedRescanStatus(null);
       setSubmittedRescanBusy(false);
+    } finally {
+      if (submittedRescanAbortRef.current === controller) {
+        submittedRescanAbortRef.current = null;
+      }
     }
   };
 

@@ -25,6 +25,7 @@ from .db import (
     get_scan_job,
     get_scan_user_email,
     update_job_status,
+    claim_scan_job,
     capture_credits,
     release_scan_credits,
     refund_free_scan,
@@ -124,20 +125,22 @@ def _fetch_r2_json(s3, bucket: str, key: str) -> dict:
 def scan_document(self, job_id: str, text: str, ai_policy: str | None = None) -> dict:
     """Run the full detect pipeline on text and store results."""
     try:
-        claimed = update_job_status(
+        claimed = claim_scan_job(
             job_id,
-            "processing",
             progress_percent=10,
             progress_message="Preparing scan",
         )
         if not claimed:
-            # The job is already resolved (failed/completed/canceled) — e.g. the API
-            # stale-recovery failed it, or this is a Celery redelivery (acks_late) of a
-            # run that already finished. Abort rather than re-run: redoing the work would
-            # waste the most expensive part of the pipeline, re-upload to R2, and re-send
-            # the completion email for a job the user has already seen resolved (H1).
-            logger.info("scan_document %s: job already resolved; skipping redelivered/raced run", job_id)
-            return {"status": "skipped", "reason": "already_resolved"}
+            # The job is NOT claimable — either already resolved (failed/completed/
+            # canceled) by the API stale-recovery / reconciler, OR already 'processing'
+            # because another worker claimed it first (a Celery acks_late redelivery or
+            # duplicate delivery). claim_scan_job's CAS matches only 'pending'/'retrying',
+            # so this abort also prevents two workers running the same scan concurrently.
+            # Redoing the work would waste the most expensive part of the pipeline,
+            # re-upload to R2, and re-send the completion email for a job the user has
+            # already seen resolved (H1).
+            logger.info("scan_document %s: job not claimable; skipping redelivered/raced/duplicate run", job_id)
+            return {"status": "skipped", "reason": "not_claimable"}
         publish_scan_progress(
             job_id, status="processing",
             progress_percent=10, progress_message="Preparing scan",
@@ -366,9 +369,18 @@ def scan_document(self, job_id: str, text: str, ai_policy: str | None = None) ->
 
 
             word_count = len(text.split())
-            job = get_scan_job(job_id)
-            capture_credits(job.get("user_id", ""), job_id, word_count)
-            update_job_status(
+            # Mark complete FIRST, then bill — mirroring the rewrite path (see
+            # run_rewrite ~"5. Mark complete, then capture credits"). update_job_status
+            # is a CAS that returns True only when a row actually changed; a concurrent
+            # stale-recovery / reconciler that already flipped the job to a terminal
+            # state (and released its credits) makes this write lose. Billing BEFORE the
+            # completed write left a window where a SoftTimeLimit / concurrent-fail
+            # between the two calls billed the user for a job that ends up 'failed' with
+            # no report_urls persisted. Capturing ONLY when the completed CAS wins closes
+            # that window; if it lost, the concurrent flipper already released the
+            # reservation, so the loser path must do nothing (release would be a no-op /
+            # wrongly refund).
+            completed_written = update_job_status(
                 job_id,
                 "completed",
                 tier=tier,
@@ -379,6 +391,17 @@ def scan_document(self, job_id: str, text: str, ai_policy: str | None = None) ->
                 progress_percent=100,
                 progress_message="Scan complete",
             )
+            if not completed_written:
+                logger.warning(
+                    "scan_document %s: completion status was not written (job already "
+                    "resolved by a concurrent fail/recovery); skipping credit capture, "
+                    "completion event and email",
+                    job_id,
+                )
+                return {"status": "skipped", "reason": "completion_status_not_written"}
+
+            job = get_scan_job(job_id)
+            capture_credits(job.get("user_id", ""), job_id, word_count)
             publish_scan_progress(
                 job_id, status="completed",
                 progress_percent=100, progress_message="Scan complete",

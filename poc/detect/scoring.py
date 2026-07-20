@@ -399,13 +399,13 @@ def _extract_genericity(summary, findings) -> Optional[float]:
     if not sentences:
         return clamp(0.40 * phrase_density)
 
-    # High top10 ratio: fraction of sentences with top10 > 0.7
-    high_top10 = sum(1 for s in sentences if s.get("top10", 0) > 0.7) / len(sentences)
+    # High top10 ratio: fraction of sentences with top10_ratio > 0.7
+    high_top10 = sum(1 for s in sentences if s.get("top10_ratio", 0) > 0.7) / len(sentences)
 
-    # Mean top10 of flagged (medium risk) sentences
-    flagged = [s for s in sentences if s.get("risk", "") in ("medium", "high")]
+    # Mean top10_ratio of flagged (medium/high risk) sentences
+    flagged = [s for s in sentences if s.get("risk_label", "") in ("medium", "high")]
     mean_flagged_top10 = (
-        sum(s.get("top10", 0) for s in flagged) / len(flagged)
+        sum(s.get("top10_ratio", 0) for s in flagged) / len(flagged)
         if flagged else 0.0
     )
 

@@ -37,9 +37,11 @@ class _FakeGateway:
     def __init__(self, raw):
         self._raw = raw
         self.last_prompt = None
+        self.last_kwargs = None
 
     def chat(self, prompt, **kwargs):
         self.last_prompt = prompt
+        self.last_kwargs = kwargs
         return _Resp(self._raw)
 
 
@@ -194,3 +196,28 @@ def test_weak_dimensions_excludes_ai_dependency_and_sorts():
     assert "ai_dependency" not in codes            # lead-ineligible never steers
     assert codes[0] == "specific_context"          # weakest (control 17.5) first
     assert codes == ["specific_context", "student_judgement", "evidence_grounding"]
+
+
+# ── Prompt-injection parity (untrusted-data clause) ────────────────────────────
+# Both system prompts send the student's own document text to an LLM (json.dumps-escaped,
+# no structural breakout possible). They must still tell the model to treat that text as
+# data, never as instructions -- mirroring detect/defence_judge.py's _SYSTEM. We assert on
+# the actual system kwarg SENT to the gateway, not on the module constant, so the test
+# fails if the clause is ever dropped from the call site.
+
+def test_dimensions_system_prompt_declares_untrusted_data(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_CRITICAL_THINKING_LLM", "1")
+    gw = _FakeGateway(_GOOD)
+    assess_critical_thinking(_REPORT, gateway=gw)
+    system = gw.last_kwargs["system"].lower()
+    assert "untrusted data" in system
+    assert "never" in system and "instruction" in system
+
+
+def test_questions_system_prompt_declares_untrusted_data(monkeypatch):
+    monkeypatch.setenv("DRAFTPROOF_CRITICAL_THINKING_QUESTIONS", "1")
+    gw = _FakeGateway(_GOOD_Q)
+    generate_reflective_questions(_REPORT_Q, gateway=gw)
+    system = gw.last_kwargs["system"].lower()
+    assert "untrusted data" in system
+    assert "never" in system and "instruction" in system

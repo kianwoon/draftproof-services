@@ -1446,10 +1446,26 @@ class ReportBuilder:
             else:
                 tier_authority_status = None
 
+        # When V7 tier-authority fusion actually APPLIED, the transformation /
+        # turnitin-like panels must classify against the FUSED authoritative
+        # score (the badge's own number), not layer3's stale pre-fusion
+        # composite. authoritative_ai_likelihood is 0-100 here (see
+        # _pre_fusion_composite / _compute_fused_authority); transformation.py
+        # works in 0-1 fractions, so divide by 100. Fusion absent/failed →
+        # None → byte-identical legacy composite behavior.
+        _transformation_fused_ai = None
+        if (
+            _tier_authority_flag_on
+            and tier_authority_status
+            and tier_authority_status.get("applied")
+            and authoritative_ai_likelihood is not None
+        ):
+            _transformation_fused_ai = authoritative_ai_likelihood / 100.0
         transformation = classify_transformation_from_scan(
             layer3_input,
             layer3,
             similarity_summary=self._sim_summary,
+            authoritative_ai_likelihood=_transformation_fused_ai,
         )
 
         ai_components = {k: round(v * 100, 2) for k, v in layer3.ai_phase.components.items()}

@@ -199,8 +199,16 @@ def build_transformation_features(
     layer3_result: Layer3Result,
     *,
     similarity_summary: Optional[Any] = None,
+    authoritative_ai_likelihood: Optional[float] = None,
 ) -> TransformationFeatures:
-    """Normalize existing scanner outputs into transformation-pattern features."""
+    """Normalize existing scanner outputs into transformation-pattern features.
+
+    ``authoritative_ai_likelihood`` (0-1 fraction) overrides
+    ``layer3_result.ai_likelihood_score`` as the AI-likelihood input when
+    provided — the caller supplies the V7-fused authoritative score so the
+    transformation/turnitin-like panels track the badge instead of the stale
+    pre-fusion composite. ``None`` → byte-identical legacy behavior.
+    """
     source_similarity, surface_similarity = _similarity_features(similarity_summary)
 
     lived_anchor = 1.0 - clamp(layer3_input.lived_detail_risk)
@@ -257,7 +265,11 @@ def build_transformation_features(
         * (0.65 + 0.35 * rewrite_smoothness)
     )
 
-    raw_ai_likelihood = clamp(layer3_result.ai_likelihood_score)
+    raw_ai_likelihood = clamp(
+        authoritative_ai_likelihood
+        if authoritative_ai_likelihood is not None
+        else layer3_result.ai_likelihood_score
+    )
     effective_human_anchor = human_anchor_score
     human_anchor_discount = clamp(effective_human_anchor * 0.45)
     adjusted_ai_risk = clamp(raw_ai_likelihood * (1.0 - human_anchor_discount))
@@ -463,10 +475,12 @@ def classify_transformation_from_scan(
     layer3_result: Layer3Result,
     *,
     similarity_summary: Optional[Any] = None,
+    authoritative_ai_likelihood: Optional[float] = None,
 ) -> TransformationClassification:
     features = build_transformation_features(
         layer3_input,
         layer3_result,
         similarity_summary=similarity_summary,
+        authoritative_ai_likelihood=authoritative_ai_likelihood,
     )
     return classify_transformation(features)
