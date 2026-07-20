@@ -428,7 +428,18 @@ def run_rewrite_pipeline_v6(
     # summary.author_review_cards, a key that only the unreachable legacy v5 producer set -- so the
     # "Author Review Cards" section was silently empty on every production rewrite. Compose it here
     # from the existing pass-trace data (inventing nothing).
+    # Honest partial-degradation signal: count flagged paragraphs that fell back to source_preserved
+    # specifically because a writer/LLM call ERRORED (provider outage, auth, timeout, empty content,
+    # rate-limit exhausted) -- direct_rewrite tags those trace rows reject_reason="writer_error". A
+    # provider partial outage otherwise ships a mostly-unchanged, fully-billed rewrite with no signal.
+    degraded_count, degraded_total = _writer_degraded_counts(document.pass_trace)
+    summary["writer_degraded_paragraphs"] = degraded_count
+    summary["writer_degraded_total"] = degraded_total
+
     author_review_cards = _author_review_cards_from_pass_trace(document.pass_trace)
+    if degraded_count > 0:
+        # Prepend so the service-degradation notice is the first card the user sees. Exact counts only.
+        author_review_cards = [_writer_degraded_card(degraded_count, degraded_total)] + author_review_cards
     if author_review_cards:
         summary["author_review_cards"] = author_review_cards
 
@@ -563,6 +574,55 @@ def _findings_by_paragraph(scan: dict[str, Any]) -> dict[str, int]:
         if paragraph_id:
             counts[paragraph_id] = counts.get(paragraph_id, 0) + 1
     return counts
+
+
+def _writer_degraded_counts(pass_trace: Any) -> tuple[int, int]:
+    """(degraded, total_flagged) from the direct path's per-paragraph trace.
+
+    ``degraded`` = distinct paragraphs whose fallback to source_preserved was caused by a writer/LLM
+    error (``reject_reason == "writer_error"``) AND that were NOT later rewritten by any accepted pass
+    (pass-2 residual_fix / QC recovery clears the degradation). ``total_flagged`` = distinct paragraphs
+    that were attempted as a primary rewrite (direct_llm or source_preserved), the honest denominator.
+    Inventing nothing: both are derived from existing trace rows.
+    """
+    degraded: set[str] = set()
+    recovered: set[str] = set()
+    flagged: set[str] = set()
+    for row in pass_trace or []:
+        if not isinstance(row, dict):
+            continue
+        pid = str(row.get("target_paragraph_id") or "").strip()
+        if not pid:
+            continue
+        source = str(row.get("selected_source") or "")
+        if source in ("direct_llm", "source_preserved"):
+            flagged.add(pid)
+        if row.get("reject_reason") == "writer_error":
+            degraded.add(pid)
+        if row.get("status") == "accepted":
+            recovered.add(pid)
+    return len(degraded - recovered), len(flagged)
+
+
+def _writer_degraded_card(degraded: int, total: int) -> dict[str, Any]:
+    """A user-facing card stating exactly how many paragraphs a service error left unchanged."""
+    scope = f"{degraded} of {total}" if total else str(degraded)
+    plural = "paragraph" if degraded == 1 else "paragraphs"
+    verb = "is" if degraded == 1 else "are"
+    return {
+        "card_id": "writer-degraded",
+        "kind": "service_degradation",
+        "provenance": "service_status",
+        "where": "Whole document",
+        "instruction": (
+            f"{scope} flagged {plural} could not be rewritten due to a temporary service issue "
+            f"and {verb} shown as your original text."
+        ),
+        "author_task": (
+            "Re-run the rewrite to complete the remaining paragraphs. The rest of the rewrite above "
+            "is unaffected."
+        ),
+    }
 
 
 def _author_review_cards_from_pass_trace(pass_trace: Any) -> list[dict[str, Any]]:

@@ -51,6 +51,25 @@ class NoRewriteableFindingsError(ValueError):
     """Raised when a completed report has findings, but none can be rewritten automatically."""
 
 
+# regenerate_rewrite_report_assets blocks a thread (task.get(timeout=45)) inside
+# asyncio.to_thread -- that call runs on the process-wide default executor, which is
+# shared with every other asyncio.to_thread call in the API (R2 uploads/downloads,
+# scan/report helpers). Unbounded concurrent regenerate requests could hold up to 45s
+# each and starve that shared pool for unrelated request handling (self-DoS). Bound it
+# per-process with a simple counter -- safe without a lock because there is no `await`
+# between the check and the increment, so no other coroutine can interleave on the
+# single-threaded event loop.
+_MAX_CONCURRENT_REWRITE_REGENERATIONS = 2
+_active_rewrite_regenerations = 0
+
+
+class RewriteRegenerationBusyError(RuntimeError):
+    """Raised when _MAX_CONCURRENT_REWRITE_REGENERATIONS regenerations are already in
+    flight for this process. Transient/retryable -- the caller should map this to
+    HTTP 429, matching the codebase's existing 429="too many requests, wait a moment"
+    convention (see app/main.py's _friendly_message)."""
+
+
 def _flatten_report_findings(report_json: dict) -> list[dict]:
     findings = []
     for tier_findings in (report_json.get("findings") or {}).values():
@@ -530,6 +549,13 @@ async def regenerate_rewrite_report_assets(rewrite_id: str, user_id: str) -> dic
         task = regen_task.delay(rewrite_id, job_info["scan_id"])
         return task.get(timeout=45)
 
+    global _active_rewrite_regenerations
+    if _active_rewrite_regenerations >= _MAX_CONCURRENT_REWRITE_REGENERATIONS:
+        raise RewriteRegenerationBusyError(
+            f"Too many rewrite report regenerations in flight "
+            f"(max {_MAX_CONCURRENT_REWRITE_REGENERATIONS}); try again shortly"
+        )
+    _active_rewrite_regenerations += 1
     try:
         return await asyncio.to_thread(_enqueue_and_wait)
     except NotRegistered:
@@ -553,6 +579,8 @@ async def regenerate_rewrite_report_assets(rewrite_id: str, user_id: str) -> dic
             rewrite_id,
         )
         return {"status": "queued", "rewrite_id": rewrite_id, "scan_id": job_info["scan_id"]}
+    finally:
+        _active_rewrite_regenerations -= 1
 
 
 async def get_rewrite_download_url(rewrite_id: str, fmt: str, user_id: str) -> str | None:

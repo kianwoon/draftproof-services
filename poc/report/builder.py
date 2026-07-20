@@ -1460,10 +1460,17 @@ class ReportBuilder:
                 else:
                     # Fail-open: no deep scan proportion available, badge stays
                     # composite-driven (authoritative_ai_likelihood/tier untouched).
+                    # DEEPSCAN_TIER_AUTHORITY_FAILOPEN — stable, machine-greppable
+                    # alerting token (first definition site; grep-stable, do not
+                    # rename). Present on every tier-authority fail-open log line
+                    # below so ops can alert on this condition reliably. The
+                    # below-floor abstain branch above is a deliberate POLICY
+                    # outcome, not a failure, and intentionally does NOT carry it.
                     logger.warning(
-                        "report.builder: V7 tier-authority enabled but no deep-scan "
-                        "proportion available; badge stays composite-driven "
-                        "(fail-open, non-fatal)."
+                        "DEEPSCAN_TIER_AUTHORITY_FAILOPEN: report.builder: V7 "
+                        "tier-authority enabled but no deep-scan proportion "
+                        "available; badge stays composite-driven (fail-open, "
+                        "non-fatal)."
                     )
                     tier_authority_status = {
                         "enabled": True,
@@ -1472,14 +1479,16 @@ class ReportBuilder:
                     }
         except Exception:
             logger.exception(
-                "report.builder: V7 tier-authority override failed; falling back to "
-                "composite-driven badge (additive, non-fatal)."
+                "DEEPSCAN_TIER_AUTHORITY_FAILOPEN: report.builder: V7 tier-authority "
+                "override failed; falling back to composite-driven badge (additive, "
+                "non-fatal)."
             )
             tier_authority_provenance = None
             if _tier_authority_flag_on:
                 logger.warning(
-                    "report.builder: V7 tier-authority enabled but override raised "
-                    "an exception; badge stays composite-driven (fail-open, non-fatal)."
+                    "DEEPSCAN_TIER_AUTHORITY_FAILOPEN: report.builder: V7 "
+                    "tier-authority enabled but override raised an exception; badge "
+                    "stays composite-driven (fail-open, non-fatal)."
                 )
                 tier_authority_status = {"enabled": True, "applied": False, "reason": "error"}
             else:

@@ -195,6 +195,8 @@ async def get_rewrite_report(rewrite_id: str, user: dict = Depends(get_current_u
 async def regenerate_rewrite_report(rewrite_id: str, user: dict = Depends(get_current_user)):
     try:
         result = await rewrite_service.regenerate_rewrite_report_assets(rewrite_id, user["id"])
+    except rewrite_service.RewriteRegenerationBusyError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not result:

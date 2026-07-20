@@ -13,9 +13,11 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from typing import Any, Callable
 
 try:
@@ -1128,7 +1130,62 @@ def _attempt_progress(
     return _wrapped
 
 
+# A writer/LLM call that raises (auth, timeout, provider outage, empty content, rate-limit-exhausted)
+# is swallowed to (None, []) -> source_preserved -- indistinguishable, at the outcome layer, from a
+# LEGITIMATE no-change (writer produced a candidate but it was a stub / broken grammar / meaning flip).
+# A provider partial outage would therefore ship a mostly-unchanged, fully-billed rewrite with no
+# user-facing signal. This thread-safe sink records the paragraph ids whose fallback was caused by a
+# writer/LLM ERROR specifically, so _paragraph_outcome can tag them reject_reason="writer_error" and
+# production can surface an honest degradation card + count. Document-scoped (reset per
+# _rewrite_document_once); best-of-N attempts are sequential and each ThreadPoolExecutor pass joins its
+# workers before the context exits, so there is never concurrent recording across two documents.
+_writer_error_lock = threading.Lock()
+_active_writer_error_sink: set[str] | None = None
+
+
+@contextmanager
+def _writer_error_recording():
+    """Activate a fresh writer-error sink for one document pass; restore the previous on exit."""
+    global _active_writer_error_sink
+    with _writer_error_lock:
+        previous = _active_writer_error_sink
+        _active_writer_error_sink = set()
+    try:
+        yield
+    finally:
+        with _writer_error_lock:
+            _active_writer_error_sink = previous
+
+
+def _record_writer_error(paragraph_id: str) -> None:
+    """Mark a paragraph as having fallen back due to a writer/LLM error (no-op if not recording)."""
+    with _writer_error_lock:
+        if _active_writer_error_sink is not None:
+            _active_writer_error_sink.add(str(paragraph_id))
+
+
+def _writer_error_recorded(paragraph_id: str) -> bool:
+    with _writer_error_lock:
+        return _active_writer_error_sink is not None and str(paragraph_id) in _active_writer_error_sink
+
+
 def _rewrite_document_once(
+    scan: Scan,
+    gateway: LLMGateway,
+    progress_callback: Callable[[int, str], None] | None,
+    cancellation_check: Callable[[], None] | None,
+    authorship_evidence: Any = None,
+    lane: str = "control",
+):
+    from .pipeline import DocumentResult  # local import: pipeline must not depend on this module
+
+    with _writer_error_recording():
+        return _rewrite_document_once_inner(
+            scan, gateway, progress_callback, cancellation_check, authorship_evidence, lane
+        )
+
+
+def _rewrite_document_once_inner(
     scan: Scan,
     gateway: LLMGateway,
     progress_callback: Callable[[int, str], None] | None,
@@ -1197,9 +1254,15 @@ def _paragraph_outcome(
 
     candidate is None -> no usable clean rewrite after retries; show the clean original (rare).
     Otherwise show the solution and ride meaning concerns along as review flags.
+
+    reject_reason distinguishes a WRITER/LLM error (provider outage, auth, timeout, empty content,
+    rate-limit exhausted -- recorded in the writer-error sink) from a legitimate no-change (a candidate
+    was produced but rejected as a stub / broken grammar / meaning flip). Only the former signals
+    service degradation the user must be told about.
     """
     if candidate is None:
-        return paragraph.text, _trace(index, paragraph.id, "source_preserved", "no_clean_rewrite", [])
+        reason = "writer_error" if _writer_error_recorded(paragraph.id) else "no_clean_rewrite"
+        return paragraph.text, _trace(index, paragraph.id, "source_preserved", reason, [])
     return candidate, _trace(index, paragraph.id, "direct_llm", None, review_items + _review_flags(candidate, paragraph))
 
 
@@ -1238,8 +1301,10 @@ def _rewrite_paragraph_task(
             return _clean_candidate(gateway, paragraph, diagnosis, findings, authorship_targets=targets, lane=lane, raise_rate_limit=True)
         except Exception as exc:  # noqa: BLE001 - only rate-limit is retried; others fall through
             if not _is_rate_limit_error(exc):
-                return None, []  # non-rate-limit: existing swallow -> source_preserved
-    return None, []  # rate-limited on every attempt
+                _record_writer_error(paragraph.id)  # non-rate-limit: existing swallow -> source_preserved
+                return None, []
+    _record_writer_error(paragraph.id)  # rate-limited on every attempt -> service degradation
+    return None, []
 
 
 def _rewrite_paragraphs_parallel(
@@ -1469,6 +1534,9 @@ def _rewrite_paragraph(
         # retry. Default (raise_rate_limit=False) keeps the historic swallow-everything behaviour.
         if raise_rate_limit and _is_rate_limit_error(exc):
             raise
+        # The swallow is silent by design (one bad paragraph must not sink the doc), but record it so
+        # the fallback is attributable to a service error rather than a legitimate no-change.
+        _record_writer_error(paragraph.id)
         return None, []
     if not isinstance(data, dict):
         return None, []

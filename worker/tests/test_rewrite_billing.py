@@ -271,6 +271,33 @@ def test_rewrite_billing_releases_original_preserved_text():
     assert decision["reason"] == "final_text_unchanged"
 
 
+def test_rewrite_billing_releases_full_writer_failure():
+    # Provider full outage in the direct path: every flagged paragraph writer-errored -> all
+    # source_preserved -> final_text == original_text -> production sets status=original_preserved
+    # and summary.no_text_change=True. BOTH signals must independently release the reservation, so a
+    # totally-failed rewrite can never bill. (Partial degradation still bills, and is surfaced to the
+    # user via summary.writer_degraded_paragraphs + an author-review card instead.)
+    original = "The framework is efficient, robust, and comprehensive across every stage."
+    decision = _rewrite_billing_decision(
+        {"status": "original_preserved"},
+        {
+            "status": "original_preserved",
+            "original_text": original,
+            "final_text": original,
+            "summary": {
+                "outcome": "original_preserved",
+                "no_text_change": True,
+                "writer_degraded_paragraphs": 3,
+                "writer_degraded_total": 3,
+            },
+        },
+    )
+
+    assert decision["billable"] is False
+    # original_preserved status is caught before the text comparison even runs.
+    assert decision["reason"] == "non_billable_status:original_preserved"
+
+
 def test_rewrite_billing_releases_empty_final_text():
     decision = _rewrite_billing_decision(
         {"status": "rewritten"},

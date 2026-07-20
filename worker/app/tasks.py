@@ -456,6 +456,25 @@ def scan_document(self, job_id: str, text: str, ai_policy: str | None = None) ->
             return {"status": "completed", "tier": tier, "findings": finding_count}
 
     except SoftTimeLimitExceeded:
+        # If the soft limit fires in the tiny window AFTER the completed-CAS write
+        # (+capture) above, the job is already 'completed' and billed. release_scan_credits
+        # would no-op via its own CAS (fine), but refund_free_scan has no status check —
+        # it flips free_scan_counted TRUE->FALSE unconditionally, wrongly refunding a free
+        # scan that actually completed. Check the job's current status first and bail out
+        # of the release/refund/status-update/publish path when it's already resolved.
+        job = get_scan_job(job_id)
+        if job and job.get("status") == "completed":
+            logger.warning(
+                "scan_document %s: SoftTimeLimitExceeded raced the completed-CAS write "
+                "(job already 'completed'); skipping credit release/refund, status "
+                "update and failure event to avoid a spurious free-scan refund",
+                job_id,
+            )
+            return {
+                "status": "completed",
+                "tier": job.get("tier"),
+                "findings": job.get("finding_count"),
+            }
         release_scan_credits(job_id)
         refund_free_scan(job_id)
         _best_effort_scan_status_update(

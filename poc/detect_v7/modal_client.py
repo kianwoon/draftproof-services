@@ -7,6 +7,14 @@ Any failure mode — unset env vars, timeout, connection error, non-200,
 malformed JSON — results in ``None``. This is a real, deployed endpoint that
 costs money per call; callers must treat a live call as optional/best-effort,
 never as something the scan pipeline depends on to complete.
+
+DEEPSCAN_MODAL_FAILURE — stable, machine-greppable alerting token (first
+definition site; grep-stable, do not rename). Prefixed onto every log line
+below that represents a genuine, exhausted call failure (retries exhausted,
+non-retryable request error, unexpected exception, non-200 response,
+malformed JSON) so ops can alert on it reliably. Deliberately NOT present on
+"not configured" / "no chunks to send" / in-progress-retry / truncation-cap
+log lines — those are expected, non-failure conditions, not alertable events.
 """
 from __future__ import annotations
 
@@ -100,7 +108,8 @@ def _should_retry(attempt: int, reason: str) -> bool:
         time.sleep(_RETRY_BACKOFF_S)
         return True
     logger.warning(
-        "detect_v7.modal_client: transient failure (%s) on final attempt %s/%s; giving up.",
+        "DEEPSCAN_MODAL_FAILURE: detect_v7.modal_client: transient failure (%s) on "
+        "final attempt %s/%s; giving up.",
         reason, attempt, _MAX_ATTEMPTS,
     )
     return False
@@ -176,12 +185,16 @@ def call_deep_scan(chunks: list[str], timeout_s: float = _DEFAULT_TIMEOUT_S) -> 
             # Non-transient request error (bad URL/schema, too many redirects,
             # etc.) — deterministic, do NOT retry.
             logger.warning(
-                "detect_v7.modal_client: non-retryable request error calling Modal endpoint: %s",
+                "DEEPSCAN_MODAL_FAILURE: detect_v7.modal_client: non-retryable "
+                "request error calling Modal endpoint: %s",
                 type(exc).__name__,
             )
             return None
         except Exception:
-            logger.exception("detect_v7.modal_client: unexpected error calling Modal endpoint.")
+            logger.exception(
+                "DEEPSCAN_MODAL_FAILURE: detect_v7.modal_client: unexpected error "
+                "calling Modal endpoint."
+            )
             return None
 
         if 500 <= response.status_code < 600:
@@ -192,7 +205,8 @@ def call_deep_scan(chunks: list[str], timeout_s: float = _DEFAULT_TIMEOUT_S) -> 
         if response.status_code != 200:
             # 4xx/auth or any other non-200 — deterministic, do NOT retry.
             logger.warning(
-                "detect_v7.modal_client: Modal endpoint returned non-200 status %s (not retried).",
+                "DEEPSCAN_MODAL_FAILURE: detect_v7.modal_client: Modal endpoint "
+                "returned non-200 status %s (not retried).",
                 response.status_code,
             )
             return None
@@ -200,11 +214,17 @@ def call_deep_scan(chunks: list[str], timeout_s: float = _DEFAULT_TIMEOUT_S) -> 
         try:
             payload = response.json()
         except ValueError:
-            logger.warning("detect_v7.modal_client: Modal endpoint response was not valid JSON.")
+            logger.warning(
+                "DEEPSCAN_MODAL_FAILURE: detect_v7.modal_client: Modal endpoint "
+                "response was not valid JSON."
+            )
             return None
 
         if not isinstance(payload, dict):
-            logger.warning("detect_v7.modal_client: Modal endpoint response was not a JSON object.")
+            logger.warning(
+                "DEEPSCAN_MODAL_FAILURE: detect_v7.modal_client: Modal endpoint "
+                "response was not a JSON object."
+            )
             return None
 
         if capped:
