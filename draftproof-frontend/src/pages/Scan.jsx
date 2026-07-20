@@ -30,6 +30,12 @@ export default function Scan() {
   const [serverError, setServerError] = useState(null);
   const [insufficientTokens, setInsufficientTokens] = useState(false);
   const [authExpired, setAuthExpired] = useState(false);
+  // Phase 1 batch 2 (docs/plans/policy_risk_external_review_response.md):
+  // THIS ASSIGNMENT's AI policy, not institution-wide -- default matches the
+  // "I don't know" option, which maps to the real "unknown" enum value (never
+  // inferred from the writing). Purely additive/optional; no scoring reads this
+  // yet (Phase 2, presentation-only, is the first consumer).
+  const [aiPolicy, setAiPolicy] = useState('unknown');
   const navigate = useNavigate();
   const { refreshBalance, balance, logout } = useAuth();
   const abortRef = useRef(null);
@@ -186,6 +192,7 @@ export default function Scan() {
       ({ data: scan } = await startScanWithText(text, {
         signal: controller.signal,
         timeout: START_SCAN_TIMEOUT_MS,
+        aiPolicy,
       }));
 
       setStatus(t('scan.scanning'));
@@ -300,6 +307,23 @@ export default function Scan() {
                 {t('scan.lengthHint', { count: RECOMMENDED_WORDS })}
               </p>
             )}
+
+            <label className="scan-label" htmlFor="scan-ai-policy">
+              {t('scan.aiPolicyLabel')}
+              <span>{t('scan.aiPolicyHelp')}</span>
+            </label>
+            <select
+              id="scan-ai-policy"
+              className="scan-select"
+              value={aiPolicy}
+              onChange={(e) => setAiPolicy(e.target.value)}
+            >
+              <option value="unknown">{t('scan.aiPolicy.unknown')}</option>
+              <option value="prohibited">{t('scan.aiPolicy.prohibited')}</option>
+              <option value="editing_only">{t('scan.aiPolicy.editing_only')}</option>
+              <option value="allowed_with_declaration">{t('scan.aiPolicy.allowed_with_declaration')}</option>
+              <option value="collaboration_allowed">{t('scan.aiPolicy.collaboration_allowed')}</option>
+            </select>
 
             <button type="submit" className="btn btn-primary" disabled={busy}>
               {busy ? (status || t('scan.scanning')) : t('scan.start')}

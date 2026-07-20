@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 from datetime import datetime
 
 
@@ -9,9 +9,24 @@ class DocumentOut(BaseModel):
     created_at: datetime
 
 
+# Phase 1 batch 2 (docs/plans/policy_risk_external_review_response.md): this
+# ASSIGNMENT's AI policy, not institution-wide -- one school can have different
+# rules across modules/assignments. UI copy and docs must frame it as "this
+# assignment permits AI under these conditions", never "institution X allows AI".
+# Keep in sync with poc/report/models.py's AI_POLICY_VALUES (mirrors the same
+# 5 values; not imported directly since the API image never copies poc/).
+AiPolicy = Literal[
+    "prohibited", "editing_only", "allowed_with_declaration", "collaboration_allowed", "unknown",
+]
+
+
 class ScanRequest(BaseModel):
     document_id: str
     text: Optional[str] = None
+    # Optional; None means "not offered/not picked" and is treated the same as
+    # "unknown" downstream (poc/report/report.py's document_context normalizes
+    # both to "unknown"). Never inferred from the writing -- always a direct pick.
+    ai_policy: Optional[AiPolicy] = None
 
 
 class ScanOut(BaseModel):

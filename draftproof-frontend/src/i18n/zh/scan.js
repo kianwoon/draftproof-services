@@ -44,6 +44,15 @@ export const scan = {
   "authTitle": "请重新登录",
   "authMessage": "你的会话已过期。请重新登录以继续扫描。返回后会恢复你粘贴的文本。",
   "signIn": "登录",
+  "aiPolicyLabel": "本次作业的 AI 政策（可选）",
+  "aiPolicyHelp": "告诉 DraftProof 你的作业允许的 AI 使用范围，以便报告据此解读。系统绝不会从你的文字中推断这一点。",
+  "aiPolicy": {
+    "unknown": "不清楚 / 未指定",
+    "prohibited": "不允许使用 AI",
+    "editing_only": "仅允许 AI 用于编辑（语法、拼写）",
+    "allowed_with_declaration": "允许使用 AI，但需声明",
+    "collaboration_allowed": "允许 AI 协作"
+  },
   "status": {
     "pending": "已排队",
     "processing": "正在扫描文档",

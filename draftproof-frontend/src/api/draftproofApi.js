@@ -68,8 +68,15 @@ export const getDocument = (id) => api.get(`/documents/${id}`);
 // Scans
 export const startScan = (documentId, opts = {}) =>
   api.post('/scans/', { document_id: documentId }, opts);
-export const startScanWithText = (text, opts = {}) =>
-  api.post('/scans/', { document_id: 'paste', text }, opts);
+// aiPolicy (Phase 1 batch 2): optional key on opts, not a new positional param —
+// startScanWithText(text) is called elsewhere (Report.jsx, RewriteDraftEditor.jsx)
+// without a policy pick, and opts.signal/opts.timeout must keep reaching axios
+// unchanged for the callers that DO pass them (Scan.jsx). Destructure it out
+// before forwarding the rest as axios config so it never leaks into the request.
+export const startScanWithText = (text, opts = {}) => {
+  const { aiPolicy, ...axiosConfig } = opts;
+  return api.post('/scans/', { document_id: 'paste', text, ai_policy: aiPolicy ?? null }, axiosConfig);
+};
 export const getScanStatus = (scanId, opts = {}) => api.get(`/scans/${scanId}`, opts);
 export const listScans = (page = 1, perPage = 10, opts = {}) =>
   api.get('/scans/', { params: { page, per_page: perPage }, signal: opts.signal });
