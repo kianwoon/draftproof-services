@@ -18,6 +18,15 @@ class Tier(str, Enum):
     CLEAN = "clean"
 
 
+# ── AI policy context (Phase 1, docs/plans/policy_risk_external_review_response.md) ──
+# ASSIGNMENT-level (not institution-wide) AI policy, optionally captured at scan
+# submission. "unknown" is the default and the common case today -- nothing infers
+# this from the writing. Frozen set, not a scoring input: never used to gate/allow
+# anything, purely a presentation-selection input for a not-yet-built Phase 2.
+AI_POLICY_VALUES = frozenset({
+    "prohibited", "editing_only", "allowed_with_declaration", "collaboration_allowed", "unknown",
+})
+
 TIER_ORDER = [Tier.CRITICAL, Tier.HIGH, Tier.MEDIUM, Tier.LOW, Tier.CLEAN]
 TIER_ICON = {
     Tier.CRITICAL: "[!]",
@@ -189,6 +198,11 @@ class DraftReport:
     authorship_concern_signals: Optional[Dict[str, Any]] = None
     ai_risk_badge: Optional[Dict[str, Any]] = None
     paragraph_explanations: Optional[Dict[str, Any]] = None
+    # Phase 1 (docs/plans/policy_risk_external_review_response.md): optional
+    # assignment-level AI policy captured at scan submission. None when absent
+    # (older reports, or the submitter didn't pick one) -- report_to_dict()
+    # normalizes that to "unknown" in document_context, never fabricates a choice.
+    ai_policy: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Serialize the report to a JSON-ready dict."""

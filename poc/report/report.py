@@ -172,6 +172,7 @@ from report.models import (
     CitationSummary,
     RewriteSummary,
     DraftReport,
+    AI_POLICY_VALUES,
 )
 from report.actionability import determine_actionability
 from report.deberta import (
@@ -3240,6 +3241,10 @@ def report_to_dict(report: DraftReport) -> Dict[str, Any]:
         "document_context": {
             "word_count": len(report.original_text.split()) if report.original_text else 0,
             "sentence_count": len(report.predictability.sentences) if report.predictability else 0,
+            # Phase 1 (docs/plans/policy_risk_external_review_response.md): optional
+            # assignment-level AI policy. Never fabricated -- an unrecognized/absent
+            # value normalizes to "unknown", the same as an explicit "I don't know".
+            "ai_policy": report.ai_policy if report.ai_policy in AI_POLICY_VALUES else "unknown",
         },
         "finding_count": report.finding_count,
         "findings": {

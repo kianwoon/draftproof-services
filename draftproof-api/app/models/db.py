@@ -163,6 +163,12 @@ class ScanJob(Base):
     document_title = Column(Text)
     content_preview = Column(Text)
     scan_type = Column(Text, nullable=False, default="scan")
+    # This ASSIGNMENT's AI policy (not institution-wide -- see migration 016 and
+    # docs/plans/policy_risk_external_review_response.md Phase 1). One of
+    # prohibited/editing_only/allowed_with_declaration/collaboration_allowed/unknown.
+    # Nullable/defaulted so absent = today's byte-identical behavior; not yet read or
+    # written by any route (Phase 1 batch 1 -- schema/model only, wiring is batch 2).
+    ai_policy = Column(Text, nullable=True, default="unknown")
     # CAS token: TRUE while this free scan's increment is live on
     # users.free_scans_used. Refund flips it TRUE->FALSE exactly once so a
     # failed/canceled free scan decrements the counter at most once.
