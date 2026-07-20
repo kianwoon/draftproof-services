@@ -1353,14 +1353,22 @@ class Layer3Scorer:
             "formulaic_conclusion_risk": conclusion,
         }
 
-        # Keep GENUINE zeros in the denominator (filter None, not >0), matching the AI
-        # phase's is-not-None filter. Dropping zeros inflated the average toward the few
-        # non-zero components and over-judged thin/clean docs into HIGH_REVIEW (M5). This
-        # only lowers scores (safe direction for human writing).
+        # Keep GENUINE zeros in the denominator. Dropping zeros inflated the average
+        # toward the few non-zero components and over-judged thin/clean docs into
+        # HIGH_REVIEW (M5). This only lowers scores (safe direction for human writing).
+        #
+        # NOTE: unlike the AI phase's filter above (which checks the raw, possibly-None
+        # `data.<field>` and genuinely drops components with no upstream signal), every
+        # value in `components` here is already clamp()-ed to a float by this point and
+        # can never be None -- a missing writing-quality signal is coerced to 0.0 upstream,
+        # not left as None. So there is no `v is not None` filter here: a missing signal
+        # deliberately stays in the denominator at 0.0, diluting the score downward (the
+        # M5 safe-direction dilution described above). This is intentionally asymmetric
+        # with the AI phase.
         score = weighted_average({
             k: (v, QUALITY_WEIGHTS[k])
             for k, v in components.items()
-            if v is not None and k in QUALITY_WEIGHTS
+            if k in QUALITY_WEIGHTS
         })
 
         source_strength = clamp(data.source_grounding_strength)

@@ -175,7 +175,15 @@ export default function Scan() {
       });
 
       source.addEventListener('error', () => {
-        finish(null);
+        // The browser auto-reconnects on a transient network blip (readyState
+        // goes CONNECTING); only give up when it has fully given up (CLOSED —
+        // e.g. server sent a non-retryable response). Do NOT reset the stall
+        // watchdog here: only real progress/scan-error events do that, so a
+        // reconnect loop that never delivers another event still terminates
+        // via SSE_STALL_TIMEOUT_MS.
+        if (source.readyState === EventSource.CLOSED) {
+          finish(null);
+        }
       });
     });
   }, [t, updateProgress]);

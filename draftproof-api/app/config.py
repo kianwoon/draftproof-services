@@ -3,7 +3,19 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
+# .txt ONLY: no PDF/DOCX text-extraction library exists anywhere in the API or worker,
+# so binary .pdf/.docx uploads were accepted here and then crashed scan creation with a
+# masked 500 (UnicodeDecodeError in scan_service._read_document_text_sync). No product
+# surface uses file upload at all today (frontend is paste-text; the extension sends
+# text) — re-adding these types is a feature that must ship WITH a real extractor.
+ALLOWED_EXTENSIONS = {".txt"}
+
+# Backstop retention for UPLOAD_DIR (storage_service._maybe_sweep_stale_uploads). Normal
+# uploads are read exactly once (at scan creation, see scan_service._read_document_text_sync)
+# and deleted right after extraction, so this only ever catches files nothing consumed --
+# e.g. an upload whose scan was never created. Generous on purpose since it's a backstop,
+# not the primary cleanup path.
+UPLOAD_RETENTION_HOURS = max(1, int(os.getenv("UPLOAD_RETENTION_HOURS", "24")))
 
 # Default raised 10 → 20: the Koyeb/Neon endpoint autosuspends, so the first
 # connect after idle must wake compute + negotiate SSL, which can exceed 10s and
@@ -111,6 +123,15 @@ SSE_XREAD_BLOCK_MS = min(
     REDIS_SOCKET_TIMEOUT_SECONDS * 1000 - 1000,
     max(1000, int(os.getenv("SSE_XREAD_BLOCK_MS", "5000"))),
 )
+
+# Absolute lifetime cap for /api/scans/{id}/events, measured from stream open (not from
+# job creation). Without this, a stream only ends via client disconnect or the terminal
+# status arriving; the worker's own hard cap (worker/app/config.py Settings.
+# SCAN_TIME_LIMIT_SECONDS, default 330s) means a scan is guaranteed to reach a terminal
+# state well before this fires in the normal case. Default is set comfortably above that
+# 330s hard limit to also absorb Celery queueing delay before the task starts, so a
+# legitimately still-processing scan is never cut off early. 600s = ~1.8x the worker cap.
+SSE_SCAN_STREAM_MAX_SECONDS = max(60, int(os.getenv("SSE_SCAN_STREAM_MAX_SECONDS", "600")))
 
 # R2 Storage (for fetching report JSON)
 R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL", "")

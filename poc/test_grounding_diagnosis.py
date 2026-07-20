@@ -3,6 +3,7 @@ from detect.grounding_diagnosis import (
     DRIVER_LABELS,
     MODEL_VERSION,
     _band,
+    _percent,
     diagnose_grounding_gap,
 )
 
@@ -133,6 +134,28 @@ def test_inputs_not_mutated():
 
 def test_weights_sum_to_100():
     assert sum(BUCKET_WEIGHTS.values()) == 100
+
+
+def test_percent_scale_is_explicit_at_the_1_0_edge():
+    # Regression for the old value<=1.0 heuristic: a genuine 0-100 signal that happens
+    # to land at exactly 1.0 (e.g. a real 1% risk from ai_components/writing_components,
+    # which report/builder.py always pre-scales to 0-100) must NOT be rescaled to 100.
+    assert _percent(1.0, scale="percent") == 1.0
+    # A genuine 0-1 fraction signal at exactly 1.0 (e.g. transformation_features'
+    # human_anchor_score = 1.0, meaning fully human) legitimately means 100%.
+    assert _percent(1.0, scale="fraction") == 100.0
+    # scale is mandatory -- no silent guessing.
+    import pytest
+    with pytest.raises(ValueError):
+        _percent(1.0, scale="bogus")
+
+
+def test_ai_component_at_1_0_is_not_rescaled_to_100():
+    # End-to-end: a writing_components value of exactly 1.0 (a real ~1% specificity
+    # gap, already on the 0-100 scale per builder.py) must stay ~1, not become 100.
+    d = _diag(writing={"lived_detail_risk": 1.0})
+    sig = next(s for s in d["signals"] if s["key"] == "specificity_gap")
+    assert sig["value"] == 1.0
 
 
 def test_driver_keys_consistent_across_tables():

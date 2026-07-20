@@ -13,7 +13,13 @@ class TextDocumentIn(BaseModel):
 
 @router.post("/upload", response_model=DocumentOut)
 async def upload_document(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    doc = await save_upload(file)
+    # save_upload raises ValueError for every validation reject (extension not allowed,
+    # content/extension mismatch, size limit). Map to 400 so the caller sees the reason
+    # instead of the generic 500 these used to fall through to.
+    try:
+        doc = await save_upload(file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return doc
 
 

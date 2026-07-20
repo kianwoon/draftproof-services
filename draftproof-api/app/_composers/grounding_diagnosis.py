@@ -73,27 +73,48 @@ class _Signal:
         return out
 
 
-def _percent(value: Any) -> float | None:
-    """Coerce a 0-1 or 0-100 number to a clamped 0-100 float; None if not numeric."""
+def _percent(value: Any, *, scale: str) -> float | None:
+    """Coerce a number to a clamped 0-100 float; None if not numeric.
+
+    ``scale`` is REQUIRED -- callers must state the feed's actual magnitude
+    instead of relying on a value<=1.0 heuristic (which misreads a genuine
+    0-100 value that happens to land at/below 1.0, e.g. a real 0.5% risk
+    getting rescaled to 50). Traced per feed (see grounding_diagnosis.py
+    callers below):
+      - 'percent': already 0-100. ``ai_components``/``writing_components``
+        (the ``ai``/``writing`` dicts here) are always this scale --
+        report/builder.py multiplies every ``layer3.ai_phase.components`` /
+        ``layer3.writing_phase.components`` value by 100 before building
+        those dicts (builder.py ~1471/~1511), and that transform is applied
+        uniformly to every key, so it holds for every ai./writing. feed used
+        in this module.
+      - 'fraction': 0-1. ``transformation_features`` (the ``features`` dict
+        here) is always this scale -- detect/transformation.py builds it via
+        ``asdict()`` of ``TransformationFeatures``, whose fields are all
+        ``clamp(...)``-ed to layer3_scoring.clamp's default [0, 1] bounds
+        before serialization.
+    """
+    if scale not in ("percent", "fraction"):
+        raise ValueError(f"_percent: scale must be 'percent' or 'fraction', got {scale!r}")
     if not isinstance(value, (int, float)):
         return None
     numeric = float(value)
     if math.isnan(numeric):
         return None
-    if abs(numeric) <= 1.0:
+    if scale == "fraction":
         numeric *= 100.0
     return max(0.0, min(100.0, numeric))
 
 
-def _gap_from_strength(value: Any) -> float | None:
+def _gap_from_strength(value: Any, *, scale: str) -> float | None:
     """Invert a 'strength' signal into a 0-100 gap/risk value."""
-    pct = _percent(value)
+    pct = _percent(value, scale=scale)
     return None if pct is None else max(0.0, min(100.0, 100.0 - pct))
 
 
-def _maxp(*values: Any) -> float | None:
+def _maxp(*values: Any, scale: str) -> float | None:
     """Max over the available _percent() values; None if none available."""
-    ps = [p for p in (_percent(v) for v in values) if p is not None]
+    ps = [p for p in (_percent(v, scale=scale) for v in values) if p is not None]
     return max(ps) if ps else None
 
 
@@ -116,12 +137,13 @@ def _bucket_signals(
     # Re-derive anchors from existing signals (derived, not badge keys). Unlike
     # external_grouped_scoring, a MISSING input stays unavailable rather than
     # defaulting to zero strength (which would read as a maximal gap on no data).
-    _lived = _percent(writing.get("lived_detail_risk"))
-    _human = _percent(features.get("human_anchor_score"))
+    _lived = _percent(writing.get("lived_detail_risk"), scale="percent")
+    _human = _percent(features.get("human_anchor_score"), scale="fraction")
     _anchor_parts = [v for v in ((100.0 - _lived) if _lived is not None else None, _human) if v is not None]
     author_anchor_strength = max(_anchor_parts) if _anchor_parts else None
     context_anchor_strength = _maxp(
-        writing.get("domain_grounding_strength"), writing.get("source_grounding_strength")
+        writing.get("domain_grounding_strength"), writing.get("source_grounding_strength"),
+        scale="percent",
     )
 
     signals: list[_Signal] = []
@@ -130,33 +152,41 @@ def _bucket_signals(
         signals.append(_Signal(key, bucket, value, value is not None, note))
 
     # Concrete grounding (specificity + context + named evidence)
-    add("specificity_gap", "concrete_grounding", _percent(writing.get("lived_detail_risk")))
-    add("broad_claim_risk", "concrete_grounding", _percent(writing.get("broad_claim_risk")))
+    add("specificity_gap", "concrete_grounding",
+        _percent(writing.get("lived_detail_risk"), scale="percent"))
+    add("broad_claim_risk", "concrete_grounding",
+        _percent(writing.get("broad_claim_risk"), scale="percent"))
     add("evidence_gap", "concrete_grounding",
-        _maxp(writing.get("source_grounding_risk"), writing.get("citation_weakness_risk")))
+        _maxp(writing.get("source_grounding_risk"), writing.get("citation_weakness_risk"),
+              scale="percent"))
     add("context_gap", "concrete_grounding",
         None if context_anchor_strength is None else max(0.0, 100.0 - context_anchor_strength))
 
     # Authorship trace (decision trail / draft process / personal judgement)
     add("author_anchor_gap", "authorship_trace",
         None if author_anchor_strength is None else max(0.0, 100.0 - author_anchor_strength))
-    add("human_anchor_gap", "authorship_trace", _gap_from_strength(features.get("human_anchor_score")))
+    add("human_anchor_gap", "authorship_trace",
+        _gap_from_strength(features.get("human_anchor_score"), scale="fraction"))
 
     # LLM patterning (predictability + rhythm + template flow + over-balance)
-    add("predictability", "llm_patterning", _percent(ai.get("predictability")))
-    add("topk_pattern", "llm_patterning", _percent(ai.get("topk_pattern")))
-    add("structure_reuse", "llm_patterning", _percent(ai.get("repeated_sentence_structure_risk")))
+    add("predictability", "llm_patterning", _percent(ai.get("predictability"), scale="percent"))
+    add("topk_pattern", "llm_patterning", _percent(ai.get("topk_pattern"), scale="percent"))
+    add("structure_reuse", "llm_patterning",
+        _percent(ai.get("repeated_sentence_structure_risk"), scale="percent"))
     add("rhythm_regularity", "llm_patterning",
-        _maxp(writing.get("paragraph_uniformity_risk"), writing.get("repeated_starter_risk")))
+        _maxp(writing.get("paragraph_uniformity_risk"), writing.get("repeated_starter_risk"),
+              scale="percent"))
     add("template_flow", "llm_patterning",
         _maxp(writing.get("signpost_paragraph_risk"), writing.get("formulaic_conclusion_risk"),
-              writing.get("paragraph_progression_risk")))
-    add("over_balance", "llm_patterning", _percent(ai.get("balanced_hedging_risk")))
+              writing.get("paragraph_progression_risk"), scale="percent"))
+    add("over_balance", "llm_patterning", _percent(ai.get("balanced_hedging_risk"), scale="percent"))
 
     # Language texture (semantic padding + paraphrase residue + [abstraction: unmeasured])
-    add("semantic_padding", "language_texture", _percent(ai.get("qualifying_text_ai_density")))
+    add("semantic_padding", "language_texture",
+        _percent(ai.get("qualifying_text_ai_density"), scale="percent"))
     add("paraphrase_residue", "language_texture",
-        _maxp(features.get("paraphrase_transformation_risk"), features.get("rewrite_smoothness")))
+        _maxp(features.get("paraphrase_transformation_risk"), features.get("rewrite_smoothness"),
+              scale="fraction"))
     signals.append(_Signal("abstraction", "language_texture", None, False,
                            "abstract_noun_density_unmeasured"))
     return signals

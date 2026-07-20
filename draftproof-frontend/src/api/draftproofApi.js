@@ -55,11 +55,8 @@ api.interceptors.response.use(
 );
 
 // Documents
-export const uploadDocument = (formData) =>
-  api.post('/documents/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-
+// (uploadDocument removed with the dead UploadPanel component: no product surface
+// does file upload — scan input is paste-text — and the API now accepts .txt only.)
 export const uploadText = (text) =>
   api.post('/documents/text', { text });
 

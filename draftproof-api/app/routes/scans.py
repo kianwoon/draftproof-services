@@ -5,6 +5,7 @@ import re
 
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
+from app.config import SSE_SCAN_STREAM_MAX_SECONDS
 from app.models import ScanRequest, ScanOut
 from app.services.scan_service import create_scan, get_scan, list_scans, delete_scan
 from app.services import progress_stream
@@ -71,10 +72,23 @@ async def stream_scan_events(
         if result["status"] in ("completed", "failed"):
             return
 
-        last_db_check = asyncio.get_running_loop().time()
+        stream_started = asyncio.get_running_loop().time()
+        last_db_check = stream_started
 
         while True:
             if await request.is_disconnected():
+                break
+
+            # Absolute lifetime cap (SSE_SCAN_STREAM_MAX_SECONDS): close cleanly, the
+            # same way the terminal-status path below does, so the client's polling
+            # fallback (GET /scans/{id}) takes over instead of the connection hanging
+            # open indefinitely. This is a backstop on top of disconnect detection and
+            # the stale-job reaper (scan_service._processing_scan_is_stale), not a
+            # replacement for either.
+            if asyncio.get_running_loop().time() - stream_started > SSE_SCAN_STREAM_MAX_SECONDS:
+                logging.getLogger(__name__).info(
+                    "SSE scan stream %s closed at lifetime cap (%ss)", scan_id, SSE_SCAN_STREAM_MAX_SECONDS
+                )
                 break
 
             # Try Redis stream first (fast, no DB hit)

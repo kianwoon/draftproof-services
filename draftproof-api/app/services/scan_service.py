@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import logging
 import os
 import re
 import uuid
@@ -112,8 +113,32 @@ def _rewrite_cost(word_count: int) -> int:
     return max(5, -(-word_count // 1000) * 5)
 
 
-def _read_document_text_sync(document_id: str) -> str:
-    """Read uploaded document text from disk (sync — call via to_thread)."""
+def _delete_upload_best_effort(path: str) -> None:
+    """Delete a consumed upload file. An uploaded document is read exactly once — at
+    scan creation — and never again: rescans (list_scans/get_scan) and rewrites operate
+    on the stored scan text/report in Postgres and R2, not the original file, and the
+    ScanJob row doesn't even retain the document_id. Deletion must happen only AFTER
+    the scan job row is committed: create_scan can still raise between extraction and
+    commit (empty text, no credit account, insufficient tokens), and deleting on
+    extraction would strand a user who tops up and retries the same document_id.
+    Best-effort: deletion is hygiene, not correctness, so failures are logged and
+    swallowed rather than raised.
+    """
+    try:
+        os.remove(path)
+    except OSError as e:
+        logging.getLogger("scan_service.upload_cleanup").warning(
+            "Failed to delete consumed upload %s: %s", path, e
+        )
+
+
+def _read_document_text_sync(document_id: str) -> tuple[str, str | None]:
+    """Read uploaded document text from disk (sync — call via to_thread).
+
+    Returns (content, path). The file is NOT deleted here — the caller deletes it
+    via _delete_upload_best_effort only after the scan job commit succeeds (see
+    that helper's docstring for why).
+    """
     # document_id is attacker-controllable (ScanRequest.document_id) and is
     # interpolated straight into a filesystem path, so anything other than a UUID
     # (e.g. "../../../../etc/passwd") is a path-traversal / arbitrary-file-read
@@ -123,13 +148,27 @@ def _read_document_text_sync(document_id: str) -> str:
     try:
         uuid.UUID(str(document_id))
     except (ValueError, TypeError):
-        return ""
+        return "", None
+    # .txt only: uploads are gated to ALLOWED_EXTENSIONS = {".txt"} (app/config.py — no
+    # PDF/DOCX extractor exists, those types never scanned successfully). The .pdf/.docx
+    # probes remain solely so a LEGACY file already on disk resolves to a clean
+    # "Document text not found or empty" (unreadable → skipped) instead of dangling.
     for ext in (".txt", ".pdf", ".docx"):
         path = os.path.join(UPLOAD_DIR, f"{document_id}{ext}")
         if os.path.isfile(path):
-            with open(path, encoding="utf-8") as f:
-                return f.read()
-    return ""
+            try:
+                with open(path, encoding="utf-8") as f:
+                    content = f.read()
+            except UnicodeDecodeError:
+                # Binary legacy upload (pre-narrowing .pdf/.docx): unreadable by design —
+                # without this guard it escaped as a masked 500 from create_scan.
+                logging.getLogger("scan_service.upload_cleanup").warning(
+                    "Upload %s is not UTF-8 text (legacy binary upload?); treating as unreadable",
+                    path,
+                )
+                continue
+            return content, path
+    return "", None
 
 
 def _redis_stream_event_time(event_id: str) -> datetime | None:
@@ -311,8 +350,11 @@ async def create_scan(
     consumer).
     """
     ai_policy = ai_policy or "unknown"
+    consumed_upload_path: str | None = None
     if not text:
-        text = await asyncio.to_thread(_read_document_text_sync, document_id)
+        text, consumed_upload_path = await asyncio.to_thread(
+            _read_document_text_sync, document_id
+        )
     if not text:
         raise ValueError("Document text not found or empty")
 
@@ -373,6 +415,10 @@ async def create_scan(
             session.add(reservation)
 
         await session.commit()
+
+    # Job row + reservation are durable now — safe to drop the consumed upload.
+    if consumed_upload_path:
+        await asyncio.to_thread(_delete_upload_best_effort, consumed_upload_path)
 
     from app.services.celery_client import scan_document
     # ai_policy as a KEYWORD arg, not positional: worker/app/tasks.py's
