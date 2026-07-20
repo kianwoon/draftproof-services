@@ -292,6 +292,7 @@ async def create_scan(
     *,
     always_paid: bool = False,
     title: str | None = None,
+    ai_policy: str | None = None,
 ) -> dict:
     """Create a scan_job row, enqueue Celery task, return scan info.
 
@@ -299,7 +300,17 @@ async def create_scan(
     receive a one-time welcome grant of credits at signup. always_paid is kept
     for call-site compatibility (extension/API-key scans) but no longer changes
     the cost — all scans reserve >=1 credit via the same reserve→capture path.
+
+    ai_policy: optional ASSIGNMENT-level AI policy (Phase 1 batch 2, docs/plans/
+    policy_risk_external_review_response.md). Normalized to "unknown" here
+    (not left as None) so every NEW row reads the same as pre-migration rows
+    backfilled by 016_scan_ai_policy.sql's column DEFAULT -- an explicit
+    ai_policy=None on the ScanJob constructor would otherwise insert a real
+    SQL NULL, bypassing that column default. Presentation-only metadata: never
+    read by any gate/scoring path (Phase 2, not built yet, is the first
+    consumer).
     """
+    ai_policy = ai_policy or "unknown"
     if not text:
         text = await asyncio.to_thread(_read_document_text_sync, document_id)
     if not text:
@@ -334,6 +345,7 @@ async def create_scan(
             scan_type="scan",
             status="pending",
             free_scan_counted=False,
+            ai_policy=ai_policy,
         )
         session.add(job)
 
@@ -363,7 +375,11 @@ async def create_scan(
         await session.commit()
 
     from app.services.celery_client import scan_document
-    scan_document.delay(str(job_id), text)
+    # ai_policy as a KEYWORD arg, not positional: worker/app/tasks.py's
+    # scan_document(self, job_id, text, ai_policy=None) accepts it as of Phase 1
+    # batch 1 (already deployed+verified healthy before this batch shipped) --
+    # see docs/plans/policy_risk_external_review_response.md's deploy-order note.
+    scan_document.delay(str(job_id), text, ai_policy=ai_policy)
 
     return {
         "id": str(job_id),

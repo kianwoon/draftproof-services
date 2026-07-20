@@ -21,8 +21,11 @@ class FakeScanTask:
     def __init__(self):
         self.calls = []
 
-    def delay(self, *args):
-        self.calls.append(args)
+    def delay(self, *args, **kwargs):
+        # Mirrors the real Celery .delay(*args, **kwargs) signature -- create_scan
+        # now passes ai_policy as a kwarg (Phase 1 batch 2, docs/plans/
+        # policy_risk_external_review_response.md), same fix as test_scan_service.py.
+        self.calls.append((args, kwargs))
 
 
 class AlwaysPaidSession:

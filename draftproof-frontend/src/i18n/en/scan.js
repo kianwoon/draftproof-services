@@ -44,6 +44,15 @@ export const scan = {
   "authTitle": "Please sign in again",
   "authMessage": "Your session has expired. Sign in again to continue your scan. Your pasted text will be restored when you return.",
   "signIn": "Sign in",
+  "aiPolicyLabel": "This assignment's AI policy (optional)",
+  "aiPolicyHelp": "Tell DraftProof what your assignment allows so the report can read it accordingly. This is never inferred from your writing.",
+  "aiPolicy": {
+    "unknown": "I don't know / not specified",
+    "prohibited": "AI is not allowed",
+    "editing_only": "AI allowed for editing only (grammar, spelling)",
+    "allowed_with_declaration": "AI allowed, with declaration",
+    "collaboration_allowed": "AI collaboration allowed"
+  },
   "status": {
     "pending": "Queued",
     "processing": "Scanning document",

@@ -27,7 +27,9 @@ async def list_scans_route(
 @router.post("/", response_model=ScanOut)
 async def create_scan_route(req: ScanRequest, user: dict = Depends(get_current_user)):
     try:
-        result = await create_scan(req.document_id, user_id=user["id"], text=req.text)
+        result = await create_scan(
+            req.document_id, user_id=user["id"], text=req.text, ai_policy=req.ai_policy,
+        )
         return ScanOut(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

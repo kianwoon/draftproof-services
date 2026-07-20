@@ -15,8 +15,13 @@ class FakeScanTask:
     def __init__(self):
         self.calls = []
 
-    def delay(self, *args):
-        self.calls.append(args)
+    def delay(self, *args, **kwargs):
+        # Mirrors the real Celery .delay(*args, **kwargs) signature (Task 7's
+        # test_defence.py precedent notwithstanding, scan_document is dispatched
+        # by celery_client.py's pure name-string signature() call -- no static
+        # arg-count check exists anywhere except this fake, so it must accept
+        # whatever scan_service.py actually passes, e.g. ai_policy as a kwarg).
+        self.calls.append((args, kwargs))
 
 
 class FakeResult:
@@ -199,6 +204,62 @@ async def test_long_scan_reserves_one_credit_per_started_1000_words(monkeypatch)
     assert acct.reserved_tokens == 3
     reservations = [a for a in fake_session.added if isinstance(a, scan_service.CreditReservation)]
     assert len(reservations) == 1 and reservations[0].tokens_reserved == 3
+
+
+# ── ai_policy capture (Phase 1 batch 2, docs/plans/policy_risk_external_review_response.md) ──
+
+@pytest.mark.asyncio
+async def test_ai_policy_is_stored_on_the_job_and_sent_to_the_worker(monkeypatch):
+    acct = SimpleNamespace(id="acct-1", balance_tokens=5, reserved_tokens=0)
+    fake_session = PaidScanSession(account=acct)
+    fake_task = FakeScanTask()
+
+    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
+    monkeypatch.setitem(
+        sys.modules,
+        "app.services.celery_client",
+        SimpleNamespace(scan_document=fake_task),
+    )
+
+    await scan_service.create_scan(
+        "paste",
+        user_id="00000000-0000-0000-0000-000000000001",
+        text=words(518),
+        ai_policy="prohibited",
+    )
+
+    job = next(a for a in fake_session.added if isinstance(a, scan_service.ScanJob))
+    assert job.ai_policy == "prohibited"
+    (args, kwargs) = fake_task.calls[0]
+    assert kwargs.get("ai_policy") == "prohibited"
+
+
+@pytest.mark.asyncio
+async def test_ai_policy_absent_normalizes_to_unknown_not_null(monkeypatch):
+    # Explicit ai_policy=None on the ScanJob constructor would insert a real SQL
+    # NULL, bypassing the column's DEFAULT 'unknown' -- create_scan must
+    # normalize before constructing ScanJob, not rely on the DB default.
+    acct = SimpleNamespace(id="acct-1", balance_tokens=5, reserved_tokens=0)
+    fake_session = PaidScanSession(account=acct)
+    fake_task = FakeScanTask()
+
+    monkeypatch.setattr(scan_service, "async_session", lambda: fake_session)
+    monkeypatch.setitem(
+        sys.modules,
+        "app.services.celery_client",
+        SimpleNamespace(scan_document=fake_task),
+    )
+
+    await scan_service.create_scan(
+        "paste",
+        user_id="00000000-0000-0000-0000-000000000001",
+        text=words(518),
+    )
+
+    job = next(a for a in fake_session.added if isinstance(a, scan_service.ScanJob))
+    assert job.ai_policy == "unknown"
+    (args, kwargs) = fake_task.calls[0]
+    assert kwargs.get("ai_policy") == "unknown"
 
 
 @pytest.mark.asyncio
