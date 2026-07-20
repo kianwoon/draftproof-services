@@ -57,7 +57,9 @@ RESTRICTED_BANDS = ((20.0, "low"), (45.0, "moderate"), (70.0, "high"), (float("i
 _NOTE = (
     "Policy risk re-weights the same writing signals two ways: 'AI allowed' judges whether the "
     "work stays grounded and student-controlled; 'AI restricted' weighs surface AI-text patterns "
-    "more. Declaration and process aren't in the text -- they're confirm-yourself factors. These "
+    "more. Declaration and process aren't in the text -- they're confirm-yourself factors. "
+    "'AI restricted' never reads lower than 'AI allowed' -- it shows the worst applicable "
+    "reading across the two lenses, not a separately calculated restrictive-policy score. These "
     "scores do not prove AI use; they estimate how the draft may read under different school policies."
 )
 
@@ -113,18 +115,30 @@ def _score_policy(weights: dict, base_signals: dict, omit_key: str, bands) -> di
 
 
 def _floor_restricted_to_allowed(ai_allowed: dict, ai_restricted: dict) -> dict:
-    """A stricter (AI-restricted) policy must never read as LOWER risk than a more
-    permissive (AI-allowed) policy for the SAME document -- that inverts the ordinary
-    reading of the two numbers side by side ("stricter policy = same-or-worse risk").
-    The two composites weight genuinely different signals (Allowed leans on
-    grounding/judgment/specificity gaps; Restricted leans on surface-AI-text/voice
-    gaps) and CAN organically invert when a document's worst signals happen to be the
-    ones Allowed weights heaviest (2026-07-20 owner review, confirmed via hand
-    arithmetic on a live report: grounding_gap=43.75 + prompt_specificity_gap=52.5
-    dominate Allowed's weighting while staying below surface_ai_text_signal's weight
-    in Restricted, producing ai_allowed=36.2 > ai_restricted=33.39).
+    """AI-Restricted must never DISPLAY as lower risk than AI-Allowed for the SAME document
+    -- that inverts the ordinary reading of the two numbers side by side. The two composites
+    weight genuinely different signals (Allowed leans on grounding/judgment/specificity gaps;
+    Restricted leans on surface-AI-text/voice gaps) and CAN organically invert when a
+    document's worst signals happen to be the ones Allowed weights heaviest (2026-07-20 owner
+    review, confirmed via hand arithmetic on a live report: grounding_gap=43.75 +
+    prompt_specificity_gap=52.5 dominate Allowed's weighting while staying below
+    surface_ai_text_signal's weight in Restricted, producing ai_allowed=36.2 >
+    ai_restricted=33.39).
 
-    Fix: when ai_restricted's organic score is lower than ai_allowed's, floor it up to
+    SCOPE OF THE GUARANTEE (2026-07-20, three-round external review + Fable consult -- see
+    docs/plans/policy_risk_external_review_response.md): only the display ORDERING
+    (ai_restricted.score >= ai_allowed.score) holds by construction. The floored value is the
+    WORST APPLICABLE READING ACROSS THE TWO DIAGNOSTIC LENSES -- it is NOT literally "risk
+    under a restrictive policy" recalculated from scratch, and must not be described that way
+    in copy or docs. Whether educators experience a floored-high Restricted score (driven by
+    permissive-lens signals like weak grounding, even when Restricted's OWN signals -- surface
+    AI text, voice gap -- are comparatively low) as a meaningful "restrictive-policy risk" is a
+    documented product-semantic choice, not a proven scoring invariant -- pending empirical
+    validation (Phase 4 of the plan doc above) once real usage/policy data exists. Nothing is
+    hidden either way: pre_floor_score/floored_to_ai_allowed preserve the organic disagreement,
+    and main_issue keeps naming the organic driver.
+
+    Mechanics: when ai_restricted's organic score is lower than ai_allowed's, floor it up to
     match. ``main_issue`` and ``confirm_delta`` are left untouched -- they still
     correctly explain what drove the ORGANIC restricted computation. ``confirm_level``
     is rebased onto the floored score so it never shows a lower band than the
