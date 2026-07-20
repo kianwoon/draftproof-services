@@ -68,6 +68,24 @@ _DEEP_SCAN_ENV_VAR = "DRAFTPROOF_V7_DEEP_SCAN"
 _TIER_AUTHORITY_ENV_VAR = "DRAFTPROOF_V7_TIER_AUTHORITY"
 _TRUTHY = {"1", "true"}
 
+# FIX 2 — attempted-and-failed sentinel. The builder's tier-authority block runs
+# get_deep_scan_proportion FIRST and hands its result through to run_v7_breakdown
+# as ``_precomputed_deep_scan``. Three distinct states must be told apart there:
+#   * a real result dict (has "proportion")      -> reuse it (already paid for);
+#   * ``None`` / key absent  = NOT ATTEMPTED     -> breakdown MAY call Modal itself
+#                                                   (tier-authority off, breakdown on);
+#   * this sentinel          = ATTEMPTED+FAILED  -> breakdown must NOT re-call Modal.
+# Before this sentinel existed, an attempted-and-failed tier-authority call left
+# ``_precomputed_deep_scan=None``, indistinguishable from "not attempted", so
+# run_v7_breakdown issued a SECOND Modal call. When that retry happened to
+# succeed after the first failed, the breakdown panel showed a deep-scan reading
+# while the badge stayed composite-driven — the exact inconsistency Fable
+# observed. Passing this sentinel eliminates that: one deep-scan attempt per scan.
+# Shape mirrors the Modal "unavailable" response ({"available": False}) and
+# deliberately carries NO "proportion" key so it can never be mistaken for a
+# real result by the reuse branch.
+DEEP_SCAN_ATTEMPTED_FAILED: dict[str, Any] = {"available": False}
+
 _UNCERTAINTY_FLAG_DEEP_SCAN_UNCALIBRATED = "deep_scan_uncalibrated"
 _UNCERTAINTY_FLAG_DEEP_SCAN_BELOW_FLOOR = "deep_scan_below_reliability_floor"
 _UNCERTAINTY_FLAG_ESL_GUARD_UNAVAILABLE = "esl_guard_unavailable"
@@ -219,8 +237,21 @@ def get_deep_scan_proportion(detection_result: Any) -> Optional[dict[str, Any]]:
     # both flags on pays for ONE deep-scan call, not two identical ones.
     if isinstance(detection_result, dict):
         precomputed = detection_result.get("_precomputed_deep_scan")
-        if isinstance(precomputed, dict) and "proportion" in precomputed:
-            return precomputed
+        if isinstance(precomputed, dict):
+            if "proportion" in precomputed:
+                return precomputed
+            # FIX 2: attempted-and-failed sentinel (DEEP_SCAN_ATTEMPTED_FAILED,
+            # {"available": False}). The tier-authority call already tried Modal
+            # and it failed; do NOT re-call. Re-calling risks a 2nd attempt
+            # succeeding after the 1st failed, which would paint a deep-scan
+            # panel under a composite badge (the inconsistency this fixes).
+            if precomputed.get("available") is False:
+                logger.info(
+                    "detect_v7.pipeline_bridge: tier-authority already attempted the "
+                    "deep-scan call and it failed; not re-calling Modal "
+                    "(single-attempt-per-scan)."
+                )
+                return None
     if not is_deep_scan_enabled():
         return None
     document_text = _extract_document_text(detection_result)
@@ -250,14 +281,26 @@ def get_deep_scan_proportion(detection_result: Any) -> Optional[dict[str, Any]]:
     windows = _build_windows(sentences, size=3, step=1)
     modal_response = modal_client.call_deep_scan(windows)
     window_scores = modal_response.get("chunk_scores") if isinstance(modal_response, dict) else None
+    # FIX 3: the client may have deterministically truncated to the first N
+    # windows (long-doc timeout guard). When it did (capped=True), align the
+    # aggregation to that kept prefix so the len(scores)==len(windows) contract
+    # still holds; sentences past the last kept window drop out as uncovered
+    # (None) in _aggregate below. ``capped`` rides up into the returned
+    # provenance so the proportion is never silently reported over a subset.
+    capped = isinstance(modal_response, dict) and modal_response.get("capped") is True
+    effective_windows = (
+        windows[: len(window_scores)]
+        if capped and isinstance(window_scores, list)
+        else windows
+    )
     if (
         isinstance(modal_response, dict)
         and modal_response.get("available") is True
         and isinstance(window_scores, list)
-        and len(window_scores) == len(windows)
+        and len(window_scores) == len(effective_windows)
         and all(isinstance(s, (int, float)) and not isinstance(s, bool) for s in window_scores)
     ):
-        _agg = _aggregate(sentences, windows, window_scores, size=3, step=1)
+        _agg = _aggregate(sentences, effective_windows, window_scores, size=3, step=1)
         # Keep sentence<->score alignment (aggregate may return None for
         # uncovered sentences): filter PAIRS so _per_paragraph_proportions'
         # equal-length contract and its normalized-text cursor mapping hold.
@@ -297,6 +340,11 @@ def get_deep_scan_proportion(detection_result: Any) -> Optional[dict[str, Any]]:
         "band": _deep_scan_band(deberta_score),
         "calibrated": modal_response.get("calibrated") is True,
     }
+    if capped:
+        # FIX 3: surface the truncation on the display payload too (additive —
+        # absent on the normal uncapped path), so any surface can warn the
+        # proportion is computed over the first N windows only.
+        payload["capped"] = True
     # Additive per-paragraph proportions: pure post-processing of the SAME
     # per-sentence Modal scores (zero extra Modal cost, document math above
     # untouched). Fail-open: a mapping failure just omits the key.
@@ -314,6 +362,7 @@ def get_deep_scan_proportion(detection_result: Any) -> Optional[dict[str, Any]]:
         "proportion": deberta_score,
         "uncalibrated": modal_response.get("calibrated") is not True,
         "below_floor": proportion < doc_floor,
+        "capped": capped,  # FIX 3: consumed by builder tier_authority_provenance
         "payload": payload,
     }
 

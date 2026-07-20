@@ -1112,3 +1112,84 @@ class TestBuilderThreadsCriterionScores:
         assert "criterion_scores" in passed_in
         assert passed_in["criterion_scores"] == b._summaries.get("criterion_scores")
         assert passed_in["criterion_scores"], "criterion_scores must be non-empty on this fixture"
+
+
+class TestPrecomputedDeepScanSentinel:
+    """FIX 2: the three-state ``_precomputed_deep_scan`` contract that stops the
+    builder's tier-authority call and run_v7_breakdown from BOTH hitting Modal."""
+
+    def test_attempted_and_failed_sentinel_skips_second_modal_call(self, monkeypatch):
+        # Tier-authority already tried Modal and it failed → sentinel handed in →
+        # get_deep_scan_proportion must NOT re-call (the inconsistency FIX 2 kills).
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+
+        def _boom(*a, **k):
+            raise AssertionError("must not re-call Modal after an attempted-and-failed call")
+
+        monkeypatch.setattr(modal_client, "call_deep_scan", _boom)
+        out = pipeline_bridge.get_deep_scan_proportion(
+            {
+                "document_text": "A sentence here. Another one there.",
+                "_precomputed_deep_scan": pipeline_bridge.DEEP_SCAN_ATTEMPTED_FAILED,
+            }
+        )
+        assert out is None
+
+    def test_not_attempted_none_still_calls_modal(self, monkeypatch):
+        # Tier-authority OFF (None handed in) → breakdown may still call Modal.
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+        called = {"n": 0}
+
+        def _fake(chunks, timeout_s=60.0):
+            called["n"] += 1
+            return None  # only asserting it WAS called
+
+        monkeypatch.setattr(modal_client, "call_deep_scan", _fake)
+        out = pipeline_bridge.get_deep_scan_proportion(
+            {
+                "document_text": "A sentence here. Another one there. And a third one now.",
+                "_precomputed_deep_scan": None,
+            }
+        )
+        assert called["n"] == 1
+        assert out is None
+
+    def test_real_precomputed_result_is_reused_without_calling_modal(self, monkeypatch):
+        def _boom(*a, **k):
+            raise AssertionError("must not call Modal when a real precomputed result is present")
+
+        monkeypatch.setattr(modal_client, "call_deep_scan", _boom)
+        real = {
+            "proportion": 0.42,
+            "uncalibrated": False,
+            "below_floor": False,
+            "payload": {"proportion": 0.42},
+        }
+        out = pipeline_bridge.get_deep_scan_proportion({"_precomputed_deep_scan": real})
+        assert out is real
+
+
+class TestDeepScanCapPropagation:
+    """FIX 3: a capped Modal response surfaces ``capped`` up through the
+    bridge's returned provenance and display payload (no silent subset)."""
+
+    def test_capped_response_propagates_flag(self, monkeypatch):
+        monkeypatch.setenv(_DEEP_SCAN_ENV_VAR, "1")
+        # capped=True → effective_windows truncates to the returned-score prefix,
+        # so the length-match contract holds regardless of the true window count.
+        monkeypatch.setattr(
+            modal_client,
+            "call_deep_scan",
+            lambda chunks, timeout_s=60.0: {
+                "available": True,
+                "calibrated": True,
+                "chunk_scores": [0.99],
+                "capped": True,
+            },
+        )
+        out = pipeline_bridge.get_deep_scan_proportion(
+            {"document_text": "One here. Two there. Three yonder. Four is more."}
+        )
+        assert out is not None
+        assert out["capped"] is True
+        assert out["payload"].get("capped") is True

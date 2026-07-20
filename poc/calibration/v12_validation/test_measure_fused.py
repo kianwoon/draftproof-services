@@ -1,7 +1,7 @@
 """Cache-wrapper behavior: hit serves from cache without calling Modal;
 miss calls through and appends ONLY responses whose checkpoint matches ours
-(the endpoint's "calibrated" flag is hardcoded stale — checkpoint identity is
-the validity criterion)."""
+(checkpoint identity is the validity criterion; the endpoint's "calibrated"
+flag is annotation-only and not part of the cache rule)."""
 import json
 from pathlib import Path
 
@@ -30,9 +30,10 @@ def test_cache_hit_skips_modal(tmp_path, monkeypatch):
         resp = mc.call_deep_scan(sentences)
     finally:
         m.uninstall_cached_deep_scan()
-    # calibrated False mirrors the endpoint's CURRENT (hardcoded) behavior so
-    # cache hits stay faithful to what a live call would return.
-    assert resp == {"available": True, "calibrated": False,
+    # calibrated True mirrors the endpoint's CURRENT live behavior (verified
+    # 2026-07-21: derives True from CALIBRATED_CHECKPOINT_IDS for this
+    # checkpoint) so cache hits stay faithful to what a live call would return.
+    assert resp == {"available": True, "calibrated": True,
                     "checkpoint": deepscan_cache.checkpoint_tag(),
                     "chunk_scores": [0.1, 0.9995]}
     assert calls == []  # Modal never hit

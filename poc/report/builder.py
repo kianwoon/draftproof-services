@@ -202,7 +202,14 @@ class ReportBuilder:
         self._deberta_heatmap: dict | None = None  # cached canonical-sentence heatmap (map+tile share it)
         self._summaries: Dict[str, Any] = {}
         self._false_positives: List[Dict[str, str]] = []
-        self._sentence_id_map: Dict[str, str] = {}
+        # Map a 60-char sentence prefix -> in-document-order list of
+        # (full_sentence, sentence_id). A plain last-write-wins dict collapsed
+        # every sentence sharing a 60-char prefix (exact duplicates included)
+        # onto the LAST occurrence's sid, mis-anchoring finding underlines/tallies.
+        self._sentence_id_map: Dict[str, List[tuple]] = {}
+        # FIFO cursor per (snippet, full_text) so successive findings about an
+        # exact-duplicate sentence anchor to successive occurrences.
+        self._sentence_id_cursor: Dict[tuple, int] = {}
 
     def set_meta(self, scan_time: float = 0.0,
                  original_text: str = "", rewritten_text: str = "",
@@ -281,10 +288,30 @@ class ReportBuilder:
             sent_id = ""
             loc = getattr(f, 'location', None) or {}
 
-            # Strategy 1: direct snippet match (works for predictability)
+            # Strategy 1: direct snippet match (works for predictability).
+            # Two sentences can share the same 60-char prefix (exact duplicates
+            # included). Resolve to the finding's OWN occurrence instead of
+            # collapsing onto the last: prefer entries whose FULL sentence text
+            # equals the finding evidence (disambiguates a shared prefix between
+            # *different* sentences), then consume repeated occurrences of the
+            # SAME text in document order via a FIFO cursor (so successive
+            # findings anchor to successive occurrences). Once every occurrence
+            # is consumed, fall back to the LAST — better than dropping the
+            # finding. When no full-text match exists (e.g. truncated evidence)
+            # this degrades to the legacy tolerant snippet match, in order.
             if self._sentence_id_map:
-                snippet = (f.evidence or "")[:60]
-                sent_id = self._sentence_id_map.get(snippet, "")
+                evidence_full = f.evidence or ""
+                entries = self._sentence_id_map.get(evidence_full[:60])
+                if entries:
+                    exact_sids = [sid for (full, sid) in entries if full == evidence_full]
+                    candidate_sids = exact_sids if exact_sids else [sid for (_, sid) in entries]
+                    ckey = (evidence_full[:60], evidence_full if exact_sids else None)
+                    cursor = self._sentence_id_cursor.get(ckey, 0)
+                    if cursor < len(candidate_sids):
+                        sent_id = candidate_sids[cursor]
+                        self._sentence_id_cursor[ckey] = cursor + 1
+                    else:
+                        sent_id = candidate_sids[-1]
 
             # Strategy 2: use start_char from location to find containing sentence
             if not sent_id and loc.get("start_char") is not None and self._pred_summary:
@@ -524,11 +551,17 @@ class ReportBuilder:
             for p in getattr(s, "matched_generic_phrases", []):
                 generic_phrases.append(p)
 
-        # Build sentence_id lookup by truncated text for matching findings
+        # Build sentence_id lookup by truncated text for matching findings.
+        # Value is an in-document-order list of (full_sentence, sentence_id) so
+        # sentences sharing a 60-char prefix (or exact duplicates) each keep a
+        # distinct, resolvable occurrence instead of last-write-wins.
         self._sentence_id_map = {}
+        self._sentence_id_cursor = {}
         for sent in sentences:
             snippet = sent["sentence"][:60]
-            self._sentence_id_map[snippet] = sent["sentence_id"]
+            self._sentence_id_map.setdefault(snippet, []).append(
+                (sent["sentence"], sent["sentence_id"])
+            )
 
         self._pred_summary = PredictabilitySummary(
             overall_risk=result.overall_risk,
@@ -1415,6 +1448,12 @@ class ReportBuilder:
                         "proportion": _deep_scan_for_authority["proportion"],
                         "flag_line": _get_tier_authority_config()["cutoffs"]["amber"],
                     }
+                    # FIX 3: when the deep-scan client truncated a long document to
+                    # the first N windows, the fused proportion is over a SUBSET —
+                    # surface it so the provenance is never silently biased (no
+                    # silent sampling). Additive: only present on the capped path.
+                    if _deep_scan_for_authority.get("capped") is True:
+                        tier_authority_provenance["capped"] = True
                     authoritative_ai_likelihood = _fused["fused_score"]
                     authoritative_tier = _fused["tier"]
                     tier_authority_status = {"enabled": True, "applied": True}
@@ -1658,7 +1697,28 @@ class ReportBuilder:
         # Additive V7 Authorship Clarity Breakdown (spec 2026-07-03/04). STRICTLY ADDITIVE —
         # never feeds tier/ai_likelihood/badge/any gate; kill-switched off by default; fail-open
         # (run_v7_breakdown catches all exceptions internally and returns None).
-        from detect_v7.pipeline_bridge import run_v7_breakdown as _run_v7_breakdown
+        from detect_v7.pipeline_bridge import (
+            DEEP_SCAN_ATTEMPTED_FAILED as _DEEP_SCAN_ATTEMPTED_FAILED,
+            run_v7_breakdown as _run_v7_breakdown,
+        )
+        # FIX 2 — three-state _precomputed_deep_scan contract (see the sentinel's
+        # definition in pipeline_bridge.py). Reuse the tier-authority block's real
+        # result when it produced one; otherwise distinguish "attempted and failed"
+        # from "never attempted":
+        #   * real dict           -> get_deep_scan_proportion reuses it (one paid call);
+        #   * ATTEMPTED+FAILED     -> flag was ON and the Modal call failed -> pass the
+        #                             sentinel so the breakdown does NOT re-call Modal
+        #                             (a 2nd call succeeding after the 1st failed would
+        #                             show a deep-scan panel under a composite badge —
+        #                             the inconsistency this fixes);
+        #   * NOT attempted (None) -> tier-authority flag OFF -> pass None so the
+        #                             breakdown can still call Modal itself (preserved).
+        if _deep_scan_for_authority is not None:
+            _precomputed_deep_scan = _deep_scan_for_authority
+        elif _tier_authority_flag_on:
+            _precomputed_deep_scan = _DEEP_SCAN_ATTEMPTED_FAILED
+        else:
+            _precomputed_deep_scan = None
         # document_text is required for the deep-scan path (sentence-level Modal scoring);
         # ai_risk_badge alone is scores-only and would silently fall back to quick-scan
         # (observed live 2026-07-04: "no document text available on detection_result").
@@ -1666,10 +1726,8 @@ class ReportBuilder:
         _v7_breakdown = _run_v7_breakdown({
             **ai_risk_badge,
             "document_text": self._original_text,
-            # Reuse the tier-authority block's Modal result (None when that block
-            # didn't run) — get_deep_scan_proportion short-circuits on this key so
-            # a scan never pays for two identical deep-scan calls.
-            "_precomputed_deep_scan": _deep_scan_for_authority,
+            # See the FIX 2 three-state contract resolved just above.
+            "_precomputed_deep_scan": _precomputed_deep_scan,
             # signal_adapter's criterion-derived signals (specificity_score,
             # sentence_variance, sentence_smoothness, local_style_shift,
             # detector_disagreement) read this key — it is NOT part of the badge,

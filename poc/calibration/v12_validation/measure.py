@@ -45,9 +45,10 @@ def install_cached_deep_scan(cache_path) -> None:
     cached only when its reported "checkpoint" matches our checkpoint_tag() —
     checkpoint identity is the validity criterion (content_key already embeds
     the tag, so a checkpoint change naturally invalidates every row). The
-    endpoint's "calibrated" flag is NOT used: the deployed endpoint hardcodes
-    it to False (stale relic predating the 2026-07-04 calibration), so a
-    calibrated-only rule would cache nothing, ever."""
+    endpoint's "calibrated" flag is NOT part of the cache-validity rule:
+    checkpoint identity alone decides validity (the flag only drives an
+    uncertainty annotation, never scoring). Live endpoint verified returning
+    "calibrated": true on 2026-07-21 — the old "hardcodes False" relic is gone."""
     import detect_v7.modal_client as mc
     from calibration.retune import deepscan_cache as dc
 
@@ -57,12 +58,11 @@ def install_cached_deep_scan(cache_path) -> None:
     def cached(sentences):
         key = dc.content_key("\n".join(sentences), dc.checkpoint_tag())
         if key in cache:
-            # "calibrated": False mirrors the endpoint's CURRENT behavior (it
-            # hardcodes False today); fabricating True on a hit would diverge
-            # from live responses. Revisit this literal if/when the endpoint
-            # fix ships (separate task) — the flag only drives an uncertainty
-            # annotation, never scoring.
-            return {"available": True, "calibrated": False,
+            # "calibrated": True mirrors the endpoint's CURRENT live behavior
+            # (verified 2026-07-21: the deployed endpoint derives it from
+            # CALIBRATED_CHECKPOINT_IDS and returns True for this checkpoint).
+            # The flag only drives an uncertainty annotation, never scoring.
+            return {"available": True, "calibrated": True,
                     "checkpoint": dc.checkpoint_tag(), "chunk_scores": cache[key]}
         resp = real(sentences)
         if (isinstance(resp, dict) and resp.get("available") is True
