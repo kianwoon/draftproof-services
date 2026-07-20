@@ -68,6 +68,18 @@ export default function PolicyRiskView({ t, pr }) {
                 </p>
               </>
             )}
+            {/* Ordering-floor disclosure (poc/detect/policy_risk.py:_apply_ordering_floor):
+                when the strict lens organically scored LOWER than the permissive one, the
+                displayed score is matched upward. Silent flooring reads as a bug (two
+                identical scores); this line names the rule without showing a second
+                number that could be misread as "the real score". Hidden once EITHER
+                confirm checkbox is ticked: the client-side confirm_delta subtraction
+                can legitimately push one card below the other, which would make this
+                "never reads lower" claim literally false on screen. */}
+            {p.floored_to_ai_allowed === true
+              && !confirmed.ai_allowed && !confirmed.ai_restricted && (
+              <p className="policy-risk-floor-note">{t('report.policyRisk.flooredNote')}</p>
+            )}
             {(p.confirm_delta || 0) > 0 && (
               <label className="policy-risk-confirm">
                 <input

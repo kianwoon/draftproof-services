@@ -699,6 +699,9 @@ img[src^="https://img.shields.io"] { height: 18px; }
 .dp-policy-row--warn .dp-policy-level { color: #c2410c; }
 .dp-policy-row--good .dp-policy-level { color: #15803d; }
 .dp-policy-issue { flex: 6; color: #6b7280; font-size: 8.5pt; }
+/* Ordering-floor disclosure under the policy rows (KEEP-IN-SYNC with the web
+   card's .policy-risk-floor-note) — informational, muted, not a risk accent. */
+.dp-policy-floor-note { margin: 2pt 0 4pt; color: #64748b; font-size: 8pt; font-style: italic; }
 
 /* ── Question cards (purple) ── */
 .dp-q-card {

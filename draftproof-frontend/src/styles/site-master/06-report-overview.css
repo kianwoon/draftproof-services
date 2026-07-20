@@ -392,6 +392,16 @@
   line-height: 1.5;
 }
 
+/* Ordering-floor disclosure on the AI-restricted row — informational, muted (NOT the
+   amber callout): it explains a display rule, it is not itself a risk signal. */
+.policy-risk-floor-note {
+  margin: .35rem 0 0;
+  color: #64748b;
+  font-size: .78rem;
+  line-height: 1.45;
+  font-style: italic;
+}
+
 .policy-risk-rows {
   display: grid;
   grid-template-columns: 1fr 1fr;

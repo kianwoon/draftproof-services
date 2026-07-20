@@ -603,6 +603,7 @@ export const report = {
     "allowedLabel": "若允许使用 AI（需声明）",
     "restrictedLabel": "若不允许使用 AI",
     "editingOnlyNote": "仅限编辑用途的政策：轻度的 AI 辅助润色可能是可接受的，但大幅度的 AI 转写可能构成政策风险。",
+    "flooredNote": "已对齐至「允许使用 AI」的分数——更严格的政策下的读数不会低于宽松政策。",
     "mainIssuePrefix": "主要问题：",
     "bestFixPrefix": "最佳修复：",
     "confirmTitle": "自行确认以降低分数",

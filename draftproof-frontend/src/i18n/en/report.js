@@ -613,6 +613,7 @@ export const report = {
     "allowedLabel": "If AI is allowed (with declaration)",
     "restrictedLabel": "If AI is not allowed",
     "editingOnlyNote": "Editing-only policy: light AI-assisted polishing may be acceptable, but substantial AI transformation may create policy risk.",
+    "flooredNote": "Matched to the AI-allowed score — a stricter policy never reads lower than a permissive one.",
     "mainIssuePrefix": "Main issue:",
     "bestFixPrefix": "Best fix:",
     "confirmTitle": "Confirm yourself to lower a score",

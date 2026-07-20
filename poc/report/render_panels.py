@@ -910,6 +910,15 @@ def render_scan_lead(report, data, *, suppress_ai_likelihood: bool = False) -> s
                 f'<span class="dp-policy-level">{escape(lvl)}</span>'
                 f'<span class="dp-policy-issue">{escape(issue)}</span></div>'
             )
+        # Ordering-floor disclosure (poc/detect/policy_risk.py:_apply_ordering_floor):
+        # mirrors the web card's flooredNote so the two surfaces can't disagree about
+        # WHY the two policy scores tie on floored reports.
+        if prr.get("floored_to_ai_allowed") is True:
+            policy_cards.append(
+                '<p class="dp-policy-floor-note">AI-not-allowed score matched to the '
+                "AI-allowed score — a stricter policy never reads lower than a "
+                "permissive one.</p>"
+            )
         # Submission readiness card (the third row in the mockup).
         rk = _level_kind(sr_level)
         ready_note = "Can defend ownership" if sr_level == "low" else "Strengthen before you submit"
