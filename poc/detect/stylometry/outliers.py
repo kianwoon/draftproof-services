@@ -18,18 +18,20 @@ baseline is taken over every OTHER paragraph, excluding the paragraph being scor
 a shifted paragraph cannot dilute its own outlier signal by contributing to its own
 baseline.
 
-A paragraph's overall `outlier_score` is the MAX of its per-feature z-scores (not a
-sum or a combined multi-dimensional distance such as a Euclidean norm across all
-dimensions). This is a deliberate choice: `OUTLIER_THRESHOLD` is calibrated in
-single-dimension "robust-z units" (the Iglewicz & Hoaglin convention), and this
-fingerprint has ~16 feature dimensions — summing or norm-combining that many
-dimensions would inflate an all-dimensions-mildly-noisy paragraph's combined score
-past the threshold even when no single dimension is actually anomalous, silently
-miscalibrating the threshold. Taking the max keeps every comparison against
-`OUTLIER_THRESHOLD` in the same, consistent single-dimension unit, and a paragraph
-that is genuinely off-voice on even one dimension (e.g. sentence length or
-function-word rate) is exactly the "different voice" signal this detector exists to
-catch.
+Per-feature z-scores stay in single-dimension "robust-z units" (never summed or
+norm-combined across dimensions — that would inflate an all-dimensions-mildly-noisy
+paragraph past any single-dimension threshold and silently miscalibrate it). The
+paragraph-level FLAG DECISION is a **k-of-m rule** (`_is_outlier`): a paragraph is an
+outlier only when at least `OUTLIER_MIN_DEVIATING_FEATURES` of its per-feature
+z-scores exceed `OUTLIER_PER_FEATURE_Z_THRESHOLD`. The old rule flagged on the MAX
+per-feature z alone (k=1 vs a single-comparison 3.5 cutoff); over ~16 leave-one-out
+comparisons on small n that fired on ~31% of paragraphs in genuine single-author
+human prose. Requiring several correlated dimensions to deviate at once — the actual
+signature of a different authorial voice — holds the human per-paragraph false-
+positive rate under 5% while still catching a genuinely off-voice paragraph. Both
+constants are empirically calibrated: see `OUTLIER_PER_FEATURE_Z_THRESHOLD` below and
+its provenance script `poc/calibration/derive_outlier_threshold.py`. `outlier_score`
+(reported for ranking/JSON) remains the MAX per-feature z of a flagged paragraph.
 """
 from __future__ import annotations
 
@@ -60,9 +62,39 @@ MIN_PARAGRAPHS = 6
 # treat word_count < 50 as unreliable-signal territory).
 MIN_WORDS_PER_PARAGRAPH = 50
 
-# Modified z-score outlier threshold, in robust-z units — Iglewicz & Hoaglin (1993)'s
-# recommended cutoff for the modified z-score defined by _MODIFIED_Z_CONSTANT below.
-# A paragraph whose max per-feature robust z-score exceeds this is flagged.
+# --- Paragraph flag decision (k-of-m) -------------------------------------------
+# The OLD rule was "flag if the MAX per-feature robust z-score exceeds 3.5". 3.5 is
+# Iglewicz & Hoaglin (1993)'s cutoff for a SINGLE modified-z comparison — but the
+# score is a MAX over m (~16) leave-one-out per-feature comparisons on small n, so a
+# max-over-many crossed 3.5 far too often: it flagged ~31% of paragraphs (per-para
+# FP) in genuine single-author human prose (49 Gutenberg essays, 100% of docs — see
+# calibration/consistency_human_precision.json BEFORE this change). Normal-theory
+# Bonferroni/Šidák does NOT fix it: the small-n MAD z-scores have fat tails, so a
+# threshold derived from normal quantiles undershoots the empirical FP.
+#
+# The replacement is an EMPIRICALLY CALIBRATED k-of-m rule: flag a paragraph only
+# when at least OUTLIER_MIN_DEVIATING_FEATURES of its per-feature robust z-scores
+# exceed OUTLIER_PER_FEATURE_Z_THRESHOLD. Both constants are the argmax-sensitivity
+# point subject to per-paragraph FP <= 5% on a seeded author-stratified human
+# derivation set, validated on a held-out set.
+# Provenance (the constants' ONLY justification — do not hand-edit these):
+#   poc/calibration/derive_outlier_threshold.py           (derivation script)
+#   poc/calibration/outlier_threshold_derivation.json     (sweep + chosen rule + holdout)
+# Chosen 2026-07-21 by calibration/derive_outlier_threshold.py (seed 20260721,
+# author-stratified 65/35 split of the 49 Gutenberg + eligible ESL human corpus):
+# rule "3-of-m @ 5.25". Derivation per-paragraph FP 0.618% (was ~31%), holdout FP
+# 2.041% (both << 5% target); multi-author concat pseudo-docs flagged 1.55x more than
+# clean human prose (informativeness guardrail met); the ESL proficiency-parity gate
+# (consistency_esl_rates.py --mode concat) PASSES (gap +1.84pt, under the 5pt limit —
+# the old max>3.5 rule only "passed" it via saturation, flagging ~100% of pseudo-docs
+# in both bands); shifted-paragraph fixture still flagged. Full sweep + frontier +
+# holdout + ESL parity per candidate: outlier_threshold_derivation.json.
+OUTLIER_PER_FEATURE_Z_THRESHOLD = 5.25
+OUTLIER_MIN_DEVIATING_FEATURES = 3
+
+# Retained: the single-comparison Iglewicz & Hoaglin cutoff, still used to size the
+# zero-spread sentinel below and reported by the derivation script as the (failed)
+# uncorrected baseline. NOT the live flag threshold anymore (see k-of-m above).
 OUTLIER_THRESHOLD = 3.5
 
 # The 0.75 quantile of the standard normal distribution — the standard scaling
@@ -155,30 +187,18 @@ def detect_outliers(
     of the document.
 
     Pure function: zero I/O, deterministic, depends only on `ParagraphFingerprint`.
-    Returns a findings list (only the paragraphs that exceed `OUTLIER_THRESHOLD`),
-    not an annotation of every paragraph — empty when the document is too short to
-    support outlier statistics (`MIN_PARAGRAPHS` / `MIN_WORDS_PER_PARAGRAPH`) or when
-    no paragraph deviates enough to be flagged.
+    Returns a findings list (only the paragraphs the k-of-m `_is_outlier` decision
+    flags), not an annotation of every paragraph — empty when the document is too short
+    to support outlier statistics (`MIN_PARAGRAPHS` / `MIN_WORDS_PER_PARAGRAPH`) or when
+    no paragraph deviates on enough dimensions to be flagged.
     """
-    if strategy is OutlierStrategy.LOCAL_OUTLIER_FACTOR:
-        raise NotImplementedError(
-            "OutlierStrategy.LOCAL_OUTLIER_FACTOR is future work (needs n>=12 "
-            "paragraphs for a meaningful local-density neighborhood); only "
-            "ROBUST_ZSCORE is implemented in this module."
-        )
-
-    eligible = [fp for fp in fingerprints if fp.word_count >= MIN_WORDS_PER_PARAGRAPH]
-    if len(eligible) < MIN_PARAGRAPHS:
-        return []
-
     results: list[OutlierResult] = []
-    for index, fp in enumerate(eligible):
-        feature_scores = _score_paragraph_features(index, fp, eligible)
+    for paragraph_id, feature_scores in score_paragraphs(fingerprints, strategy):
         if not feature_scores:
             continue
 
         outlier_score = max(score for _name, score in feature_scores)
-        if outlier_score <= OUTLIER_THRESHOLD:
+        if not _is_outlier(feature_scores):
             continue
 
         # Only report dimensions that actually deviate -- a paragraph flagged on
@@ -194,13 +214,65 @@ def detect_outliers(
         ]
         results.append(
             OutlierResult(
-                paragraph_id=fp.paragraph_id,
+                paragraph_id=paragraph_id,
                 outlier_score=outlier_score,
                 top_deviating_features=top_features,
             )
         )
 
     return results
+
+
+def score_paragraphs(
+    fingerprints: list[ParagraphFingerprint],
+    strategy: OutlierStrategy = OutlierStrategy.ROBUST_ZSCORE,
+) -> list[tuple[str, list[tuple[str, float]]]]:
+    """Per-paragraph raw feature z-scores for every ELIGIBLE paragraph, before any
+    flag decision is applied.
+
+    Returns `[(paragraph_id, [(feature_name, robust_z), ...]), ...]` for the
+    paragraphs that clear the `MIN_WORDS_PER_PARAGRAPH` / `MIN_PARAGRAPHS` eligibility
+    floors — empty when the document is too short. This is the single scoring code
+    path shared by `detect_outliers` (which applies `_is_outlier` on top) and the
+    threshold-derivation script (`poc/calibration/derive_outlier_threshold.py`),
+    guaranteeing the derived decision rule is calibrated against exactly the z-scores
+    production sees — no re-implementation drift.
+    """
+    if strategy is OutlierStrategy.LOCAL_OUTLIER_FACTOR:
+        raise NotImplementedError(
+            "OutlierStrategy.LOCAL_OUTLIER_FACTOR is future work (needs n>=12 "
+            "paragraphs for a meaningful local-density neighborhood); only "
+            "ROBUST_ZSCORE is implemented in this module."
+        )
+
+    eligible = [fp for fp in fingerprints if fp.word_count >= MIN_WORDS_PER_PARAGRAPH]
+    if len(eligible) < MIN_PARAGRAPHS:
+        return []
+
+    return [
+        (fp.paragraph_id, _score_paragraph_features(index, fp, eligible))
+        for index, fp in enumerate(eligible)
+    ]
+
+
+def _is_outlier(feature_scores: list[tuple[str, float]]) -> bool:
+    """The paragraph-level flag decision: k-of-m — a paragraph is an outlier only
+    when at least `OUTLIER_MIN_DEVIATING_FEATURES` of its per-feature robust z-scores
+    exceed `OUTLIER_PER_FEATURE_Z_THRESHOLD`.
+
+    Provenance: both constants are empirically calibrated to hold per-paragraph
+    false-positive rate <= 5% on genuine single-author human prose — see
+    `poc/calibration/derive_outlier_threshold.py` (the derivation script) and its
+    committed evidence `poc/calibration/outlier_threshold_derivation.json`. A pure
+    max-threshold rule (K=1) is the degenerate special case; requiring K>=2 is what
+    suppresses the dominant human false-positive mode (a single feature spiking on
+    the zero-spread sentinel or a small-n MAD tail) while still catching a genuinely
+    off-voice paragraph, which deviates on several correlated dimensions at once.
+    """
+    deviating = sum(
+        1 for _name, score in feature_scores if score > OUTLIER_PER_FEATURE_Z_THRESHOLD
+    )
+    return deviating >= OUTLIER_MIN_DEVIATING_FEATURES
 
 
 def _score_paragraph_features(

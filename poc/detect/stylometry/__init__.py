@@ -15,10 +15,13 @@ from .features import ParagraphFingerprint, extract_fingerprints
 from .outliers import (
     MIN_PARAGRAPHS,
     MIN_WORDS_PER_PARAGRAPH,
+    OUTLIER_MIN_DEVIATING_FEATURES,
+    OUTLIER_PER_FEATURE_Z_THRESHOLD,
     OUTLIER_THRESHOLD,
     OutlierResult,
     OutlierStrategy,
     detect_outliers,
+    score_paragraphs,
 )
 
 __all__ = [
@@ -27,7 +30,10 @@ __all__ = [
     "OutlierResult",
     "OutlierStrategy",
     "detect_outliers",
+    "score_paragraphs",
     "MIN_PARAGRAPHS",
     "MIN_WORDS_PER_PARAGRAPH",
     "OUTLIER_THRESHOLD",
+    "OUTLIER_PER_FEATURE_Z_THRESHOLD",
+    "OUTLIER_MIN_DEVIATING_FEATURES",
 ]

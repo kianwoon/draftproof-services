@@ -5,9 +5,17 @@ synthetic TEST FIXTURE data (a uniform baseline group plus a deliberately shifte
 paragraph) used to exercise detect_outliers -- they are test input data, not a
 matching/scoring list consumed by production code.
 
+Flag rule (2026-07-21): a paragraph is an outlier only when it deviates on at least
+`OUTLIER_MIN_DEVIATING_FEATURES` (=3) feature dimensions, each exceeding
+`OUTLIER_PER_FEATURE_Z_THRESHOLD` (=5.25) — the k-of-m rule derived by
+calibration/derive_outlier_threshold.py to hold human per-paragraph FP <=5%. The
+"shifted paragraph" fixtures below therefore deviate on >=3 dimensions (a genuine
+multi-dimensional voice shift, which is what the rule exists to catch); a 1-2 feature
+spike is deliberately NOT an outlier anymore (that was the old hair-trigger behavior).
+
 Covers: (1) the brief's literal scenario -- 5 uniform paragraphs + 1 paragraph shifted
-on sentence length (3x) and function-word rate (near-zero) -- the shifted paragraph
-must be flagged and the uniform ones must not; (2) the same shape with realistic
+on sentence length (3x), function-word rate (near-zero) and word length -- the shifted
+paragraph must be flagged and the uniform ones must not; (2) the same shape with realistic
 jitter in the baseline (not literally identical values) to exercise the finite,
 non-degenerate robust-z path as well as the degenerate (zero-MAD) path; (3) the
 MIN_PARAGRAPHS floor returning no findings; (4) the MIN_WORDS_PER_PARAGRAPH floor
@@ -26,6 +34,8 @@ from detect.stylometry.features import ParagraphFingerprint
 from detect.stylometry.outliers import (
     MIN_PARAGRAPHS,
     MIN_WORDS_PER_PARAGRAPH,
+    OUTLIER_MIN_DEVIATING_FEATURES,
+    OUTLIER_PER_FEATURE_Z_THRESHOLD,
     OUTLIER_THRESHOLD,
     OutlierResult,
     OutlierStrategy,
@@ -95,22 +105,27 @@ def test_shifted_paragraph_flagged_others_not_identical_baseline():
         "p006",
         sentence_length_mean=45.0,  # 3x the baseline's 15.0
         function_word_rate=2.0,  # near-zero vs. baseline's 40.0
+        word_length_mean=9.0,  # 2x the baseline's 4.5 -- 3rd deviating dimension
     )
 
     results = detect_outliers(baseline + [shifted])
 
     assert [r.paragraph_id for r in results] == ["p006"]
     flagged = results[0]
-    assert flagged.outlier_score > OUTLIER_THRESHOLD
+    assert flagged.outlier_score > OUTLIER_PER_FEATURE_Z_THRESHOLD
     # Report artifacts are serialized to JSON downstream (R2 -> frontend), which has
     # no `Infinity` literal -- the score must always be finite, even in this fully
     # degenerate (byte-identical baseline) case where MAD collapses to zero on
     # every dimension.
     assert math.isfinite(flagged.outlier_score)
-    # Only sentence_length_mean and function_word_rate actually differ between the
-    # shifted paragraph and the baseline -- every other dimension is identical, so
-    # top_deviating_features must not be padded with non-deviating (z == 0.0) names.
-    assert set(flagged.top_deviating_features) == {"sentence length", "function word rate"}
+    # Exactly the three shifted dimensions differ from the (byte-identical) baseline,
+    # so top_deviating_features must be those three and nothing else (no padding with
+    # non-deviating z==0.0 names).
+    assert set(flagged.top_deviating_features) == {
+        "sentence length",
+        "function word rate",
+        "word length",
+    }
 
 
 def test_shifted_paragraph_flagged_with_jittered_realistic_baseline():
@@ -118,11 +133,13 @@ def test_shifted_paragraph_flagged_with_jittered_realistic_baseline():
     # finite (non-degenerate-MAD) robust z-score path.
     jitter_sentence_lengths = [14.0, 15.0, 16.0, 15.0, 14.0]
     jitter_function_rates = [38.0, 40.0, 42.0, 39.0, 41.0]
+    jitter_word_lengths = [4.4, 4.5, 4.6, 4.5, 4.4]
     baseline = [
         _make_fingerprint(
             f"p{i:03d}",
             sentence_length_mean=jitter_sentence_lengths[i - 1],
             function_word_rate=jitter_function_rates[i - 1],
+            word_length_mean=jitter_word_lengths[i - 1],
         )
         for i in range(1, 6)
     ]
@@ -130,14 +147,19 @@ def test_shifted_paragraph_flagged_with_jittered_realistic_baseline():
         "p006",
         sentence_length_mean=46.0,
         function_word_rate=1.5,
+        word_length_mean=9.5,  # 3rd deviating dimension vs. ~4.5 baseline
     )
 
     results = detect_outliers(baseline + [shifted])
 
     assert [r.paragraph_id for r in results] == ["p006"]
     assert math.isfinite(results[0].outlier_score)
-    assert results[0].outlier_score > OUTLIER_THRESHOLD
-    assert set(results[0].top_deviating_features) == {"sentence length", "function word rate"}
+    assert results[0].outlier_score > OUTLIER_PER_FEATURE_Z_THRESHOLD
+    assert set(results[0].top_deviating_features) == {
+        "sentence length",
+        "function word rate",
+        "word length",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +240,11 @@ def test_none_flesch_reading_ease_on_baseline_paragraphs_does_not_crash():
         _make_fingerprint(f"p{i:03d}", flesch_reading_ease=None) for i in range(1, 6)
     ]
     shifted = _make_fingerprint(
-        "p006", sentence_length_mean=45.0, function_word_rate=2.0, flesch_reading_ease=60.0
+        "p006",
+        sentence_length_mean=45.0,
+        function_word_rate=2.0,
+        word_length_mean=9.0,  # 3rd deviating dimension (k-of-m rule needs >=3)
+        flesch_reading_ease=60.0,
     )
 
     results = detect_outliers(baseline + [shifted])
@@ -234,7 +260,7 @@ def test_none_flesch_reading_ease_on_baseline_paragraphs_does_not_crash():
 def test_top_deviating_features_are_human_readable_not_raw_field_names():
     baseline = _uniform_baseline(5)
     shifted = _make_fingerprint(
-        "p006", sentence_length_mean=45.0, function_word_rate=2.0
+        "p006", sentence_length_mean=45.0, function_word_rate=2.0, word_length_mean=9.0
     )
 
     results = detect_outliers(baseline + [shifted])
@@ -251,7 +277,7 @@ def test_top_deviating_features_are_human_readable_not_raw_field_names():
 def test_top_deviating_features_naming_is_stable_across_repeated_calls():
     baseline = _uniform_baseline(5)
     shifted = _make_fingerprint(
-        "p006", sentence_length_mean=45.0, function_word_rate=2.0
+        "p006", sentence_length_mean=45.0, function_word_rate=2.0, word_length_mean=9.0
     )
     fingerprints = baseline + [shifted]
 
@@ -259,6 +285,7 @@ def test_top_deviating_features_naming_is_stable_across_repeated_calls():
     second = detect_outliers(fingerprints)
 
     assert first == second
+    assert first and first[0].paragraph_id == "p006"  # non-trivial: a real flag
 
 
 # ---------------------------------------------------------------------------
@@ -277,13 +304,14 @@ def test_local_outlier_factor_strategy_raises_not_implemented():
 def test_detect_outliers_default_strategy_is_robust_zscore():
     baseline = _uniform_baseline(5)
     shifted = _make_fingerprint(
-        "p006", sentence_length_mean=45.0, function_word_rate=2.0
+        "p006", sentence_length_mean=45.0, function_word_rate=2.0, word_length_mean=9.0
     )
 
     default_call = detect_outliers(baseline + [shifted])
     explicit_call = detect_outliers(baseline + [shifted], strategy=OutlierStrategy.ROBUST_ZSCORE)
 
     assert default_call == explicit_call
+    assert default_call and default_call[0].paragraph_id == "p006"
 
 
 # ---------------------------------------------------------------------------
@@ -302,10 +330,10 @@ def test_fully_uniform_document_has_no_outliers():
 def test_two_shifted_paragraphs_both_flagged():
     baseline = _uniform_baseline(5)
     shifted_1 = _make_fingerprint(
-        "p006", sentence_length_mean=45.0, function_word_rate=2.0
+        "p006", sentence_length_mean=45.0, function_word_rate=2.0, word_length_mean=9.0
     )
     shifted_2 = _make_fingerprint(
-        "p007", academic_vocab_rate=25.0, passive_voice_rate=5.0
+        "p007", academic_vocab_rate=25.0, passive_voice_rate=5.0, lexical_density=0.95
     )
 
     results = detect_outliers(baseline + [shifted_1, shifted_2])
@@ -328,7 +356,7 @@ def test_too_short_paragraph_does_not_pollute_others_baseline():
         word_count=MIN_WORDS_PER_PARAGRAPH - 1,
     )
     shifted = _make_fingerprint(
-        "p006", sentence_length_mean=45.0, function_word_rate=2.0
+        "p006", sentence_length_mean=45.0, function_word_rate=2.0, word_length_mean=9.0
     )
 
     results = detect_outliers(baseline + [polluter, shifted])
@@ -339,10 +367,68 @@ def test_too_short_paragraph_does_not_pollute_others_baseline():
     assert "academic vocabulary rate" not in results[0].top_deviating_features
 
 
+# ---------------------------------------------------------------------------
+# k-of-m flag rule boundary behavior (OUTLIER_MIN_DEVIATING_FEATURES /
+# OUTLIER_PER_FEATURE_Z_THRESHOLD, derived by derive_outlier_threshold.py)
+# ---------------------------------------------------------------------------
+
+
+def test_kofm_rule_constants_are_the_derived_values():
+    # Guards the provenance chain: these are the values the derivation script chose.
+    # If they change, derive_outlier_threshold.py must be re-run and this updated.
+    assert OUTLIER_MIN_DEVIATING_FEATURES == 3
+    assert OUTLIER_PER_FEATURE_Z_THRESHOLD == 5.25
+
+
+def test_paragraph_deviating_on_exactly_two_features_is_not_flagged():
+    # Exactly K-1 = 2 dimensions deviate (byte-identical baseline -> the other 14 are
+    # z==0). Below the k-of-m floor, so NOT an outlier -- this is the old hair-trigger
+    # behavior the derived rule deliberately suppresses.
+    baseline = _uniform_baseline(5)
+    two_feature_spike = _make_fingerprint(
+        "p006", sentence_length_mean=45.0, function_word_rate=2.0
+    )
+
+    results = detect_outliers(baseline + [two_feature_spike])
+
+    assert results == []
+
+
+def test_paragraph_deviating_on_exactly_three_features_is_flagged():
+    # Exactly K = 3 dimensions deviate -> at the floor -> flagged.
+    baseline = _uniform_baseline(5)
+    three_feature_shift = _make_fingerprint(
+        "p006",
+        sentence_length_mean=45.0,
+        function_word_rate=2.0,
+        word_length_mean=9.0,
+    )
+
+    results = detect_outliers(baseline + [three_feature_shift])
+
+    assert [r.paragraph_id for r in results] == ["p006"]
+    assert set(results[0].top_deviating_features) == {
+        "sentence length",
+        "function word rate",
+        "word length",
+    }
+
+
+def test_single_extreme_feature_is_not_flagged():
+    # One wildly-extreme dimension is NOT enough on its own (K=3): a single spiking
+    # feature was the dominant human false-positive mode before the re-tune.
+    baseline = _uniform_baseline(6)
+    one_feature_spike = _make_fingerprint("p007", sentence_length_mean=900.0)
+
+    results = detect_outliers(baseline + [one_feature_spike])
+
+    assert results == []
+
+
 def test_outlier_result_is_a_dataclass_with_expected_fields():
     baseline = _uniform_baseline(5)
     shifted = _make_fingerprint(
-        "p006", sentence_length_mean=45.0, function_word_rate=2.0
+        "p006", sentence_length_mean=45.0, function_word_rate=2.0, word_length_mean=9.0
     )
 
     results = detect_outliers(baseline + [shifted])
