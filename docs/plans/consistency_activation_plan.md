@@ -505,6 +505,33 @@ Update `project_authorship_submission_risk_gap_assessment.md` (its "Consistency 
 - **Threshold tuning of `outliers.py`**: only reopened (as an Opus-tier task) if Task 2 FAILs.
 - **Read-time API backfill of `consistency_display` for older reports**: claim_graph precedent is scan-time-only; revisit only on user demand.
 
+## Outcome (2026-07-21 — plan executed; activation NOT performed)
+
+Tasks 1–4 executed (commits e1e95481..5a12f746). **Task 5 was NOT executed and must not be until the
+threshold work below lands.** Evidence chain:
+
+- Per-essay ESL gate: **UNMEASURABLE** — SCoCESLE eligibility ~2% (3 higher / 2 lower essays ≥6
+  paragraphs; `consistency_esl_rates.json`). The MIN_ELIGIBLE_PER_GROUP floor worked as designed.
+- Redesigned `--mode concat` (symmetric same-band concatenation): **PASS_SATURATED** — flag-rate gap
+  0.0 pts (n 53/42, seed-robust), continuous metric agrees (4.52 vs 4.38 outliers/doc). **ESL-fairness
+  blocker removed**; binary rate saturates at 100% (ceiling effect, labeled in the verdict).
+- Single-author human precision check (`consistency_human_precision.py`, MEASUREMENT_ONLY): 49
+  full-length Gutenberg essays → 100% of docs flagged, mean 8.49 outliers/doc. **Correct per-paragraph
+  framing** (Fable review): ≈31% of paragraphs flagged on genuine single-author human prose, vs ≈67%
+  on multi-author concats — the detector discriminates ~2× but its absolute false-positive rate is
+  disqualifying; the one eligible modern ESL essay flagged 6/6 paragraphs, so register/era does not
+  explain it away. Do NOT cite the earlier "similar magnitude to concat" per-doc comparison — it is
+  wrong once normalized per paragraph.
+- Likely mechanism: `OUTLIER_THRESHOLD=3.5` (poc/detect/stylometry/outliers.py) is Iglewicz–Hoaglin's
+  single-comparison cutoff, but the score takes a MAX over per-feature robust-z's with leave-one-out
+  on small n — structurally inflating false positives.
+
+**Standing decision: `DRAFTPROOF_CONSISTENCY` stays OFF** (advisory-mode enablement rejected too — at
+~31% per-paragraph FP most of the ≤12 displayed cards would be noise; precision-first forbids it).
+Path to activation: a bounded OUTLIER_THRESHOLD derivation task — hold per-paragraph FP ≤~5% on the
+human corpus (correcting the max-over-features effect), then re-run this plan's precision check AND
+the ESL-parity gate before any enable decision.
+
 ## Model routing (per orchestration hierarchy)
 
 | Task | Model |
