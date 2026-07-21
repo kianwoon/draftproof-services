@@ -1,0 +1,54 @@
+{
+  "sources": {
+    "gutenberg": {
+      "n_docs": 49,
+      "n_eligible": 49,
+      "eligibility_rate_pct": 100.0,
+      "flagged_doc_rate_pct": 100.0,
+      "mean_outliers_per_eligible_doc": 8.49,
+      "mean_paragraphs_per_eligible_doc": 27.694,
+      "distribution": {
+        "0": 0,
+        "1": 1,
+        "2": 0,
+        "3+": 48
+      },
+      "caveat": "19th-century formal register; not modern student writing.",
+      "dir": "/Users/kianwoonwong/Downloads/human_precision_corpus/gutenberg"
+    },
+    "scocesle_eligible": {
+      "n_docs": 5,
+      "n_eligible": 1,
+      "eligibility_rate_pct": 20.0,
+      "flagged_doc_rate_pct": 100.0,
+      "mean_outliers_per_eligible_doc": 6.0,
+      "mean_paragraphs_per_eligible_doc": 6.0,
+      "distribution": {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3+": 1
+      },
+      "caveat": "ESL student essays; n=5, anecdotal.",
+      "dir": "/Users/kianwoonwong/Downloads/human_precision_corpus/scocesle_eligible"
+    }
+  },
+  "overall": {
+    "n_docs": 54,
+    "n_eligible": 50,
+    "eligibility_rate_pct": 92.59,
+    "flagged_doc_rate_pct": 100.0,
+    "mean_outliers_per_eligible_doc": 8.44,
+    "mean_paragraphs_per_eligible_doc": 27.26,
+    "distribution": {
+      "0": 0,
+      "1": 1,
+      "2": 0,
+      "3+": 49
+    }
+  },
+  "verdict": "MEASUREMENT_ONLY",
+  "acquisition_notes": [
+    "raid_human ATTEMPTED via calibration/raid_benchmark/fetch_subset.py --per-class 40 (120 rows fetched, 40 human/attack=none). EXCLUDED from this run: 0/40 met the >=6 blank-line-separated-paragraph acquisition threshold \u2014 RAID stores generation text as a single unformatted block with no paragraph breaks (max 1 paragraph observed across all 40 human rows, domains: abstracts/books/news/poetry/recipes/reddit/reviews/wiki). Not faked; this is itself informative (web/benchmark human text lacks the structure this detector's eligibility gate requires)."
+  ]
+}
