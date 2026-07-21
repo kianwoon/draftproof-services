@@ -25,5 +25,7 @@
     "mean_outliers_per_eligible_essay": 0.0
   },
   "flag_rate_gap_pts": -33.33,
-  "max_flag_rate_gap_pts": 5.0
+  "max_flag_rate_gap_pts": 5.0,
+  "measurable": false,
+  "verdict": "UNMEASURABLE"
 }

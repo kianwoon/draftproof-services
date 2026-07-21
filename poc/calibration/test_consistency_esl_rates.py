@@ -57,3 +57,29 @@ def test_groups_measurable_floor():
     }
     assert groups_measurable(ok) is True
     assert groups_measurable(tiny) is False
+
+
+def test_compute_verdict_unmeasurable_when_gap_none():
+    from calibration.consistency_esl_rates import compute_verdict
+
+    assert compute_verdict(gap=None, measurable=False) == "UNMEASURABLE"
+
+
+def test_compute_verdict_unmeasurable_when_groups_not_measurable():
+    from calibration.consistency_esl_rates import compute_verdict
+
+    # gap present but a group is below MIN_ELIGIBLE_PER_GROUP -> still UNMEASURABLE.
+    assert compute_verdict(gap=-33.33, measurable=False) == "UNMEASURABLE"
+
+
+def test_compute_verdict_pass_within_threshold():
+    from calibration.consistency_esl_rates import MAX_FLAG_RATE_GAP_PTS, compute_verdict
+
+    assert compute_verdict(gap=MAX_FLAG_RATE_GAP_PTS, measurable=True) == "PASS"
+    assert compute_verdict(gap=-33.33, measurable=True) == "PASS"
+
+
+def test_compute_verdict_fail_over_threshold():
+    from calibration.consistency_esl_rates import MAX_FLAG_RATE_GAP_PTS, compute_verdict
+
+    assert compute_verdict(gap=MAX_FLAG_RATE_GAP_PTS + 0.01, measurable=True) == "FAIL"

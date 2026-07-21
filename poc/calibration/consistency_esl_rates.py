@@ -120,6 +120,19 @@ def groups_measurable(groups: dict) -> bool:
     return all(seen.values())
 
 
+def compute_verdict(gap: float | None, measurable: bool) -> str:
+    """Single source of truth for the PASS/FAIL/UNMEASURABLE decision.
+
+    Mirrors main()'s exit-code logic exactly so the printed verdict, the exit
+    code, and the persisted JSON can never drift apart.
+    """
+    if gap is None or not measurable:
+        return "UNMEASURABLE"
+    if gap > MAX_FLAG_RATE_GAP_PTS:
+        return "FAIL"
+    return "PASS"
+
+
 def _essay_outliers(text: str) -> tuple[int, bool]:
     """(flagged-paragraph count, eligible?) for one essay."""
     fps = extract_fingerprints(text)
@@ -165,8 +178,12 @@ def measure(corpus: str | None, limit: int | None) -> dict:
         ai_eligs.append(e)
     result["ai_cases_control"] = summarize_group(ai_counts, ai_eligs)
 
-    result["flag_rate_gap_pts"] = flag_rate_gap_pts(result["groups"])
+    gap = flag_rate_gap_pts(result["groups"])
+    measurable = gap is not None and groups_measurable(result["groups"])
+    result["flag_rate_gap_pts"] = gap
     result["max_flag_rate_gap_pts"] = MAX_FLAG_RATE_GAP_PTS
+    result["measurable"] = measurable
+    result["verdict"] = compute_verdict(gap, measurable)
     return result
 
 
@@ -185,14 +202,15 @@ def main() -> None:
         Path(args.out).write_text(json.dumps(res, indent=2))
 
     gap = res["flag_rate_gap_pts"]
-    if gap is None or not groups_measurable(res["groups"]):
+    verdict = res["verdict"]
+    if verdict == "UNMEASURABLE":
         print(
             f"VERDICT: UNMEASURABLE — a proficiency group is missing or has fewer than "
             f"{MIN_ELIGIBLE_PER_GROUP} eligible essays; the gap would be noise.",
             file=sys.stderr,
         )
         sys.exit(1)
-    if gap > MAX_FLAG_RATE_GAP_PTS:
+    if verdict == "FAIL":
         print(
             f"VERDICT: FAIL — lower-proficiency essays flagged {gap:+.2f} pts more than "
             f"higher (limit {MAX_FLAG_RATE_GAP_PTS}). Do NOT enable DRAFTPROOF_CONSISTENCY.",
