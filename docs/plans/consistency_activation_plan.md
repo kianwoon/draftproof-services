@@ -526,11 +526,31 @@ threshold work below lands.** Evidence chain:
   single-comparison cutoff, but the score takes a MAX over per-feature robust-z's with leave-one-out
   on small n — structurally inflating false positives.
 
-**Standing decision: `DRAFTPROOF_CONSISTENCY` stays OFF** (advisory-mode enablement rejected too — at
-~31% per-paragraph FP most of the ≤12 displayed cards would be noise; precision-first forbids it).
-Path to activation: a bounded OUTLIER_THRESHOLD derivation task — hold per-paragraph FP ≤~5% on the
-human corpus (correcting the max-over-features effect), then re-run this plan's precision check AND
-the ESL-parity gate before any enable decision.
+**Standing decision (superseded 2026-07-21, same day — see below): `DRAFTPROOF_CONSISTENCY` stayed OFF**
+pending the OUTLIER_THRESHOLD derivation task.
+
+### Re-tune outcome (2026-07-21, commits a2c58074..c204f603 — Fable-reviewed 9/10)
+
+The derivation task landed a **k-of-m rule**: a paragraph is flagged only when **≥3 features**
+(`OUTLIER_MIN_DEVIATING_FEATURES`) exceed a per-feature robust-z of **5.25**
+(`OUTLIER_PER_FEATURE_Z_THRESHOLD`) — provenance: `poc/calibration/derive_outlier_threshold.py` +
+`outlier_threshold_derivation.json` (13 of the swept candidates satisfied all hard constraints;
+3-of-m@5.25 is the mechanical sensitivity argmax; author-stratified seeded split, holdout never
+consulted during selection).
+
+- Human per-paragraph FP: **31% → 0.618% derivation / 2.041% holdout** (target ≤5%).
+- Shifted-paragraph fixture still flagged for the right reason (11 features trip, z 7–52);
+  single-feature spikes correctly suppressed.
+- ESL concat parity with the new rule: **real PASS, gap +1.84 pt** (bands 43.4%/45.24% — no longer
+  saturated). Caveat: small-n noisy gap — re-run `consistency_esl_rates.py --mode concat` on any
+  corpus refresh.
+- Concat/human discrimination ratio ≈1.55 — advisory-grade signal only, never verdict-grade.
+- Known limit: the derivation/holdout split is author-overlapping (new-docs-same-authors proof, not
+  new-author generalization; second-order because the z is within-document leave-one-out).
+
+**All Task-5 preconditions are now met** (ESL parity PASS, precision ≤5%, score-neutrality
+unchanged). Fable's flip recommendation: enable **advisory + monitored** via the Koyeb worker env
+per Task 5 as written. The flip itself remains an owner decision.
 
 ## Model routing (per orchestration hierarchy)
 
