@@ -179,17 +179,24 @@ def groups_measurable(groups: dict) -> bool:
     return all(seen.values())
 
 
-def compute_verdict(gap: float | None, measurable: bool) -> str:
-    """Single source of truth for the PASS/FAIL/UNMEASURABLE decision.
+def compute_verdict(gap: float | None, measurable: bool, saturated: bool = False) -> str:
+    """Single source of truth for the PASS/FAIL/UNMEASURABLE/PASS_SATURATED decision.
 
     Mirrors main()'s exit-code logic exactly so the printed verdict, the exit
     code, and the persisted JSON can never drift apart.
+
+    `saturated` (default False — essay mode never computes it) marks that BOTH
+    proficiency bands' binary flag rate is pinned at/near 100% (see
+    `_saturation_note`): at that ceiling the binary gap is structurally forced
+    toward 0 regardless of any real proficiency-specific effect, so a plain PASS
+    would overstate the measurement. Only a would-be PASS is downgraded to
+    PASS_SATURATED — FAIL and UNMEASURABLE are never rescued by saturation.
     """
     if gap is None or not measurable:
         return "UNMEASURABLE"
     if gap > MAX_FLAG_RATE_GAP_PTS:
         return "FAIL"
-    return "PASS"
+    return "PASS_SATURATED" if saturated else "PASS"
 
 
 def _essay_outliers(text: str) -> tuple[int, bool]:
@@ -400,13 +407,14 @@ def measure_concat(corpus: str | None, limit: int | None) -> dict:
     ai_texts = _ai_texts()
     result["ai_cases_control"] = _concat_group_summary(ai_texts, PSEUDO_DOC_SHUFFLE_SEED)
 
+    saturation = _saturation_note(result["groups"])
     gap = flag_rate_gap_pts(result["groups"])
     measurable = gap is not None and groups_measurable(result["groups"])
     result["flag_rate_gap_pts"] = gap
     result["max_flag_rate_gap_pts"] = MAX_FLAG_RATE_GAP_PTS
     result["measurable"] = measurable
-    result["verdict"] = compute_verdict(gap, measurable)
-    result["binary_flag_rate_saturation"] = _saturation_note(result["groups"])
+    result["verdict"] = compute_verdict(gap, measurable, saturated=saturation["saturated"])
+    result["binary_flag_rate_saturation"] = saturation
     result["seed_robustness"] = _seed_robustness(groups_files, limit)
     return result
 
@@ -477,7 +485,7 @@ def main() -> None:
 
     print(json.dumps(res, indent=2))
     if args.out:
-        Path(args.out).write_text(json.dumps(res, indent=2))
+        Path(args.out).write_text(json.dumps(res, indent=2) + "\n")
 
     gap = res["flag_rate_gap_pts"]
     verdict = res["verdict"]
@@ -499,6 +507,14 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    if verdict == "PASS_SATURATED":
+        print(
+            f"VERDICT: PASS_SATURATED [{args.mode}] — flag-rate gap {gap:+.2f} pts within "
+            f"{MAX_FLAG_RATE_GAP_PTS}, but both bands' binary flag rate is saturated "
+            f"(near/at 100%); the gap is structurally forced toward 0 at that ceiling — "
+            f"see binary_flag_rate_saturation.non_saturating_companion."
+        )
+        return
     print(
         f"VERDICT: PASS [{args.mode}] — flag-rate gap {gap:+.2f} pts within "
         f"{MAX_FLAG_RATE_GAP_PTS}."

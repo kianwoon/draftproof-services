@@ -85,6 +85,36 @@ def test_compute_verdict_fail_over_threshold():
     assert compute_verdict(gap=MAX_FLAG_RATE_GAP_PTS + 0.01, measurable=True) == "FAIL"
 
 
+def test_compute_verdict_pass_saturated_when_would_pass_and_saturated():
+    from calibration.consistency_esl_rates import compute_verdict
+
+    assert compute_verdict(gap=0.0, measurable=True, saturated=True) == "PASS_SATURATED"
+
+
+def test_compute_verdict_pass_not_saturated_default():
+    from calibration.consistency_esl_rates import compute_verdict
+
+    # saturated defaults to False (essay mode never computes it) -> plain PASS.
+    assert compute_verdict(gap=0.0, measurable=True) == "PASS"
+    assert compute_verdict(gap=0.0, measurable=True, saturated=False) == "PASS"
+
+
+def test_compute_verdict_saturation_never_rescues_fail():
+    from calibration.consistency_esl_rates import MAX_FLAG_RATE_GAP_PTS, compute_verdict
+
+    assert (
+        compute_verdict(gap=MAX_FLAG_RATE_GAP_PTS + 0.01, measurable=True, saturated=True)
+        == "FAIL"
+    )
+
+
+def test_compute_verdict_saturation_never_rescues_unmeasurable():
+    from calibration.consistency_esl_rates import compute_verdict
+
+    assert compute_verdict(gap=None, measurable=False, saturated=True) == "UNMEASURABLE"
+    assert compute_verdict(gap=-33.33, measurable=False, saturated=True) == "UNMEASURABLE"
+
+
 # ---------------------------------------------------------------------------
 # concat-mode pure logic (pseudo-document construction + aggregation).
 # The `eligible_count_fn` is INJECTED so these tests need no corpus and no

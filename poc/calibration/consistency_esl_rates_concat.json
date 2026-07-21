@@ -46,7 +46,7 @@
   "flag_rate_gap_pts": 0.0,
   "max_flag_rate_gap_pts": 5.0,
   "measurable": true,
-  "verdict": "PASS",
+  "verdict": "PASS_SATURATED",
   "binary_flag_rate_saturation": {
     "saturated": true,
     "band_flag_rates_pct": {
