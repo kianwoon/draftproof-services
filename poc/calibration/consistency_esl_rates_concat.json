@@ -1,0 +1,76 @@
+{
+  "mode": "concat",
+  "corpus": "/Users/kianwoonwong/Downloads/Small Corpus of Colombian English as a Second Language Essays (SCoCESLE)",
+  "limit": null,
+  "shuffle_seed": 20260721,
+  "target_eligible_paragraphs": 6,
+  "caveat": "concat_mode measures detector behaviour on MULTI-AUTHOR pseudo-documents built by concatenating short same-band essays until each has MIN_PARAGRAPHS eligible paragraphs. Every pseudo-doc contains genuine author boundaries, so these flag rates are an UPPER BOUND on style-break flagging, NOT the rate a real single-author ESL essay would see. The load-bearing quantity is the lower-minus-higher GAP under identical construction, read alongside mean_essays_per_pseudo_doc (a band packing more source essays per pseudo-doc has more author boundaries \u2014 a confound correlated with, but not identical to, prose style). Construction is deterministic (fixed-seed shuffle); seed_robustness shows the gap is not a shuffle artifact.",
+  "groups": {
+    "higher": {
+      "n_pseudo_docs": 53,
+      "n_eligible": 53,
+      "eligibility_rate_pct": 100.0,
+      "flagged_pseudo_doc_rate_pct": 100.0,
+      "flagged_essay_rate_pct": 100.0,
+      "mean_outliers_per_eligible_essay": 4.377,
+      "mean_essays_per_pseudo_doc": 2.585,
+      "mean_eligible_paras_per_pseudo_doc": 6.623,
+      "min_essays_per_pseudo_doc": 1,
+      "max_essays_per_pseudo_doc": 3
+    },
+    "lower": {
+      "n_pseudo_docs": 42,
+      "n_eligible": 42,
+      "eligibility_rate_pct": 100.0,
+      "flagged_pseudo_doc_rate_pct": 100.0,
+      "flagged_essay_rate_pct": 100.0,
+      "mean_outliers_per_eligible_essay": 4.524,
+      "mean_essays_per_pseudo_doc": 3.167,
+      "mean_eligible_paras_per_pseudo_doc": 6.69,
+      "min_essays_per_pseudo_doc": 2,
+      "max_essays_per_pseudo_doc": 4
+    }
+  },
+  "ai_cases_control": {
+    "n_pseudo_docs": 33,
+    "n_eligible": 33,
+    "eligibility_rate_pct": 100.0,
+    "flagged_pseudo_doc_rate_pct": 100.0,
+    "flagged_essay_rate_pct": 100.0,
+    "mean_outliers_per_eligible_essay": 4.788,
+    "mean_essays_per_pseudo_doc": 2.848,
+    "mean_eligible_paras_per_pseudo_doc": 7.061,
+    "min_essays_per_pseudo_doc": 2,
+    "max_essays_per_pseudo_doc": 4
+  },
+  "flag_rate_gap_pts": 0.0,
+  "max_flag_rate_gap_pts": 5.0,
+  "measurable": true,
+  "verdict": "PASS",
+  "binary_flag_rate_saturation": {
+    "saturated": true,
+    "band_flag_rates_pct": {
+      "higher": 100.0,
+      "lower": 100.0
+    },
+    "non_saturating_companion": "mean_outliers_per_eligible_essay (per group)"
+  },
+  "seed_robustness": {
+    "seeds": [
+      1,
+      7,
+      42,
+      101,
+      2718
+    ],
+    "gap_per_seed": {
+      "1": 0.0,
+      "7": 0.0,
+      "42": 0.0,
+      "101": 1.92,
+      "2718": 0.0
+    },
+    "gap_min": 0.0,
+    "gap_max": 1.92
+  }
+}
