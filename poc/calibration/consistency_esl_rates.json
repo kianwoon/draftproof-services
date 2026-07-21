@@ -1,0 +1,29 @@
+{
+  "corpus": "/Users/kianwoonwong/Downloads/Small Corpus of Colombian English as a Second Language Essays (SCoCESLE)",
+  "limit": null,
+  "groups": {
+    "higher": {
+      "n_essays": 139,
+      "n_eligible": 3,
+      "eligibility_rate_pct": 2.16,
+      "flagged_essay_rate_pct": 33.33,
+      "mean_outliers_per_eligible_essay": 2.0
+    },
+    "lower": {
+      "n_essays": 133,
+      "n_eligible": 2,
+      "eligibility_rate_pct": 1.5,
+      "flagged_essay_rate_pct": 0.0,
+      "mean_outliers_per_eligible_essay": 0.0
+    }
+  },
+  "ai_cases_control": {
+    "n_essays": 96,
+    "n_eligible": 39,
+    "eligibility_rate_pct": 40.62,
+    "flagged_essay_rate_pct": 0.0,
+    "mean_outliers_per_eligible_essay": 0.0
+  },
+  "flag_rate_gap_pts": -33.33,
+  "max_flag_rate_gap_pts": 5.0
+}
