@@ -7,7 +7,7 @@ export const reduceDetection = {
   "ctaSecondaryLabel": "See the content checker",
   "heroStat": {
     "label": "The honest answer",
-    "value": "You can't reliably beat it",
+    "value": "Beating it is the wrong goal",
     "detail": "So fix the writing, not the number"
   },
   "intro": [
@@ -36,7 +36,7 @@ export const reduceDetection = {
         },
         {
           "title": "It's still misconduct",
-          "body": "Disguising AI work to dodge detection is the exact thing integrity policies exist to catch. A clean score from evasion is still a violation if you're caught."
+          "body": "Disguising AI work to dodge detection is the exact thing integrity policies exist to catch. A clean score from evasion is still a violation — detected or not."
         }
       ]
     },

@@ -9,7 +9,7 @@ export const footer = {
   "turnitinVsDetectors": "Turnitin 对比 AI 检测工具",
   "turnitinAlternatives": "Turnitin 替代工具",
   "aiDeclaration": "AI 使用声明",
-  "reduceDetection": "降低 AI 检测",
+  "reduceDetection": "AI 检测的真相",
   "pricing": "价格",
   "faq": "常见问题",
   "privacy": "隐私",

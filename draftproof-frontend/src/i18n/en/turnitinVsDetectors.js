@@ -23,7 +23,7 @@ export const turnitinVsDetectors = {
   "sections": [
     {
       "eyebrow": "Side by side",
-      "title": "How the three detectors compare.",
+      "title": "How the three detectors compare — and why grounded writing holds up under all of them.",
       "type": "comparison",
       "columns": ["Turnitin", "GPTZero", "Originality.ai", "DraftProof"],
       "rows": [

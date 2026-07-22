@@ -39,7 +39,7 @@ export const pricing = {
   "faqTitle": "Frequently asked questions",
   "faqs": [
     {
-      "q": "Can DraftProof help me pass Turnitin?",
+      "q": "Can DraftProof guarantee a Turnitin result?",
       "a": "DraftProof helps you prepare before a Turnitin-style review by finding citation gaps, weak source grounding, similarity risk, generic phrasing, and AI-like writing signals. It does not guarantee a Turnitin result, bypass Turnitin, or prove authorship. It gives you guidance so you can revise the draft responsibly before submission."
     },
     {

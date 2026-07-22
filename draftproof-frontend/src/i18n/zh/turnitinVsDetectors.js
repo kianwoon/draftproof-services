@@ -23,7 +23,7 @@ export const turnitinVsDetectors = {
   "sections": [
     {
       "eyebrow": "并排对比",
-      "title": "三个检测工具的对比。",
+      "title": "三个检测工具的对比——以及为什么有真实依据的写作在它们面前都站得住脚。",
       "type": "comparison",
       "columns": ["Turnitin", "GPTZero", "Originality.ai", "DraftProof"],
       "rows": [

@@ -9,7 +9,7 @@ export const footer = {
   "turnitinVsDetectors": "Turnitin vs AI detectors",
   "turnitinAlternatives": "Turnitin alternatives",
   "aiDeclaration": "AI declaration",
-  "reduceDetection": "Reduce AI detection",
+  "reduceDetection": "The truth about AI detection",
   "pricing": "Pricing",
   "faq": "FAQ",
   "privacy": "Privacy",

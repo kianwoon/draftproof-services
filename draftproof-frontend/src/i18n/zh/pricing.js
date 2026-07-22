@@ -39,7 +39,7 @@ export const pricing = {
   "faqTitle": "常见问题",
   "faqs": [
     {
-      "q": "DraftProof 能帮助我通过 Turnitin 吗？",
+      "q": "DraftProof 能保证 Turnitin 的结果吗？",
       "a": "DraftProof 会在 Turnitin 式审阅前帮助你准备稿件，找出引用缺口、来源支撑薄弱、相似度风险、泛化表达和类似 AI 的写作信号。它不保证 Turnitin 结果，不绕过 Turnitin，也不能证明作者身份。它提供指导，帮助你在提交前负责任地修改草稿。"
     },
     {

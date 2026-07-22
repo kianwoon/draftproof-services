@@ -616,7 +616,7 @@ export const report = {
     "flooredNote": "Matched to the AI-allowed score — a stricter policy never reads lower than a permissive one.",
     "mainIssuePrefix": "Main issue:",
     "bestFixPrefix": "Best fix:",
-    "confirmTitle": "Confirm yourself to lower a score",
+    "confirmTitle": "Declare what you can honestly show",
     "confirmAllowed": "I can explain how AI was used",
     "confirmRestricted": "I have drafts / notes for this work",
     "disclaimer": "These scores do not prove AI use. They estimate how risky the draft may look under different school policies.",

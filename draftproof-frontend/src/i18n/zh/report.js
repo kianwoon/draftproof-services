@@ -606,7 +606,7 @@ export const report = {
     "flooredNote": "已对齐至「允许使用 AI」的分数——更严格的政策下的读数不会低于宽松政策。",
     "mainIssuePrefix": "主要问题：",
     "bestFixPrefix": "最佳修复：",
-    "confirmTitle": "自行确认以降低分数",
+    "confirmTitle": "如实声明你能证明的情况",
     "confirmAllowed": "我能说明 AI 是如何使用的",
     "confirmRestricted": "我有这份作业的草稿 / 笔记",
     "disclaimer": "这些分数并不证明使用了 AI。它们只是估计在不同学校政策下，这份草稿可能呈现多大风险。",

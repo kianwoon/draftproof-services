@@ -7,7 +7,7 @@ export const reduceDetection = {
   "ctaSecondaryLabel": "查看内容检查工具",
   "heroStat": {
     "label": "诚实的答案",
-    "value": "你无法可靠地骗过它",
+    "value": "骗过它本身就是错误的目标",
     "detail": "所以修正写作，而不是数字"
   },
   "intro": [
@@ -36,7 +36,7 @@ export const reduceDetection = {
         },
         {
           "title": "它仍然是学术不端",
-          "body": "为躲避检测而伪装 AI 成果，恰恰是诚信规定要查处的事。靠规避得到的“干净”分数，一旦被发现，依然是违规。"
+          "body": "为躲避检测而伪装 AI 成果，恰恰是诚信规定要查处的事。靠规避得到的“干净”分数，无论是否被发现，都是违规。"
         }
       ]
     },

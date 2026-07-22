@@ -81,7 +81,7 @@ export const dashboard = {
     },
     {
       "title": "Re-scan to confirm",
-      "body": "Paste the revised text into a new scan and check whether the risk is lower before you submit."
+      "body": "Paste the revised text into a new scan to confirm the flagged gaps are fixed — grounded claims, real sources, your voice."
     }
   ]
 };
