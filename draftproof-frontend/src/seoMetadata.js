@@ -37,8 +37,8 @@ export const CRITICAL_THINKING_REVIEW_DATE = '2026-06-17';
 // SEO keyword landing pages (Turnitin score, academic integrity, AI declaration, reduce detection).
 export const SEO_LANDING_REVIEW_DATE = '2026-06-24';
 // Turnitin SEO cluster Phase 1 (check-essay-before-turnitin, turnitin-flagged-my-essay-ai,
-// draftproof-vs-turnitin). Placeholder copy ships noindex; drives sitemap <lastmod> once
-// robots:'noindex' is removed after final copy lands.
+// draftproof-vs-turnitin). Final copy landed 2026-07-23; pages are now indexable (robots
+// override removed) and included in the sitemap; drives their sitemap <lastmod>.
 export const TURNITIN_CLUSTER_REVIEW_DATE = '2026-07-23';
 
 export const PAGE_META = {
@@ -144,7 +144,6 @@ export const PAGE_META = {
     socialDescriptionKey: 'seo.checkBeforeTurnitinSocialDescription',
     canonical: '/check-essay-before-turnitin',
     schemaType: 'WebPage',
-    robots: 'noindex',
     freshness: { type: 'reviewed', date: TURNITIN_CLUSTER_REVIEW_DATE },
   },
   '/turnitin-flagged-my-essay-ai': {
@@ -154,7 +153,6 @@ export const PAGE_META = {
     canonical: '/turnitin-flagged-my-essay-ai',
     schemaType: 'FAQPage',
     faqKey: 'turnitinFlagged.faq',
-    robots: 'noindex',
     freshness: { type: 'reviewed', date: TURNITIN_CLUSTER_REVIEW_DATE },
   },
   '/draftproof-vs-turnitin': {
@@ -163,7 +161,6 @@ export const PAGE_META = {
     socialDescriptionKey: 'seo.draftproofVsTurnitinSocialDescription',
     canonical: '/draftproof-vs-turnitin',
     schemaType: 'WebPage',
-    robots: 'noindex',
     freshness: { type: 'reviewed', date: TURNITIN_CLUSTER_REVIEW_DATE },
   },
   '/pricing': {
