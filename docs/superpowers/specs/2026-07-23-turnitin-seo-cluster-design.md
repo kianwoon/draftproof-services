@@ -39,6 +39,12 @@ data-driven SEO system.
 
 ## The 3 new pages
 
+**Build/priority order = acquisition value** (numbering below is the order to build and the expected
+traffic value). #1 pre-submission is the near-perfect DraftProof entry point; #2 post-flag maps to
+the authorship/grounding/defence-readiness direction; #3 branded-comparison is conversion-support
+and entity definition (user usually already knows DraftProof), so it is the lowest early-traffic bet
+but still worth building.
+
 ### 1. `/check-essay-before-turnitin` — namespace `checkBeforeTurnitin`
 - **Intent**: `check essay before turnitin`, `check my essay before submitting`.
 - **Positioning**: "Understand the risks your lecturer may see before you submit" — NOT "see what
@@ -63,9 +69,22 @@ data-driven SEO system.
 
 ## Cross-linking (semantic cluster, plan §4/§8)
 
-Each new page's `links[]` points to the other two new pages + the most relevant existing pages
-(`/turnitin-ai-score`, `/academic-integrity-ai`, `/ai-declaration`). Existing pages are left as-is
-this phase (optionally back-link in a follow-up).
+**Outbound** — each new page's `links[]` points to the other two new pages + the most relevant
+existing pages (`/turnitin-ai-score`, `/academic-integrity-ai`, `/ai-declaration`).
+
+**Inbound (mandatory this phase — not deferred).** Add at least one inbound link from an existing
+indexed page to every new page BEFORE indexing, so the cluster has authority from day one. Edit the
+existing i18n namespace files' `links[]` (EN + ZH):
+
+| From (existing) | To (new) | Anchor |
+|---|---|---|
+| `/turnitin-ai-score` (`turnitinScore`) | `/turnitin-flagged-my-essay-ai` | "What to do if Turnitin flags your writing as AI" |
+| `/turnitin-alternatives` (`turnitinAlternatives`) | `/draftproof-vs-turnitin` | "How DraftProof differs from Turnitin" |
+| `/academic-integrity-ai` (`academicIntegrity`) *or* `/ai-declaration` | `/check-essay-before-turnitin` | "Review authorship and AI-use risks before submission" |
+
+Note: inbound links live on already-indexable pages, so they go live immediately — that is fine and
+desired; the *target* new pages stay `noindex` until copy lands (a followed link to a noindex page is
+normal and harmless).
 
 ## FAQPage structured data (new capability)
 
@@ -80,7 +99,9 @@ Add `FAQPage` support to `buildSchema` (`src/seoMetadata.js:238`):
   resolves empty, fall back to the generic WebPage schema (no empty FAQPage emitted).
 - **Expectation note**: Google restricted FAQ rich-result *display* to authoritative gov/health
   sites (Aug 2023); the schema is still valid and machine-readable but may not render as a snippet.
-  It is low-cost and correct to include; do not over-promise the rich-result payoff.
+- **Priority framing**: treat FAQPage as reusable *infrastructure*, NOT a ranking lever. The real
+  levers, in order: search-intent-matched content ≈ internal links > titles/H1/metadata ≈
+  indexability ≫ FAQPage schema. Build it once, don't over-invest.
 
 ## Copy handling & indexing guard
 
@@ -88,13 +109,19 @@ User provides final copy. This phase ships **clearly-marked placeholder copy** (
 prefix on body text) so pages render and prerender correctly. EN and ZH namespace files both
 scaffolded; ZH placeholders mirror EN structure with a `[需替换]` marker for the user's translator.
 
-**Do not index placeholder pages.** Adding a `PAGE_META` entry immediately enters the page into
-`PRERENDER_PATHS` + sitemap, and `prerender-seo.mjs` only excludes `noindex` pages. Therefore each
-new `PAGE_META` entry ships this phase with `robots: 'noindex, nofollow'` (pattern at
-`seoMetadata.js:190`). The user flips these to indexable (delete the `robots` line) once final copy
-lands. Each entry also gets its own **fresh `freshness.date` = 2026-07-23** (a new constant
+**Do not index placeholder pages, but keep link traversal.** Each new `PAGE_META` entry ships this
+phase with `robots: 'noindex'` — **not** `'noindex, nofollow'`. `nofollow` would stop engines from
+following the cluster's internal links, which defeats the semantic-cluster purpose; there is no
+benefit to it. The user flips to indexable by deleting the `robots` line once final copy lands.
+
+**Sitemap already does the right thing — no code change.** `renderSitemap` filters out any page
+whose robots contains `noindex` (`prerender-seo.mjs:71`, `/\bnoindex\b/i`). So while placeholder:
+render YES, accessible YES, `noindex` YES, **sitemap NO** — automatically. Once `noindex` is removed:
+sitemap YES with hreflang/x-default alternates. `'noindex'` alone still matches the filter.
+
+Each entry also gets its own **fresh `freshness.date` = 2026-07-23** (a new constant
 `TURNITIN_CLUSTER_REVIEW_DATE`), NOT the stale `SEO_LANDING_REVIEW_DATE` (2026-06-24), because that
-date drives sitemap `<lastmod>`.
+date drives sitemap `<lastmod>` once the page is indexable.
 
 Each `PAGE_META` entry includes `titleKey`, `descriptionKey`, and `socialDescriptionKey` (all sibling
 entries define the social key; it falls back to description only if omitted).
@@ -110,18 +137,44 @@ entries define the social key; it falls back to description only if omitted).
 - **Edit**: `src/seoMetadata.js` (3 `PAGE_META` entries incl. `robots: noindex` + `socialDescriptionKey`
   + `faqKey` on the panic page; new `TURNITIN_CLUSTER_REVIEW_DATE`; FAQPage branch in `buildSchema`)
 - **Edit**: `src/i18n/en/seo.js` + `zh/seo.js` (title/description/socialDescription keys for 3 paths)
+- **Edit (inbound links)**: existing namespace files `src/i18n/en/{turnitinScore,turnitinAlternatives,academicIntegrity}.js`
+  (+ `zh/` twins) — add one `links[]` entry each per the cross-linking table.
+
+## Measurement (Phase 1 — decides Phase 2)
+
+Do not scale to more Turnitin articles until real Google Search Console data shows which query
+families Google associates with DraftProof.
+
+**Per-page primary intent family** (secondary families also tracked):
+
+| Page | Primary intent |
+|---|---|
+| `/check-essay-before-turnitin` | check essay before Turnitin |
+| `/turnitin-flagged-my-essay-ai` | Turnitin flagged essay as AI |
+| `/draftproof-vs-turnitin` | DraftProof vs Turnitin |
+
+**GSC per URL** (user-side ops, once indexable): index status, impressions, queries, avg position, CTR.
+
+**Product funnel** (existing GA4, `GA_MEASUREMENT_ID`): SEO landing → CTA click → sign-in → scan
+started → scan completed. The CTA already routes to `/signin?next=/scan` (funnel entry exists via
+`SeoLandingPage`). Wiring explicit GA events on the CTA is a *recommended follow-up*, not part of this
+page-build phase.
 
 ## Verification
 
 1. `npm run build` succeeds (frontend Vite build).
 2. `npm run check:i18n` passes (en/zh namespace parity gate — all 3 new namespaces must mirror).
-3. `scripts/prerender-seo.mjs` output includes the 3 new EN + 3 ZH paths; they appear in
-   `dist/sitemap.xml` with auto hreflang/x-default alternates (`prerender-seo.mjs:96-109`, no manual
-   work) — and carry `noindex` this phase (flip on final copy).
+3. `scripts/prerender-seo.mjs` prerenders the 3 new EN + 3 ZH paths successfully, but they are
+   **excluded from `dist/sitemap.xml` while `noindex`** (`prerender-seo.mjs:71` filter). After final
+   copy and removal of `robots: 'noindex'`, all six localized URLs appear in the sitemap with auto
+   hreflang/x-default alternates (`prerender-seo.mjs:96-109`, no manual work).
 4. `/zh/check-essay-before-turnitin` etc. render the ZH namespace (locale-trap guard: paths present
    in `LOCALIZABLE_PUBLIC_PATHS`).
 5. FAQPage JSON-LD validates (well-formed `mainEntity` with Question/Answer) on the panic page.
-6. Positioning check: no "bypass/beat Turnitin" language; independence stated on the vs page.
+6. Positioning check: no "bypass/beat Turnitin" language; independence stated on the vs page;
+   category held as "Student Authorship & Submission Readiness" (not "AI detector").
+7. Inbound links: each new page has ≥1 inbound link from an existing indexed page (per the
+   cross-linking table), live in both EN and ZH.
 
 ## Out of scope (later phases)
 
