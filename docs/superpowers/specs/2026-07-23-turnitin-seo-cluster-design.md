@@ -24,7 +24,9 @@ data-driven SEO system.
   `/academic-integrity-ai`, `/ai-declaration`, `/reduce-ai-detection`.
 - **Adding a page = data only**: i18n namespace pair + route pair + `LOCALIZABLE_PUBLIC_PATHS`
   entry (`src/localeRouting.js:4`) + `PAGE_META` entry (`src/seoMetadata.js:40`, auto-adds to
-  `PRERENDER_PATHS` + sitemap) + register in `src/i18n/resources`.
+  `PRERENDER_PATHS` + sitemap) + register in `src/i18n/en.js` + `src/i18n/zh.js` (import the ns file
+  and add its key to `enTranslation` / `zhTranslation`; `resources.js` only re-exports these
+  aggregates — editing it alone does NOT register a namespace).
 
 ## Overlap decisions (avoid keyword cannibalization)
 
@@ -53,7 +55,8 @@ data-driven SEO system.
   authorship. **FAQPage schema** attached (see below).
 
 ### 3. `/draftproof-vs-turnitin` — namespace `draftproofVsTurnitin`
-- **Intent**: `draftproof vs turnitin`, `turnitin alternative for students`.
+- **Intent**: strictly branded comparison — `draftproof vs turnitin`. **Do NOT target
+  `turnitin alternative for students`** — that cannibalizes the existing `/turnitin-alternatives`.
 - **Content**: the stage-difference comparison table from plan §5 via `section.type: 'comparison'`.
 - **Guardrails**: state independence from Turnitin; do not imply affiliation; do not claim score
   reproduction/prediction.
@@ -66,39 +69,59 @@ this phase (optionally back-link in a follow-up).
 
 ## FAQPage structured data (new capability)
 
-Add `FAQPage` support to `buildSchema` (`src/seoMetadata.js`):
-- New `schemaType: 'FAQPage'` branch that reads an optional `faq` array from the page's i18n
-  namespace (`[{question, answer}]`) and emits `mainEntity` `Question`/`Answer` nodes alongside the
-  existing Organization + WebSite `@graph`.
-- The i18n `faq` content is provided per-page (placeholder in this phase).
-- Applied to `/turnitin-flagged-my-essay-ai` (highest rich-result value). Guard: if no `faq`
-  content, fall back to the generic WebPage schema (no empty FAQPage emitted).
+Add `FAQPage` support to `buildSchema` (`src/seoMetadata.js:238`):
+- New `schemaType: 'FAQPage'` branch. `buildSchema(meta, url, translate)` has **no direct namespace
+  access**, so the page declares a `faqKey` on its `PAGE_META` entry (e.g. `faqKey: 'turnitinFlagged.faq'`)
+  and the branch resolves it via the module's existing `getResourceValue(faqKey, meta.locale)` helper
+  (`seoMetadata.js:377` — its `.reduce` traverses arrays, so `<ns>.faq` returns the array).
+- The resolved `faq` array is `[{question, answer}]`; emit `mainEntity` `Question`/`Answer` nodes
+  **inside the existing `@graph`** alongside Organization + WebSite (same shape as the WebPage branch).
+- Applied to `/turnitin-flagged-my-essay-ai` (highest relevance). Guard: if `faqKey` is absent or
+  resolves empty, fall back to the generic WebPage schema (no empty FAQPage emitted).
+- **Expectation note**: Google restricted FAQ rich-result *display* to authoritative gov/health
+  sites (Aug 2023); the schema is still valid and machine-readable but may not render as a snippet.
+  It is low-cost and correct to include; do not over-promise the rich-result payoff.
 
-## Copy handling
+## Copy handling & indexing guard
 
 User provides final copy. This phase ships **clearly-marked placeholder copy** (`[DRAFT — replace]`
 prefix on body text) so pages render and prerender correctly. EN and ZH namespace files both
 scaffolded; ZH placeholders mirror EN structure with a `[需替换]` marker for the user's translator.
 
+**Do not index placeholder pages.** Adding a `PAGE_META` entry immediately enters the page into
+`PRERENDER_PATHS` + sitemap, and `prerender-seo.mjs` only excludes `noindex` pages. Therefore each
+new `PAGE_META` entry ships this phase with `robots: 'noindex, nofollow'` (pattern at
+`seoMetadata.js:190`). The user flips these to indexable (delete the `robots` line) once final copy
+lands. Each entry also gets its own **fresh `freshness.date` = 2026-07-23** (a new constant
+`TURNITIN_CLUSTER_REVIEW_DATE`), NOT the stale `SEO_LANDING_REVIEW_DATE` (2026-06-24), because that
+date drives sitemap `<lastmod>`.
+
+Each `PAGE_META` entry includes `titleKey`, `descriptionKey`, and `socialDescriptionKey` (all sibling
+entries define the social key; it falls back to description only if omitted).
+
 ## Files touched
 
 - **New**: `src/i18n/en/{checkBeforeTurnitin,turnitinFlagged,draftproofVsTurnitin}.js` (+ `zh/` twins)
 - **New**: `docs/superpowers/specs/2026-07-23-turnitin-seo-cluster-design.md` (this file)
-- **Edit**: `src/i18n/resources.js` (register 3 namespaces × 2 locales)
+- **Edit**: `src/i18n/en.js` + `src/i18n/zh.js` (import 3 ns files each, add keys to
+  `enTranslation` / `zhTranslation` — NOT `resources.js`)
 - **Edit**: `src/App.jsx` (3 route pairs)
 - **Edit**: `src/localeRouting.js` (3 paths in `LOCALIZABLE_PUBLIC_PATHS`)
-- **Edit**: `src/seoMetadata.js` (3 `PAGE_META` entries + FAQPage branch in `buildSchema`)
-- **Edit**: `src/i18n/en/seo.js` + `zh/seo.js` (title/description keys for 3 paths)
+- **Edit**: `src/seoMetadata.js` (3 `PAGE_META` entries incl. `robots: noindex` + `socialDescriptionKey`
+  + `faqKey` on the panic page; new `TURNITIN_CLUSTER_REVIEW_DATE`; FAQPage branch in `buildSchema`)
+- **Edit**: `src/i18n/en/seo.js` + `zh/seo.js` (title/description/socialDescription keys for 3 paths)
 
 ## Verification
 
 1. `npm run build` succeeds (frontend Vite build).
-2. `scripts/prerender-seo.mjs` output includes the 3 new EN + 3 ZH paths and they appear in
-   `dist/sitemap.xml` with hreflang alternates.
-3. `/zh/check-essay-before-turnitin` etc. render the ZH namespace (locale-trap guard: paths present
+2. `npm run check:i18n` passes (en/zh namespace parity gate — all 3 new namespaces must mirror).
+3. `scripts/prerender-seo.mjs` output includes the 3 new EN + 3 ZH paths; they appear in
+   `dist/sitemap.xml` with auto hreflang/x-default alternates (`prerender-seo.mjs:96-109`, no manual
+   work) — and carry `noindex` this phase (flip on final copy).
+4. `/zh/check-essay-before-turnitin` etc. render the ZH namespace (locale-trap guard: paths present
    in `LOCALIZABLE_PUBLIC_PATHS`).
-4. FAQPage JSON-LD validates (well-formed `mainEntity` with Question/Answer) on the panic page.
-5. Positioning check: no "bypass/beat Turnitin" language; independence stated on the vs page.
+5. FAQPage JSON-LD validates (well-formed `mainEntity` with Question/Answer) on the panic page.
+6. Positioning check: no "bypass/beat Turnitin" language; independence stated on the vs page.
 
 ## Out of scope (later phases)
 
