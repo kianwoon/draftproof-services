@@ -19,14 +19,23 @@
 //   url      – OPTIONAL. If present, the band shows a "Read update" link
 //              (opens in a new tab). Omit for a plain, non-clickable notice.
 //
+// LOCALIZATION — any text-bearing field (badge/date/headline/text/emphasis, and
+// each pill) may be either a plain string OR an { en, zh } object. When an
+// object is given, the band shows the value for the active language (Chinese
+// when the UI is toggled to 中文, otherwise the English/fallback value). Plain
+// strings render as-is in every language, so existing entries keep working.
+//
 // To hide the band entirely, leave this array empty.
 // ─────────────────────────────────────────────────────────────────────────
 export const announcements = [
   {
     id: "turnitin-integrity-insights-2026",
     badge: "Turnitin",
-    date: "Jul 2026",
-    text: "Turnitin today released its latest Learning Integrity Insights Report revealing a gap in how students use AI for writing and a clear shift toward educators taking ownership of how AI is used in their classrooms and lecture halls.",
+    date: { en: "Jul 2026", zh: "2026年7月" },
+    text: {
+      en: "Turnitin today released its latest Learning Integrity Insights Report revealing a gap in how students use AI for writing and a clear shift toward educators taking ownership of how AI is used in their classrooms and lecture halls.",
+      zh: "Turnitin 今日发布最新《学习诚信洞察报告》，揭示了学生在写作中使用 AI 的落差，以及教育者日益主动掌控 AI 在课堂与讲堂中使用方式的明显转变。",
+    },
     url: "https://www.turnitin.com/media-center/",
   },
 ];
