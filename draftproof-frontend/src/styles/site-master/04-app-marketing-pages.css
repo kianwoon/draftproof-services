@@ -2154,3 +2154,57 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* "Under the hood" — technology pillars (fine-tune / ESL calibration / deep-scan / claim-graph) */
+.feat-tech-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+
+.feat-tech-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1.25rem 1.35rem 1.25rem 1.5rem;
+  overflow: hidden;
+}
+
+.feat-tech-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--green);
+}
+
+.feat-tech-metric {
+  display: inline-block;
+  margin-bottom: 0.55rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--green-700);
+}
+
+.feat-tech-card h3 {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  margin: 0 0 0.4rem;
+  color: var(--ink);
+}
+
+.feat-tech-card p {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.6;
+}
+
+@media (max-width: 600px) {
+  .feat-tech-grid {
+    grid-template-columns: 1fr;
+  }
+}

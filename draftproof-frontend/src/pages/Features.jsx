@@ -19,6 +19,7 @@ export default function Features() {
 
   const competitors = t('featuresPage.competitors', { returnObjects: true });
   const rows = t('featuresPage.rows', { returnObjects: true });
+  const techPillars = t('featuresPage.techPillars', { returnObjects: true });
   const tabKeys = ['scan', 'rewrite'];
   const [activeTab, setActiveTab] = useState('scan');
   const cardsByTab = {
@@ -38,6 +39,21 @@ export default function Features() {
             <p className="lead">{t('featuresPage.lead')}</p>
           </div>
         </section>
+
+        {Array.isArray(techPillars) && techPillars.length > 0 && (
+          <section className="feat-tech" style={{ marginTop: '2.5rem' }}>
+            <p className="feat-section-label">{t('featuresPage.techLabel')}</p>
+            <div className="feat-tech-grid">
+              {techPillars.map((pillar) => (
+                <div className="feat-tech-card" key={pillar.title}>
+                  <span className="feat-tech-metric">{pillar.metric}</span>
+                  <h3>{pillar.title}</h3>
+                  <p>{pillar.body}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section style={{ marginTop: '2.5rem' }}>
           <p className="feat-section-label">{t('featuresPage.tableLabel')}</p>

@@ -3,7 +3,33 @@
 export const featuresPage = {
   eyebrow: "Why DraftProof",
   title: "Prepare. Improve. Prove.",
-  lead: "AI detectors flag your writing after you submit — DraftProof works before. It helps you prepare your draft and keep evidence of responsible AI use, rather than replacing your institution's checker.",
+  lead: "AI detectors flag your writing after you submit — DraftProof works before, on an engine we built and tuned ourselves: a fine-tuned detection model, sentence-level deep scan, and grounding checks that tell you why — not just a number.",
+  techLabel: "Under the hood",
+  // allow-hardcode: user-facing tech-pillar copy for /features — marketing prose grounded in
+  // the real detector (fine-tune + ESL calibration + deep-scan + claim-graph). Not a scoring
+  // oracle. Numbers mirror the vetted public claims (0.8% ESL FPR / 272-essay corpus).
+  techPillars: [
+    {
+      metric: "GPT-5.x · Gemini · Qwen",
+      title: "A detector we fine-tuned ourselves",
+      body: "Not an off-the-shelf API. DraftProof runs its own model, fine-tuned on frontier-AI output and thousands of real essays — and re-tuned as new frontier models ship, so detection keeps pace with the tools students actually use.",
+    },
+    {
+      metric: "0.8% FPR · lower-proficiency ESL",
+      title: "Calibrated for non-native English writers",
+      body: "Detectors are notorious for flagging fluent ESL writing as \"AI.\" Every scoring change is gated against a 272-essay corpus of real non-native English writing and ships only if false positives stay low — 0.8% on lower-proficiency writers at our standard threshold.",
+    },
+    {
+      metric: "Sentence by sentence",
+      title: "Deep scan reads at sentence level",
+      body: "A separate deep-reading model scores your draft sentence by sentence, then fuses with the pattern signal — so no single noisy number can swing a verdict, and you see exactly which lines drive the score.",
+    },
+    {
+      metric: "Entailment-checked",
+      title: "Claim-graph grounding",
+      body: "DraftProof maps the claims in your argument and checks whether each is actually supported by its cited source — surfacing the ungrounded, generic assertions that are the real reason writing reads as AI-generated.",
+    },
+  ],
   tableLabel: "How DraftProof is different",
   competitors: ["DraftProof", "GPTZero", "Turnitin", "Originality.ai", "Winston AI"],
   rows: [

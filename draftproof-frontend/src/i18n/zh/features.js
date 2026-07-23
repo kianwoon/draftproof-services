@@ -3,7 +3,33 @@
 export const featuresPage = {
   eyebrow: "为什么选择 DraftProof",
   title: "准备。改进。证明。",
-  lead: "AI 检测工具在你提交之后才标记你的写作 —— DraftProof 在此之前介入。它帮你准备好草稿，并留存你负责任使用 AI 的证据，而不是替代你所在机构的检测工具。",
+  lead: "AI 检测工具在你提交之后才标记你的写作 —— DraftProof 在此之前介入，依托一套我们自研自调的引擎：一个经过微调的检测模型、句子级深度扫描，以及会告诉你「为什么」的依据核查 —— 而不只是一个分数。",
+  techLabel: "技术内核",
+  // allow-hardcode: user-facing tech-pillar copy for /features — marketing prose grounded in
+  // the real detector (fine-tune + ESL calibration + deep-scan + claim-graph). Not a scoring
+  // oracle. Numbers mirror the vetted public claims (0.8% ESL FPR / 272-essay corpus).
+  techPillars: [
+    {
+      metric: "GPT-5.x · Gemini · Qwen",
+      title: "我们自研微调的检测模型",
+      body: "并非现成的第三方 API。DraftProof 运行自有模型，在前沿 AI 输出与数千篇真实作文上微调 —— 并随新的前沿模型发布而重新调校，让检测始终跟上学生真正在用的工具。",
+    },
+    {
+      metric: "较低水平 ESL 误报率 0.8%",
+      title: "为非母语英语写作者校准",
+      body: "检测工具素来容易把流畅的 ESL 写作误判为「AI」。每一次评分变更都要先通过一个 272 篇真实非母语英语作文语料库的检验，只有在误报率保持低位时才会上线 —— 在标准阈值下，较低水平写作者的误报率为 0.8%。",
+    },
+    {
+      metric: "逐句分析",
+      title: "深度扫描精确到句子",
+      body: "一个独立的深度阅读模型逐句为你的草稿评分，再与模式信号融合 —— 这样任何单一的噪声数值都无法左右判定，你也能清楚看到是哪些句子推高了分数。",
+    },
+    {
+      metric: "蕴含核查",
+      title: "论点图谱依据核查",
+      body: "DraftProof 梳理你论证中的各项主张，核查每一条是否真正得到所引来源的支撑 —— 揪出那些缺乏依据、泛泛而谈的表述，而这正是写作读起来像 AI 生成的真正原因。",
+    },
+  ],
   tableLabel: "DraftProof 有何不同",
   competitors: ["DraftProof", "GPTZero", "Turnitin", "Originality.ai", "Winston AI"],
   rows: [
