@@ -101,6 +101,11 @@ export const academicIntegrity = {
       "label": "如何降低 AI 检测（诚实版）",
       "to": "/reduce-ai-detection",
       "body": "为什么打好依据胜过钻空子。"
+    },
+    {
+      "label": "提交前先审查作者身份与 AI 使用风险",
+      "to": "/check-essay-before-turnitin",
+      "body": "提交前值得检查的八件事。"
     }
   ],
   "ctaTitle": "自信地拥有你的写作。",

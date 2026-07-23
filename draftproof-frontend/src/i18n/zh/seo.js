@@ -59,4 +59,13 @@ export const seo = {
   "turnitinAlternativesTitle": "Turnitin 替代工具：哪个 AI 检测器最像 Turnitin？| DraftProof",
   "turnitinAlternativesDescription": "在找一个像 Turnitin 的 AI 检测器？中立地了解 Turnitin、GPTZero、Originality.ai 和 Copyleaks——各自为谁而设、如何选择，以及为什么 DraftProof 是在用它们之前该先跑的提交前一步，而不是替代品。",
   "turnitinAlternativesSocialDescription": "中立对比像 Turnitin 的 AI 检测器——以及在用任何一个之前该先做什么。DraftProof 不是替代品。",
+  "checkBeforeTurnitinTitle": "在 Turnitin 之前先检查你的论文 | DraftProof",
+  "checkBeforeTurnitinDescription": "在提交之前，先了解导师可能会看到的提交准备度风险——AI 模式风险、作者身份清晰度、引用依据等。不是 Turnitin 分数的预览。",
+  "checkBeforeTurnitinSocialDescription": "在提交之前，先了解导师可能会看到的风险——而不是 Turnitin 会给出什么分数。",
+  "turnitinFlaggedTitle": "Turnitin 把我的论文标记为 AI——该怎么办 | DraftProof",
+  "turnitinFlaggedDescription": "Turnitin 把你的论文标记为 AI 写的？了解人类写作为何会被标记、这个百分比究竟意味着什么，以及如何加强你自己作者身份的证据。",
+  "turnitinFlaggedSocialDescription": "了解你的写作为何可能被质疑——以及如何加强作者身份的证据。",
+  "draftproofVsTurnitinTitle": "DraftProof 与 Turnitin 有何不同？| DraftProof",
+  "draftproofVsTurnitinDescription": "DraftProof 与 Turnitin 处于不同阶段。Turnitin 审查已提交的作品；DraftProof 帮助学生在提交之前理解自己的作品。二者相互独立，DraftProof 与 Turnitin 没有关联。",
+  "draftproofVsTurnitinSocialDescription": "Turnitin 审查已提交的作品。DraftProof 帮助学生在提交之前理解自己的作品。",
 };

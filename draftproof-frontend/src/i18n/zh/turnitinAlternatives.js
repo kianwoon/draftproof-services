@@ -105,6 +105,11 @@ export const turnitinAlternatives = {
       "label": "学术诚信与 AI",
       "to": "/academic-integrity-ai",
       "body": "哪些 AI 用法没问题，哪些不行。"
+    },
+    {
+      "label": "DraftProof 与 Turnitin 有何不同",
+      "to": "/draftproof-vs-turnitin",
+      "body": "两个不同阶段，不是互相竞争的分数。"
     }
   ],
   "ctaTitle": "在任何检测器之前，先检查你的草稿。",

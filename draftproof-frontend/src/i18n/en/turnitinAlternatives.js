@@ -105,6 +105,11 @@ export const turnitinAlternatives = {
       "label": "Academic integrity & AI",
       "to": "/academic-integrity-ai",
       "body": "Where AI use is fine — and where it isn't."
+    },
+    {
+      "label": "How DraftProof differs from Turnitin",
+      "to": "/draftproof-vs-turnitin",
+      "body": "Two different stages, not competing scores."
     }
   ],
   "ctaTitle": "Check your draft before any detector does.",

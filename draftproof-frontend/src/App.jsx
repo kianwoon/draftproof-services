@@ -160,6 +160,12 @@ export default function App() {
             <Route path="/zh/turnitin-vs-ai-detectors" element={<SeoLandingPage ns="turnitinVsDetectors" path="/turnitin-vs-ai-detectors" />} />
             <Route path="/turnitin-alternatives" element={<SeoLandingPage ns="turnitinAlternatives" path="/turnitin-alternatives" />} />
             <Route path="/zh/turnitin-alternatives" element={<SeoLandingPage ns="turnitinAlternatives" path="/turnitin-alternatives" />} />
+            <Route path="/check-essay-before-turnitin" element={<SeoLandingPage ns="checkBeforeTurnitin" path="/check-essay-before-turnitin" />} />
+            <Route path="/zh/check-essay-before-turnitin" element={<SeoLandingPage ns="checkBeforeTurnitin" path="/check-essay-before-turnitin" />} />
+            <Route path="/turnitin-flagged-my-essay-ai" element={<SeoLandingPage ns="turnitinFlagged" path="/turnitin-flagged-my-essay-ai" />} />
+            <Route path="/zh/turnitin-flagged-my-essay-ai" element={<SeoLandingPage ns="turnitinFlagged" path="/turnitin-flagged-my-essay-ai" />} />
+            <Route path="/draftproof-vs-turnitin" element={<SeoLandingPage ns="draftproofVsTurnitin" path="/draftproof-vs-turnitin" />} />
+            <Route path="/zh/draftproof-vs-turnitin" element={<SeoLandingPage ns="draftproofVsTurnitin" path="/draftproof-vs-turnitin" />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/zh/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />

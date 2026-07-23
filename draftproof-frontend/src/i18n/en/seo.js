@@ -59,4 +59,13 @@ export const seo = {
   "turnitinAlternativesTitle": "Turnitin Alternatives: Which AI Detector Is Most Like Turnitin? | DraftProof",
   "turnitinAlternativesDescription": "Looking for an AI detector like Turnitin? A neutral look at Turnitin, GPTZero, Originality.ai, and Copyleaks — who each is built for, how to choose, and why DraftProof is the pre-submission step to run before any of them, not a replacement.",
   "turnitinAlternativesSocialDescription": "AI detectors like Turnitin, compared neutrally — plus what to run before any of them. DraftProof isn't a replacement.",
+  "checkBeforeTurnitinTitle": "Check Your Essay Before Turnitin | DraftProof",
+  "checkBeforeTurnitinDescription": "Understand the submission-readiness risks your lecturer may see before you submit — AI-pattern risk, authorship clarity, citation grounding, and more. Not a preview of what Turnitin will score.",
+  "checkBeforeTurnitinSocialDescription": "Understand the risks your lecturer may see before you submit — not what Turnitin will score.",
+  "turnitinFlaggedTitle": "Turnitin Flagged My Essay as AI — What to Do | DraftProof",
+  "turnitinFlaggedDescription": "Turnitin flagged your essay as AI-written? Learn why human writing gets flagged, what the percentage actually means, and how to strengthen evidence of your own authorship.",
+  "turnitinFlaggedSocialDescription": "Find out why your writing may be questioned — and how to strengthen evidence of authorship.",
+  "draftproofVsTurnitinTitle": "DraftProof vs Turnitin: What's the Difference? | DraftProof",
+  "draftproofVsTurnitinDescription": "DraftProof and Turnitin work at different stages. Turnitin reviews submitted work; DraftProof helps students understand their work before submission. Independent — not affiliated with Turnitin.",
+  "draftproofVsTurnitinSocialDescription": "Turnitin reviews submitted work. DraftProof helps students understand their work before submission.",
 };

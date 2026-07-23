@@ -31,6 +31,9 @@ import { aiDeclaration } from './zh/aiDeclaration.js';
 import { reduceDetection } from './zh/reduceDetection.js';
 import { turnitinVsDetectors } from './zh/turnitinVsDetectors.js';
 import { turnitinAlternatives } from './zh/turnitinAlternatives.js';
+import { checkBeforeTurnitin } from './zh/checkBeforeTurnitin.js';
+import { turnitinFlagged } from './zh/turnitinFlagged.js';
+import { draftproofVsTurnitin } from './zh/draftproofVsTurnitin.js';
 
 export const zhTranslation = {
   "common": common,
@@ -66,4 +69,7 @@ export const zhTranslation = {
   "reduceDetection": reduceDetection,
   "turnitinVsDetectors": turnitinVsDetectors,
   "turnitinAlternatives": turnitinAlternatives,
+  "checkBeforeTurnitin": checkBeforeTurnitin,
+  "turnitinFlagged": turnitinFlagged,
+  "draftproofVsTurnitin": draftproofVsTurnitin,
 };

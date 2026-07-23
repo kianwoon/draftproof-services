@@ -106,6 +106,11 @@ export const turnitinScore = {
       "label": "Academic integrity & AI",
       "to": "/academic-integrity-ai",
       "body": "Where AI use is fine — and where it isn't."
+    },
+    {
+      "label": "What to do if Turnitin flags your writing as AI",
+      "to": "/turnitin-flagged-my-essay-ai",
+      "body": "Why human writing gets flagged, and how to respond."
     }
   ],
   "ctaTitle": "See what's driving your score.",

@@ -36,6 +36,10 @@ export const HOME_REVIEW_DATE = '2026-07-15';
 export const CRITICAL_THINKING_REVIEW_DATE = '2026-06-17';
 // SEO keyword landing pages (Turnitin score, academic integrity, AI declaration, reduce detection).
 export const SEO_LANDING_REVIEW_DATE = '2026-06-24';
+// Turnitin SEO cluster Phase 1 (check-essay-before-turnitin, turnitin-flagged-my-essay-ai,
+// draftproof-vs-turnitin). Placeholder copy ships noindex; drives sitemap <lastmod> once
+// robots:'noindex' is removed after final copy lands.
+export const TURNITIN_CLUSTER_REVIEW_DATE = '2026-07-23';
 
 export const PAGE_META = {
   '/': {
@@ -133,6 +137,34 @@ export const PAGE_META = {
     canonical: '/turnitin-alternatives',
     schemaType: 'WebPage',
     freshness: { type: 'reviewed', date: '2026-07-10' },
+  },
+  '/check-essay-before-turnitin': {
+    titleKey: 'seo.checkBeforeTurnitinTitle',
+    descriptionKey: 'seo.checkBeforeTurnitinDescription',
+    socialDescriptionKey: 'seo.checkBeforeTurnitinSocialDescription',
+    canonical: '/check-essay-before-turnitin',
+    schemaType: 'WebPage',
+    robots: 'noindex',
+    freshness: { type: 'reviewed', date: TURNITIN_CLUSTER_REVIEW_DATE },
+  },
+  '/turnitin-flagged-my-essay-ai': {
+    titleKey: 'seo.turnitinFlaggedTitle',
+    descriptionKey: 'seo.turnitinFlaggedDescription',
+    socialDescriptionKey: 'seo.turnitinFlaggedSocialDescription',
+    canonical: '/turnitin-flagged-my-essay-ai',
+    schemaType: 'FAQPage',
+    faqKey: 'turnitinFlagged.faq',
+    robots: 'noindex',
+    freshness: { type: 'reviewed', date: TURNITIN_CLUSTER_REVIEW_DATE },
+  },
+  '/draftproof-vs-turnitin': {
+    titleKey: 'seo.draftproofVsTurnitinTitle',
+    descriptionKey: 'seo.draftproofVsTurnitinDescription',
+    socialDescriptionKey: 'seo.draftproofVsTurnitinSocialDescription',
+    canonical: '/draftproof-vs-turnitin',
+    schemaType: 'WebPage',
+    robots: 'noindex',
+    freshness: { type: 'reviewed', date: TURNITIN_CLUSTER_REVIEW_DATE },
   },
   '/pricing': {
     titleKey: 'seo.pricingTitle',
@@ -265,6 +297,31 @@ export function buildSchema(meta, url, translate = defaultTranslate) {
         },
       }),
     ]);
+  }
+
+  if (meta.schemaType === 'FAQPage') {
+    const faq = meta.faqKey ? getResourceValue(meta.faqKey, meta.locale) : null;
+    if (Array.isArray(faq) && faq.length) {
+      return graphSchema([
+        organizationSchema(entityId),
+        websiteSchema(websiteId, entityId, language),
+        withFreshness(meta, {
+          '@type': 'FAQPage',
+          '@id': `${url}#webpage`,
+          name: meta.title,
+          url,
+          inLanguage: language,
+          description: meta.description,
+          publisher: { '@id': entityId },
+          isPartOf: { '@id': websiteId },
+          mainEntity: faq.map((f) => ({
+            '@type': 'Question',
+            name: f.question,
+            acceptedAnswer: { '@type': 'Answer', text: f.answer },
+          })),
+        }),
+      ]);
+    }
   }
 
   const basePageSchema = withFreshness(meta, {

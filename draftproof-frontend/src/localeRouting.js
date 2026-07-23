@@ -1,7 +1,7 @@
 export const DEFAULT_LOCALE = 'en';
 export const SEO_LOCALES = ['en', 'zh'];
 export const LOCALE_PREFIXES = ['zh'];
-export const LOCALIZABLE_PUBLIC_PATHS = ['/', '/why', '/features', '/technology', '/rewrite', '/content-checker', '/turnitin-ai-score', '/academic-integrity-ai', '/ai-declaration', '/reduce-ai-detection', '/turnitin-vs-ai-detectors', '/turnitin-alternatives', '/pricing', '/faq', '/privacy', '/security', '/signin'];
+export const LOCALIZABLE_PUBLIC_PATHS = ['/', '/why', '/features', '/technology', '/rewrite', '/content-checker', '/turnitin-ai-score', '/academic-integrity-ai', '/ai-declaration', '/reduce-ai-detection', '/turnitin-vs-ai-detectors', '/turnitin-alternatives', '/check-essay-before-turnitin', '/turnitin-flagged-my-essay-ai', '/draftproof-vs-turnitin', '/pricing', '/faq', '/privacy', '/security', '/signin'];
 
 export function getLocaleFromPathname(pathname = '/') {
   return String(pathname).split('/')[1] === 'zh' ? 'zh' : DEFAULT_LOCALE;

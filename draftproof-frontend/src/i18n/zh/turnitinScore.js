@@ -106,6 +106,11 @@ export const turnitinScore = {
       "label": "学术诚信与 AI",
       "to": "/academic-integrity-ai",
       "body": "哪些 AI 用法没问题，哪些不行。"
+    },
+    {
+      "label": "Turnitin 把你的论文标记为 AI 该怎么办",
+      "to": "/turnitin-flagged-my-essay-ai",
+      "body": "为什么人类写作会被标记，以及该如何应对。"
     }
   ],
   "ctaTitle": "看清是什么在拉高你的分数。",

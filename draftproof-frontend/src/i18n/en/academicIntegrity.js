@@ -101,6 +101,11 @@ export const academicIntegrity = {
       "label": "How to reduce AI detection (honestly)",
       "to": "/reduce-ai-detection",
       "body": "Why grounding beats gaming."
+    },
+    {
+      "label": "Review authorship and AI-use risks before submission",
+      "to": "/check-essay-before-turnitin",
+      "body": "The eight things worth checking before you submit."
     }
   ],
   "ctaTitle": "Own your writing with confidence.",
