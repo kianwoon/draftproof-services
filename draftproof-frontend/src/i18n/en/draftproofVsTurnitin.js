@@ -2,7 +2,7 @@
 export const draftproofVsTurnitin = {
   "eyebrow": "DraftProof vs Turnitin",
   "title": "DraftProof vs Turnitin: two different stages, not competing scores",
-  "lead": "[DRAFT — replace] Turnitin reviews submitted work. DraftProof helps students understand their work before submission. DraftProof is independent from Turnitin — not affiliated with it, and not a tool that reproduces or predicts its score.",
+  "lead": "Turnitin reviews work after it's submitted. DraftProof helps you understand your work before you submit. DraftProof is independent from Turnitin — not affiliated with it, and not a tool that reproduces or predicts its score.",
   "ctaPrimaryLabel": "Check your draft",
   "ctaSecondaryLabel": "See the content checker",
   "heroStat": {
@@ -13,11 +13,11 @@ export const draftproofVsTurnitin = {
   "intro": [
     {
       "title": "Different stage, different job",
-      "body": "[DRAFT — replace] Turnitin operates at the point of submission, as part of an institution's review process. DraftProof operates before that — a student-facing check you run on your own draft, independent of any institution account."
+      "body": "Turnitin runs at the point of submission, inside your institution's review process. DraftProof runs before that — a student-facing check on your own draft that you control, with no institution account involved."
     },
     {
       "title": "Independent, not affiliated",
-      "body": "[DRAFT — replace] DraftProof has no affiliation with Turnitin and does not claim to reproduce or predict a Turnitin score. It is a separate, pre-submission review of your own writing."
+      "body": "DraftProof has no affiliation with Turnitin and makes no claim to reproduce or predict a Turnitin score. It is a separate, pre-submission review of your own writing — the two are complementary, not the same tool measured twice."
     }
   ],
   "sections": [
@@ -30,43 +30,43 @@ export const draftproofVsTurnitin = {
         {
           "label": "Stage",
           "values": [
-            "[DRAFT — replace] After submission, as part of institutional review",
-            "[DRAFT — replace] Before submission, on your own draft"
+            "After submission, as part of institutional review",
+            "Before submission, on your own draft"
           ]
         },
         {
           "label": "Who runs it",
           "values": [
-            "[DRAFT — replace] Instructors and institutions",
-            "[DRAFT — replace] Students, on their own initiative"
+            "Instructors and institutions",
+            "Students, on their own initiative"
           ]
         },
         {
           "label": "Access",
           "values": [
-            "[DRAFT — replace] Requires an institution account",
-            "[DRAFT — replace] No institution account needed"
+            "Requires an institution account",
+            "No institution account needed"
           ]
         },
         {
           "label": "Category",
           "values": [
-            "[DRAFT — replace] Plagiarism and AI-writing detector",
-            "[DRAFT — replace] Student authorship & submission readiness"
+            "Plagiarism and AI-writing detector",
+            "Student authorship & submission readiness"
           ]
         },
         {
           "label": "What you get",
           "values": [
-            "[DRAFT — replace] A similarity and AI percentage",
-            "[DRAFT — replace] Paragraph-level findings and coaching to fix them"
+            "A similarity and AI percentage",
+            "Paragraph-level findings and coaching to fix them"
           ]
         },
         {
           "label": "Goal",
           "values": [
-            "[DRAFT — replace] Flag work that needs human review",
-            "[DRAFT — replace] Help you strengthen your work before anyone reviews it"
+            "Flag work that needs human review",
+            "Help you strengthen your work before anyone reviews it"
           ]
         }
       ]
@@ -97,5 +97,5 @@ export const draftproofVsTurnitin = {
     }
   ],
   "ctaTitle": "Review your work before Turnitin ever sees it.",
-  "ctaBody": "[DRAFT — replace] DraftProof is the pre-submission step — independent from Turnitin — that helps you understand and strengthen your writing beforehand."
+  "ctaBody": "DraftProof is the pre-submission step — independent from Turnitin — that helps you understand and strengthen your writing while you can still change it."
 };

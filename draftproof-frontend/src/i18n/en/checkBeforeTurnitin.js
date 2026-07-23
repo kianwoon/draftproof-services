@@ -2,7 +2,7 @@
 export const checkBeforeTurnitin = {
   "eyebrow": "Before you submit",
   "title": "Check your essay before Turnitin does",
-  "lead": "[DRAFT — replace] Understand the risks your lecturer may see before you submit — not what Turnitin will score. DraftProof reviews your draft across the areas markers actually look at, so you can strengthen the work itself.",
+  "lead": "See the writing risks a marker might notice — while you can still fix them. DraftProof reviews your draft across the areas markers actually care about, so you strengthen the writing itself instead of guessing at a score.",
   "ctaPrimaryLabel": "Check your draft",
   "ctaSecondaryLabel": "See the content checker",
   "heroStat": {
@@ -13,11 +13,11 @@ export const checkBeforeTurnitin = {
   "intro": [
     {
       "title": "What this page covers",
-      "body": "[DRAFT — replace] A pre-submission walkthrough of the eight areas of submission readiness DraftProof reviews — AI-pattern risk, authorship clarity, AI-paraphrasing, consistency, citation and grounding, argument strength, policy and declaration, and defence readiness."
+      "body": "A pre-submission walkthrough of the eight areas of submission readiness DraftProof reviews: AI-pattern risk, authorship clarity, AI-paraphrasing, writing consistency, citation and grounding, argument strength, policy and declaration, and defence readiness."
     },
     {
       "title": "Why check before you submit",
-      "body": "[DRAFT — replace] Once submitted, you can't fix a thin paragraph or a missing citation. Checking beforehand means you find and strengthen the weak spots while you still control the outcome."
+      "body": "Once your essay is in, you can't go back and rescue a thin paragraph or add the citation you forgot. Reviewing your draft beforehand means you find the weak spots while the outcome is still in your hands."
     }
   ],
   "sections": [
@@ -28,35 +28,35 @@ export const checkBeforeTurnitin = {
       "items": [
         {
           "title": "AI-pattern risk",
-          "body": "[DRAFT — replace] Does the phrasing read as statistically predictable or over-smoothed in ways that could draw scrutiny?"
+          "body": "Some phrasing reads as statistically predictable or over-smoothed — the kind of patterns detectors react to. DraftProof shows you where your draft looks that way, so you can make it read like you."
         },
         {
           "title": "Authorship clarity",
-          "body": "[DRAFT — replace] Is it clear the reasoning and voice are yours, paragraph by paragraph?"
+          "body": "Markers look for your reasoning and your voice. DraftProof flags paragraphs where the thinking feels generic or borrowed, so it's clear the work is yours."
         },
         {
           "title": "AI-paraphrasing",
-          "body": "[DRAFT — replace] Has content been run through a paraphraser in a way that keeps the same generic claims but changes the wording?"
+          "body": "Running text through a paraphraser keeps the same generic claims and just changes the words. That still reads as AI-shaped — and DraftProof points out where it shows."
         },
         {
-          "title": "Consistency",
-          "body": "[DRAFT — replace] Does the register, vocabulary, and argument style stay consistent across the whole draft?"
+          "title": "Writing consistency",
+          "body": "Sudden shifts in register, vocabulary, or argument style stand out to a reader. DraftProof checks that your draft holds one consistent voice from start to finish."
         },
         {
           "title": "Citation and grounding",
-          "body": "[DRAFT — replace] Are claims backed by real sources and specifics, or left generic and unanchored?"
+          "body": "Unanchored claims — true but backed by nothing — are one of the biggest risk signals. DraftProof finds the claims that need a real source or a concrete specific."
         },
         {
-          "title": "Argument weakness",
-          "body": "[DRAFT — replace] Does each section make a real, defensible point, or just restate the question?"
+          "title": "Argument strength",
+          "body": "A paragraph that only restates the question adds no credit. DraftProof surfaces sections that need a sharper, more defensible point."
         },
         {
           "title": "Policy and declaration",
-          "body": "[DRAFT — replace] Have you disclosed any AI assistance in line with your institution's policy?"
+          "body": "Most institutions now expect you to disclose AI assistance. DraftProof helps you see where a declaration may be needed so you can meet your policy."
         },
         {
           "title": "Defence readiness",
-          "body": "[DRAFT — replace] Could you explain and defend every claim in this draft if a marker asked you to?"
+          "body": "If a marker asked, could you explain and defend every claim? DraftProof highlights the passages you'd struggle to stand behind — before anyone asks."
         }
       ]
     }
@@ -86,5 +86,5 @@ export const checkBeforeTurnitin = {
     }
   ],
   "ctaTitle": "Review your draft before you submit.",
-  "ctaBody": "[DRAFT — replace] DraftProof walks through your draft's submission readiness so you know what to strengthen before it ever reaches Turnitin."
+  "ctaBody": "DraftProof walks through your draft's submission readiness — paragraph by paragraph — so you know exactly what to strengthen before it ever reaches Turnitin."
 };
