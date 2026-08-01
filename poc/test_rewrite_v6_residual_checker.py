@@ -150,8 +150,11 @@ def test_residual_skips_when_fresh_scan_changes_paragraph_count(monkeypatch):
     monkeypatch.setattr(direct_rewrite, "scan_text_preserve_blocks", _fake_scan(paras))
     out = direct_rewrite._apply_residual_fix(_doc(rewritten), gateway=None, cancellation_check=None)
     assert out.rewritten_text == rewritten
-    entry = out.pass_trace[-1]
-    assert entry["selected_source"] == "residual_checker"
+    # The shape-mismatch guard trace is always the FIRST appended row; it may be followed by
+    # unconditional added-paragraph cards (rewrite_targeting.shape_mismatch_added_paragraph_traces,
+    # job 5bacaeb3 incident fix) for any new paragraph with no reasonable original counterpart --
+    # so locate it by its own selected_source rather than assuming it's the last trace row.
+    entry = next(row for row in out.pass_trace if row.get("selected_source") == "residual_checker")
     assert entry["status"] == "skipped_shape_mismatch"
     assert entry["expected_paragraphs"] == 2
     assert entry["actual_paragraphs"] == 3

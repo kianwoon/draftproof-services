@@ -80,158 +80,19 @@ def residual_fix_enabled() -> bool:
     return os.environ.get("DRAFTPROOF_V6_RESIDUAL_FIX", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
-# Grounding-aware residual trigger. scan_text (pass 2's re-scan) surfaces only STRUCTURAL tells and
-# gives a pure-generic paragraph 0 findings (verified) -- so a generic leftover (e.g. a pass-1
-# source_preserved paragraph) would sail through unfixed. Pass 2 therefore also consults the grounding
-# signals directly. Thresholds from measured data: generic => lived_gap ~0.80 / generic_assertion
-# ~0.90 (flag); grounded => lived_gap ~0.20 / generic_assertion ~0.65 (do NOT flag). Env-tunable.
-_RESIDUAL_LIVED_GAP_DEFAULT = 0.60
-_RESIDUAL_GENERIC_ASSERTION_DEFAULT = 0.80
-
-
-def _residual_grounding_thresholds() -> tuple[float, float]:
-    def _f(name: str, default: float) -> float:
-        raw = os.environ.get(name, "").strip()
-        try:
-            value = float(raw)
-            if 0.0 <= value <= 1.0:
-                return value
-        except (TypeError, ValueError):
-            pass
-        return default
-    return (_f("DRAFTPROOF_V6_RESIDUAL_LIVED_GAP", _RESIDUAL_LIVED_GAP_DEFAULT),
-            _f("DRAFTPROOF_V6_RESIDUAL_GENERIC_ASSERTION", _RESIDUAL_GENERIC_ASSERTION_DEFAULT))
-
-
-class _GroundingFinding:
-    """Synthesized finding for a grounding-only residual (no structural tag from scan_text). Carries
-    grounding tags so the writer prompt targets concrete anchors (same shape the writer expects: a
-    `.tags` iterable)."""
-    tags = ("low_specificity", "source_grounding")
-    paragraph_id = ""
-
-
-def _grounding_gap(text: str) -> bool:
-    """True if the paragraph still reads as generic/ungrounded -- the blind spot scan_text misses."""
-    try:
-        from poc.detect.layer3_scoring import estimate_generic_assertion_risk, estimate_lived_detail_risk
-    except ImportError:
-        from detect.layer3_scoring import estimate_generic_assertion_risk, estimate_lived_detail_risk
-    lived_gap_th, generic_assertion_th = _residual_grounding_thresholds()
-    return (estimate_lived_detail_risk(text, None) >= lived_gap_th
-            or estimate_generic_assertion_risk(text) >= generic_assertion_th)
-
-
-def _residual_findings(residual_scan, paragraph) -> list:
-    """Findings that should trigger a pass-2 re-fix: scan_text's STRUCTURAL findings, or -- when the
-    paragraph is structurally clean but still GENERIC -- a synthesized grounding finding."""
-    structural = findings_for_paragraph(residual_scan, paragraph.id)
-    if structural:
-        return structural
-    if _grounding_gap(paragraph.text):
-        return [_GroundingFinding()]
-    return []
-
-
-def _apply_residual_fix(
-    doc,
-    gateway,
-    *,
-    cancellation_check: Callable[[], None] | None,
-    authorship_evidence: Any = None,
-    lane: str = "control",
-):
-    """Rewrite pass 2: a paragraph-level check on the rewriter's own output.
-
-    Re-scan the REWRITTEN draft (never the original) and re-run the writer on any paragraph the
-    FRESH re-scan flags -- catching both residuals pass 1 missed and problems pass 1 introduced.
-    Unflagged paragraphs keep their pass-1 text, so pass-1 gains are preserved (the load-bearing
-    invariant). Flagging drives off the fresh re-scan: scan_text's STRUCTURAL findings plus a
-    grounding-signal check (`_residual_findings`), because scan_text is blind to grounding gaps. We
-    pass diagnosis=None to `_clean_candidate` because `paragraph_diagnosis()` is a positional-id
-    ContextVar still holding the ORIGINAL diagnosis (stale-leak guard, R1). On disable/any failure
-    the document is returned unchanged."""
-    from .pipeline import DocumentResult
-
-    if not residual_fix_enabled():
-        return doc
-    try:
-        residual_scan = scan_text_preserve_blocks(doc.rewritten_text)
-    except Exception:
-        return doc
-    expected_paragraphs = len(getattr(doc.initial_scan, "paragraphs", []) or [])
-    actual_paragraphs = len(getattr(residual_scan, "paragraphs", []) or [])
-    if expected_paragraphs and actual_paragraphs != expected_paragraphs:
-        from dataclasses import replace
-        trace = list(doc.pass_trace) + [{
-            "selected_source": "residual_checker",
-            "status": "skipped_shape_mismatch",
-            "expected_paragraphs": expected_paragraphs,
-            "actual_paragraphs": actual_paragraphs,
-        }]
-        return replace(doc, pass_trace=trace)
-
-    paragraphs = list(residual_scan.paragraphs)
-    rewritten: list[str] = []
-    trace = list(doc.pass_trace)
-    refixed = 0
-    flagged = 0
-    for index, paragraph in enumerate(paragraphs):
-        if cancellation_check:
-            cancellation_check()
-        findings = _residual_findings(residual_scan, paragraph)
-        if not findings:
-            rewritten.append(paragraph.text)   # keep PASS-1 text (we scanned the rewritten draft)
-            continue
-        flagged += 1
-        try:
-            targets = (
-                paragraph_authorship_targets(authorship_evidence, paragraph.text)
-                if (authorship_evidence and authorship_boost_enabled())
-                else {}
-            )
-            # diagnosis=None on purpose: fresh findings only, never stale original paragraph_diagnosis.
-            candidate, review_items = _clean_candidate(
-                gateway, paragraph, None, findings, authorship_targets=targets, lane=lane
-            )
-        except Exception:
-            # A writer failure on one paragraph must degrade to its pass-1 text, never discard the
-            # whole pass-1 result. (cancellation_check above stays outside this guard so a real
-            # cancellation still propagates.)
-            candidate, review_items = None, []
-        if candidate is None:
-            rewritten.append(paragraph.text)   # no clean residual fix -> keep pass-1 paragraph
-        else:
-            rewritten.append(candidate)
-            refixed += 1
-            trace.append(_trace(index, paragraph.id, "residual_fix", None,
-                                review_items + _review_flags(candidate, paragraph)))
-
-    if refixed == 0:
-        trace.append({"selected_source": "residual_checker", "status": "checked",
-                      "flagged_paragraphs": flagged, "refixed": 0})
-        return DocumentResult(
-            initial_scan=doc.initial_scan,
-            final_scan=doc.final_scan,
-            passes=doc.passes,
-            rewritten_text=doc.rewritten_text,
-            pass_trace=trace,
-            final_text_before_quality_repair=doc.final_text_before_quality_repair,
-            quality_repair=doc.quality_repair,
-            naturalisation_repair=doc.naturalisation_repair,
-        )
-
-    fixed_text = "\n\n".join(rewritten)
-    return DocumentResult(
-        initial_scan=doc.initial_scan,
-        final_scan=scan_text_preserve_blocks(fixed_text),
-        passes=doc.passes,
-        rewritten_text=fixed_text,
-        pass_trace=trace,
-        final_text_before_quality_repair=doc.final_text_before_quality_repair,
-        quality_repair=doc.quality_repair,
-        naturalisation_repair=doc.naturalisation_repair,
-    )
+# Rewrite pass 2 (paragraph-level residual checker) lives in residual_fix.py -- moved out to keep
+# this module under the repo's 1500-LOC cap. Re-exported here so `direct_rewrite.X` monkeypatches
+# are visible (see residual_fix.py's `_resolve_shared`, which is the other half of this contract:
+# it compares `direct_rewrite.X` against the ORIGINAL object identity captured below, and falls
+# back to `residual_fix`'s own current global whenever `direct_rewrite.X` hasn't been repointed --
+# so a monkeypatch on EITHER module's attribute takes effect, without the "static re-export looks
+# unpatched forever" trap a naive PEP-562 `__getattr__` forward has (monkeypatch's teardown restores
+# the ORIGINAL object into the target module's `__dict__`, which permanently materializes the
+# attribute there and defeats a lazy `__getattr__` fallback on every later test).
+from .residual_fix import (  # noqa: E402
+    _apply_residual_fix, _grounding_gap, _residual_findings, _GroundingFinding,
+    _residual_grounding_thresholds,
+)
 
 
 # System prompts live in direct_prompts.py (extracted to keep this file under the 1500-LOC limit).
@@ -772,6 +633,7 @@ def run_direct_rewrite_all(
     progress_callback: Callable[[int, str], None] | None = None,
     cancellation_check: Callable[[], None] | None = None,
     authorship_evidence: Any = None,
+    rewrite_targeting: Any = None,
     **_ignored: Any,
 ):
     scan = source_scan or scan_text(text)
@@ -805,6 +667,7 @@ def run_direct_rewrite_all(
                 cancellation_check,
                 authorship_evidence=authorship_evidence,
                 lane=lane,
+                rewrite_targeting=rewrite_targeting,
             )
             processed = _apply_direct_score_stages(
                 doc,
@@ -814,6 +677,7 @@ def run_direct_rewrite_all(
                 cancellation_check=cancellation_check,
                 authorship_evidence=authorship_evidence,
                 lane=lane,
+                rewrite_targeting=rewrite_targeting,
             )
             score = _document_ai_risk(processed.rewritten_text)
             # Backstop: a candidate that adds first-person experience absent from the source has its
@@ -858,12 +722,14 @@ def _apply_direct_score_stages(
     cancellation_check: Callable[[], None] | None,
     authorship_evidence: Any,
     lane: str,
+    rewrite_targeting: Any = None,
 ):
     fixed = _apply_residual_fix(
         doc, gateway,
         cancellation_check=cancellation_check,
         authorship_evidence=authorship_evidence,
         lane=lane,
+        rewrite_targeting=rewrite_targeting,
     )
     reviewed = _apply_reviewer(fixed, gateway, cancellation_check=cancellation_check)
     repaired = _apply_grammar_repair(
@@ -1176,12 +1042,13 @@ def _rewrite_document_once(
     cancellation_check: Callable[[], None] | None,
     authorship_evidence: Any = None,
     lane: str = "control",
+    rewrite_targeting: Any = None,
 ):
     from .pipeline import DocumentResult  # local import: pipeline must not depend on this module
 
     with _writer_error_recording():
         return _rewrite_document_once_inner(
-            scan, gateway, progress_callback, cancellation_check, authorship_evidence, lane
+            scan, gateway, progress_callback, cancellation_check, authorship_evidence, lane, rewrite_targeting
         )
 
 
@@ -1192,6 +1059,7 @@ def _rewrite_document_once_inner(
     cancellation_check: Callable[[], None] | None,
     authorship_evidence: Any = None,
     lane: str = "control",
+    rewrite_targeting: Any = None,
 ):
     from .pipeline import DocumentResult  # local import: pipeline must not depend on this module
 
@@ -1207,7 +1075,8 @@ def _rewrite_document_once_inner(
     concurrency = _writer_concurrency()
     if concurrency > 1 and flagged_total > 1:
         rewritten, pass_trace = _rewrite_paragraphs_parallel(
-            scan, gateway, paragraphs, flagged_total, concurrency, progress_callback, cancellation_check, authorship_evidence, lane)
+            scan, gateway, paragraphs, flagged_total, concurrency, progress_callback, cancellation_check,
+            authorship_evidence, lane, rewrite_targeting)
     else:
         # concurrency == 1 (or <=1 flagged): the original strictly-sequential path, byte-identical.
         done = 0
@@ -1218,6 +1087,10 @@ def _rewrite_document_once_inner(
             diagnosis = paragraph_diagnosis(paragraph.id)
             if not findings and not diagnosis:
                 rewritten.append(paragraph.text)
+                continue
+            if rewrite_targeting is not None and rewrite_targeting.should_skip(paragraph.id):
+                rewritten.append(paragraph.text)
+                pass_trace.append(rewrite_targeting.skipped_trace(index, paragraph.id))
                 continue
             if progress_callback:
                 progress_callback(
@@ -1317,6 +1190,7 @@ def _rewrite_paragraphs_parallel(
     cancellation_check: Callable[[], None] | None,
     authorship_evidence: Any,
     lane: str,
+    rewrite_targeting: Any = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """Parallel per-paragraph loop; results keyed by index so order matches the sequential path.
 
@@ -1332,6 +1206,9 @@ def _rewrite_paragraphs_parallel(
         diagnosis = paragraph_diagnosis(paragraph.id)
         if not findings and not diagnosis:
             results[index] = (paragraph.text, {})
+            continue
+        if rewrite_targeting is not None and rewrite_targeting.should_skip(paragraph.id):
+            results[index] = (paragraph.text, rewrite_targeting.skipped_trace(index, paragraph.id))
             continue
         targets = paragraph_authorship_targets(authorship_evidence, paragraph.text) if boost_on else {}
         jobs.append((index, paragraph, diagnosis, findings, targets))

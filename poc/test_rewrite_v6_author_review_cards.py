@@ -90,6 +90,36 @@ def test_cards_deduped_and_capped_at_twelve():
     assert instructions.count("same flag") == 1  # deduped across rows
 
 
+def test_skipped_not_target_card_never_evicts_fabrication_card_at_cap():
+    """15 early out-of-scope paragraphs (skipped_not_target) followed by a real fabrication/
+    regression review flag must not push the fabrication card past the cap -- skipped_not_target
+    cards are always ordered AFTER every other provenance, so they get truncated first."""
+    skipped_rows = [
+        {
+            "target_paragraph_id": f"p{n:03d}",
+            "author_review_items": [{
+                "added": "no change (outside this rewrite's scope)",
+                "why": f"reason {n} -- DraftProof did not touch it.",
+                "provenance": "skipped_not_target",
+            }],
+        }
+        for n in range(15)
+    ]
+    fabrication_row = {
+        "target_paragraph_id": "p900",
+        "author_review_items": [{
+            "added": "invented names or places",
+            "why": "Replace them with your own real examples or remove them before submitting.",
+        }],
+    }
+    cards = _author_review_cards_from_pass_trace(skipped_rows + [fabrication_row])
+    assert len(cards) == 12  # cap
+    provenances = [c["provenance"] for c in cards]
+    assert "illustrative_content" in provenances  # the fabrication card survived the cap
+    fabrication_card = next(c for c in cards if c["provenance"] == "illustrative_content")
+    assert fabrication_card["instruction"] == "invented names or places"
+
+
 def test_pdf_renderer_emits_composed_cards():
     summary = {"author_review_cards": _author_review_cards_from_pass_trace(_pass_trace_with_items())}
     lines = _author_review_card_section(summary)
@@ -103,4 +133,28 @@ def test_pdf_renderer_emits_composed_cards():
 
 def test_pdf_renderer_empty_without_cards():
     assert _author_review_card_section({}) == []
+
+
+def test_pdf_renderer_honours_non_default_cap(monkeypatch):
+    """Fable review must-fix: render_rewrite._author_review_card_section used to hardcode
+    cards[:12], so raising DRAFTPROOF_V6_AUTHOR_REVIEW_CARD_CAP had no effect on the PDF. It now
+    delegates to the same rewrite_v6.card_cap.author_review_card_cap() the producer uses, so both
+    a raised and a lowered cap must be reflected in the rendered section."""
+    cards = [
+        {"card_id": f"card-{n}", "instruction": f"item {n}", "provenance": "illustrative_content"}
+        for n in range(20)
+    ]
+    summary = {"author_review_cards": cards}
+
+    monkeypatch.setenv("DRAFTPROOF_V6_AUTHOR_REVIEW_CARD_CAP", "18")
+    lines = _author_review_card_section(summary)
+    body = "\n".join(lines)
+    assert "item 17" in body  # 18th card (index 17) now included, beyond the old hardcoded 12
+    assert "item 18" not in body  # still truncated at the raised cap
+
+    monkeypatch.setenv("DRAFTPROOF_V6_AUTHOR_REVIEW_CARD_CAP", "3")
+    lines = _author_review_card_section(summary)
+    body = "\n".join(lines)
+    assert "item 2" in body
+    assert "item 3" not in body  # truncated well below the old hardcoded 12
     assert _author_review_card_section({"author_review_cards": []}) == []

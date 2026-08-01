@@ -615,7 +615,10 @@ export default function Rewrite() {
               {t('rewritePage.authorReviewCardsCopy')}
             </p>
             <div className="rewrite-suggestion-grid">
-              {authorReviewCards.slice(0, 12).map((item, i) => (
+              {/* authorReviewCards is already truncated server-side to the env-tunable
+                  DRAFTPROOF_V6_AUTHOR_REVIEW_CARD_CAP (poc/rewrite_v6/card_cap.py); re-slicing
+                  to a hardcoded 12 here would silently defeat a raised cap for the web view. */}
+              {authorReviewCards.map((item, i) => (
                 <article className="rewrite-suggestion-card" key={`${item.card_id || item.kind || 'author-review'}-${i}`}>
                   <div className="rewrite-suggestion-meta">
                     <span>{item.provenance ? String(item.provenance).replaceAll('_', ' ') : t('rewritePage.authorProxyDraft')}</span>

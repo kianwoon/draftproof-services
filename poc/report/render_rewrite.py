@@ -29,6 +29,21 @@ def _verdict_reframe_module():
     return _vr
 
 
+def _author_review_card_cap() -> int:
+    """Same lazy-import trick as `_verdict_reframe_module` above (and for the same reason:
+    `rewrite_v6/__init__.py` imports `production`, which imports THIS module — importing
+    ``rewrite_v6.card_cap`` at module scope here would re-trigger that cycle even though
+    `card_cap.py` itself has no heavy deps, because Python must run `rewrite_v6/__init__.py`
+    first). Delegates to the single cap definition in `rewrite_v6/card_cap.py` so this
+    renderer and `production.py`'s `_author_review_cards_from_pass_trace` truncate to the
+    same, env-tunable (`DRAFTPROOF_V6_AUTHOR_REVIEW_CARD_CAP`) value."""
+    try:
+        from rewrite_v6.card_cap import author_review_card_cap as _cap  # worker sys.path
+    except ImportError:
+        from poc.rewrite_v6.card_cap import author_review_card_cap as _cap
+    return _cap()
+
+
 _TIER_ORDER = ["critical", "high", "medium", "low"]
 # allow-hardcode: presentation level labels for the two policy scores (machine level
 # -> display), not a scoring/matching oracle. Mirrors render.py / the web report.
@@ -703,7 +718,7 @@ def _author_review_card_section(summary: dict) -> List[str]:
         "These candidate-specific items should be verified, replaced, or removed by the author before submission.",
         "",
     ]
-    for index, card in enumerate(cards[:12], start=1):
+    for index, card in enumerate(cards[:_author_review_card_cap()], start=1):
         if not isinstance(card, dict):
             continue
         title = str(card.get("instruction") or card.get("target_text") or card.get("kind") or f"Review item {index}").strip()

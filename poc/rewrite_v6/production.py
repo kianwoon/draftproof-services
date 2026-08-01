@@ -34,6 +34,7 @@ except ModuleNotFoundError:
 from .pipeline import _planner_model, _writer_model, run_v6_rewrite_all
 from .direct_rewrite import direct_rewrite_enabled, run_direct_rewrite_all
 from .register_coaching import build_register_coaching, register_coaching_enabled
+from .card_cap import author_review_card_cap as _author_review_card_cap
 from .llm_config import (
     resolve_v6_api_key,
     resolve_v6_base_url,
@@ -114,6 +115,8 @@ def run_rewrite_pipeline_v6(
     # fix. The lean direct path (flag) uses it straight; the legacy planner path translates it.
     with paragraph_diagnoses_context(extract_paragraph_diagnoses(effective_detect_json)):
         if direct_rewrite_enabled():
+            from .rewrite_targeting import resolve_rewrite_targeting
+
             document = run_direct_rewrite_all(
                 original_text,
                 source_scan=source_scan,
@@ -123,6 +126,7 @@ def run_rewrite_pipeline_v6(
                 progress_callback=progress,
                 cancellation_check=raise_if_canceled,
                 authorship_evidence=authorship_evidence,
+                rewrite_targeting=resolve_rewrite_targeting(detect_json),
             )
         else:
             document = run_v6_rewrite_all(
@@ -332,6 +336,47 @@ def run_rewrite_pipeline_v6(
         lambda: _sentence_comparison(original_text, final_text),
     )
     detect_scores = _detect_scores_for_summary(original_scan_report, rewritten_scan_report)
+    # INTERNAL no-regression guard: our OWN detector says the shipped rewrite is materially MORE
+    # AI-like than what the user submitted (incident 5bacaeb3: 13.38 -> 66.05 on a GREEN document,
+    # shipped silently). Default is ADVISORY (CLAUDE.md: guards ANNOTATE, never SUPPRESS) -- keep the
+    # rewrite as the shown solution but tell the user loudly. DRAFTPROOF_V6_REGRESSION_GUARD_ADVISORY=0
+    # restores a hard revert to the original text.
+    regression_guard = _internal_regression_guard(detect_scores)
+    if regression_guard.get("triggered") and not _regression_guard_advisory():
+        final_text = original_text
+        document = _replace_document(
+            document,
+            rewritten_text=final_text,
+            final_scan=document.initial_scan,
+            pass_trace=list(document.pass_trace) + [{
+                "selected_source": "internal_regression_guard",
+                "status": "rejected",
+                "reason": regression_guard.get("reason"),
+                "original_ai": regression_guard.get("original_ai"),
+                "rewritten_ai": regression_guard.get("rewritten_ai"),
+            }],
+        )
+        rewritten_scan_report = original_scan_report
+        detect_scores = _detect_scores_for_summary(original_scan_report, rewritten_scan_report)
+        sentence_comparison = _sentence_comparison(original_text, final_text)
+        status = "original_preserved_regression_guard"
+        regression_guard = {**regression_guard, "advisory": False, "reverted": True}
+        # The ORIGINAL document shipped -- changed/cleared were computed before the revert and would
+        # otherwise still claim a strict-safe rewrite happened. Force them truthful.
+        changed = False
+        cleared = False
+    elif regression_guard.get("triggered"):
+        regression_guard = {**regression_guard, "advisory": True, "reverted": False}
+        document = _replace_document(
+            document,
+            pass_trace=list(document.pass_trace) + [{
+                "selected_source": "internal_regression_guard",
+                "status": "advisory",
+                "reason": regression_guard.get("reason"),
+                "original_ai": regression_guard.get("original_ai"),
+                "rewritten_ai": regression_guard.get("rewritten_ai"),
+            }],
+        )
     summary = {
         "rewrite_pipeline_version": "rewrite_v6_scanner_planner_writer",
         "rewrite_engine_mode": "v6_production",
@@ -436,7 +481,13 @@ def run_rewrite_pipeline_v6(
     summary["writer_degraded_paragraphs"] = degraded_count
     summary["writer_degraded_total"] = degraded_total
 
+    if regression_guard.get("status") != "disabled":
+        summary["internal_regression_guard"] = regression_guard
+
     author_review_cards = _author_review_cards_from_pass_trace(document.pass_trace)
+    if regression_guard.get("triggered"):
+        # First card the user sees: our own detector scored the rewrite HIGHER than their original.
+        author_review_cards = [_internal_regression_card(regression_guard)] + author_review_cards
     if degraded_count > 0:
         # Prepend so the service-degradation notice is the first card the user sees. Exact counts only.
         author_review_cards = [_writer_degraded_card(degraded_count, degraded_total)] + author_review_cards
@@ -647,10 +698,26 @@ def _author_review_cards_from_pass_trace(pass_trace: Any) -> list[dict[str, Any]
       - ``target_text``       both guarded/optional -> omitted (no candidate-detail text available)
       - ``user_input_needed`` both guarded/optional -> omitted
       - ``author_task``       PDF "Author task" line (721-722); web note block (~587)
-    Both renderers cap at 12; we cap here to match.
+    Both renderers cap at the shared `rewrite_v6.card_cap.author_review_card_cap()` (this module
+    truncates here on the way in; `poc/report/render_rewrite.py`'s `_author_review_card_section`
+    truncates again on the way out via the same function, lazily imported to dodge the
+    rewrite_v6/report circular-import trap) -- they now agree because both call the one function.
+
+    Provenance is per-item, not a blanket label: `rewrite_targeting.py`'s `skipped_not_target_review_card`
+    and `added_paragraph_review_card` each stamp their own truthful `provenance` ("skipped_not_target" /
+    "added_paragraph") because a "no change -- outside rewrite scope" card is not "illustrative_content".
+    Only items with no provenance of their own (the plain `_review_flags` fabrication/regression/
+    grounding items direct_rewrite.py emits) fall back to "illustrative_content", which is what those
+    actually are -- content DraftProof added/changed for the author to verify.
+
+    Ordering is priority-aware, not pure paragraph order: `skipped_not_target` cards (nothing changed,
+    lowest urgency) are collected separately and appended AFTER every other card, so a document with
+    many early out-of-scope paragraphs can never crowd a real fabrication/regression card past the cap.
     """
-    cards: list[dict[str, Any]] = []
+    priority_cards: list[dict[str, Any]] = []
+    skipped_cards: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    cap = _author_review_card_cap()
     for row in pass_trace or []:
         if not isinstance(row, dict):
             continue
@@ -671,19 +738,19 @@ def _author_review_cards_from_pass_trace(pass_trace: Any) -> list[dict[str, Any]
             if key in seen:
                 continue
             seen.add(key)
+            provenance = str(item.get("provenance") or "").strip() or "illustrative_content"
+            bucket = skipped_cards if provenance == "skipped_not_target" else priority_cards
             card: dict[str, Any] = {
-                "card_id": f"{pid or 'para'}-{len(cards) + 1:02d}",
+                "card_id": f"{pid or 'para'}-{len(priority_cards) + len(skipped_cards) + 1:02d}",
                 "kind": "direct_review_flag",
-                "provenance": "illustrative_content",
+                "provenance": provenance,
                 "where": where,
                 "instruction": instruction,
             }
             if why:
                 card["author_task"] = why
-            cards.append(card)
-            if len(cards) >= 12:
-                return cards
-    return cards
+            bucket.append(card)
+    return (priority_cards + skipped_cards)[:cap]
 
 
 def _enrich_badge_diagnoses(scan_report: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -899,6 +966,91 @@ def _external_guard_decision(original_scan: dict | None, candidate_scan: dict | 
             "reason": "candidate_external_score_regressed",
         })
     return decision
+
+
+def _internal_regression_guard(detect_scores: dict[str, Any] | None) -> dict[str, Any]:
+    """Detect an INTERNAL AI-score regression: our own detector scores the shipped rewrite materially
+    higher on AI-likelihood than the user's original. Returns a detail dict; ``triggered`` is True only
+    when both the delta margin AND the absolute floor are met. Missing/None scores -> skip silently."""
+    if not _regression_guard_enabled():
+        return {"triggered": False, "status": "disabled"}
+    scores = detect_scores if isinstance(detect_scores, dict) else {}
+    original_ai = _optional_float(scores.get("original_ai"))
+    rewritten_ai = _optional_float(scores.get("rewritten_ai"))
+    margin = _regression_guard_margin()
+    floor = _regression_guard_floor()
+    decision: dict[str, Any] = {
+        "triggered": False,
+        "status": "checked",
+        "original_ai": original_ai,
+        "rewritten_ai": rewritten_ai,
+        "margin": margin,
+        "floor": floor,
+    }
+    if original_ai is None or rewritten_ai is None:
+        decision["status"] = "scores_unavailable"
+        return decision
+    delta = round(rewritten_ai - original_ai, 3)
+    decision["delta"] = delta
+    if delta >= margin and rewritten_ai >= floor:
+        decision.update({"triggered": True, "reason": "rewritten_ai_regressed_vs_original"})
+    return decision
+
+
+def _internal_regression_card(guard: dict[str, Any]) -> dict[str, Any]:
+    """User-facing card. States only the two real scores -- invents no other numeric claim."""
+    original_ai = guard.get("original_ai")
+    rewritten_ai = guard.get("rewritten_ai")
+    reverted = bool(guard.get("reverted"))
+    instruction = (
+        "Our own detector scores this rewritten draft HIGHER on AI-likelihood than the text you "
+        f"submitted (original {original_ai}, rewritten {rewritten_ai}, on a 0-100 scale). "
+        "This rewrite did not reduce AI risk for this document."
+    )
+    if reverted:
+        instruction += " Your original text has been kept instead of the rewrite."
+    return {
+        "card_id": "internal-regression-guard",
+        "kind": "ai_risk_regression",
+        "provenance": "draftproof_detector",
+        "where": "Whole document",
+        "instruction": instruction,
+        "author_task": (
+            "Do not submit this rewrite as-is. Prefer your own wording for these passages, and use the "
+            "rewrite only as a prompt for where to add your own concrete evidence, examples and sources."
+        ),
+    }
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _regression_guard_enabled() -> bool:
+    import os
+
+    return os.environ.get("DRAFTPROOF_V6_REGRESSION_GUARD", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _regression_guard_advisory() -> bool:
+    """Default TRUE: annotate + keep the rewrite. Set DRAFTPROOF_V6_REGRESSION_GUARD_ADVISORY=0 to
+    revert to the original text instead."""
+    import os
+
+    return os.environ.get("DRAFTPROOF_V6_REGRESSION_GUARD_ADVISORY", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _regression_guard_margin() -> float:
+    return _float_env("DRAFTPROOF_V6_REGRESSION_GUARD_MARGIN", 25.0, minimum=0.0, maximum=100.0)
+
+
+def _regression_guard_floor() -> float:
+    return _float_env("DRAFTPROOF_V6_REGRESSION_GUARD_FLOOR", 50.0, minimum=0.0, maximum=100.0)
 
 
 def _external_score(estimate: dict | None) -> float | None:

@@ -889,11 +889,16 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
             }
             billing_decision = _rewrite_billing_decision(result, rewrite_json)
             rewrite_json["billing_decision"] = billing_decision
-            rewrite_json = _bounded_rewrite_json_payload(rewrite_json)
             try:
                 from report.render_rewrite import render_rewrite_report
                 from report.pdf import render_pdf
 
+                # Render from the FULL (un-bounded) rewrite_json. Incident
+                # rewrite 5bacaeb3: bounding rewrite_json to 1.5MB BEFORE this
+                # render truncated sentence_comparison down to 1 entry, so both
+                # the delivered markdown and PDF showed no before/after diff —
+                # not just the web/API view. Bound only the payload we upload
+                # as JSON, after rendering, so md/PDF always see full data.
                 md_text = render_rewrite_report(
                     summary=rewrite_json.get("summary") or {},
                     sentence_comparison=rewrite_json.get("sentence_comparison") or [],
@@ -911,6 +916,10 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                     pdf_bytes = f.read()
             except Exception:
                 _l.warning("Failed to regenerate rewrite delivery PDF; using pipeline PDF", exc_info=True)
+
+            # Bound only the JSON payload that gets uploaded/stored — md_text
+            # and pdf_bytes above were already rendered from the full data.
+            rewrite_json = _bounded_rewrite_json_payload(rewrite_json)
 
             debug_log = _build_rewrite_debug_log(
                 rewrite_id=rewrite_id,
