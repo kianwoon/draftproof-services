@@ -484,15 +484,25 @@ def run_rewrite_pipeline_v6(
     if regression_guard.get("status") != "disabled":
         summary["internal_regression_guard"] = regression_guard
 
-    author_review_cards = _author_review_cards_from_pass_trace(document.pass_trace)
-    if regression_guard.get("triggered"):
-        # First card the user sees: our own detector scored the rewrite HIGHER than their original.
-        author_review_cards = [_internal_regression_card(regression_guard)] + author_review_cards
+    # Cards the composer must reserve cap slots for, so its own budget keeps the FINAL list within
+    # the cap and the renderers' second cards[:cap] slice cannot evict a pinned notice. Runtime
+    # count, computed here where the prepends are decided.
+    pinned_prepends: list[dict[str, Any]] = []
     if degraded_count > 0:
-        # Prepend so the service-degradation notice is the first card the user sees. Exact counts only.
-        author_review_cards = [_writer_degraded_card(degraded_count, degraded_total)] + author_review_cards
+        # First card the user sees: service-degradation notice. Exact counts only.
+        pinned_prepends.append(_writer_degraded_card(degraded_count, degraded_total))
+    if regression_guard.get("triggered"):
+        # Our own detector scored the rewrite HIGHER than their original.
+        pinned_prepends.append(_internal_regression_card(regression_guard))
+
+    composed_cards, cards_total = _author_review_cards_from_pass_trace(
+        document.pass_trace, reserved_pinned=len(pinned_prepends)
+    )
+    author_review_cards = pinned_prepends + composed_cards
     if author_review_cards:
         summary["author_review_cards"] = author_review_cards
+        summary["author_review_cards_total"] = cards_total + len(pinned_prepends)
+        summary["author_review_cards_shown"] = len(author_review_cards)
 
     result_obj = SimpleNamespace(
         summary=summary,
@@ -676,7 +686,84 @@ def _writer_degraded_card(degraded: int, total: int) -> dict[str, Any]:
     }
 
 
-def _author_review_cards_from_pass_trace(pass_trace: Any) -> list[dict[str, Any]]:
+def _skipped_paragraphs_summary_card(skipped_cards: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate the N per-paragraph ``skipped_not_target`` cards into ONE non-evictable card.
+
+    Incident 5bacaeb3 replay: 8 skip notices were generated and the card cap evicted every one of
+    them, so five byte-identical paragraphs were shipped with no explanation -- the repo's
+    explicitly-named worst outcome ("guards ANNOTATE, never SUPPRESS"). The skip information is
+    per-paragraph identical in KIND, so one card listing the paragraph ids (and the distinct
+    reasons) carries 100% of the information in one slot.
+    """
+    wheres: list[str] = []
+    reasons: list[str] = []
+    for card in skipped_cards:
+        where = str(card.get("where") or "").strip()
+        if where and where not in wheres:
+            wheres.append(where)
+        reason = str(card.get("author_task") or "").strip()
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    count = len(skipped_cards)
+    plural = "paragraph" if count == 1 else "paragraphs"
+    # Sort for stable, readable output -- pass_trace order is generation order, not document
+    # order, so "p003, p006, p012, p001, p013" reads as scrambled. Sort by the trailing numeric
+    # id when every "where" follows "Paragraph pNNN"; fall back to lexical sort otherwise.
+    def _sort_key(where: str) -> tuple[int, Any]:
+        prefix = "Paragraph p"
+        if where.startswith(prefix):
+            digits = where[len(prefix):]
+            if digits.isdigit():
+                return (0, int(digits))
+        return (1, where)
+
+    wheres = sorted(wheres, key=_sort_key)
+    where_line = ", ".join(wheres) if wheres else "Unchanged paragraphs"
+    author_task = (
+        "No action required for these: they are your original text, byte-identical. "
+        "Verify the list matches your expectation."
+    )
+    if reasons:
+        author_task = f"{author_task} Reason(s): " + " | ".join(reasons)
+    return {
+        "card_id": "skipped-summary",
+        "kind": "skipped_paragraphs_summary",
+        "provenance": "skipped_not_target",
+        "where": where_line,
+        "instruction": (
+            f"{count} {plural} were left unchanged -- outside this rewrite's scope "
+            f"(not flagged as rewrite targets)."
+        ),
+        "author_task": author_task,
+    }
+
+
+def _truncation_notice_card(shown: int, total: int) -> dict[str, Any]:
+    """Non-evictable notice that the review-card list was truncated. Without it the user sees a
+    short list with no signal that the majority of the guidance was dropped.
+
+    Wording must stay truthful: the PDF/web renderers cap at the same number (they slice the
+    already-capped list this module produces), so there is no "full list" surface to point to.
+    The complete per-paragraph data exists only in the raw report JSON (``v6_pass_trace``), which
+    is not a document authors read. Point them at what actually helps: the highest-priority items
+    are already shown; anything past the cap was lower priority.
+    """
+    return {
+        "card_id": "review-cards-truncated",
+        "kind": "review_cards_truncated",
+        "provenance": "service_status",
+        "where": "Whole document",
+        "instruction": f"Showing {shown} of {total} review items -- the rest were lower priority and are not displayed.",
+        "author_task": (
+            "The items shown above are the highest-priority ones DraftProof found. Review your "
+            "full document yourself for anything not called out here."
+        ),
+    }
+
+
+def _author_review_cards_from_pass_trace(
+    pass_trace: Any, reserved_pinned: int = 0
+) -> tuple[list[dict[str, Any]], int]:
     """Compose the user-facing ``author_review_cards`` from the direct path's per-paragraph
     review items so the guard annotations actually reach BOTH surfaces (PDF
     ``render_rewrite._author_review_card_section`` + web ``Rewrite.jsx`` author-review section).
@@ -713,6 +800,23 @@ def _author_review_cards_from_pass_trace(pass_trace: Any) -> list[dict[str, Any]
     Ordering is priority-aware, not pure paragraph order: `skipped_not_target` cards (nothing changed,
     lowest urgency) are collected separately and appended AFTER every other card, so a document with
     many early out-of-scope paragraphs can never crowd a real fabrication/regression card past the cap.
+
+    Returns ``(cards, total_generated)``. ``skipped_not_target`` cards are NOT emitted raw: they are
+    aggregated into one ``skipped_paragraphs_summary`` card, and a ``review_cards_truncated`` notice
+    is appended when anything was dropped. ``reserved_pinned`` is the runtime count of cards the
+    CALLER will prepend (regression / service-degradation).
+
+    Precedence when the cap is smaller than everything that wants a slot (highest wins): the
+    caller's pinned prepends (degradation, regression -- already excluded via ``reserved_pinned``)
+    > the skipped-paragraphs summary (one aggregate slot representing every unchanged, out-of-scope
+    paragraph -- dropping it would silently erase the fact that those paragraphs exist, the exact
+    failure this composer exists to prevent) > priority review flags, truncated to whatever remains
+    > the truncation notice itself, which only takes a slot when something above was actually cut
+    and yields it back at the tightest caps. Every branch below is derived from
+    ``available = cap - reserved_pinned`` (clamped >= 0), so the returned list ALWAYS satisfies
+    ``len(cards) + reserved_pinned <= cap`` -- the renderers' second ``cards[:cap]`` slice is a
+    no-op instead of a second eviction, even at pathological caps (1, 2, 3) or when reserved_pinned
+    alone consumes the whole cap.
     """
     priority_cards: list[dict[str, Any]] = []
     skipped_cards: list[dict[str, Any]] = []
@@ -734,11 +838,16 @@ def _author_review_cards_from_pass_trace(pass_trace: Any) -> list[dict[str, Any]
             if not added and not why:
                 continue
             instruction = added or why
-            key = (instruction, why)
+            provenance_raw = str(item.get("provenance") or "").strip()
+            # Dedup collapses genuinely duplicate ADVICE. A skipped_not_target notice is a
+            # per-paragraph FACT ("this paragraph is byte-identical"), phrased identically for
+            # every paragraph -- deduping it would silently erase 7 of 8 unchanged paragraphs
+            # from the aggregated summary (incident 5bacaeb3). Key those by paragraph.
+            key = (instruction, why, pid) if provenance_raw == "skipped_not_target" else (instruction, why)
             if key in seen:
                 continue
             seen.add(key)
-            provenance = str(item.get("provenance") or "").strip() or "illustrative_content"
+            provenance = provenance_raw or "illustrative_content"
             bucket = skipped_cards if provenance == "skipped_not_target" else priority_cards
             card: dict[str, Any] = {
                 "card_id": f"{pid or 'para'}-{len(priority_cards) + len(skipped_cards) + 1:02d}",
@@ -750,7 +859,47 @@ def _author_review_cards_from_pass_trace(pass_trace: Any) -> list[dict[str, Any]
             if why:
                 card["author_task"] = why
             bucket.append(card)
-    return (priority_cards + skipped_cards)[:cap]
+
+    total_generated = len(priority_cards) + len(skipped_cards)
+    skipped_summary_card = _skipped_paragraphs_summary_card(skipped_cards) if skipped_cards else None
+
+    # `available` is the ONLY budget the rest of this function is allowed to spend against -- it
+    # already accounts for the caller's pinned prepends, so every branch below is clamped to it
+    # and the invariant `len(cards) + reserved_pinned <= cap` holds even when reserved_pinned alone
+    # meets or exceeds the cap (available == 0).
+    available = max(cap - reserved_pinned, 0)
+    total_wanted = len(priority_cards) + (1 if skipped_summary_card else 0)
+
+    if total_wanted <= available:
+        # Everything fits -- no eviction, no truncation notice needed.
+        kept_priority = priority_cards
+        kept_skipped = [skipped_summary_card] if skipped_summary_card else []
+        truncated = False
+    elif available <= 0:
+        # No room even for a single notice: reserved_pinned alone consumes the whole cap.
+        kept_priority = []
+        kept_skipped = []
+        truncated = False
+    else:
+        # Reserve exactly one slot for the truncation notice, then give the skipped-paragraphs
+        # summary first claim on what remains (it's a single aggregate card standing in for many
+        # per-paragraph notices -- losing it means the user never learns those paragraphs were
+        # skipped at all), and spend whatever is left on priority cards.
+        content_budget = max(available - 1, 0)
+        if skipped_summary_card and content_budget >= 1:
+            kept_skipped = [skipped_summary_card]
+            content_budget -= 1
+        else:
+            kept_skipped = []
+        kept_priority = priority_cards[:content_budget]
+        truncated = True
+
+    cards = kept_priority + kept_skipped
+    if truncated:
+        shown = len(cards) + reserved_pinned + 1  # +1 counts the truncation card itself
+        cards.append(_truncation_notice_card(shown, total_generated + reserved_pinned))
+
+    return cards, total_generated
 
 
 def _enrich_badge_diagnoses(scan_report: dict[str, Any] | None) -> dict[str, Any] | None:

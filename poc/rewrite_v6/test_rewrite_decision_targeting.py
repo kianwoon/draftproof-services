@@ -173,6 +173,9 @@ def test_skipped_not_target_row_surfaces_as_author_review_card():
     targeting = RewriteTargeting(active=True, target_paragraph_ids={"p999"})
     pass_trace = [targeting.skipped_trace(0, "p001")]
 
-    cards = v6_production._author_review_cards_from_pass_trace(pass_trace)
+    cards, total = v6_production._author_review_cards_from_pass_trace(pass_trace)
+    # Skip notices are aggregated into one non-evictable summary card (incident 5bacaeb3).
+    assert total == 1
     assert len(cards) == 1
+    assert cards[0]["kind"] == "skipped_paragraphs_summary"
     assert cards[0]["where"] == "Paragraph p001"

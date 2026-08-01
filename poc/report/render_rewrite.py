@@ -727,8 +727,11 @@ def _author_review_card_section(summary: dict) -> List[str]:
         needed = str(card.get("user_input_needed") or "").strip()
         task = str(card.get("author_task") or "").strip()
         provenance = str(card.get("provenance") or "").replace("_", " ").strip()
+        where = str(card.get("where") or "").strip()
         if provenance:
             lines.append(f"- Provenance: {provenance}")
+        if where:
+            lines.append(f"- Where: {where}")
         if target:
             lines.append(f"- Candidate detail: {target}")
         if needed:
