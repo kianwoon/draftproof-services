@@ -1,4 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────
+// last-updated: 2026-08-13
 // Site news — EDIT THIS LIST to change the featured announcement band that
 // sits directly under the header. Only the FIRST item is shown (the band is a
 // single static feature, not a scroller). After editing, commit + push to main
