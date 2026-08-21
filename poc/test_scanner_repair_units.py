@@ -1,7 +1,6 @@
 from detect.repair_units import build_repair_units_v2
 from rewrite_v2.goal_contract import evaluate_rewrite_goal
 from rewrite_controller.eligible_span_density import build_preferred_eligible_span_density_contract
-from rewrite_v5.residual_comb import _density_gate_for_report
 
 
 def _segment(source: str, sentence: str, sentence_id: str, sentence_index: int, paragraph_id: str, risk: float) -> dict:
@@ -84,7 +83,7 @@ def test_scanner_repair_units_emit_exact_slice_clusters_without_content_keywords
     assert density["top_unsafe_clusters"][0]["source"] == "scanner.repair_units_v2"
 
 
-def test_v5_prefers_scanner_owned_density_gate_when_report_contract_is_valid():
+def test_prefers_scanner_owned_density_gate_when_report_contract_is_valid():
     source = "A first risky sentence appears here. A second risky sentence follows it."
     first = "A first risky sentence appears here."
     second = "A second risky sentence follows it."
@@ -101,7 +100,7 @@ def test_v5_prefers_scanner_owned_density_gate_when_report_contract_is_valid():
     )
     report = {"repair_units_v2": contract}
 
-    density = _density_gate_for_report(source, report)
+    density = build_preferred_eligible_span_density_contract(source, report)
 
     assert density["version"] == "scanner_repair_units_density_v2"
     assert density["source"] == "scanner.repair_units_v2"
