@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-DraftProof is an AI writing integrity detection and rewrite platform. Users submit documents, receive a tier classification (clean/acceptable/concerning/strong) with detailed findings, and can request rewrites that preserve academic intent while removing AI-generated passages.
+DraftProof is an AI writing integrity detection and rewrite platform. Users submit documents, receive a tier classification (the AI-risk badge tier — `green`/`amber`/`orange`/`red`) with detailed findings, and can request rewrites that preserve academic intent while removing AI-generated passages.
 
 ## Objective & Rewrite Philosophy (read before touching the rewrite/guards)
 
@@ -169,7 +169,16 @@ V6 uses separate planner/writer/selector models with fallback chains:
 
 **Jobs**: `scan_jobs` (status, tier, ai_score, report_urls JSON), `rewrite_jobs` (status, scan_id FK), `usage_events`, `pricing_plans`
 
-`scan_jobs.tier` values: `clean` / `acceptable` / `concerning` / `strong`
+`scan_jobs.tier` values: `green` / `amber` / `orange` / `red` — this is the **AI-risk badge tier**
+(`poc/report/builder.py` `ai_risk_badge["tier"]`, produced by the Layer3 / DeBERTa / V7-fused
+scoring paths and `.lower()`ed to lowercase). It is what the report PDF/MD shows and what the
+frontend colors (`reportHelpers.js` `DRAFTPROOF_TIER_COLORS = {GREEN, AMBER, ORANGE, RED}`).
+Do NOT confuse it with two other tier vocabularies in the codebase:
+- `critical` / `high` / `medium` / `low` / `clean` — `poc/report/models.py` `Tier`, the
+  findings-based `overall_tier` (drives the findings list, not the headline badge).
+- `clean` / `acceptable` / `concerning` / `strong` — the V7 **detection-result** tier
+  (Turnitin-style; consumed by the V7 guard config and `test_detect_v7_pipeline_bridge.py`),
+  a separate surface that is not what `scan_jobs.tier` stores.
 `scan_jobs.status` / `rewrite_jobs.status` values: `pending` / `processing` / `completed` / `failed` (+ `canceled` for rewrites)
 
 ---
