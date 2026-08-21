@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Delete fully-merged branches
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const base = context.payload.repository.default_branch;
