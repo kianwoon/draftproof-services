@@ -11,9 +11,11 @@ WORKDIR /app
 
 COPY worker/requirements.txt /app/requirements.txt
 
-# Install deps — use CPU-only PyTorch for smaller image
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir -r requirements.txt
+# Install deps — CPU-only PyTorch (pinned in requirements.txt with
+# --extra-index-url to the CPU wheel index; the explicit ==2.13.0+cpu pin
+# prevents pip from re-resolving torch from the default PyPI index to the
+# ~2.5GB GPU wheel during the requirements install).
+RUN pip install --no-cache-dir -r requirements.txt
 
 # HF cache — Koyeb volume mounts here so model persists across deploys
 ENV HF_HOME=/app/hf_cache

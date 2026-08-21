@@ -20,3 +20,12 @@ draftproof-frontend/node_modules
 /report*.pdf
 /rewrite*.pdf
 /sample.json
+
+# Dev / CI-only data — never needed at runtime in the worker image
+**/test_*.py
+**/test_output/
+**/calibration/
+**/.pytest_cache/
+**/test_*.md
+**/test_report*.txt
+**/detect_report_output.txt

@@ -87,8 +87,17 @@ REPO_BRANCH="${GIT_REPO_BRANCH:-main}"
 if [ -n "${GIT_PAT}" ]; then
     AUTH_URL=$(echo "${REPO_URL}" | sed "s|https://|https://${GIT_PAT}@|")
     echo "[entrypoint] Attempting git pull for latest poc/ code..."
-    if git clone --depth 1 --branch "${REPO_BRANCH}" "${AUTH_URL}" /tmp/draftproof-repo 2>/dev/null; then
+    if git clone --depth 1 --filter=blob:none --branch "${REPO_BRANCH}" "${AUTH_URL}" /tmp/draftproof-repo 2>/dev/null; then
         CODE_SHA=$(git -C /tmp/draftproof-repo rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        # Strip dev/CI-only files from the cloned tree before overlaying, so the
+        # runtime code never ships test files, calibration corpora, or caches
+        # (mirrors .dockerignore; keeps the running container lean).
+        find /tmp/draftproof-repo/poc -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+        find /tmp/draftproof-repo/poc -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+        find /tmp/draftproof-repo/poc -type d -name "test_output" -exec rm -rf {} + 2>/dev/null || true
+        find /tmp/draftproof-repo/poc -type d -name "calibration" -exec rm -rf {} + 2>/dev/null || true
+        find /tmp/draftproof-repo/poc -type f -name "test_*.py" -delete 2>/dev/null || true
+        find /tmp/draftproof-repo/poc -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.DS_Store" \) -delete 2>/dev/null || true
         rm -rf "${CODE_DIR}"
         cp -a /tmp/draftproof-repo/poc "${CODE_DIR}"
         # Also overlay latest worker/app/ code for fast code deploys.
