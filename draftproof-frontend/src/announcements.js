@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────
-// last-updated: 2026-08-13
+// last-updated: 2026-09-11
 // Site news — EDIT THIS LIST to change the featured announcement band that
 // sits directly under the header. Only the FIRST item is shown (the band is a
 // single static feature, not a scroller). After editing, commit + push to main
@@ -29,6 +29,19 @@
 // To hide the band entirely, leave this array empty.
 // ─────────────────────────────────────────────────────────────────────────
 export const announcements = [
+  {
+    id: "voice-matched-rewrite-2026",
+    badge: "DraftProof",
+    date: { en: "Sep 2026", zh: "2026年9月" },
+    headline: {
+      en: "New: rewrites now keep your voice —",
+      zh: "新功能：改写保留你的语气 ——",
+    },
+    text: {
+      en: "our most-requested feature. Flagged passages are rewritten in your own formality, rhythm, and stance, with a voice-match score on every rewrite so you can verify it.",
+      zh: "应用户呼声最高的功能。被标记的段落将以你自己的正式程度、句式节奏和表达立场进行改写，每次改写都附带语气匹配度评分，供你验证。",
+    },
+  },
   {
     id: "anthropic-claude-watermarking-2026",
     badge: "Anthropic",
