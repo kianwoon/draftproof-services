@@ -46,6 +46,7 @@ def _run_once(detect_json: dict, run_index: int) -> dict | None:
     result = json.loads(Path(envelope["json_path"]).read_text())
     pt = result.get("candidate_generation_status", {}).get("pass_trace", [])
     srcs = Counter(p.get("selected_source") for p in pt)
+    vf = result.get("voice_fidelity") or {}
     return {
         "final_risk": result.get("final_risk"),
         "original_risk": result.get("original_risk"),
@@ -53,6 +54,10 @@ def _run_once(detect_json: dict, run_index: int) -> dict | None:
         "passes": len(pt),
         "findings": (result.get("v6_scores") or {}).get("final", {}).get("finding_count"),
         "best_of_n": result.get("best_of_n"),
+        # P1 voice-match: drift of the rewrite from the source voice profile.
+        # 1.0 = matched or abstained (short/disabled); lower = more register drift.
+        "voice_score": vf.get("score") if not vf.get("abstain") else None,
+        "voice_abstain": bool(vf.get("abstain")),
     }
 
 
@@ -74,10 +79,13 @@ def main() -> int:
         if bon:
             bon_str = (f"  best_of_n={bon.get('candidate_ai_risks')} -> picked #{bon.get('selected_index')} "
                        f"({bon.get('selected_ai_risk')})")
-        print(f"run {i}: final_risk={row['final_risk']:.2f}  "
+        voice_str = (f"voice_drift={row['voice_score']:.4f}" if row.get("voice_score") is not None
+                     else "voice_drift=abstain")
+        print(f"run {i}: final_risk={row['final_risk']:.2f}  {voice_str}  "
               f"source_preserved={row['source_preserved']}/{row['passes']}  findings={row['findings']}{bon_str}")
 
     risks = [r["final_risk"] for r in runs if isinstance(r.get("final_risk"), (int, float))]
+    voice_scores = [r["voice_score"] for r in runs if r.get("voice_score") is not None]
     if not risks:
         print("\nNo successful runs.")
         return 1
@@ -89,6 +97,11 @@ def main() -> int:
     print(f"  min / max   : {min(risks):.2f} / {max(risks):.2f}")
     print(f"  spread      : {max(risks) - min(risks):.2f}")
     print(f"  stdev       : {stdev:.2f}")
+    if voice_scores:
+        print(f"  voice_drift mean (source->rewrite, 1.0=matched): {statistics.mean(voice_scores):.4f} "
+              f"({len(voice_scores)}/{len(runs)} runs scored, rest abstained)")
+    else:
+        print("  voice_drift : abstained on all runs (short text or voice disabled)")
     print(f"\n>>> A future change only counts as real improvement if its mean beats {mean:.2f} "
           f"by more than the spread ({max(risks) - min(risks):.2f}).")
     return 0

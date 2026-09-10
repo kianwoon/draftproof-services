@@ -26,6 +26,25 @@ from .rewrite_playbook import playbook_entries
 from .text import Paragraph
 from .writer_brief_prompt import _must_keep_terms, _variant_requirements
 
+try:
+    from .voice_profile import build_voice_profile, render_voice_contract, voice_match_enabled
+except ImportError:  # pragma: no cover
+    from poc.rewrite_v6.voice_profile import build_voice_profile, render_voice_contract, voice_match_enabled
+
+
+def _voice_contract_guidance(paragraph_text: str) -> list[str]:
+    """P0 voice-match spike: per-paragraph voice contract appended to rewrite_guidance.
+    Fail-open: disabled / short text / any error -> [] (static guidance only)."""
+    try:
+        if not voice_match_enabled() or not paragraph_text:
+            return []
+        profile = build_voice_profile(paragraph_text)
+        if not profile or profile.get("abstain"):
+            return []
+        return render_voice_contract(profile)
+    except Exception:
+        return []
+
 
 def _predictability_mode() -> bool:
     """Stage 2: feed the graded predictable token-spans to the writer and free those tokens from
@@ -93,6 +112,9 @@ def build_lean_finding_prompt(paragraph: Paragraph, plan: Plan) -> str:
                 if _predictability_mode()
                 else []
             ),
+            # P0 voice-match spike: measured voice contract appended after the static guidance
+            # (meaning rules above stay untouched).
+            *_voice_contract_guidance(paragraph.text),
         ],
         "variant_requirements": _variant_requirements(plan),
         "output_schema": {

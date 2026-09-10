@@ -19,7 +19,7 @@ _TERMINAL_REWRITE_STATUSES = ("completed", "failed", "canceled")
 @router.post("/", response_model=RewriteOut)
 async def create_rewrite(req: RewriteCreateRequest, user: dict = Depends(get_current_user)):
     try:
-        result = await rewrite_service.create_rewrite(req.scan_id, user["id"])
+        result = await rewrite_service.create_rewrite(req.scan_id, user["id"], voice_options=req.voice)
         return RewriteOut(**result)
     except rewrite_service.NoRewriteableFindingsError as e:
         raise HTTPException(status_code=422, detail=str(e))

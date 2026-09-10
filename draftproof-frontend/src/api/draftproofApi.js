@@ -110,7 +110,7 @@ export const getPurchaseHistory = (page = 1, perPage = 5, opts = {}) =>
   api.get('/payments/history', { params: { page, per_page: perPage }, signal: opts.signal });
 
 // Rewrites
-export const createRewrite = (scanId) => api.post('/rewrites/', { scan_id: scanId });
+export const createRewrite = (scanId, voice) => api.post('/rewrites/', voice ? { scan_id: scanId, voice } : { scan_id: scanId });
 export const cancelRewrite = (rewriteId) => api.post(`/rewrites/${rewriteId}/cancel`);
 export const getRewriteStatus = (rewriteId) => api.get(`/rewrites/${rewriteId}`);
 export const getRewriteReport = (rewriteId) => api.get(`/rewrites/${rewriteId}/report`);

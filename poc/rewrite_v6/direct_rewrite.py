@@ -39,6 +39,7 @@ from .llm_config import resolve_v6_api_key, resolve_v6_base_url, resolve_v6_mode
 from .report_contracts import paragraph_diagnosis
 from .rewrite_playbook import playbook_entries
 from .scan import Scan, findings_for_paragraph, scan_text, scan_text_preserve_blocks
+from .voice_profile import build_voice_profile, render_voice_contract, voice_match_enabled, voice_options_var
 from .selector_diagnostics import _severe_polarity_inversion
 from .text import Paragraph
 try:
@@ -98,6 +99,22 @@ from .residual_fix import (  # noqa: E402
 # System prompts live in direct_prompts.py (extracted to keep this file under the 1500-LOC limit).
 # Aliased to the historic private names so every existing reference keeps working unchanged.
 from .direct_prompts import DIVERSIFIED_SYSTEM as _DIVERSIFIED_SYSTEM, SYSTEM as _SYSTEM, apply_scan_target_instructions
+
+
+def _voice_contract_for(paragraph_text: str) -> list[str]:
+    """P0 voice-match spike: per-paragraph voice contract replacing the static house-voice
+    instruction. Fail-open: any error / disabled switch / abstained profile -> [] (house voice kept)."""
+    try:
+        if not (voice_match_enabled() and paragraph_text):
+            return []
+        if (voice_options_var.get() or {}).get("disabled"):
+            return []
+        profile = build_voice_profile(paragraph_text)
+        if not profile or profile.get("abstain"):
+            return []
+        return render_voice_contract(profile)
+    except Exception:
+        return []
 
 
 def _prompt(
@@ -161,11 +178,15 @@ def _prompt(
             "Cut hedging (may, might, can, could, should, often, generally) and generic filler.",
             # allow-hardcode: model coaching guidance (a prompt), not a detect/scoring word-list. The
             # example phrases are illustrations shown to the model, never matched against input.
-            "Write in PLAIN, direct, everyday voice -- not an over-polished, ornamented register. Avoid sweeping "
-            "moral generalisations ('we must', 'it is essential that', 'society needs to'), clichéd or "
-            "figurative openers and metaphors, and an elevated, measured, balanced cadence. State each "
-            "concrete point plainly and directly, the way the author would actually say it -- not as a "
-            "smooth, ornamented set-piece. Plainness and concreteness beat polish.",
+            # P0 voice-match spike: when a measured per-paragraph contract is available it REPLACES
+            # the static house-voice instruction below. Meaning rules elsewhere stay untouched.
+            *(_voice_contract_for(paragraph_text)
+              or ["Write in PLAIN, direct, everyday voice -- not an over-polished, ornamented register. "
+                  "Avoid sweeping moral generalisations ('we must', 'it is essential that', 'society "
+                  "needs to'), clichéd or figurative openers and metaphors, and an elevated, measured, "
+                  "balanced cadence. State each concrete point plainly and directly, the way the author "
+                  "would actually say it -- not as a smooth, ornamented set-piece. Plainness and "
+                  "concreteness beat polish."]),
             "Preserve the author's actual argument and meaning, and stay in the same subject and "
             "register as the source. Do not shift a balanced 'not only X but also Y' into 'Y over X', "
             "and do not drop their existing ideas.",

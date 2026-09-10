@@ -87,8 +87,15 @@ class ApplySuggestionRequest(BaseModel):
     suggestion_id: str
 
 
+class VoiceOptionsIn(BaseModel):
+    """P1 voice-match: how the rewrite should sound relative to the author's own voice."""
+    mode: str = "match_my_voice"  # match_my_voice | plain | academic
+    freeform_hint: Optional[str] = None
+
+
 class RewriteCreateRequest(BaseModel):
     scan_id: str
+    voice: Optional[VoiceOptionsIn] = None
 
 
 class RewriteOut(BaseModel):
@@ -114,3 +121,5 @@ class RewriteReportOut(BaseModel):
     effective_rewrite_plan: Optional[Any] = None
     authorship_evidence: Optional[Any] = None
     external_detector_estimate: Optional[Any] = None
+    voice_fidelity: Optional[Any] = None
+    voice_profile: Optional[Any] = None

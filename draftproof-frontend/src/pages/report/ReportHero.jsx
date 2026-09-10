@@ -21,6 +21,8 @@ export default function ReportHero({
   isRewrittenView = false,
   onDownloadRewrittenPdf,
   mergedCard = null,
+  voiceOptions = null,
+  onVoiceOptionsChange = null,
 }) {
   // Download PDF lives in the info column (under the date). The rewrite CTAs (Auto
   // Rewrite + cancel) live inside the Repair Summary risk box, next to Manual Rewrite —
@@ -105,6 +107,40 @@ export default function ReportHero({
               <div className="report-hero-repair-cta">
                 {(canStartRewrite || rewriteLoading || rewriteInProgress) && (
                   <div className="rewrite-action-group">
+                    {canStartRewrite && onVoiceOptionsChange && (
+                      <div className="rewrite-voice-options" role="group" aria-label={t('report.rewrite.voice.ariaLabel')}>
+                        <div className="rewrite-voice-modes">
+                          {[
+                            { value: 'match_my_voice', label: t('report.rewrite.voice.modeMatchMyVoice') },
+                            { value: 'plain', label: t('report.rewrite.voice.modePlain') },
+                            { value: 'academic', label: t('report.rewrite.voice.modeAcademic') },
+                          ].map(({ value, label }) => (
+                            <button
+                              key={value}
+                              type="button"
+                              className={`rewrite-voice-mode-btn${(voiceOptions?.mode || 'match_my_voice') === value ? ' is-active' : ''}`}
+                              aria-pressed={(voiceOptions?.mode || 'match_my_voice') === value}
+                              onClick={() => onVoiceOptionsChange({ ...(voiceOptions || {}), mode: value })}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <textarea
+                          className="rewrite-voice-hint"
+                          maxLength={280}
+                          rows={2}
+                          placeholder={t('report.rewrite.voice.hintPlaceholder')}
+                          aria-label={t('report.rewrite.voice.hintLabel')}
+                          value={voiceOptions?.freeform_hint || ''}
+                          onChange={(e) => onVoiceOptionsChange({
+                            ...(voiceOptions || {}),
+                            mode: voiceOptions?.mode || 'match_my_voice',
+                            freeform_hint: e.target.value,
+                          })}
+                        />
+                      </div>
+                    )}
                     <button
                       type="button"
                       className="rewrite-btn"

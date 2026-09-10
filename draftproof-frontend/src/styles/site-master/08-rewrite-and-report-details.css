@@ -327,6 +327,79 @@
   border: 1px solid #a7f3d0;
 }
 
+/* P1 voice-match: fidelity meter pill + segmented voice options */
+.rewrite-review-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: .35rem .8rem;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.rewrite-voice-meter {
+  width: 100%;
+  max-width: 420px;
+  height: 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+  margin: .35rem 0 .75rem;
+}
+
+.rewrite-voice-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width .3s ease;
+}
+
+.rewrite-voice-options {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  margin-bottom: .5rem;
+}
+
+.rewrite-voice-modes {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.rewrite-voice-mode-btn {
+  border: none;
+  background: #fff;
+  color: #334155;
+  padding: .45rem .9rem;
+  font-size: .85rem;
+  cursor: pointer;
+  border-right: 1px solid #cbd5e1;
+}
+
+.rewrite-voice-mode-btn:last-child {
+  border-right: none;
+}
+
+.rewrite-voice-mode-btn.is-active {
+  background: var(--navy-950, #0f172a);
+  color: #fff;
+  font-weight: 700;
+}
+
+.rewrite-voice-hint {
+  width: 100%;
+  max-width: 480px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: .5rem .65rem;
+  font-size: .85rem;
+  resize: vertical;
+}
+
 .rewrite-review-copy {
   max-width: 760px;
   margin: 0 0 1rem;

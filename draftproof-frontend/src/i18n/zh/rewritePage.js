@@ -86,6 +86,16 @@ export const rewritePage = {
     "offendersHeading": "读起来最精致的句子——用你平时真正会说的方式重写",
     "rhythmNote": "你的句子长度和节奏也相当均匀——用你自己的语气加入一些更短、更直白的句子，会减少机器般的平滑感。"
   },
+  // allow-hardcode: i18n UI label strings for the voice-fidelity section, not a detect/scoring list.
+  "voice": {
+    "kicker": "语气匹配",
+    "heading": "它还像你的风格吗？",
+    "score": "语气匹配度 {{score}}%",
+    "abstained": "这次改写篇幅较短，无法可靠测量语气差异——因此未报告偏移。",
+    "axisFallback": "风格",
+    "driftTowards": "与你原文相比，语气偏向「{{direction}}」。",
+    "driftDelta": "与你原文相比，偏移量为 {{delta}}。"
+  },
   "outcomes": {
     "completed": "已完成",
     "ai_mitigated": "已应用依据草稿",

@@ -334,6 +334,11 @@ def _bounded_rewrite_json_payload(payload: dict, *, max_bytes: int = MAX_REWRITE
         ),
         "effective_rewrite_plan": _compact_debug_value(payload.get("effective_rewrite_plan")),
         "billing_decision": payload.get("billing_decision"),
+        # Voice-match surfacing: small, already-capped payloads — pass through
+        # so the API report view keeps the fidelity meter + drift notes even
+        # when the overall rewrite.json tripped the size cap.
+        "voice_fidelity": payload.get("voice_fidelity"),
+        "voice_profile": payload.get("voice_profile"),
         "rewrite_json_truncated": True,
         "rewrite_json_truncation_reason": f"rewrite.json exceeded {max_bytes} bytes before upload",
     }

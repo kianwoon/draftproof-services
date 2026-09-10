@@ -33,6 +33,7 @@ except ModuleNotFoundError:
 
 from .pipeline import _planner_model, _writer_model, run_v6_rewrite_all
 from .direct_rewrite import direct_rewrite_enabled, run_direct_rewrite_all
+from .voice_profile import voice_options_var
 from .register_coaching import build_register_coaching, register_coaching_enabled
 from .card_cap import author_review_card_cap as _author_review_card_cap
 from .llm_config import (
@@ -75,6 +76,7 @@ def run_rewrite_pipeline_v6(
     base_url: str | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     cancellation_check: Callable[[], None] | None = None,
+    voice_options: dict | None = None,
 ) -> dict[str, Any]:
     started = time.time()
 
@@ -113,7 +115,8 @@ def run_rewrite_pipeline_v6(
 
     # Bind the report explainer's per-paragraph diagnosis so the rewrite acts on the concrete named
     # fix. The lean direct path (flag) uses it straight; the legacy planner path translates it.
-    with paragraph_diagnoses_context(extract_paragraph_diagnoses(effective_detect_json)):
+    with paragraph_diagnoses_context(extract_paragraph_diagnoses(effective_detect_json)), \
+            voice_options_var.set(dict(voice_options) if voice_options else None):
         if direct_rewrite_enabled():
             from .rewrite_targeting import resolve_rewrite_targeting
 
@@ -518,6 +521,29 @@ def run_rewrite_pipeline_v6(
     )
 
     ts = time.strftime("%Y%m%d_%H%M%S")
+    # P1 voice-match: attach the deterministic voice-fidelity measurement (fail-open,
+    # observability only — never re-loops or mutates final_text) + the source voice
+    # profile the per-paragraph contracts were built from. Skipped (abstain) when
+    # voice_options {"disabled": true} or either side is too short to profile.
+    try:
+        from .voice_check import voice_fidelity
+        from .voice_profile import build_voice_profile
+    except Exception:
+        voice_fidelity = None
+        build_voice_profile = None
+    if voice_fidelity is not None and build_voice_profile is not None:
+        try:
+            voice_fidelity_result = voice_fidelity(original_text, final_text)
+            voice_profile_result = build_voice_profile(original_text)
+        except Exception:
+            voice_fidelity_result = {"abstain": True, "score": 1.0, "drift_axes": [],
+                                     "source_profile": None, "rewrite_profile": None}
+            voice_profile_result = None
+    else:
+        voice_fidelity_result = {"abstain": True, "score": 1.0, "drift_axes": [],
+                                 "source_profile": None, "rewrite_profile": None}
+        voice_profile_result = None
+
     md_path = out_dir / f"draftproof_rewrite_v6_{ts}.md"
     pdf_path = out_dir / f"draftproof_rewrite_v6_{ts}.pdf"
     json_path = out_dir / f"draftproof_rewrite_v6_{ts}.json"
@@ -558,6 +584,8 @@ def run_rewrite_pipeline_v6(
         "pdf_path": str(pdf_path),
         "json_path": str(json_path),
         "result": result_obj,
+        "voice_fidelity": voice_fidelity_result,
+        "voice_profile": voice_profile_result,
         "elapsed": elapsed,
     }
 

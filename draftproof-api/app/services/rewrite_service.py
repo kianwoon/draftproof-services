@@ -319,7 +319,34 @@ async def _mark_rewrite_interrupted(session, job: RewriteJob) -> None:
     await _release_active_reservation(session, job.id)
 
 
-async def create_rewrite(scan_id: str, user_id: str) -> dict:
+def sanitize_voice_options(voice_options) -> dict | None:
+    """Normalize user-supplied voice options for the worker. Fail-open: returns None for
+    anything unusable. freeform_hint is stripped + truncated to 280 chars; it is injected
+    downstream as a single quoted author instruction and can never override the meaning-
+    preservation rules (the prompt layer enforces that)."""
+    try:
+        if not voice_options:
+            return None
+        if hasattr(voice_options, "model_dump"):
+            voice_options = voice_options.model_dump(exclude_none=True)
+        elif not isinstance(voice_options, dict):
+            return None
+        mode = str(voice_options.get("mode") or "match_my_voice").strip()
+        if mode not in ("match_my_voice", "plain", "academic"):
+            raise ValueError("voice.mode must be one of: match_my_voice, plain, academic")
+        hint = voice_options.get("freeform_hint")
+        hint = str(hint or "").strip()[:280] or None
+        out: dict = {"mode": mode}
+        if hint:
+            out["freeform_hint"] = hint
+        return out
+    except ValueError:
+        raise
+    except Exception:
+        return None
+
+
+async def create_rewrite(scan_id: str, user_id: str, voice_options=None) -> dict:
     """Create a rewrite job: validate scan, check balance, deduct tokens, enqueue."""
     uid = uuid.UUID(user_id)
     scan_uuid = uuid.UUID(scan_id)
@@ -434,7 +461,10 @@ async def create_rewrite(scan_id: str, user_id: str) -> dict:
         await session.commit()
 
     from app.services.celery_client import run_rewrite
-    run_rewrite.apply_async(args=[str(job_id), scan_id], task_id=str(job_id))
+    sanitized_voice = sanitize_voice_options(voice_options)
+    run_rewrite.apply_async(
+        args=[str(job_id), scan_id, sanitized_voice], task_id=str(job_id)
+    )
 
     return {
         "id": str(job_id),

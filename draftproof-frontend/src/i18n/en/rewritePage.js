@@ -87,6 +87,17 @@ export const rewritePage = {
     "offendersHeading": "Lines that read most polished — say them the way you actually would",
     "rhythmNote": "Your sentences also run at a fairly even length and rhythm — mixing in some shorter, blunter sentences in your own voice reads less machine-smooth."
   },
+  // allow-hardcode: i18n UI label strings for the voice-fidelity section (headings/labels), not a
+  // detect/scoring/matching word-list. Metric values come from the server's voice_check module.
+  "voice": {
+    "kicker": "Voice match",
+    "heading": "Does It Still Sound Like You?",
+    "score": "{{score}}% voice match",
+    "abstained": "This rewrite was too short to measure voice reliably — no drift is reported.",
+    "axisFallback": "Style",
+    "driftTowards": "Drifted toward {{direction}} compared with your original writing.",
+    "driftDelta": "Shifted by {{delta}} relative to your original writing."
+  },
   "outcomes": {
     "completed": "completed",
     "ai_mitigated": "grounding draft applied",

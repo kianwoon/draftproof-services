@@ -166,6 +166,13 @@ export default function Report() {
   const autoOpenedEditorRef = useRef(false);
   const submittedHighlightRef = useRef(null);
   const submittedDocumentRef = useRef(null);
+  // P1 voice-match: latest voice options from the rewrite options panel
+  // ({mode, freeform_hint}) — read at createRewrite time.
+  const rewriteVoiceRef = useRef(null);
+  const [rewriteVoiceOptions, setRewriteVoiceOptions] = useState(null);
+  useEffect(() => {
+    rewriteVoiceRef.current = rewriteVoiceOptions;
+  }, [rewriteVoiceOptions]);
   const submittedEditorCloseTimerRef = useRef(null);
   const submittedTrackedCopyTimerRef = useRef(null);
   // Fix 1 (scan-flow lifecycle): rescanSubmittedDraft's up-to-10-minute poll loop
@@ -1378,7 +1385,7 @@ export default function Report() {
       progress_message: t('report.rewrite.queuing'),
     });
     try {
-      const { data } = await createRewrite(id);
+      const { data } = await createRewrite(id, rewriteVoiceRef.current || undefined);
       if (data.id) {
         watchedRewriteIdsRef.current.add(data.id);
       }
@@ -1500,6 +1507,8 @@ export default function Report() {
           currentRewrite={currentRewrite}
           onRewrite={handleRewrite}
           onCancelRewrite={handleCancelRewrite}
+          voiceOptions={rewriteVoiceOptions}
+          onVoiceOptionsChange={setRewriteVoiceOptions}
           repairSummary={showOriginalRepairGuidance ? repairSummary : null}
           repairMainRiskLabel={t('report.repairSummary.mainRisk')}
           repairActionLabel={t('report.submitted.editor.editDraft')}

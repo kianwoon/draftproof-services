@@ -358,6 +358,11 @@ export default function Rewrite() {
   const bracketSpans = summary?.bracket_grounding_spans || report?.bracket_grounding_spans || [];
   // honest register/polish coaching (NOT a score lever) -- backend supplies the note + selected lines
   const registerCoaching = summary?.register_coaching || report?.register_coaching || null;
+  // P1 voice-match: fidelity metrics from the pipeline (via rewrite.json). Hidden when absent
+  // or abstained (short/disabled => old behavior, no meter).
+  const voiceFidelity = report?.voice_fidelity || summary?.voice_fidelity || null;
+  const voiceFidelityScore = Number(voiceFidelity?.score);
+  const voiceFidelityValid = Number.isFinite(voiceFidelityScore) && !voiceFidelity?.abstain;
   // worked teaching examples: generic claim -> grounded version -> why (the "teacher works the problem")
   const workedExamples = (summary?.predictability_showcase || report?.predictability_showcase || []).filter(
     (it) => it && it.sentence && it.suggestion,
@@ -723,6 +728,67 @@ export default function Rewrite() {
             )}
             {registerCoaching.rhythm_even && (
               <p className="rewrite-review-copy">{t('rewritePage.registerCoaching.rhythmNote')}</p>
+            )}
+          </section>
+        )}
+
+        {/* P1 voice-match: fidelity meter + drift notes — hidden when absent (fail-open). */}
+        {voiceFidelityValid && (
+          <section className="rewrite-review-section">
+            <div className="rewrite-review-heading">
+              <div>
+                <span className="rewrite-review-kicker">{t('rewritePage.voice.kicker')}</span>
+                <h3>{t('rewritePage.voice.heading')}</h3>
+              </div>
+              <div
+                className="rewrite-review-pill"
+                style={{
+                  background: voiceFidelityScore >= 0.75 ? '#f0fdf4' : voiceFidelityScore >= 0.5 ? '#fffbeb' : '#fef2f2',
+                  borderColor: voiceFidelityScore >= 0.75 ? '#bbf7d0' : voiceFidelityScore >= 0.5 ? '#fde68a' : '#fecaca',
+                }}
+              >
+                <span
+                  style={{
+                    color: voiceFidelityScore >= 0.75 ? '#15803d' : voiceFidelityScore >= 0.5 ? '#92400e' : '#b91c1c',
+                    fontWeight: 700,
+                  }}
+                >
+                  {t('rewritePage.voice.score', { score: Math.round(voiceFidelityScore * 100) })}
+                </span>
+              </div>
+            </div>
+            <div className="rewrite-voice-meter" role="img" aria-label={t('rewritePage.voice.score', { score: Math.round(voiceFidelityScore * 100) })}>
+              <div
+                className="rewrite-voice-meter-fill"
+                style={{
+                  width: `${Math.round(Math.max(0, Math.min(1, voiceFidelityScore)) * 100)}%`,
+                  background: voiceFidelityScore >= 0.75 ? '#22c55e' : voiceFidelityScore >= 0.5 ? '#f59e0b' : '#ef4444',
+                }}
+              />
+            </div>
+            {voiceFidelity.abstain && (
+              <p className="rewrite-review-copy">{t('rewritePage.voice.abstained')}</p>
+            )}
+            {(voiceFidelity.drift_axes || []).filter((axis) => axis && (axis.drift || axis.delta)).length > 0 && (
+              <div className="rewrite-suggestion-grid">
+                {(voiceFidelity.drift_axes || [])
+                  .filter((axis) => axis && (axis.drift || axis.delta))
+                  .slice(0, 4)
+                  .map((axis, i) => (
+                    <article className="rewrite-suggestion-card" key={`voice-axis-${i}`}>
+                      <div className="rewrite-suggestion-meta">
+                        <span>{axis.axis || axis.name || t('rewritePage.voice.axisFallback')}</span>
+                      </div>
+                      <div className="rewrite-target-block">
+                        <p>
+                          {axis.drift
+                            ? t('rewritePage.voice.driftTowards', { direction: axis.drift })
+                            : t('rewritePage.voice.driftDelta', { delta: axis.delta })}
+                        </p>
+                      </div>
+                    </article>
+                  ))}
+              </div>
             )}
           </section>
         )}

@@ -55,6 +55,8 @@ celery_app.conf.update(
 # Task name follows Celery convention: <module>.<function>
 scan_document = celery_app.signature("app.tasks.scan_document")
 run_rewrite = celery_app.signature("app.tasks.run_rewrite")
+# Signature is name-based and arg-list driven: the API may pass an optional 3rd
+# positional arg, a sanitized voice_options dict (or None) — see rewrite_service.sanitize_voice_options.
 regenerate_rewrite_report_assets = celery_app.signature("app.tasks.regenerate_rewrite_report_assets")
 # Task 7 (not yet implemented as of this commit) owns worker/app/tasks.py::judge_defence_answer.
 # Enqueued by name string only — the API image never copies poc/ or worker/ (root Dockerfile),

@@ -382,6 +382,19 @@ def scan_document(self, job_id: str, text: str, ai_policy: str | None = None) ->
                 except Exception:
                     logger.warning("Critical Thinking questions PDF render skipped for %s", job_id, exc_info=True)
 
+            # P2: build the author's voice profile at scan time (fail-open) so
+            # later rewrites of this scan can use it even without user voice options.
+            try:
+                try:
+                    from rewrite_v6.voice_profile import build_voice_profile
+                except Exception:
+                    from poc.rewrite_v6.voice_profile import build_voice_profile
+                _vp = build_voice_profile(text)
+                if isinstance(_vp, dict) and _vp:
+                    results_json["voice_profile"] = _vp
+            except Exception:
+                logger.warning("Voice profile build skipped for %s", job_id, exc_info=True)
+
             report_progress(97, "Uploading report files")
             urls = upload_report_files(job_id, md_text, pdf_bytes, results_json, paragraph_explanations)
 
@@ -524,8 +537,31 @@ def scan_document(self, job_id: str, text: str, ai_policy: str | None = None) ->
     soft_time_limit=settings.REWRITE_SOFT_TIME_LIMIT_SECONDS,
     time_limit=settings.REWRITE_TIME_LIMIT_SECONDS,
 )
-def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
-    """Run the rewrite pipeline on a completed scan's results."""
+def _sanitize_voice_options_inline(voice_options) -> dict | None:
+    """Fail-open worker-side mirror of the API's sanitize_voice_options."""
+    try:
+        if not voice_options or not isinstance(voice_options, dict):
+            return None
+        mode = str(voice_options.get("mode") or "match_my_voice").strip()
+        if mode not in ("match_my_voice", "plain", "academic"):
+            return None
+        hint = str(voice_options.get("freeform_hint") or "").strip()[:280] or None
+        out = {"mode": mode}
+        if hint:
+            out["freeform_hint"] = hint
+        return out
+    except Exception:
+        return None
+
+
+def run_rewrite(self, rewrite_id: str, scan_id: str, voice_options: dict | None = None) -> dict:
+    """Run the rewrite pipeline on a completed scan's results.
+
+    voice_options (optional 3rd arg, enqueued by the API): sanitized user voice
+    preferences {"mode": ..., "freeform_hint": ...} — sanitized fail-open inline
+    and merged with the scan report's voice_profile when present.
+    """
+    voice_options = _sanitize_voice_options_inline(voice_options)
     from .storage import upload_rewrite_files, _client as _r2_client
     from .config import settings as worker_settings
     import tempfile
@@ -786,6 +822,16 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                 if pipeline_choice == "v6":
                     from rewrite_v6 import run_rewrite_pipeline_v6
                     v6_rewrite_model = settings.DRAFTPROOF_V6_WRITER_MODEL or rewrite_model
+                    # Merge user voice options with the scan-time voice profile
+                    # (report_json wins only where user provided nothing).
+                    _scan_voice_profile = (
+                        report_json.get("voice_profile")
+                        if isinstance(report_json, dict) and isinstance(report_json.get("voice_profile"), dict)
+                        else None
+                    )
+                    _voice_for_pipeline = dict(_scan_voice_profile) if _scan_voice_profile else None
+                    if voice_options:
+                        _voice_for_pipeline = {**(_voice_for_pipeline or {}), **voice_options}
                     result = run_rewrite_pipeline_v6(
                         detect_json=report_json,
                         output_dir=tmpdir,
@@ -794,6 +840,7 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                         base_url=settings.LLM_BASE_URL or None,
                         progress_callback=report_rewrite_progress,
                         cancellation_check=raise_if_canceled,
+                        voice_options=_voice_for_pipeline,
                     )
                 else:
                     from poc.rewrite_pipeline import run_rewrite_pipeline
@@ -887,6 +934,15 @@ def run_rewrite(self, rewrite_id: str, scan_id: str) -> dict:
                     rw.rewrite_plan if rw and hasattr(rw, "rewrite_plan") else None
                 ),
             }
+            # Voice-match surfacing (fail-open): include profile + fidelity
+            # metrics from the v6 pipeline result when present.
+            try:
+                if result.get("voice_fidelity") is not None:
+                    rewrite_json["voice_fidelity"] = result["voice_fidelity"]
+                if result.get("voice_profile") is not None:
+                    rewrite_json["voice_profile"] = result["voice_profile"]
+            except Exception:
+                pass
             billing_decision = _rewrite_billing_decision(result, rewrite_json)
             rewrite_json["billing_decision"] = billing_decision
             try:
