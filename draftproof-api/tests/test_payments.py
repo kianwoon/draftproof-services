@@ -3,7 +3,7 @@
 import json
 import hashlib
 import hmac
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock, PropertyMock, AsyncMock
 
 import pytest
 import stripe as stripe_lib
@@ -276,3 +276,58 @@ class TestPriceCalculation:
         from app.config import TOKEN_PRICE_SGD
 
         assert TOKEN_PRICE_SGD >= 0.50, f"Price SGD ${TOKEN_PRICE_SGD} below Stripe minimum"
+
+
+# ── POST /webhook ─────────────────────────────────────────────────
+
+def _completed_event(metadata):
+    return {
+        "id": "evt_test",
+        "type": "checkout.session.completed",
+        "data": {"object": {"id": "cs_test_1", "metadata": metadata, "amount_total": 500, "currency": "sgd"}},
+    }
+
+
+class TestWebhook:
+    """The Stripe account is shared with other products (e.g. Mousecape): their Checkout
+    Sessions reach this endpoint too and must be acknowledged, not crash (a 5xx makes Stripe
+    retry for days and can get the endpoint disabled)."""
+
+    def _post(self, client, event):
+        with patch("app.routes.payments.stripe.Webhook.construct_event", return_value=event):
+            return client.post("/api/payments/webhook", content=b"{}", headers={"stripe-signature": "t=1,v1=x"})
+
+    @pytest.mark.parametrize("metadata", [
+        {"product_id": "com.sdmj76.Mousecape", "checkout_intent_id": "ci_1"},  # another product
+        {},
+        None,
+        {"user_id": "u1"},          # tokens missing
+        {"tokens": "10"},           # user missing
+    ])
+    def test_foreign_or_incomplete_session_is_acknowledged_and_ignored(self, client, metadata):
+        client.mock_db.execute = AsyncMock()
+        client.mock_db.commit = AsyncMock()
+        resp = self._post(client, _completed_event(metadata))
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "skipped": "not_draftproof"}
+        client.mock_db.execute.assert_not_called()
+        client.mock_db.commit.assert_not_called()
+
+    def test_draftproof_session_still_credits_tokens(self, client):
+        account = MagicMock(id="acct_1", balance_tokens=5)
+        no_payment = MagicMock(); no_payment.scalar_one_or_none.return_value = None
+        has_account = MagicMock(); has_account.scalar_one_or_none.return_value = account
+        client.mock_db.execute = AsyncMock(side_effect=[no_payment, has_account])
+        client.mock_db.flush = AsyncMock()
+        client.mock_db.commit = AsyncMock()
+        resp = self._post(client, _completed_event({"user_id": "u1", "pack_id": "single", "tokens": "10"}))
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+        assert account.balance_tokens == 15
+        client.mock_db.commit.assert_awaited_once()
+
+    def test_other_event_types_are_acknowledged(self, client):
+        client.mock_db.execute = AsyncMock()
+        resp = self._post(client, {"id": "evt_2", "type": "charge.refunded", "data": {"object": {}}})
+        assert resp.status_code == 200
+        client.mock_db.execute.assert_not_called()

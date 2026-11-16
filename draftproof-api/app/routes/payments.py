@@ -160,8 +160,16 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
     if event["type"] == "checkout.session.completed":
         session_data = event["data"]["object"]
-        user_id = session_data["metadata"]["user_id"]
-        tokens = int(session_data["metadata"]["tokens"])
+        # The Stripe account is shared with other products (e.g. Mousecape). Their sessions
+        # carry no Draftproof metadata: acknowledge them (a 5xx makes Stripe retry for days
+        # and can get this endpoint disabled) and change nothing.
+        metadata = session_data.get("metadata") or {}
+        user_id = metadata.get("user_id")
+        tokens_raw = metadata.get("tokens")
+        if not user_id or not tokens_raw:
+            log.info("Webhook: skipping checkout session %s without Draftproof metadata", session_data.get("id"))
+            return {"ok": True, "skipped": "not_draftproof"}
+        tokens = int(tokens_raw)
         stripe_session_id = session_data["id"]
         amount_cents = session_data["amount_total"]
         currency = str(session_data.get("currency") or TOKEN_CURRENCY_CODE).upper()
